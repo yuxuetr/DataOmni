@@ -339,14 +339,39 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
   // Actions
   connectToDatabase: async (connectionString: string, connectionId?: string) => {
-    // 在连接新数据库前，保存当前的SQL历史
     const currentState = get();
-    if (currentState.connectionId && (currentState.sqlInput.trim() || currentState.statements.length > 0)) {
+    
+    // 如果连接ID相同，且已经有正常的连接，则直接返回
+    if (currentState.connectionId === connectionId && currentState.database && !currentState.error) {
+      console.log('✅ 使用现有数据库连接:', connectionId);
+      return;
+    }
+    
+    // 在连接新数据库前，保存当前的SQL历史
+    if (currentState.connectionId && currentState.connectionId !== connectionId && (currentState.sqlInput.trim() || currentState.statements.length > 0)) {
+      console.log('💾 保存旧连接的SQL历史:', currentState.connectionId);
       const { saveSqlHistory } = get();
       saveSqlHistory();
     }
+    
+    // 关闭旧连接
+    if (currentState.database) {
+      try {
+        await currentState.database.close();
+        console.log('🔌 旧数据库连接已关闭');
+      } catch (error) {
+        console.warn('⚠️ 关闭旧连接失败:', error);
+      }
+    }
 
-    set({ isConnecting: true, error: null });
+    set({ 
+      isConnecting: true, 
+      error: null,
+      database: null, // 清空旧连接
+      sqlInput: '',   // 清空旧SQL输入
+      statements: []  // 清空旧语句
+    });
+    
     try {
       // 隐藏密码的连接字符串用于日志
       const safeConnectionString = connectionString.replace(/:([^:@]+)@/, ':***@');
@@ -369,7 +394,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       const { loadSqlHistory } = get();
       loadSqlHistory(newConnectionId);
       
-      console.log('✅ 数据库连接成功');
+      console.log('✅ 数据库连接成功:', newConnectionId);
     } catch (error) {
       console.error('❌ 数据库连接失败:', error);
       set({ 

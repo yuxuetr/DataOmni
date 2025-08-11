@@ -1,8 +1,8 @@
 [package]
 name = "dataomni"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "DataOmni is a Data Management Platform"
+authors = ["yuxuetr"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -29,4 +29,3 @@ tauri-plugin-dialog = "2"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-cli = "2"
-

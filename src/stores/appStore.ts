@@ -95,24 +95,35 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const currentState = get();
     const previousConnectionId = currentState.activeConnection?.config.id;
     
-    // 设置连接状态为未准备就绪
+    // 先断开旧连接并保存历史
+    if (previousConnectionId && previousConnectionId !== connection.id) {
+      console.log('🔌 断开旧连接并保存历史:', previousConnectionId);
+      const { disconnect, saveSqlHistory } = useQueryStore.getState();
+      saveSqlHistory(); // 保存当前SQL历史
+      disconnect(); // 断开旧连接
+      get().clearDatabaseMetadata(previousConnectionId);
+    }
+    
+    // 设置连接状态为连接中
     set({ 
       activeConnection: { config: connection, connectionString },
       selectedTable: null,
       connectionReady: false
     });
     
-    // 如果切换到了不同的连接，清除旧的元数据缓存
-    if (previousConnectionId && previousConnectionId !== connection.id) {
-      console.log('🗑️ 清除旧连接的元数据缓存:', previousConnectionId);
-      get().clearDatabaseMetadata(previousConnectionId);
-    }
-    
     // 建立数据库连接
     try {
       console.log('🔗 正在建立数据库连接...');
       const { connectToDatabase } = useQueryStore.getState();
+      
+      // 等待连接完成
       await connectToDatabase(connectionString, connection.id);
+      
+      // 验证连接状态
+      const { database } = useQueryStore.getState();
+      if (!database) {
+        throw new Error('数据库连接对象为空');
+      }
       
       // 连接成功后设置状态为准备就绪
       console.log('✅ 数据库连接成功，设置状态为准备就绪');

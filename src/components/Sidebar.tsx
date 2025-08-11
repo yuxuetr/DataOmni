@@ -4,6 +4,7 @@ import { ConnectionConfig, DatabaseType, useConnectionStore } from '../stores/co
 import DatabaseExplorer from './DatabaseExplorer';
 import { ConnectionForm } from './ConnectionForm';
 import { confirm } from '@tauri-apps/plugin-dialog';
+import { useConnectionStateManager } from '../utils/stateSync';
 
 interface SidebarProps {
   onConnect: (connection: ConnectionConfig, connectionString: string) => void;

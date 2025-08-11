@@ -13,6 +13,7 @@ import {
 import { useConnectionStore } from '../stores/connectionStore';
 import { useQueryStore } from '../stores/queryStore';
 import { useAppStore } from '../stores/appStore';
+import { validateDatabaseConnection } from '../utils/stateSync';
 
 interface DatabaseExplorerProps {
   connectionId: string;
@@ -48,6 +49,12 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
   // 加载数据库元数据
   const loadDatabaseMetadata = async (forceRefresh = false) => {
     if (!database || !connection) return;
+    
+    // 验证连接状态
+    if (!validateDatabaseConnection()) {
+      console.warn('⚠️ DatabaseExplorer: 连接状态不一致，跳过元数据加载');
+      return;
+    }
     
     // 如果是强制刷新或者没有缓存，直接加载
     if (forceRefresh || !cachedMetadata || isMetadataStale) {
@@ -165,9 +172,21 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
   useEffect(() => {
     if (connectionId && database && connectionReady) {
       console.log('🔄 DatabaseExplorer: 连接准备就绪，重新加载元数据:', connectionId);
-      loadDatabaseMetadata(true); // 强制刷新，确保获取最新数据
+      // 添加短暂延时确保数据库连接对象已完全同步
+      const timeoutId = setTimeout(() => {
+        loadDatabaseMetadata(true); // 强制刷新，确保获取最新数据
+      }, 100);
+      
+      return () => clearTimeout(timeoutId);
     }
   }, [connectionId, connectionReady]); // 监听连接ID和连接状态变化
+  
+  // 添加额外的连接ID变化监听，确保连接切换时清理旧状态
+  useEffect(() => {
+    console.log('🔄 DatabaseExplorer: 连接ID变化，清理旧状态:', connectionId);
+    setError(null);
+    setExpandedSchemas(new Set());
+  }, [connectionId]);
 
   // 调试：监控连接状态变化
   useEffect(() => {

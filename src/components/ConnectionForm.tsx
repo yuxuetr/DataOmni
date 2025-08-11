@@ -261,6 +261,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
               </label>
               <input
                 type="text"
+                name="connection-name"
                 value={formData.name || ''}
                 onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                 className={clsx(
@@ -268,6 +269,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   validationErrors.name ? "border-red-300" : "border-gray-300"
                 )}
                 placeholder="输入连接名称"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
               />
               {validationErrors.name && (
                 <p className="text-red-500 text-sm mt-1">{validationErrors.name}</p>
@@ -415,6 +419,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         : "例如: mydata.duckdb 或 /完整/路径/到/数据库.duckdb"
                       }
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                     />
                     {/* 路径帮助说明 */}
                     <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
@@ -454,6 +461,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                     </label>
                     <input
                       type="text"
+                      name="host"
                       value={formData.host || ''}
                       onChange={(e) => setFormData(prev => ({ ...prev, host: e.target.value }))}
                       className={clsx(
@@ -461,6 +469,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         validationErrors.host ? "border-red-300" : "border-gray-300"
                       )}
                       placeholder="localhost"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                     />
                     {validationErrors.host && (
                       <p className="text-red-500 text-sm mt-1">{validationErrors.host}</p>
@@ -499,6 +510,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                     </label>
                     <input
                       type="text"
+                      name="database-name"
                       value={formData.database || ''}
                       onChange={(e) => setFormData(prev => ({ ...prev, database: e.target.value }))}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -509,6 +521,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         formData.db_type === DatabaseType.Neo4j ? "neo4j" :
                         formData.db_type === DatabaseType.ClickHouse ? "default" : ""
                       }
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                     />
                   </div>
                 )}
@@ -546,6 +561,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       </label>
                       <input
                         type="text"
+                        name="username"
                         value={formData.username || ''}
                         onChange={(e) => setFormData(prev => ({ ...prev, username: e.target.value }))}
                         className={clsx(
@@ -553,6 +569,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                           validationErrors.username ? "border-red-300" : "border-gray-300"
                         )}
                         placeholder="输入用户名"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
                       />
                       {validationErrors.username && (
                         <p className="text-red-500 text-sm mt-1">{validationErrors.username}</p>

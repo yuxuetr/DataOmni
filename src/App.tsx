@@ -3,6 +3,7 @@ import { SqlWorkbench } from './components/SqlWorkbench';
 import TableDataViewer from './components/TableDataViewer';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { useAppStore } from './stores/appStore';
+import { useConnectionStateManager } from './utils/stateSync';
 
 function App() {
   const { 
@@ -10,10 +11,11 @@ function App() {
     viewMode, 
     tableViewerState, 
     selectedTable,
-    setActiveConnection,
     handleConnectionDeleted,
     closeTableViewer
   } = useAppStore();
+  
+  const connectionManager = useConnectionStateManager();
 
   return (
     <div className="h-screen flex bg-gray-100">
@@ -22,10 +24,10 @@ function App() {
         <Sidebar 
           onConnect={async (connection, connectionString) => {
             try {
-              await setActiveConnection(connection, connectionString);
+              await connectionManager.switchConnection(connection, connectionString);
             } catch (error) {
               console.error('连接失败:', error);
-              // 可以在这里添加错误提示
+              // TODO: 添加错误提示UI
             }
           }}
           activeConnectionId={activeConnection?.config.id}
