@@ -15,6 +15,16 @@
 
 </div>
 
+## 📱 界面预览
+
+<div align="center">
+
+![DataOmni Interface](images/dataomni.png)
+
+*DataOmni 启动后的主界面展示*
+
+</div>
+
 ## 🌟 特性
 
 ### 🔗 多数据库支持
