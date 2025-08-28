@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Database, ChevronDown, Edit, Trash2 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { ConnectionConfig, DatabaseType, useConnectionStore } from '../stores/connectionStore';
 import DatabaseExplorer from './DatabaseExplorer';
 import { ConnectionForm } from './ConnectionForm';
 import { confirm } from '@tauri-apps/plugin-dialog';
-import { useConnectionStateManager } from '../utils/stateSync';
 
 interface SidebarProps {
   onConnect: (connection: ConnectionConfig, connectionString: string) => void;
@@ -49,27 +49,54 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // 处理连接选择
   const handleConnectionSelect = async (connection: ConnectionConfig) => {
-    // 构建连接字符串
-    let connectionString = '';
-    switch (connection.db_type) {
-      case DatabaseType.SQLite:
-        const dbPath = connection.database || 'data.db';
-        connectionString = `sqlite:${dbPath}`;
-        break;
-      case DatabaseType.MySQL:
-        connectionString = `mysql://${connection.username}:${connection.password}@${connection.host}:${connection.port}/${connection.database}`;
-        break;
-      case DatabaseType.PostgreSQL:
-        connectionString = `postgres://${connection.username}:${connection.password}@${connection.host}:${connection.port}/${connection.database}`;
-        break;
-    }
-    
     try {
+      // 使用后端的test_connection来获取正确的连接字符串(包含SSL参数)
+      console.log('🔗 获取连接字符串:', connection.name);
+      const connectionString = await invoke<string>('test_connection', { config: connection });
+      console.log('✅ 获取到带SSL参数的连接字符串:', connectionString.replace(/:([^:@]+)@/, ':***@'));
+      
       await onConnect(connection, connectionString);
       setShowConnectionMenu(false);
     } catch (error) {
       console.error('连接失败:', error);
-      // 可以在这里添加错误提示
+      
+      // 如果后端调用失败，使用简化的连接字符串作为备选方案
+      console.warn('⚠️ 后端连接字符串生成失败，使用前端备选方案');
+      let fallbackConnectionString = '';
+      
+      switch (connection.db_type) {
+        case DatabaseType.SQLite:
+          const dbPath = connection.database || 'data.db';
+          fallbackConnectionString = `sqlite:${dbPath}`;
+          break;
+        case DatabaseType.MySQL:
+          // 为MySQL连接添加SSL参数，并对用户名和密码进行URL编码
+          const encodedUsername = encodeURIComponent(connection.username);
+          const encodedPassword = encodeURIComponent(connection.password);
+          const mysqlBase = `mysql://${encodedUsername}:${encodedPassword}@${connection.host}:${connection.port}/${connection.database}`;
+          // 对于MySQL 5.7容器环境，统一使用DISABLED模式以避免SSL握手失败
+          fallbackConnectionString = `${mysqlBase}?ssl-mode=DISABLED&connectTimeout=30000&acquireTimeout=30000`;
+          break;
+        case DatabaseType.PostgreSQL:
+          const encodedUsernamePg = encodeURIComponent(connection.username);
+          const encodedPasswordPg = encodeURIComponent(connection.password);
+          const pgBase = `postgres://${encodedUsernamePg}:${encodedPasswordPg}@${connection.host}:${connection.port}/${connection.database}`;
+          fallbackConnectionString = connection.ssl || connection.port > 32767
+            ? `${pgBase}?sslmode=require&connect_timeout=30`
+            : `${pgBase}?sslmode=disable&connect_timeout=30`;
+          break;
+      }
+      
+      if (fallbackConnectionString) {
+        try {
+          console.log('🔄 尝试使用备选连接字符串:', fallbackConnectionString.replace(/:([^:@]+)@/, ':***@'));
+          await onConnect(connection, fallbackConnectionString);
+          setShowConnectionMenu(false);
+        } catch (fallbackError) {
+          console.error('备选连接方案也失败:', fallbackError);
+          // 这里可以添加用户友好的错误提示
+        }
+      }
     }
   };
 

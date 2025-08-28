@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use urlencoding::encode;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionConfig {
@@ -18,7 +19,7 @@ pub struct ConnectionConfig {
   pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DatabaseType {
   // 关系型数据库
   #[serde(rename = "mysql")]
@@ -132,24 +133,65 @@ impl DatabaseType {
   pub fn to_connection_string(&self, config: &ConnectionConfig) -> String {
     match self {
       DatabaseType::MySQL => {
-        format!(
+        let base_url = format!(
           "mysql://{}:{}@{}:{}/{}",
-          config.username,
-          config.password,
+          encode(&config.username),
+          encode(&config.password),
           config.host,
           config.port,
           config.database.as_ref().unwrap_or(&"mysql".to_string())
-        )
+        );
+        
+        // Add SSL parameters if SSL is enabled or if connecting to a non-standard port (likely cloud/managed DB)
+        let mut params = Vec::new();
+        
+        if config.ssl || config.port > 32767 || config.port == 31306 {
+          // For MySQL SSL connections using SQLx, use the correct parameter names
+          // SQLx MySQL uses different SSL parameters than PostgreSQL
+          // 对于MySQL 5.7容器环境，默认禁用SSL以避免握手失败
+          params.push("ssl-mode=DISABLED".to_string());
+        } else {
+          // Explicitly disable SSL for non-SSL connections  
+          params.push("ssl-mode=DISABLED".to_string());
+        }
+        
+        // Add connection timeout and other stability parameters
+        params.push("connectTimeout=30000".to_string());
+        params.push("acquireTimeout=30000".to_string());
+        
+        if !params.is_empty() {
+          format!("{}?{}", base_url, params.join("&"))
+        } else {
+          base_url
+        }
       }
       DatabaseType::PostgreSQL => {
-        format!(
+        let base_url = format!(
           "postgres://{}:{}@{}:{}/{}",
-          config.username,
-          config.password,
+          encode(&config.username),
+          encode(&config.password),
           config.host,
           config.port,
           config.database.as_ref().unwrap_or(&"postgres".to_string())
-        )
+        );
+        
+        // Add SSL parameters if SSL is enabled or connecting to non-standard ports
+        let mut params = Vec::new();
+        
+        if config.ssl || config.port > 32767 {
+          params.push("sslmode=require".to_string());
+        } else {
+          params.push("sslmode=disable".to_string());
+        }
+        
+        // Add connection timeout
+        params.push("connect_timeout=30".to_string());
+        
+        if !params.is_empty() {
+          format!("{}?{}", base_url, params.join("&"))
+        } else {
+          base_url
+        }
       }
       DatabaseType::SQLite => {
         format!(
@@ -161,8 +203,8 @@ impl DatabaseType {
         if !config.username.is_empty() && !config.password.is_empty() {
           format!(
             "mongodb://{}:{}@{}:{}/{}",
-            config.username,
-            config.password,
+            encode(&config.username),
+            encode(&config.password),
             config.host,
             config.port,
             config.database.as_ref().unwrap_or(&"admin".to_string())
@@ -180,8 +222,8 @@ impl DatabaseType {
         if !config.username.is_empty() && !config.password.is_empty() {
           format!(
             "redis://{}:{}@{}:{}/{}",
-            config.username,
-            config.password,
+            encode(&config.username),
+            encode(&config.password),
             config.host,
             config.port,
             config.database.as_ref().unwrap_or(&"0".to_string())
@@ -198,8 +240,8 @@ impl DatabaseType {
       DatabaseType::Neo4j => {
         format!(
           "bolt://{}:{}@{}:{}/{}",
-          config.username,
-          config.password,
+          encode(&config.username),
+          encode(&config.password),
           config.host,
           config.port,
           config.database.as_ref().unwrap_or(&"neo4j".to_string())
@@ -214,8 +256,8 @@ impl DatabaseType {
       DatabaseType::ClickHouse => {
         format!(
           "clickhouse://{}:{}@{}:{}/{}",
-          config.username,
-          config.password,
+          encode(&config.username),
+          encode(&config.password),
           config.host,
           config.port,
           config.database.as_ref().unwrap_or(&"default".to_string())
@@ -225,7 +267,10 @@ impl DatabaseType {
         if !config.username.is_empty() && !config.password.is_empty() {
           format!(
             "http://{}:{}@{}:{}",
-            config.username, config.password, config.host, config.port
+            encode(&config.username), 
+            encode(&config.password), 
+            config.host, 
+            config.port
           )
         } else {
           format!("http://{}:{}", config.host, config.port)

@@ -377,6 +377,15 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       const safeConnectionString = connectionString.replace(/:([^:@]+)@/, ':***@');
       console.log('🔗 连接到数据库:', safeConnectionString);
       
+      // 检查Tauri SQL插件端口限制
+      const portMatch = connectionString.match(/:(\d+)\//);
+      if (portMatch) {
+        const port = parseInt(portMatch[1]);
+        if (port > 32767) {
+          throw new Error(`端口兼容性错误：端口 ${port} 超出了Tauri SQL插件支持的范围（最大32767）。请使用SSH端口转发或联系管理员使用标准端口范围。`);
+        }
+      }
+      
       const db = await Database.load(connectionString);
       
       // 生成或使用提供的连接ID
@@ -397,14 +406,28 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       console.log('✅ 数据库连接成功:', newConnectionId);
     } catch (error) {
       console.error('❌ 数据库连接失败:', error);
+      
+      // 处理端口错误的特殊情况
+      let errorMessage = error instanceof Error ? error.message : '数据库连接失败';
+      if (errorMessage.includes('invalid port number')) {
+        // 尝试从连接字符串中提取端口号
+        const portMatch = connectionString.match(/:(\d+)\//);
+        const port = portMatch ? parseInt(portMatch[1]) : 0;
+        if (port > 32767) {
+          errorMessage = `端口号兼容性问题: ${port}。当前数据库驱动不支持大于32767的端口号。这是已知限制，建议联系数据库管理员使用标准端口范围内的端口，或检查是否有端口映射方案。`;
+        } else {
+          errorMessage = `端口号无效: ${port || '未知'}。可能的原因：1) 端口超出有效范围(1-65535)，2) 端口被防火墙阻止，3) 数据库服务未在此端口运行。`;
+        }
+      }
+      
       set({ 
-        error: error instanceof Error ? error.message : '数据库连接失败',
+        error: errorMessage,
         isConnecting: false,
         database: null,
         connectionString: null,
         connectionId: null
       });
-      throw error;
+      throw new Error(errorMessage);
     }
   },
 

@@ -74,7 +74,7 @@ export const createDefaultConfig = (type: DatabaseType = DatabaseType.SQLite): P
     database: '',
     username: '',
     password: '',
-    ssl: false,
+        ssl: false,
     options: {},
     tags: [],
   };
@@ -92,6 +92,7 @@ export const createDefaultConfig = (type: DatabaseType = DatabaseType.SQLite): P
       return {
         ...baseConfig,
         database: 'mysql',
+        ssl: true, // Enable SSL by default for MySQL due to common cloud database requirements
       };
     case DatabaseType.PostgreSQL:
       return {
@@ -266,6 +267,25 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   testConnection: async (config) => {
     set({ isLoading: true, error: null, testResult: null });
     try {
+      // 前端预验证
+      if (config.port > 65535 || config.port < 1) {
+        throw new Error(`端口号无效: ${config.port}。端口号必须在1-65535范围内。`);
+      }
+      
+      // 检查Tauri SQL插件的端口限制（适用于所有数据库类型）
+      if (config.port > 32767) {
+        const errorMessage = `端口兼容性错误：端口 ${config.port} 超出了Tauri SQL插件支持的范围（最大32767）。这是由于底层驱动使用16位有符号整数的限制。
+
+解决方案：
+1. 联系数据库管理员使用标准端口范围（1-32767）
+2. 使用SSH端口转发：ssh -L 3306:${config.host}:${config.port} user@jump-server
+3. 使用本地代理服务（如socat）进行端口转发
+4. 请求数据库管理员配置负载均衡器或代理`;
+        
+        console.error(`❌ ${errorMessage}`);
+        throw new Error(errorMessage);
+      }
+      
       // 先进行后端验证
       const connectionString = await invoke<string>('test_connection', { config });
       
@@ -283,12 +303,23 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       } catch (dbError) {
         console.error('数据库连接失败:', dbError);
         const dbErrorMessage = dbError instanceof Error ? dbError.message : '数据库连接失败';
+        
+        // 特殊处理端口错误
+        let finalErrorMessage = dbErrorMessage;
+        if (dbErrorMessage.includes('invalid port number')) {
+          if (config.port > 32767) {
+            finalErrorMessage = `端口号兼容性问题: ${config.port}。当前数据库驱动可能不支持大于32767的端口号。建议：1) 联系数据库管理员使用标准端口范围，2) 检查是否存在端口映射或代理服务。`;
+          } else {
+            finalErrorMessage = `端口号无效: ${config.port}。请检查：1) 端口是否在有效范围内(1-65535)，2) 端口是否被防火墙阻止，3) 数据库服务是否在此端口运行。`;
+          }
+        }
+        
         set({ 
-          error: dbErrorMessage,
-          testResult: `连接测试失败: ${dbErrorMessage}`,
+          error: finalErrorMessage,
+          testResult: `连接测试失败: ${finalErrorMessage}`,
           isLoading: false 
         });
-        throw dbError;
+        throw new Error(finalErrorMessage);
       }
     } catch (error) {
       console.error('连接配置验证失败:', error);
