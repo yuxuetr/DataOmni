@@ -46,10 +46,13 @@ function App() {
           activeConnection ? (
             <SqlWorkbench
               connection={activeConnection.config}
-              connectionString={activeConnection.connectionString}
               onDisconnect={() => {
                 useAppStore.getState().clearActiveConnection();
               }}
+              onReconnect={() => connectionManager.switchConnection(
+                activeConnection.config,
+                activeConnection.connectionString
+              )}
               selectedTable={selectedTable || undefined}
             />
           ) : (
@@ -63,7 +66,6 @@ function App() {
             connection={tableViewerState.connection}
             tableName={tableViewerState.tableName}
             schema={tableViewerState.schema}
-            connectionString={activeConnection?.connectionString}
             onClose={closeTableViewer}
           />
         ) : null}

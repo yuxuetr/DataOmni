@@ -79,7 +79,7 @@
 ### 1.2 统一连接身份和生命周期
 
 - [x] 删除从连接串生成连接 ID 的逻辑，统一使用 `ConnectionProfile.id`
-- [ ] 移除 `SqlWorkbench`、`TableDataViewer` 中的自行重连逻辑
+- [x] 移除 `SqlWorkbench`、`TableDataViewer` 中的自行重连逻辑
 - [ ] 建立唯一的 `SessionManager`，统一负责连接、复用、重连和关闭
 - [ ] 区分保存的连接配置 ID 与运行时 Session ID
 - [ ] 切换侧边栏连接不得改变已打开标签页的执行目标

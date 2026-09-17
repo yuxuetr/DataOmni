@@ -63,7 +63,6 @@ interface TableDataViewerProps {
   connection: ConnectionConfig;
   tableName: string;
   schema?: string;
-  connectionString?: string;
   onClose?: () => void;
 }
 
@@ -71,10 +70,9 @@ interface TableDataViewerProps {
 type TabType = 'schema' | 'data' | 'er';
 
 export default function TableDataViewer({ 
-  connection, 
+  connection,
   tableName, 
   schema, 
-  connectionString,
   onClose 
 }: TableDataViewerProps) {
   const [tableSchema, setTableSchema] = useState<TableSchema | null>(null);
@@ -98,7 +96,7 @@ export default function TableDataViewer({
     value: ''
   });
   
-  const { database, connectToDatabase } = useQueryStore();
+  const { database } = useQueryStore();
 
   // 标签页配置
   const tabs = [
@@ -126,26 +124,10 @@ export default function TableDataViewer({
   const ensureDatabaseConnection = async () => {
     console.log('🔍 检查数据库连接状态...');
     console.log('当前database对象:', database ? '已连接' : '未连接');
-    console.log('连接字符串:', connectionString ? '已提供' : '未提供');
     
     if (!database) {
-      console.log('数据库未连接，尝试重新连接...');
-      if (connectionString) {
-        try {
-          console.log('🔄 尝试重新连接数据库，连接ID:', connection.id);
-          await connectToDatabase(connectionString, connection.id);
-          console.log('✅ 重新连接数据库成功');
-          return true;
-        } catch (error) {
-          console.error('❌ 重新连接数据库失败:', error);
-          setError(`重新连接数据库失败: ${error instanceof Error ? error.message : '未知错误'}`);
-          return false;
-        }
-      } else {
-        console.error('❌ 缺少连接字符串，无法重新连接');
-        setError('数据库未连接，请重新连接数据库');
-        return false;
-      }
+      setError('数据库会话不可用，请先重新连接');
+      return false;
     }
     console.log('✅ 数据库连接正常');
     return true;
@@ -283,7 +265,7 @@ export default function TableDataViewer({
     };
     
     initializeViewer();
-  }, [tableName, schema, connectionString, activeTab]); // 添加activeTab依赖
+  }, [tableName, schema, activeTab]); // 添加activeTab依赖
 
   // 点击外部关闭日期时间选择器
   useEffect(() => {

@@ -15,15 +15,15 @@ import { SqlEditor } from './SqlEditor';
 
 interface SqlWorkbenchProps {
   connection: ConnectionConfig;
-  connectionString: string;
   onDisconnect: () => void;
+  onReconnect: () => Promise<void>;
   selectedTable?: { name: string; schema?: string };
 }
 
 export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({ 
   connection, 
-  connectionString,
   onDisconnect,
+  onReconnect,
   selectedTable
 }) => {
   const {
@@ -31,7 +31,6 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
     connectionId,
     isConnecting,
     error,
-    connectToDatabase,
     disconnect,
     setError,
     setSqlInput,
@@ -42,12 +41,6 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
   const { selectTable, clearSelectedTable } = useAppStore();
 
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('disconnected');
-
-  // 初始化连接
-  useEffect(() => {
-    handleConnect();
-    // 移除组件卸载时的断开连接逻辑，避免在切换视图时断开连接
-  }, [connectionString]);
 
   // 监听连接状态
   useEffect(() => {
@@ -89,20 +82,10 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
     }
   }, [selectedTable, database, connectionStatus]);
 
-  // 连接数据库
-  const handleConnect = async () => {
-    try {
-      console.log('🔗 SQL工作台连接数据库，连接ID:', connection.id);
-      await connectToDatabase(connectionString, connection.id);
-    } catch (error) {
-      console.error('SQL工作台连接失败:', error);
-    }
-  };
-
   // 重新连接
   const handleReconnect = async () => {
     setError(null);
-    await handleConnect();
+    await onReconnect();
   };
 
   // 关闭工作台
