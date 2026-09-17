@@ -27,7 +27,7 @@ function App() {
               await connectionManager.switchConnection(connection, connectionString);
             } catch (error) {
               console.error('连接失败:', error);
-              // TODO: 添加错误提示UI
+              throw error;
             }
           }}
           activeConnectionId={activeConnection?.config.id}

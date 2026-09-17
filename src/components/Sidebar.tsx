@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Database, ChevronDown, Edit, Trash2 } from 'lucide-react';
+import { Plus, Database, ChevronDown, Edit, Trash2, AlertCircle, X } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { ConnectionConfig, useConnectionStore } from '../stores/connectionStore';
 import DatabaseExplorer from './DatabaseExplorer';
@@ -7,7 +7,7 @@ import { ConnectionForm } from './ConnectionForm';
 import { confirm } from '@tauri-apps/plugin-dialog';
 
 interface SidebarProps {
-  onConnect: (connection: ConnectionConfig, connectionString: string) => void;
+  onConnect: (connection: ConnectionConfig, connectionString: string) => Promise<void>;
   activeConnectionId?: string | null;
   onConnectionDeleted?: (deletedConnectionId: string) => void;
   onTableSelect?: (tableName: string, schema?: string) => void;
@@ -23,16 +23,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingConnection, setEditingConnection] = useState<ConnectionConfig | null>(null);
   const [showConnectionMenu, setShowConnectionMenu] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   // 初始化时加载连接列表
   useEffect(() => {
     loadConnections().catch(err => {
       console.error('加载连接列表失败:', err);
+      setConnectionError(err instanceof Error ? err.message : '加载连接列表失败');
     });
   }, []);
 
   // 处理新建连接
   const handleCreateConnection = () => {
+    setConnectionError(null);
     setEditingConnection(null);
     setIsFormOpen(true);
   };
@@ -49,6 +52,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // 处理连接选择
   const handleConnectionSelect = async (connection: ConnectionConfig) => {
+    setConnectionError(null);
     try {
       // 使用后端的test_connection来获取正确的连接字符串(包含SSL参数)
       console.log('🔗 获取连接字符串:', connection.name);
@@ -59,6 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       setShowConnectionMenu(false);
     } catch (error) {
       console.error('连接失败:', error);
+      setConnectionError(error instanceof Error ? error.message : '数据库连接失败');
     }
   };
 
@@ -84,6 +89,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }
       } catch (error) {
         console.error('删除连接失败:', error);
+        setConnectionError(error instanceof Error ? error.message : '删除连接失败');
       }
     }
     setShowConnectionMenu(false);
@@ -152,6 +158,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <Trash2 size={14} />
                       </button>
                     </div>
+                    {connectionError && (
+                      <div className="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">
+                        <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                        <span className="flex-1 break-words">{connectionError}</span>
+                        <button
+                          type="button"
+                          onClick={() => setConnectionError(null)}
+                          className="text-red-500 hover:text-red-700"
+                          title="关闭错误提示"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))
               )}
@@ -203,6 +223,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             // 重新加载连接列表
             loadConnections().catch(err => {
               console.error('加载连接列表失败:', err);
+              setConnectionError(err instanceof Error ? err.message : '加载连接列表失败');
             });
           }}
         />
