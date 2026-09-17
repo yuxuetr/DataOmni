@@ -165,8 +165,13 @@ export class SessionManager {
    */
   async handleConnectionDeleted(connectionId: string): Promise<void> {
     const appStore = useAppStore.getState();
+    const workspaceStore = useWorkspaceStore.getState();
+    const ownsRuntimeTarget = this.lifecycle.profileId === connectionId
+      || this.reconnectTarget?.connection.id === connectionId;
 
-    if (appStore.activeConnection?.config.id === connectionId) {
+    workspaceStore.handleProfileDeleted(connectionId);
+
+    if (appStore.activeConnection?.config.id === connectionId || ownsRuntimeTarget) {
       await this.disconnect();
       return;
     }

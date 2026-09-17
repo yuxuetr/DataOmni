@@ -1,5 +1,8 @@
 import { create } from 'zustand';
-import type { WorkspaceTab } from '../contracts/workspace';
+import {
+  markWorkspaceTabProfileDeleted,
+  type WorkspaceTab
+} from '../contracts/workspace';
 
 interface WorkspaceState {
   sidebarProfileId: string | null;
@@ -12,6 +15,7 @@ interface WorkspaceActions {
   registerTab: (tab: WorkspaceTab) => void;
   activateTab: (tabId: string) => void;
   closeTab: (tabId: string) => void;
+  handleProfileDeleted: (profileId: string) => void;
 }
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
@@ -59,6 +63,34 @@ export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
       }
 
       return { tabs, activeTabId };
+    });
+  },
+
+  handleProfileDeleted: (profileId) => {
+    set((state) => {
+      const tabs = state.tabs.flatMap((tab) => {
+        if (tab.binding.profileId !== profileId) {
+          return [tab];
+        }
+
+        if (tab.kind === 'sql' && tab.dirty) {
+          return [markWorkspaceTabProfileDeleted(tab)];
+        }
+
+        return [];
+      });
+      const activeTabId = state.activeTabId
+        && tabs.some((tab) => tab.id === state.activeTabId)
+        ? state.activeTabId
+        : tabs[0]?.id ?? null;
+
+      return {
+        sidebarProfileId: state.sidebarProfileId === profileId
+          ? null
+          : state.sidebarProfileId,
+        tabs,
+        activeTabId
+      };
     });
   }
 }));

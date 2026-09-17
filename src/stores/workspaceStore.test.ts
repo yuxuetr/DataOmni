@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createSqlWorkspaceTab } from '../contracts/workspace';
+import {
+  createSqlWorkspaceTab,
+  createTableWorkspaceTab
+} from '../contracts/workspace';
 import { useWorkspaceStore } from './workspaceStore';
 
 describe('workspace store', () => {
@@ -67,5 +70,54 @@ describe('workspace store', () => {
     useWorkspaceStore.getState().closeTab('tab-b');
 
     expect(useWorkspaceStore.getState().activeTabId).toBe('tab-a');
+  });
+
+  it('preserves dirty SQL drafts and closes clean tabs for a deleted profile', () => {
+    const dirtySqlTab = createSqlWorkspaceTab('profile-a', {
+      id: 'sql-a',
+      sessionId: 'session-a',
+      sql: 'SELECT 1;'
+    });
+    const cleanTableTab = createTableWorkspaceTab('profile-a', 'users', {
+      id: 'table-a',
+      sessionId: 'session-a'
+    });
+    const otherProfileTab = createSqlWorkspaceTab('profile-b', {
+      id: 'sql-b',
+      sessionId: 'session-b'
+    });
+
+    useWorkspaceStore.getState().registerTab(dirtySqlTab);
+    useWorkspaceStore.getState().registerTab(cleanTableTab);
+    useWorkspaceStore.getState().registerTab(otherProfileTab);
+    useWorkspaceStore.getState().selectSidebarProfile('profile-a');
+    useWorkspaceStore.getState().handleProfileDeleted('profile-a');
+
+    const state = useWorkspaceStore.getState();
+    expect(state.sidebarProfileId).toBeNull();
+    expect(state.tabs.map((tab) => tab.id)).toEqual(['sql-a', 'sql-b']);
+    expect(state.tabs[0]).toMatchObject({
+      availability: 'profile-deleted',
+      dirty: true,
+      binding: {
+        profileId: 'profile-a',
+        sessionId: null
+      },
+      draft: { sql: 'SELECT 1;' }
+    });
+    expect(state.tabs[1]).toEqual(otherProfileTab);
+  });
+
+  it('moves focus when a deleted profile closes the active clean tab', () => {
+    const retainedTab = createSqlWorkspaceTab('profile-b', { id: 'sql-b' });
+    const deletedTab = createTableWorkspaceTab('profile-a', 'users', {
+      id: 'table-a'
+    });
+
+    useWorkspaceStore.getState().registerTab(retainedTab);
+    useWorkspaceStore.getState().registerTab(deletedTab);
+    useWorkspaceStore.getState().handleProfileDeleted('profile-a');
+
+    expect(useWorkspaceStore.getState().activeTabId).toBe('sql-b');
   });
 });

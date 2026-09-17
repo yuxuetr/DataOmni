@@ -5,11 +5,14 @@ export interface WorkspaceTabBinding {
   readonly sessionId: string | null;
 }
 
+export type WorkspaceTabAvailability = 'available' | 'profile-deleted';
+
 interface WorkspaceTabBase {
   id: string;
   kind: WorkspaceTabKind;
   title: string;
   binding: WorkspaceTabBinding;
+  availability: WorkspaceTabAvailability;
   dirty: boolean;
   createdAt: string;
   lastActivatedAt: string;
@@ -65,6 +68,7 @@ function createTabBase(
       profileId,
       sessionId: options.sessionId ?? null
     },
+    availability: 'available',
     dirty: false,
     createdAt: now,
     lastActivatedAt: now
@@ -110,5 +114,18 @@ export function updateSqlWorkspaceTabDraft(
     ...tab,
     dirty: sql !== tab.draft.sql || tab.dirty,
     draft: { sql }
+  };
+}
+
+export function markWorkspaceTabProfileDeleted(
+  tab: WorkspaceTab
+): WorkspaceTab {
+  return {
+    ...tab,
+    availability: 'profile-deleted',
+    binding: {
+      profileId: tab.binding.profileId,
+      sessionId: null
+    }
   };
 }
