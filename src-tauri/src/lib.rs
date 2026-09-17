@@ -21,6 +21,7 @@ pub fn run() {
     .plugin(tauri_plugin_sql::Builder::new().build())
     .plugin(tauri_plugin_cli::init())
     .manage(ConnectionServiceState::default())
+    .manage(QueryCancellationState::default())
     .setup(|app| {
       println!("🎯 DataOmni应用启动成功");
 
@@ -99,6 +100,7 @@ pub fn run() {
       get_database_metadata_query,
       get_table_quick_view_query,
       execute_query,
+      cancel_query,
       validate_query,
     ])
     .run(tauri::generate_context!())

@@ -2,20 +2,57 @@ use crate::commands::connection_commands::ConnectionServiceState;
 use crate::services::QueryExecutionResult;
 // use crate::models::{ColumnInfo, ConnectionConfig, DatabaseInfo, QueryResult, TableInfo};
 // use crate::services::{ConnectionService, DatabaseService};
+use std::collections::HashMap;
 use tauri::{AppHandle, State};
 use tauri_plugin_sql::DbInstances;
+use tokio::sync::{oneshot, Mutex};
 use tokio::time::Duration;
 
 // 全局数据库服务状态
 // pub type DatabaseServiceState = Mutex<crate::services::DatabaseService>;
 
+pub const QUERY_CANCELLED_CODE: &str = "QUERY_CANCELLED";
+
+#[derive(Default)]
+pub struct QueryCancellationState {
+  senders: Mutex<HashMap<String, oneshot::Sender<()>>>,
+}
+
+impl QueryCancellationState {
+  async fn register(&self, execution_id: &str) -> Result<oneshot::Receiver<()>, String> {
+    let (sender, receiver) = oneshot::channel();
+    let mut senders = self.senders.lock().await;
+    if senders.contains_key(execution_id) {
+      return Err("查询执行 ID 已存在".to_string());
+    }
+    senders.insert(execution_id.to_string(), sender);
+    Ok(receiver)
+  }
+
+  async fn cancel(&self, execution_id: &str) -> bool {
+    self
+      .senders
+      .lock()
+      .await
+      .remove(execution_id)
+      .map(|sender| sender.send(()).is_ok())
+      .unwrap_or(false)
+  }
+
+  async fn finish(&self, execution_id: &str) {
+    self.senders.lock().await.remove(execution_id);
+  }
+}
+
 #[tauri::command]
 pub async fn execute_query(
   connection_id: String,
+  execution_id: String,
   sql: String,
   timeout_ms: u64,
   connection_service_state: State<'_, ConnectionServiceState>,
   database_instances: State<'_, DbInstances>,
+  cancellation_state: State<'_, QueryCancellationState>,
 ) -> Result<QueryExecutionResult, String> {
   if !(100..=3_600_000).contains(&timeout_ms) {
     return Err("查询超时必须在 100 毫秒到 1 小时之间".to_string());
@@ -31,7 +68,41 @@ pub async fn execute_query(
 
   let instances = database_instances.0.read().await;
   let pool = instances.get(&connection_string).ok_or_else(|| "数据库会话未连接".to_string())?;
-  crate::services::execute_query_with_timeout(pool, &sql, Duration::from_millis(timeout_ms)).await
+  let receiver = cancellation_state.register(&execution_id).await?;
+
+  let result = tokio::select! {
+    result = crate::services::execute_query_with_timeout(
+      pool,
+      &sql,
+      Duration::from_millis(timeout_ms)
+    ) => result,
+    _ = receiver => Err(format!("{QUERY_CANCELLED_CODE}: 查询已取消")),
+  };
+  cancellation_state.finish(&execution_id).await;
+  result
+}
+
+#[tauri::command]
+pub async fn cancel_query(
+  execution_id: String,
+  cancellation_state: State<'_, QueryCancellationState>,
+) -> Result<bool, String> {
+  Ok(cancellation_state.cancel(&execution_id).await)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[tokio::test]
+  async fn cancellation_requests_are_acknowledged_once() {
+    let state = QueryCancellationState::default();
+    let receiver = state.register("execution-1").await.expect("register execution");
+
+    assert!(state.cancel("execution-1").await);
+    assert!(receiver.await.is_ok());
+    assert!(!state.cancel("execution-1").await);
+  }
 }
 
 #[tauri::command]

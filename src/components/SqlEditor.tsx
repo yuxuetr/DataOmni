@@ -9,9 +9,11 @@ import {
   Clock,
   AlertCircle,
   CheckCircle,
-  Loader
+  Loader,
+  Square
 } from 'lucide-react';
 import { useQueryStore, SqlStatement } from '../stores/queryStore';
+import type { QueryExecution } from '../contracts/queryExecution';
 import CodeMirror from '@uiw/react-codemirror';
 import { sql } from '@codemirror/lang-sql';
 import { oneDark } from '@codemirror/theme-one-dark';
@@ -77,6 +79,8 @@ export const SqlEditor: React.FC = () => {
   const {
     sqlInput,
     statements,
+    executions,
+    latestExecutionIdByStatement,
     queryTimeoutMs,
     isConnecting,
     error,
@@ -85,6 +89,7 @@ export const SqlEditor: React.FC = () => {
     executeSql,
     executeStatement,
     executeAllStatements,
+    cancelExecution,
     setQueryTimeoutMs,
     clearResults,
     removeStatement,
@@ -385,15 +390,23 @@ export const SqlEditor: React.FC = () => {
         ) : (
           /* 语句列表 */
           <div className="p-4 space-y-4">
-            {statements.map((statement) => (
-              <SqlStatementCard
-                key={statement.id}
-                statement={statement}
-                onExecute={() => executeStatement(statement.id)}
-                onRemove={() => removeStatement(statement.id)}
-                formatExecutionTime={formatExecutionTime}
-              />
-            ))}
+            {statements.map((statement) => {
+              const executionId = latestExecutionIdByStatement[statement.id];
+              const execution = executions.find(
+                (candidate) => candidate.id === executionId
+              );
+              return (
+                <SqlStatementCard
+                  key={statement.id}
+                  statement={statement}
+                  execution={execution}
+                  onExecute={() => executeStatement(statement.id)}
+                  onCancel={() => execution && cancelExecution(execution.id)}
+                  onRemove={() => removeStatement(statement.id)}
+                  formatExecutionTime={formatExecutionTime}
+                />
+              );
+            })}
           </div>
         )}
       </div>
@@ -404,7 +417,9 @@ export const SqlEditor: React.FC = () => {
 // SQL语句卡片组件
 interface SqlStatementCardProps {
   statement: SqlStatement;
+  execution?: QueryExecution;
   onExecute: () => void;
+  onCancel: () => void;
   onRemove: () => void;
   formatExecutionTime: (ms: number) => string;
 }
@@ -413,7 +428,9 @@ interface SqlStatementCardProps {
 
 const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
   statement,
+  execution,
   onExecute,
+  onCancel,
   onRemove,
   formatExecutionTime
 }) => {
@@ -448,17 +465,27 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
           
           {/* 操作按钮 */}
           <button
-            onClick={onExecute}
-            disabled={statement.isExecuting}
+            onClick={statement.isExecuting ? onCancel : onExecute}
+            disabled={execution?.status === 'cancel-requested'}
             className={clsx(
               "flex items-center space-x-1 px-3 py-1 text-sm rounded-md transition-colors",
-              statement.isExecuting
-                ? "bg-gray-300 text-gray-500 cursor-not-allowed"
+              execution?.status === 'cancel-requested'
+                ? "bg-amber-100 text-amber-700 cursor-wait"
+                : statement.isExecuting
+                  ? "bg-red-600 text-white hover:bg-red-700"
                 : "bg-green-600 text-white hover:bg-green-700"
             )}
           >
-            <Play size={14} />
-            <span>{statement.isExecuting ? '执行中' : '执行'}</span>
+            {statement.isExecuting ? <Square size={14} /> : <Play size={14} />}
+            <span>
+              {execution?.status === 'cancel-requested'
+                ? '取消请求中'
+                : statement.isExecuting
+                  ? '停止'
+                  : execution?.status === 'cancelled'
+                    ? '重新执行'
+                    : '执行'}
+            </span>
           </button>
           
           <button

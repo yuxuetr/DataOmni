@@ -3,8 +3,10 @@ import Database from '@tauri-apps/plugin-sql';
 import { invoke } from '@tauri-apps/api/core';
 import {
   completeQueryExecution,
+  cancelQueryExecution,
   createQueryExecution,
   failQueryExecution,
+  requestQueryExecutionCancellation,
   startQueryExecution,
   type QueryExecution,
   type SqlDialect
@@ -60,6 +62,7 @@ interface QueryActions {
   executeSql: (sql: string) => Promise<void>;
   executeStatement: (statementId: string) => Promise<void>;
   executeAllStatements: () => Promise<void>;
+  cancelExecution: (executionId: string) => Promise<void>;
   setQueryTimeoutMs: (timeoutMs: number) => void;
   
   // 结果管理
@@ -547,6 +550,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       const sql = statement.sql.trim();
       const driverResult = await invoke<DriverQueryResult>('execute_query', {
         connectionId,
+        executionId: execution.id,
         sql: statement.sql,
         timeoutMs: queryTimeoutMs
       });
@@ -608,20 +612,31 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       console.error('❌ SQL执行失败:', error);
       const rawErrorMessage = error instanceof Error ? error.message : String(error);
       const timedOut = rawErrorMessage.startsWith('QUERY_TIMEOUT:');
-      const errorMessage = timedOut
-        ? `查询已超时（${formatExecutionTime(queryTimeoutMs)}）`
-        : rawErrorMessage;
+      const cancelled = rawErrorMessage.startsWith('QUERY_CANCELLED:');
+      const errorMessage = cancelled
+        ? '查询已取消'
+        : timedOut
+          ? `查询已超时（${formatExecutionTime(queryTimeoutMs)}）`
+          : rawErrorMessage;
       
       // 更新错误状态
       set((state) => ({
         statements: state.statements.map(s =>
-          s.id === statementId 
-            ? failSqlStatement(s, errorMessage)
+          s.id === statementId
+            ? cancelled
+              ? { ...s, isExecuting: false, error: undefined }
+              : failSqlStatement(s, errorMessage)
             : s
         ),
         executions: state.executions.map((candidate) =>
           candidate.id === execution.id
-            ? failQueryExecution(
+            ? cancelled
+              ? cancelQueryExecution(
+                  candidate.status === 'cancel-requested'
+                    ? candidate
+                    : requestQueryExecutionCancellation(candidate)
+                )
+              : failQueryExecution(
                 candidate,
                 {
                   message: errorMessage,
@@ -632,6 +647,52 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
                 timedOut ? 'timed-out' : 'failed'
               )
             : candidate
+        )
+      }));
+    }
+  },
+
+  cancelExecution: async (executionId: string) => {
+    set((state) => ({
+      executions: state.executions.map((execution) =>
+        execution.id === executionId && execution.status === 'running'
+          ? requestQueryExecutionCancellation(execution)
+          : execution
+      )
+    }));
+
+    try {
+      const accepted = await invoke<boolean>('cancel_query', { executionId });
+      if (!accepted) {
+        set((state) => ({
+          executions: state.executions.map((execution) =>
+            execution.id === executionId && execution.status === 'cancel-requested'
+              ? {
+                  ...execution,
+                  status: 'running',
+                  cancellation: {
+                    requestedAt: null,
+                    acknowledgedAt: null
+                  }
+                }
+              : execution
+          )
+        }));
+      }
+    } catch (error) {
+      set((state) => ({
+        error: error instanceof Error ? error.message : String(error),
+        executions: state.executions.map((execution) =>
+          execution.id === executionId && execution.status === 'cancel-requested'
+            ? {
+                ...execution,
+                status: 'running',
+                cancellation: {
+                  requestedAt: null,
+                  acknowledgedAt: null
+                }
+              }
+            : execution
         )
       }));
     }
