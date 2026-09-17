@@ -12,6 +12,7 @@ export interface SqlStatement {
   sql: string;
   isExecuting: boolean;
   result?: QueryResult;
+  resultSql?: string;
   error?: string;
   executedAt?: string;
 }

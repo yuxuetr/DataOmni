@@ -377,11 +377,18 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
 
       {/* 执行结果 */}
       {statement.result && (
-        <QueryResultScrollTable 
-          result={statement.result} 
-          statementId={statement.id}
-          formatExecutionTime={formatExecutionTime} 
-        />
+        <>
+          {statement.resultSql && statement.resultSql !== statement.sql && (
+            <div className="px-3 py-2 text-xs text-amber-700 bg-amber-50 border-t border-amber-200">
+              当前结果来自上一次执行，编辑后的 SQL 尚未执行。
+            </div>
+          )}
+          <QueryResultScrollTable
+            result={statement.result}
+            statementId={statement.id}
+            formatExecutionTime={formatExecutionTime}
+          />
+        </>
       )}
 
       {/* 错误信息 */}

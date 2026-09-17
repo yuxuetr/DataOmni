@@ -3,8 +3,14 @@ import Database from '@tauri-apps/plugin-sql';
 import { DatabaseSession } from '../contracts/session';
 import type { QueryResult, SqlHistory, SqlStatement } from '../contracts/query';
 import { assertSingleRowAffected } from '../utils/executeResult';
+import {
+  clearSqlStatementResult,
+  completeSqlStatement,
+  failSqlStatement,
+  reconcileSqlStatements
+} from '../utils/queryStatements';
 import { quoteSqlIdentifier, type SqlIdentifierDialect } from '../utils/sqlIdentifiers';
-import { returnsResultSet, splitSqlStatements } from '../utils/sqlStatements';
+import { returnsResultSet } from '../utils/sqlStatements';
 
 export type { QueryResult, SqlHistory, SqlStatement } from '../contracts/query';
 
@@ -59,18 +65,6 @@ interface QueryActions {
 
 // 完整的Store类型
 type QueryStore = QueryState & QueryActions;
-
-// 解析SQL语句的工具函数
-const parseSqlStatements = (sqlText: string): SqlStatement[] => {
-  const statements = splitSqlStatements(sqlText)
-    .map((sql, index) => ({
-      id: `stmt_${Date.now()}_${index}`,
-      sql: sql + ';', // 添加回分号
-      isExecuting: false,
-    }));
-  
-  return statements;
-};
 
 // 只有能明确映射到单表完整行的查询结果才允许编辑
 const extractEditableTableName = (sql: string): string | undefined => {
@@ -447,14 +441,19 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   },
 
   parseStatements: () => {
-    const { sqlInput } = get();
+    const { sqlInput, statements } = get();
     if (!sqlInput.trim()) {
-      set({ statements: [] });
+      set({
+        statements: statements.some((statement) => statement.result)
+          ? statements
+              .filter((statement) => statement.result)
+              .map((statement) => ({ ...statement, sql: '', error: undefined }))
+          : []
+      });
       return;
     }
     
-    const statements = parseSqlStatements(sqlInput);
-    set({ statements });
+    set({ statements: reconcileSqlStatements(sqlInput, statements) });
   },
 
   executeStatement: async (statementId: string) => {
@@ -538,19 +537,18 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       }
 
       // 更新结果
-      set({
-        statements: statements.map(s => 
+      set((state) => ({
+        statements: state.statements.map(s =>
           s.id === statementId 
-            ? { 
-                ...s, 
-                isExecuting: false, 
-                result: queryResult,
-                executedAt: new Date().toLocaleTimeString(),
-                error: undefined
-              }
+            ? completeSqlStatement(
+                s,
+                queryResult,
+                new Date().toLocaleTimeString(),
+                statement.sql
+              )
             : s
         )
-      });
+      }));
 
       console.log(`✅ SQL执行成功，耗时: ${formatExecutionTime(queryResult.execution_time)}`);
     } catch (error) {
@@ -558,18 +556,13 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       const errorMessage = error instanceof Error ? error.message : 'SQL执行失败';
       
       // 更新错误状态
-      set({
-        statements: statements.map(s => 
+      set((state) => ({
+        statements: state.statements.map(s =>
           s.id === statementId 
-            ? { 
-                ...s, 
-                isExecuting: false, 
-                error: errorMessage,
-                result: undefined
-              }
+            ? failSqlStatement(s, errorMessage)
             : s
         )
-      });
+      }));
     }
   },
 
@@ -588,12 +581,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   clearResults: () => {
     const { statements } = get();
     set({
-      statements: statements.map(s => ({
-        ...s,
-        result: undefined,
-        error: undefined,
-        executedAt: undefined
-      }))
+      statements: statements.map(clearSqlStatementResult)
     });
   },
 
