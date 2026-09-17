@@ -1,0 +1,177 @@
+import { DatabaseSession } from './session';
+
+export type QueryExecutionStatus =
+  | 'queued'
+  | 'running'
+  | 'cancel-requested'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'timed-out';
+
+export interface QueryExecutionSessionSnapshot {
+  readonly profileId: string;
+  readonly sessionId: string;
+  readonly database: string | null;
+}
+
+export interface QueryExecutionError {
+  message: string;
+  code?: string;
+  details?: string;
+}
+
+export interface QueryExecutionCancellation {
+  requestedAt: string | null;
+  acknowledgedAt: string | null;
+}
+
+export interface QueryExecution {
+  id: string;
+  tabId: string;
+  readonly sqlSnapshot: string;
+  readonly session: QueryExecutionSessionSnapshot;
+  status: QueryExecutionStatus;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationMs: number | null;
+  cancellation: QueryExecutionCancellation;
+  resultSetIds: string[];
+  error: QueryExecutionError | null;
+}
+
+interface CreateQueryExecutionOptions {
+  id?: string;
+  now?: string;
+}
+
+function getDurationMs(execution: QueryExecution, finishedAt: string): number {
+  const startedAt = execution.startedAt ?? execution.createdAt;
+  return Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
+}
+
+function assertActiveExecution(execution: QueryExecution): void {
+  if (execution.status !== 'running' && execution.status !== 'cancel-requested') {
+    throw new Error(`查询执行 ${execution.id} 当前状态为 ${execution.status}，无法完成`);
+  }
+}
+
+export function createQueryExecution(
+  tabId: string,
+  sql: string,
+  session: DatabaseSession,
+  options: CreateQueryExecutionOptions = {}
+): QueryExecution {
+  const now = options.now ?? new Date().toISOString();
+
+  return {
+    id: options.id ?? crypto.randomUUID(),
+    tabId,
+    sqlSnapshot: sql,
+    session: {
+      profileId: session.profileId,
+      sessionId: session.id,
+      database: session.database
+    },
+    status: 'queued',
+    createdAt: now,
+    startedAt: null,
+    finishedAt: null,
+    durationMs: null,
+    cancellation: {
+      requestedAt: null,
+      acknowledgedAt: null
+    },
+    resultSetIds: [],
+    error: null
+  };
+}
+
+export function startQueryExecution(
+  execution: QueryExecution,
+  startedAt: string = new Date().toISOString()
+): QueryExecution {
+  if (execution.status !== 'queued') {
+    throw new Error(`查询执行 ${execution.id} 当前状态为 ${execution.status}，无法启动`);
+  }
+
+  return {
+    ...execution,
+    status: 'running',
+    startedAt
+  };
+}
+
+export function requestQueryExecutionCancellation(
+  execution: QueryExecution,
+  requestedAt: string = new Date().toISOString()
+): QueryExecution {
+  if (execution.status !== 'running') {
+    throw new Error(`查询执行 ${execution.id} 当前状态为 ${execution.status}，无法请求取消`);
+  }
+
+  return {
+    ...execution,
+    status: 'cancel-requested',
+    cancellation: {
+      ...execution.cancellation,
+      requestedAt
+    }
+  };
+}
+
+export function completeQueryExecution(
+  execution: QueryExecution,
+  resultSetIds: string[],
+  finishedAt: string = new Date().toISOString()
+): QueryExecution {
+  assertActiveExecution(execution);
+
+  return {
+    ...execution,
+    status: 'succeeded',
+    finishedAt,
+    durationMs: getDurationMs(execution, finishedAt),
+    resultSetIds: [...resultSetIds],
+    error: null
+  };
+}
+
+export function failQueryExecution(
+  execution: QueryExecution,
+  error: QueryExecutionError,
+  finishedAt: string = new Date().toISOString(),
+  status: 'failed' | 'timed-out' = 'failed'
+): QueryExecution {
+  assertActiveExecution(execution);
+
+  return {
+    ...execution,
+    status,
+    finishedAt,
+    durationMs: getDurationMs(execution, finishedAt),
+    resultSetIds: [],
+    error: { ...error }
+  };
+}
+
+export function cancelQueryExecution(
+  execution: QueryExecution,
+  finishedAt: string = new Date().toISOString()
+): QueryExecution {
+  if (execution.status !== 'cancel-requested') {
+    throw new Error(`查询执行 ${execution.id} 当前状态为 ${execution.status}，无法确认取消`);
+  }
+
+  return {
+    ...execution,
+    status: 'cancelled',
+    finishedAt,
+    durationMs: getDurationMs(execution, finishedAt),
+    cancellation: {
+      ...execution.cancellation,
+      acknowledgedAt: finishedAt
+    }
+  };
+}
