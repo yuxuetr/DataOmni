@@ -100,8 +100,8 @@
 
 ### 1.4 重建查询执行模型
 
-- [ ] 使用可靠 SQL 解析器或方言感知分句器替代 `split(';')`
-- [ ] 正确处理字符串、注释、Dollar-quoted string 和过程体中的分号
+- [x] 使用可靠 SQL 解析器或方言感知分句器替代 `split(';')`
+- [x] 正确处理字符串、注释、Dollar-quoted string 和过程体中的分号
 - [ ] 根据驱动返回结果判断结果集，而不是只识别 `SELECT`
 - [ ] 支持 `WITH`、`SHOW`、`DESCRIBE`、`EXPLAIN` 和 `RETURNING`
 - [ ] 编辑文档、执行请求和执行结果使用独立生命周期
