@@ -23,23 +23,13 @@ import {
   BarChart3
 } from 'lucide-react';
 import clsx from 'clsx';
-import { ConnectionConfig } from '../stores/connectionStore';
+import type {
+  ColumnInfo,
+  ConnectionProfile,
+  TableSchema
+} from '../contracts';
 import { assertSingleRowAffected } from '../utils/executeResult';
 import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from '../utils/sqlIdentifiers';
-
-interface ColumnInfo {
-  name: string;
-  data_type: string;
-  is_nullable: boolean;
-  is_primary_key: boolean;
-  default_value?: string;
-}
-
-interface TableSchema {
-  columns: ColumnInfo[];
-  indexes?: Array<{ name: string; columns: string[] }>;
-  constraints?: Array<{ name: string; type: string; columns: string[] }>;
-}
 
 // 编辑模式类型
 type EditMode = 'view' | 'edit' | 'add';
@@ -60,7 +50,7 @@ interface DateTimePickerState {
 }
 
 interface TableDataViewerProps {
-  connection: ConnectionConfig;
+  connection: ConnectionProfile;
   tableName: string;
   schema?: string;
   onClose?: () => void;

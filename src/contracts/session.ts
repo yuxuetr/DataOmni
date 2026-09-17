@@ -1,4 +1,4 @@
-import { ConnectionProfile, DatabaseType } from '../stores/connectionStore';
+import { DatabaseType, type ConnectionProfile } from './connection';
 
 export interface SessionCapabilities {
   schemas: boolean;

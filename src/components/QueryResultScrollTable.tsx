@@ -9,17 +9,11 @@ import {
   Edit
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import type { QueryResult } from '../contracts/query';
 import { useQueryStore } from '../stores/queryStore';
 
 interface QueryResultScrollTableProps {
-  result: {
-    columns: string[];
-    rows: any[][];
-    affected_rows: number;
-    execution_time: number;
-    table_name?: string;
-    primary_key?: string;
-  };
+  result: QueryResult;
   statementId: string;
   formatExecutionTime: (ms: number) => string;
 }

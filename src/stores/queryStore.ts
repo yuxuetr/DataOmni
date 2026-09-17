@@ -1,37 +1,12 @@
 import { create } from 'zustand';
 import Database from '@tauri-apps/plugin-sql';
 import { DatabaseSession } from '../contracts/session';
+import type { QueryResult, SqlHistory, SqlStatement } from '../contracts/query';
 import { assertSingleRowAffected } from '../utils/executeResult';
 import { quoteSqlIdentifier, type SqlIdentifierDialect } from '../utils/sqlIdentifiers';
 import { isSelectStatement, splitSqlStatements } from '../utils/sqlStatements';
 
-// 查询结果接口
-export interface QueryResult {
-  columns: string[];
-  rows: any[][];
-  affected_rows: number;
-  execution_time: number;
-  table_name?: string; // 表名，用于支持数据操作
-  primary_key?: string; // 主键列名，用于更新和删除操作
-}
-
-// SQL语句接口
-export interface SqlStatement {
-  id: string;
-  sql: string;
-  isExecuting: boolean;
-  result?: QueryResult;
-  error?: string;
-  executedAt?: string;
-}
-
-// SQL历史缓存接口
-export interface SqlHistory {
-  connectionId: string;
-  sqlInput: string;
-  statements: SqlStatement[];
-  lastUpdated: string;
-}
+export type { QueryResult, SqlHistory, SqlStatement } from '../contracts/query';
 
 // 查询状态
 export interface QueryState {

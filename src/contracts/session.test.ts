@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ConnectionProfile, DatabaseType } from '../stores/connectionStore';
+import { DatabaseType, type ConnectionProfile } from './connection';
 import { createDatabaseSession } from './session';
 
 const profile: ConnectionProfile = {

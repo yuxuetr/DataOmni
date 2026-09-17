@@ -1,47 +1,17 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
+import {
+  DatabaseType,
+  type ConnectionConfig,
+  type ConnectionEnvironment
+} from '../contracts/connection';
 
-// 数据库类型枚举
-export enum DatabaseType {
-  // 关系型数据库
-  MySQL = 'mysql',
-  PostgreSQL = 'postgresql',
-  SQLite = 'sqlite',
-  
-  // 非关系型数据库
-  MongoDB = 'mongodb',
-  Redis = 'redis',
-  Neo4j = 'neo4j',
-  
-  // 分析平台
-  DuckDB = 'duckdb',
-  ClickHouse = 'clickhouse',
-  Elasticsearch = 'elasticsearch',
-}
-
-export type ConnectionEnvironment = 'development' | 'testing' | 'staging' | 'production';
-
-// 保存的连接资料；运行时状态由 Session 管理
-export interface ConnectionProfile {
-  id: string;
-  name: string;
-  db_type: DatabaseType;
-  host: string;
-  port: number;
-  database?: string;
-  username: string;
-  password: string;
-  ssl: boolean;
-  options: Record<string, string>;
-  tags: string[];
-  environment: ConnectionEnvironment;
-  credential_ref?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-/** @deprecated 使用 ConnectionProfile。 */
-export type ConnectionConfig = ConnectionProfile;
+export {
+  DatabaseType,
+  type ConnectionConfig,
+  type ConnectionEnvironment,
+  type ConnectionProfile
+} from '../contracts/connection';
 
 // 连接状态
 export interface ConnectionState {

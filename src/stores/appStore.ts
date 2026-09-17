@@ -1,12 +1,15 @@
 import { create } from 'zustand';
-import { ConnectionConfig } from './connectionStore';
+import type {
+  CachedDatabaseMetadata,
+  ConnectionProfile
+} from '../contracts';
 
 // 视图模式类型
 export type ViewMode = 'workbench' | 'table-viewer';
 
 // 表查看器状态
 export interface TableViewerState {
-  connection: ConnectionConfig;
+  connection: ConnectionProfile;
   tableName: string;
   schema?: string;
 }
@@ -15,7 +18,7 @@ export interface TableViewerState {
 export interface AppState {
   // 当前活跃的数据库连接
   activeConnection: {
-    config: ConnectionConfig;
+    config: ConnectionProfile;
     connectionString: string;
   } | null;
   
@@ -32,15 +35,7 @@ export interface AppState {
   } | null;
   
   // 数据库元数据缓存
-  databaseMetadata: {
-    [connectionId: string]: {
-      schemas: Array<{
-        name: string;
-        tables: Array<{ name: string; type: string }>;
-      }>;
-      lastUpdated: number;
-    };
-  };
+  databaseMetadata: Record<string, CachedDatabaseMetadata>;
   
   // 连接状态监听
   connectionReady: boolean;
@@ -52,7 +47,7 @@ export interface AppActions {
   setViewMode: (mode: ViewMode) => void;
   
   // 表数据查看器管理
-  openTableViewer: (connection: ConnectionConfig, tableName: string, schema?: string) => void;
+  openTableViewer: (connection: ConnectionProfile, tableName: string, schema?: string) => void;
   closeTableViewer: () => void;
   
   // 表选择管理
@@ -85,7 +80,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ viewMode: mode });
   },
 
-  openTableViewer: (connection: ConnectionConfig, tableName: string, schema?: string) => {
+  openTableViewer: (connection: ConnectionProfile, tableName: string, schema?: string) => {
     console.log('🖱️ 打开表数据查看器:', tableName, 'schema:', schema);
     
     const currentState = get();
