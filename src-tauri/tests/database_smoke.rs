@@ -1,4 +1,6 @@
+use dataomni_lib::services::{execute_query, QueryExecutionResult};
 use sqlx::{mysql::MySqlPoolOptions, postgres::PgPoolOptions, sqlite::SqlitePoolOptions};
+use tauri_plugin_sql::DbPool;
 
 const REQUIRE_NETWORK_DATABASES_ENV: &str = "DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS";
 const MYSQL_URL_ENV: &str = "DATAOMNI_MYSQL_TEST_URL";
@@ -28,6 +30,14 @@ async fn sqlite_supports_basic_read_write() {
     .expect("read SQLite smoke row");
 
   assert_eq!(value, "ready");
+
+  let result = execute_query(
+    &DbPool::Sqlite(pool.clone()),
+    "SELECT value FROM smoke_test WHERE id = -1",
+  )
+  .await
+  .expect("describe empty SQLite result");
+  assert_empty_row_result(result, "value");
 }
 
 #[tokio::test]
@@ -59,6 +69,14 @@ async fn postgres_supports_basic_read_write() {
     .expect("read PostgreSQL smoke row");
 
   assert_eq!(value, "ready");
+
+  let result = execute_query(
+    &DbPool::Postgres(pool.clone()),
+    "UPDATE smoke_test SET value = 'updated' WHERE id = 1 RETURNING value",
+  )
+  .await
+  .expect("execute PostgreSQL returning query");
+  assert_single_row_result(result, "value", "updated");
 }
 
 #[tokio::test]
@@ -90,6 +108,35 @@ async fn mysql_supports_basic_read_write() {
     .expect("read MySQL smoke row");
 
   assert_eq!(value, "ready");
+
+  let result = execute_query(
+    &DbPool::MySql(pool.clone()),
+    "SELECT value FROM smoke_test WHERE id = -1",
+  )
+  .await
+  .expect("describe empty MySQL result");
+  assert_empty_row_result(result, "value");
+}
+
+fn assert_empty_row_result(result: QueryExecutionResult, column: &str) {
+  match result {
+    QueryExecutionResult::Rows { columns, rows } => {
+      assert_eq!(columns, vec![column]);
+      assert!(rows.is_empty());
+    }
+    QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
+  }
+}
+
+fn assert_single_row_result(result: QueryExecutionResult, column: &str, value: &str) {
+  match result {
+    QueryExecutionResult::Rows { columns, rows } => {
+      assert_eq!(columns, vec![column]);
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0][column], value);
+    }
+    QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
+  }
 }
 
 fn network_database_url(variable: &str) -> Option<String> {

@@ -5,7 +5,7 @@ use tauri_plugin_cli::CliExt;
 // 模块导入
 mod commands;
 mod models;
-mod services;
+pub mod services;
 
 use commands::{connection_commands::ConnectionServiceState, *};
 
@@ -98,6 +98,7 @@ pub fn run() {
       get_table_list_query,
       get_database_metadata_query,
       get_table_quick_view_query,
+      execute_query,
       validate_query,
     ])
     .run(tauri::generate_context!())

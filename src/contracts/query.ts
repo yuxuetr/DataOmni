@@ -7,6 +7,17 @@ export interface QueryResult {
   primary_key?: string;
 }
 
+export type DriverQueryResult =
+  | {
+      kind: 'rows';
+      columns: string[];
+      rows: Record<string, unknown>[];
+    }
+  | {
+      kind: 'affected';
+      rows_affected: number;
+    };
+
 export interface SqlStatement {
   id: string;
   sql: string;

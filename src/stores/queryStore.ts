@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import Database from '@tauri-apps/plugin-sql';
+import { invoke } from '@tauri-apps/api/core';
 import {
   completeQueryExecution,
   createQueryExecution,
@@ -9,7 +10,12 @@ import {
   type SqlDialect
 } from '../contracts/queryExecution';
 import { DatabaseSession } from '../contracts/session';
-import type { QueryResult, SqlHistory, SqlStatement } from '../contracts/query';
+import type {
+  DriverQueryResult,
+  QueryResult,
+  SqlHistory,
+  SqlStatement
+} from '../contracts/query';
 import { assertSingleRowAffected } from '../utils/executeResult';
 import {
   clearSqlStatementResult,
@@ -18,7 +24,6 @@ import {
   reconcileSqlStatements
 } from '../utils/queryStatements';
 import { quoteSqlIdentifier } from '../utils/sqlIdentifiers';
-import { returnsResultSet } from '../utils/sqlStatements';
 
 export type { QueryResult, SqlHistory, SqlStatement } from '../contracts/query';
 
@@ -508,56 +513,40 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       const safeConnectionString = connectionString?.replace(/:([^:@]+)@/, ':***@') || 'unknown';
       console.log('🔗 当前连接字符串:', safeConnectionString);
       
-      // 执行SQL查询
+      // 由数据库驱动返回的列元数据判断语句是否产生结果集
       let queryResult: QueryResult;
       const sql = statement.sql.trim();
-      
-      if (returnsResultSet(sql)) {
-        // 返回行的语句使用 select 方法
-        const selectResult = await database.select(statement.sql);
-        const executionTime = Date.now() - startTime;
-        
-        // 处理SELECT结果
-        console.log('📊 原始查询结果:', selectResult);
-        console.log('📊 结果类型:', typeof selectResult, '是否为数组:', Array.isArray(selectResult));
-        
-        if (Array.isArray(selectResult) && selectResult.length > 0) {
-          const columns = Object.keys(selectResult[0]);
-          const rows = selectResult.map(row => columns.map(col => row[col]));
-          
-          console.log('📋 解析的列名:', columns);
-          console.log('📊 解析的行数:', rows.length);
-          
-          // 尝试从SQL语句中提取表名和主键信息
-          const tableName = extractEditableTableName(sql);
-          const primaryKey = await detectPrimaryKey(database, tableName, columns, connectionString);
-          
-          queryResult = {
-            columns,
-            rows,
-            affected_rows: selectResult.length,
-            execution_time: executionTime,
-            table_name: tableName,
-            primary_key: primaryKey,
-          };
-        } else {
-          console.log('⚠️ 查询结果为空或格式不正确');
-          queryResult = {
-            columns: [],
-            rows: [],
-            affected_rows: 0,
-            execution_time: executionTime,
-          };
-        }
+      const driverResult = await invoke<DriverQueryResult>('execute_query', {
+        connectionId,
+        sql: statement.sql
+      });
+      const executionTime = Date.now() - startTime;
+
+      if (driverResult.kind === 'rows') {
+        const rows = driverResult.rows.map((row) =>
+          driverResult.columns.map((column) => row[column])
+        );
+        const tableName = extractEditableTableName(sql);
+        const primaryKey = await detectPrimaryKey(
+          database,
+          tableName,
+          driverResult.columns,
+          connectionString
+        );
+
+        queryResult = {
+          columns: driverResult.columns,
+          rows,
+          affected_rows: rows.length,
+          execution_time: executionTime,
+          table_name: tableName,
+          primary_key: primaryKey,
+        };
       } else {
-        // 非SELECT查询使用execute方法
-        const execResult = await database.execute(statement.sql);
-        const executionTime = Date.now() - startTime;
-        
         queryResult = {
           columns: [],
           rows: [],
-          affected_rows: (execResult as any).rowsAffected || 0,
+          affected_rows: driverResult.rows_affected,
           execution_time: executionTime,
         };
       }
@@ -578,7 +567,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           candidate.id === execution.id
             ? completeQueryExecution(
                 candidate,
-                returnsResultSet(statement.sql) ? [`result:${execution.id}`] : []
+                driverResult.kind === 'rows' ? [`result:${execution.id}`] : []
               )
             : candidate
         )

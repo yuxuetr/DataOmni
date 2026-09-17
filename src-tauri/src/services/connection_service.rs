@@ -208,6 +208,11 @@ impl ConnectionService {
     self.connections.get(id)
   }
 
+  pub fn resolve_connection_string(&self, id: &str) -> Result<String, String> {
+    let connection = self.connections.get(id).ok_or_else(|| "连接不存在".to_string())?;
+    self.test_connection(connection)
+  }
+
   /// 测试数据库连接 - 实际尝试连接并返回连接字符串
   pub fn test_connection(&self, config: &ConnectionProfile) -> Result<String, String> {
     validate_tls_configuration(config)?;

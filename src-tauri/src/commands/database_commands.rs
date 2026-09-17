@@ -1,10 +1,32 @@
 use crate::commands::connection_commands::ConnectionServiceState;
+use crate::services::QueryExecutionResult;
 // use crate::models::{ColumnInfo, ConnectionConfig, DatabaseInfo, QueryResult, TableInfo};
 // use crate::services::{ConnectionService, DatabaseService};
 use tauri::{AppHandle, State};
+use tauri_plugin_sql::DbInstances;
 
 // 全局数据库服务状态
 // pub type DatabaseServiceState = Mutex<crate::services::DatabaseService>;
+
+#[tauri::command]
+pub async fn execute_query(
+  connection_id: String,
+  sql: String,
+  connection_service_state: State<'_, ConnectionServiceState>,
+  database_instances: State<'_, DbInstances>,
+) -> Result<QueryExecutionResult, String> {
+  let connection_string = {
+    let connection_service_guard =
+      connection_service_state.lock().map_err(|e| format!("获取连接服务状态失败: {e}"))?;
+    let service =
+      connection_service_guard.as_ref().ok_or_else(|| "连接服务未初始化".to_string())?;
+    service.resolve_connection_string(&connection_id)?
+  };
+
+  let instances = database_instances.0.read().await;
+  let pool = instances.get(&connection_string).ok_or_else(|| "数据库会话未连接".to_string())?;
+  crate::services::execute_query(pool, &sql).await
+}
 
 #[tauri::command]
 pub fn get_databases_query(
