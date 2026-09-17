@@ -20,6 +20,7 @@ import { clsx } from 'clsx';
 import { 
   ConnectionConfig, 
   DatabaseType, 
+  type TlsMode,
   createDefaultConfig, 
   getDefaultPort,
   useConnectionStore 
@@ -602,21 +603,33 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   </div>
                 )}
 
-                {/* SSL 选项 - 仅对支持SSL的数据库显示 */}
+                {/* TLS 选项 - 仅对支持 TLS 的数据库显示 */}
                 {(formData.db_type === DatabaseType.MySQL || 
                   formData.db_type === DatabaseType.PostgreSQL ||
                   formData.db_type === DatabaseType.Elasticsearch) && (
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      id="ssl"
-                      checked={formData.ssl || false}
-                      onChange={(e) => setFormData(prev => ({ ...prev, ssl: e.target.checked }))}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                    />
-                    <label htmlFor="ssl" className="ml-2 text-sm text-gray-700">
-                      启用 SSL 连接
-                    </label>
+                  <div>
+                   <label htmlFor="tls-mode" className="block text-sm font-medium text-gray-700 mb-1">
+                     TLS 模式
+                   </label>
+                   <select
+                     id="tls-mode"
+                     value={formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')}
+                     onChange={(event) => {
+                       const tlsMode = event.target.value as TlsMode;
+                       setFormData((previous) => ({
+                         ...previous,
+                         tls_mode: tlsMode,
+                         ssl: tlsMode !== 'disabled'
+                       }));
+                     }}
+                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                   >
+                     <option value="disabled">禁用</option>
+                     <option value="preferred">优先使用 TLS</option>
+                     <option value="required">要求 TLS</option>
+                     <option value="verify-ca">校验证书颁发机构</option>
+                     <option value="verify-full">校验证书和主机名</option>
+                   </select>
                   </div>
                 )}
               </>

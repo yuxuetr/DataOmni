@@ -11,6 +11,7 @@ export enum DatabaseType {
 }
 
 export type ConnectionEnvironment = 'development' | 'testing' | 'staging' | 'production';
+export type TlsMode = 'disabled' | 'preferred' | 'required' | 'verify-ca' | 'verify-full';
 
 export interface ConnectionProfile {
   id: string;
@@ -22,6 +23,7 @@ export interface ConnectionProfile {
   username: string;
   password: string;
   ssl: boolean;
+  tls_mode?: TlsMode;
   options: Record<string, string>;
   tags: string[];
   environment: ConnectionEnvironment;

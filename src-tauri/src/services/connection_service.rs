@@ -349,6 +349,7 @@ mod tests {
       username: "postgres".to_string(),
       password: password.to_string(),
       ssl: false,
+      tls_mode: None,
       options: HashMap::new(),
       tags: Vec::new(),
       environment: ConnectionEnvironment::Development,

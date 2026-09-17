@@ -14,6 +14,8 @@ pub struct ConnectionProfile {
   #[serde(default)]
   pub password: String,
   pub ssl: bool,
+  #[serde(default)]
+  pub tls_mode: Option<TlsMode>,
   pub options: HashMap<String, String>,
   pub tags: Vec<String>,
   #[serde(default)]
@@ -32,6 +34,16 @@ pub enum ConnectionEnvironment {
   Testing,
   Staging,
   Production,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TlsMode {
+  Disabled,
+  Preferred,
+  Required,
+  VerifyCa,
+  VerifyFull,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -159,11 +171,16 @@ impl DatabaseType {
 
         let mut params = Vec::new();
 
-        if config.ssl {
-          params.push("ssl-mode=REQUIRED".to_string());
-        } else {
-          params.push("ssl-mode=DISABLED".to_string());
-        }
+        params.push(format!(
+          "ssl-mode={}",
+          match config.effective_tls_mode() {
+            TlsMode::Disabled => "DISABLED",
+            TlsMode::Preferred => "PREFERRED",
+            TlsMode::Required => "REQUIRED",
+            TlsMode::VerifyCa => "VERIFY_CA",
+            TlsMode::VerifyFull => "VERIFY_IDENTITY",
+          }
+        ));
 
         // Add connection timeout and other stability parameters
         params.push("connectTimeout=30000".to_string());
@@ -185,14 +202,18 @@ impl DatabaseType {
           config.database.as_ref().unwrap_or(&"postgres".to_string())
         );
 
-        // Add SSL parameters if SSL is enabled or connecting to non-standard ports
         let mut params = Vec::new();
 
-        if config.ssl || config.port > 32767 {
-          params.push("sslmode=require".to_string());
-        } else {
-          params.push("sslmode=disable".to_string());
-        }
+        params.push(format!(
+          "sslmode={}",
+          match config.effective_tls_mode() {
+            TlsMode::Disabled => "disable",
+            TlsMode::Preferred => "prefer",
+            TlsMode::Required => "require",
+            TlsMode::VerifyCa => "verify-ca",
+            TlsMode::VerifyFull => "verify-full",
+          }
+        ));
 
         // Add connection timeout
         params.push("connect_timeout=30".to_string());
@@ -268,19 +289,29 @@ impl DatabaseType {
         )
       }
       DatabaseType::Elasticsearch => {
+        let scheme =
+          if config.effective_tls_mode() == TlsMode::Disabled { "http" } else { "https" };
+
         if !config.username.is_empty() && !config.password.is_empty() {
           format!(
-            "http://{}:{}@{}:{}",
+            "{}://{}:{}@{}:{}",
+            scheme,
             encode(&config.username),
             encode(&config.password),
             config.host,
             config.port
           )
         } else {
-          format!("http://{}:{}", config.host, config.port)
+          format!("{}://{}:{}", scheme, config.host, config.port)
         }
       }
     }
+  }
+}
+
+impl ConnectionProfile {
+  pub fn effective_tls_mode(&self) -> TlsMode {
+    self.tls_mode.unwrap_or(if self.ssl { TlsMode::Required } else { TlsMode::Disabled })
   }
 }
 
@@ -296,6 +327,7 @@ impl Default for ConnectionProfile {
       username: "".to_string(),
       password: "".to_string(),
       ssl: false,
+      tls_mode: Some(TlsMode::Disabled),
       options: HashMap::new(),
       tags: Vec::new(),
       environment: ConnectionEnvironment::Development,
@@ -310,7 +342,7 @@ impl Default for ConnectionProfile {
 mod tests {
   use super::*;
 
-  fn mysql_config(ssl: bool) -> ConnectionProfile {
+  fn mysql_config(tls_mode: Option<TlsMode>, ssl: bool) -> ConnectionProfile {
     ConnectionProfile {
       db_type: DatabaseType::MySQL,
       host: "localhost".to_string(),
@@ -319,13 +351,15 @@ mod tests {
       username: "user".to_string(),
       password: "password".to_string(),
       ssl,
+      tls_mode,
       ..ConnectionProfile::default()
     }
   }
 
   #[test]
   fn mysql_connection_string_requires_tls_when_enabled() {
-    let connection_string = DatabaseType::MySQL.to_connection_string(&mysql_config(true));
+    let connection_string =
+      DatabaseType::MySQL.to_connection_string(&mysql_config(Some(TlsMode::Required), false));
 
     assert!(connection_string.contains("ssl-mode=REQUIRED"));
     assert!(!connection_string.contains("ssl-mode=DISABLED"));
@@ -333,10 +367,26 @@ mod tests {
 
   #[test]
   fn mysql_connection_string_disables_tls_when_disabled() {
-    let connection_string = DatabaseType::MySQL.to_connection_string(&mysql_config(false));
+    let connection_string =
+      DatabaseType::MySQL.to_connection_string(&mysql_config(Some(TlsMode::Disabled), true));
 
     assert!(connection_string.contains("ssl-mode=DISABLED"));
     assert!(!connection_string.contains("ssl-mode=REQUIRED"));
+  }
+
+  #[test]
+  fn mysql_connection_string_verifies_host_identity() {
+    let connection_string =
+      DatabaseType::MySQL.to_connection_string(&mysql_config(Some(TlsMode::VerifyFull), false));
+
+    assert!(connection_string.contains("ssl-mode=VERIFY_IDENTITY"));
+  }
+
+  #[test]
+  fn legacy_ssl_flag_maps_to_required_tls() {
+    let connection_string = DatabaseType::MySQL.to_connection_string(&mysql_config(None, true));
+
+    assert!(connection_string.contains("ssl-mode=REQUIRED"));
   }
 
   #[test]
@@ -362,5 +412,7 @@ mod tests {
 
     assert_eq!(profile.environment, ConnectionEnvironment::Development);
     assert_eq!(profile.credential_ref, None);
+    assert_eq!(profile.tls_mode, None);
+    assert_eq!(profile.effective_tls_mode(), TlsMode::Disabled);
   }
 }

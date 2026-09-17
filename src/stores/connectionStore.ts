@@ -3,14 +3,16 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   DatabaseType,
   type ConnectionConfig,
-  type ConnectionEnvironment
+  type ConnectionEnvironment,
+  type TlsMode
 } from '../contracts/connection';
 
 export {
   DatabaseType,
   type ConnectionConfig,
   type ConnectionEnvironment,
-  type ConnectionProfile
+  type ConnectionProfile,
+  type TlsMode
 } from '../contracts/connection';
 
 // 连接状态
@@ -52,6 +54,7 @@ export const createDefaultConfig = (type: DatabaseType = DatabaseType.SQLite): P
     username: '',
     password: '',
         ssl: false,
+    tls_mode: 'disabled' as TlsMode,
     options: {},
     tags: [],
     environment: 'development' as ConnectionEnvironment,
@@ -72,6 +75,7 @@ export const createDefaultConfig = (type: DatabaseType = DatabaseType.SQLite): P
         ...baseConfig,
         database: 'mysql',
         ssl: true, // Enable SSL by default for MySQL due to common cloud database requirements
+        tls_mode: 'required',
       };
     case DatabaseType.PostgreSQL:
       return {
