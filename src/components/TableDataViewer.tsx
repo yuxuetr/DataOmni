@@ -132,10 +132,8 @@ export default function TableDataViewer({
       console.log('数据库未连接，尝试重新连接...');
       if (connectionString) {
         try {
-          // 生成连接ID
-          const connId = `table_viewer_${connection.id}_${Date.now()}`;
-          console.log('🔄 尝试重新连接数据库，连接ID:', connId);
-          await connectToDatabase(connectionString, connId);
+          console.log('🔄 尝试重新连接数据库，连接ID:', connection.id);
+          await connectToDatabase(connectionString, connection.id);
           console.log('✅ 重新连接数据库成功');
           return true;
         } catch (error) {

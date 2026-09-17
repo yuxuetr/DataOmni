@@ -43,22 +43,6 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
 
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('disconnected');
 
-  // 生成连接ID
-  const generateConnectionId = (connectionString: string): string => {
-    try {
-      const url = new URL(connectionString);
-      const protocol = url.protocol.replace(':', '');
-      const hostname = url.hostname || 'localhost';
-      const port = url.port || (protocol === 'postgres' ? '5432' : protocol === 'mysql' ? '3306' : '');
-      const database = url.pathname.slice(1) || 'default';
-      const username = url.username || 'anonymous';
-      
-      return `${protocol}_${username}_${hostname}_${port}_${database}`;
-    } catch {
-      return btoa(connectionString).replace(/[^a-zA-Z0-9]/g, '').slice(0, 20);
-    }
-  };
-
   // 初始化连接
   useEffect(() => {
     handleConnect();
@@ -108,9 +92,8 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
   // 连接数据库
   const handleConnect = async () => {
     try {
-      const connId = generateConnectionId(connectionString);
-      console.log('🔗 SQL工作台连接数据库，连接ID:', connId);
-      await connectToDatabase(connectionString, connId);
+      console.log('🔗 SQL工作台连接数据库，连接ID:', connection.id);
+      await connectToDatabase(connectionString, connection.id);
     } catch (error) {
       console.error('SQL工作台连接失败:', error);
     }

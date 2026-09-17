@@ -46,7 +46,7 @@ export interface QueryState {
 // Store Actions
 interface QueryActions {
   // 数据库连接
-  connectToDatabase: (connectionString: string, connectionId?: string) => Promise<void>;
+  connectToDatabase: (connectionString: string, connectionId: string) => Promise<void>;
   disconnect: () => void;
   
   // SQL 编辑
@@ -219,24 +219,6 @@ const getSqlDialect = (connectionString: string | null): SqlIdentifierDialect =>
   return 'sqlite';
 };
 
-// 生成连接ID的工具函数
-const generateConnectionId = (connectionString: string): string => {
-  // 从连接字符串中提取关键信息生成唯一ID
-  try {
-    const url = new URL(connectionString);
-    const protocol = url.protocol.replace(':', '');
-    const hostname = url.hostname || 'localhost';
-    const port = url.port || (protocol === 'postgres' ? '5432' : protocol === 'mysql' ? '3306' : '');
-    const database = url.pathname.slice(1) || 'default';
-    const username = url.username || 'anonymous';
-    
-    return `${protocol}_${username}_${hostname}_${port}_${database}`;
-  } catch {
-    // 如果解析失败，使用连接字符串的hash
-    return btoa(connectionString).replace(/[^a-zA-Z0-9]/g, '').slice(0, 20);
-  }
-};
-
 // localStorage键名常量
 const STORAGE_KEY_PREFIX = 'dataomni_sql_history_';
 const STORAGE_KEY_LIST = 'dataomni_sql_history_list';
@@ -352,7 +334,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   error: null,
 
   // Actions
-  connectToDatabase: async (connectionString: string, connectionId?: string) => {
+  connectToDatabase: async (connectionString: string, connectionId: string) => {
     const currentState = get();
     
     // 如果连接ID相同，且已经有正常的连接，则直接返回
@@ -402,22 +384,19 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       
       const db = await Database.load(connectionString);
       
-      // 生成或使用提供的连接ID
-      const newConnectionId = connectionId || generateConnectionId(connectionString);
-      
       set({ 
         database: db, 
         connectionString,
-        connectionId: newConnectionId,
+        connectionId,
         isConnecting: false,
         error: null 
       });
       
       // 尝试加载该连接的SQL历史
       const { loadSqlHistory } = get();
-      loadSqlHistory(newConnectionId);
+      loadSqlHistory(connectionId);
       
-      console.log('✅ 数据库连接成功:', newConnectionId);
+      console.log('✅ 数据库连接成功:', connectionId);
     } catch (error) {
       console.error('❌ 数据库连接失败:', error);
       
