@@ -1,4 +1,6 @@
-export type SqlIdentifierDialect = 'mysql' | 'postgresql' | 'sqlite';
+import type { SqlDialect } from '../contracts/queryExecution';
+
+export type SqlIdentifierDialect = SqlDialect;
 
 export const quoteSqlIdentifier = (
   identifier: string,

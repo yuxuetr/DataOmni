@@ -9,6 +9,8 @@ export type QueryExecutionStatus =
   | 'cancelled'
   | 'timed-out';
 
+export type SqlDialect = 'mysql' | 'postgresql' | 'sqlite';
+
 export interface QueryExecutionSessionSnapshot {
   readonly profileId: string;
   readonly sessionId: string;
@@ -30,6 +32,7 @@ export interface QueryExecution {
   id: string;
   tabId: string;
   readonly sqlSnapshot: string;
+  readonly dialect: SqlDialect;
   readonly session: QueryExecutionSessionSnapshot;
   status: QueryExecutionStatus;
   createdAt: string;
@@ -61,6 +64,7 @@ export function createQueryExecution(
   tabId: string,
   sql: string,
   session: DatabaseSession,
+  dialect: SqlDialect,
   options: CreateQueryExecutionOptions = {}
 ): QueryExecution {
   const now = options.now ?? new Date().toISOString();
@@ -69,6 +73,7 @@ export function createQueryExecution(
     id: options.id ?? crypto.randomUUID(),
     tabId,
     sqlSnapshot: sql,
+    dialect,
     session: {
       profileId: session.profileId,
       sessionId: session.id,

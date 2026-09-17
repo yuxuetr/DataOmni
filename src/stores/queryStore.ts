@@ -1,5 +1,13 @@
 import { create } from 'zustand';
 import Database from '@tauri-apps/plugin-sql';
+import {
+  completeQueryExecution,
+  createQueryExecution,
+  failQueryExecution,
+  startQueryExecution,
+  type QueryExecution,
+  type SqlDialect
+} from '../contracts/queryExecution';
 import { DatabaseSession } from '../contracts/session';
 import type { QueryResult, SqlHistory, SqlStatement } from '../contracts/query';
 import { assertSingleRowAffected } from '../utils/executeResult';
@@ -9,7 +17,7 @@ import {
   failSqlStatement,
   reconcileSqlStatements
 } from '../utils/queryStatements';
-import { quoteSqlIdentifier, type SqlIdentifierDialect } from '../utils/sqlIdentifiers';
+import { quoteSqlIdentifier } from '../utils/sqlIdentifiers';
 import { returnsResultSet } from '../utils/sqlStatements';
 
 export type { QueryResult, SqlHistory, SqlStatement } from '../contracts/query';
@@ -22,6 +30,8 @@ export interface QueryState {
   database: Database | null;
   sqlInput: string;
   statements: SqlStatement[];
+  executions: QueryExecution[];
+  latestExecutionIdByStatement: Record<string, string>;
   isConnecting: boolean;
   error: string | null;
 }
@@ -184,7 +194,7 @@ const formatExecutionTime = (ms: number): string => {
   }
 };
 
-const getSqlDialect = (connectionString: string | null): SqlIdentifierDialect => {
+const getSqlDialect = (connectionString: string | null): SqlDialect => {
   if (connectionString?.startsWith('mysql://')) {
     return 'mysql';
   }
@@ -306,6 +316,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   database: null,
   sqlInput: '',
   statements: [],
+  executions: [],
+  latestExecutionIdByStatement: {},
   isConnecting: false,
   error: null,
 
@@ -457,23 +469,37 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   },
 
   executeStatement: async (statementId: string) => {
-    const { database, statements } = get();
-    if (!database) {
+    const { connectionId, database, session, statements } = get();
+    if (!database || !session || !connectionId) {
       set({ error: '数据库未连接' });
       return;
     }
 
     const statement = statements.find(s => s.id === statementId);
     if (!statement) return;
+    const dialect = getSqlDialect(get().connectionString);
+    const execution = startQueryExecution(
+      createQueryExecution(
+        `workbench:${connectionId}`,
+        statement.sql,
+        session,
+        dialect
+      )
+    );
 
     // 更新执行状态
-    set({
-      statements: statements.map(s => 
-        s.id === statementId 
+    set((state) => ({
+      statements: state.statements.map(s =>
+        s.id === statementId
           ? { ...s, isExecuting: true, error: undefined }
           : s
-      )
-    });
+      ),
+      executions: [...state.executions.slice(-99), execution],
+      latestExecutionIdByStatement: {
+        ...state.latestExecutionIdByStatement,
+        [statementId]: execution.id
+      }
+    }));
 
     try {
       const startTime = Date.now();
@@ -547,6 +573,14 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
                 statement.sql
               )
             : s
+        ),
+        executions: state.executions.map((candidate) =>
+          candidate.id === execution.id
+            ? completeQueryExecution(
+                candidate,
+                returnsResultSet(statement.sql) ? [`result:${execution.id}`] : []
+              )
+            : candidate
         )
       }));
 
@@ -561,6 +595,11 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           s.id === statementId 
             ? failSqlStatement(s, errorMessage)
             : s
+        ),
+        executions: state.executions.map((candidate) =>
+          candidate.id === execution.id
+            ? failQueryExecution(candidate, { message: errorMessage })
+            : candidate
         )
       }));
     }

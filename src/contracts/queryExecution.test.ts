@@ -33,6 +33,7 @@ describe('QueryExecution', () => {
       'tab-1',
       'SELECT * FROM users;',
       session,
+      'postgresql',
       {
         id: 'execution-1',
         now: '2026-09-17T06:30:00.000Z'
@@ -40,6 +41,7 @@ describe('QueryExecution', () => {
     );
 
     expect(execution.sqlSnapshot).toBe('SELECT * FROM users;');
+    expect(execution.dialect).toBe('postgresql');
     expect(execution.session).toEqual({
       profileId: 'profile-1',
       sessionId: 'session-1',
@@ -49,7 +51,7 @@ describe('QueryExecution', () => {
   });
 
   it('records real lifecycle timing and result references', () => {
-    const queued = createQueryExecution('tab-1', 'SELECT 1;', session, {
+    const queued = createQueryExecution('tab-1', 'SELECT 1;', session, 'postgresql', {
       id: 'execution-1',
       now: '2026-09-17T06:30:00.000Z'
     });
@@ -67,7 +69,7 @@ describe('QueryExecution', () => {
   });
 
   it('tracks cancellation requests and acknowledgement separately', () => {
-    const queued = createQueryExecution('tab-1', 'SELECT pg_sleep(10);', session);
+    const queued = createQueryExecution('tab-1', 'SELECT pg_sleep(10);', session, 'postgresql');
     const running = startQueryExecution(queued, '2026-09-17T06:30:01.000Z');
     const requested = requestQueryExecutionCancellation(
       running,
@@ -84,7 +86,7 @@ describe('QueryExecution', () => {
   });
 
   it('keeps structured failure details', () => {
-    const queued = createQueryExecution('tab-1', 'SELECT missing;', session);
+    const queued = createQueryExecution('tab-1', 'SELECT missing;', session, 'postgresql');
     const running = startQueryExecution(queued, '2026-09-17T06:30:01.000Z');
     const failed = failQueryExecution(
       running,
