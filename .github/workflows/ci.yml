@@ -64,3 +64,65 @@ jobs:
 
       - name: Test Rust
         run: bun run rust:test
+
+  database-smoke:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: dataomni_test
+          POSTGRES_PASSWORD: dataomni
+          POSTGRES_USER: dataomni
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dataomni -d dataomni_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: dataomni_test
+          MYSQL_PASSWORD: dataomni
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_USER: dataomni
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -uroot -proot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
+      DATAOMNI_POSTGRES_TEST_URL: postgres://dataomni:dataomni@localhost:5432/dataomni_test
+      DATAOMNI_MYSQL_TEST_URL: mysql://dataomni:dataomni@localhost:3306/dataomni_test?ssl-mode=DISABLED
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Run database smoke tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --test database_smoke -- --nocapture
