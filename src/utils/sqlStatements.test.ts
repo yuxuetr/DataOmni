@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isSelectStatement, splitSqlStatements } from './sqlStatements';
+import {
+  isSelectStatement,
+  returnsResultSet,
+  splitSqlStatements
+} from './sqlStatements';
 
 describe('splitSqlStatements', () => {
   it('splits and trims multiple statements', () => {
@@ -81,5 +85,53 @@ describe('isSelectStatement', () => {
 
   it('does not classify mutation statements as SELECT', () => {
     expect(isSelectStatement('UPDATE users SET active = true')).toBe(false);
+  });
+});
+
+describe('returnsResultSet', () => {
+  it.each([
+    'SELECT 1',
+    'SHOW TABLES',
+    'DESCRIBE users',
+    'EXPLAIN SELECT * FROM users',
+    'PRAGMA table_info(users)',
+    'VALUES (1), (2)',
+    'TABLE users'
+  ])('recognizes %s as returning rows', (sql) => {
+    expect(returnsResultSet(sql)).toBe(true);
+  });
+
+  it('recognizes SELECT and RETURNING after common table expressions', () => {
+    expect(returnsResultSet(`
+      WITH active_users AS (
+        SELECT id FROM users WHERE note = 'UPDATE; RETURNING'
+      )
+      SELECT * FROM active_users
+    `)).toBe(true);
+    expect(returnsResultSet(`
+      WITH changed AS (
+        SELECT id FROM users
+      )
+      UPDATE users SET active = true
+      WHERE id IN (SELECT id FROM changed)
+      RETURNING id
+    `)).toBe(true);
+  });
+
+  it('recognizes DML RETURNING but ignores keywords in comments and strings', () => {
+    expect(returnsResultSet("INSERT INTO users(name) VALUES ('a') RETURNING id")).toBe(true);
+    expect(returnsResultSet("UPDATE users SET note = 'RETURNING'")).toBe(false);
+    expect(returnsResultSet('DELETE FROM users /* RETURNING id */')).toBe(false);
+  });
+
+  it('recognizes leading comments before result-producing statements', () => {
+    expect(returnsResultSet('-- report\nSELECT 1')).toBe(true);
+    expect(returnsResultSet('/* report */ WITH data AS (SELECT 1) SELECT * FROM data')).toBe(true);
+  });
+
+  it('keeps ordinary mutations on the execute path', () => {
+    expect(returnsResultSet('INSERT INTO users(name) VALUES (\'a\')')).toBe(false);
+    expect(returnsResultSet('UPDATE users SET active = true')).toBe(false);
+    expect(returnsResultSet('DELETE FROM users')).toBe(false);
   });
 });

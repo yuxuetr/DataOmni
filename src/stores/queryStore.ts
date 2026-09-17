@@ -4,7 +4,7 @@ import { DatabaseSession } from '../contracts/session';
 import type { QueryResult, SqlHistory, SqlStatement } from '../contracts/query';
 import { assertSingleRowAffected } from '../utils/executeResult';
 import { quoteSqlIdentifier, type SqlIdentifierDialect } from '../utils/sqlIdentifiers';
-import { isSelectStatement, splitSqlStatements } from '../utils/sqlStatements';
+import { returnsResultSet, splitSqlStatements } from '../utils/sqlStatements';
 
 export type { QueryResult, SqlHistory, SqlStatement } from '../contracts/query';
 
@@ -487,8 +487,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       let queryResult: QueryResult;
       const sql = statement.sql.trim();
       
-      if (isSelectStatement(sql)) {
-        // SELECT查询使用select方法
+      if (returnsResultSet(sql)) {
+        // 返回行的语句使用 select 方法
         const selectResult = await database.select(statement.sql);
         const executionTime = Date.now() - startTime;
         

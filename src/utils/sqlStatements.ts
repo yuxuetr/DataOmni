@@ -146,7 +146,32 @@ export const splitSqlStatements = (sqlText: string): string[] => {
 };
 
 export const isSelectStatement = (sql: string): boolean =>
-  sql.trimStart().toLowerCase().startsWith('select');
+  firstTopLevelKeyword(sql) === 'SELECT';
+
+export const returnsResultSet = (sql: string): boolean => {
+  const keywords = topLevelKeywords(sql);
+  const firstKeyword = keywords[0];
+
+  if (!firstKeyword) {
+    return false;
+  }
+
+  if (['SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN', 'PRAGMA', 'VALUES', 'TABLE'].includes(firstKeyword)) {
+    return true;
+  }
+
+  if (firstKeyword === 'WITH') {
+    const statementKeyword = keywords.find((keyword) =>
+      ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'MERGE'].includes(keyword)
+    );
+
+    return statementKeyword === 'SELECT'
+      || (statementKeyword !== undefined && keywords.includes('RETURNING'));
+  }
+
+  return ['INSERT', 'UPDATE', 'DELETE', 'MERGE'].includes(firstKeyword)
+    && keywords.includes('RETURNING');
+};
 
 function matchDollarQuoteTag(sqlText: string, index: number): string | null {
   if (sqlText[index] !== '$') {
@@ -176,4 +201,126 @@ function matchDelimiterDirective(
     delimiter: match[1],
     endIndex: index + match[0].length
   };
+}
+
+function firstTopLevelKeyword(sql: string): string | undefined {
+  return topLevelKeywords(sql)[0];
+}
+
+function topLevelKeywords(sql: string): string[] {
+  const keywords: string[] = [];
+  let state: LexerState = NORMAL_STATE;
+  let depth = 0;
+  let index = 0;
+
+  while (index < sql.length) {
+    if (state.type === 'normal') {
+      const dollarQuoteTag = matchDollarQuoteTag(sql, index);
+      if (dollarQuoteTag) {
+        state = { type: 'dollar-quote', tag: dollarQuoteTag };
+        index += dollarQuoteTag.length;
+        continue;
+      }
+
+      if (sql.startsWith('--', index) || sql[index] === '#') {
+        state = { type: 'line-comment' };
+        index += sql[index] === '#' ? 1 : 2;
+        continue;
+      }
+
+      if (sql.startsWith('/*', index)) {
+        state = { type: 'block-comment', depth: 1 };
+        index += 2;
+        continue;
+      }
+
+      const character = sql[index];
+      if (character === "'" || character === '"' || character === '`') {
+        state = character === "'"
+          ? { type: 'single-quote' }
+          : character === '"'
+            ? { type: 'double-quote' }
+            : { type: 'backtick' };
+        index += 1;
+        continue;
+      }
+
+      if (character === '(') {
+        depth += 1;
+        index += 1;
+        continue;
+      }
+
+      if (character === ')') {
+        depth = Math.max(0, depth - 1);
+        index += 1;
+        continue;
+      }
+
+      if (depth === 0 && /[A-Za-z_]/.test(character)) {
+        const match = sql.slice(index).match(/^[A-Za-z_][A-Za-z0-9_$]*/);
+        if (match) {
+          keywords.push(match[0].toUpperCase());
+          index += match[0].length;
+          continue;
+        }
+      }
+
+      index += 1;
+      continue;
+    }
+
+    if (state.type === 'dollar-quote') {
+      if (sql.startsWith(state.tag, index)) {
+        index += state.tag.length;
+        state = NORMAL_STATE;
+      } else {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (state.type === 'line-comment') {
+      if (sql[index] === '\n' || sql[index] === '\r') {
+        state = NORMAL_STATE;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (state.type === 'block-comment') {
+      if (sql.startsWith('/*', index)) {
+        state = { type: 'block-comment', depth: state.depth + 1 };
+        index += 2;
+      } else if (sql.startsWith('*/', index)) {
+        index += 2;
+        state = state.depth === 1
+          ? NORMAL_STATE
+          : { type: 'block-comment', depth: state.depth - 1 };
+      } else {
+        index += 1;
+      }
+      continue;
+    }
+
+    const quote = state.type === 'single-quote'
+      ? "'"
+      : state.type === 'double-quote'
+        ? '"'
+        : '`';
+    const character = sql[index];
+    index += 1;
+
+    if (character === '\\') {
+      index += 1;
+    } else if (character === quote) {
+      if (sql[index] === quote) {
+        index += 1;
+      } else {
+        state = NORMAL_STATE;
+      }
+    }
+  }
+
+  return keywords;
 }
