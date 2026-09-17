@@ -131,11 +131,6 @@ impl ConnectionService {
 
   /// 测试数据库连接 - 实际尝试连接并返回连接字符串
   pub fn test_connection(&self, config: &ConnectionConfig) -> Result<String, String> {
-    // 对于MySQL和SSL连接，尝试多种配置
-    if config.db_type == crate::models::DatabaseType::MySQL && (config.ssl || config.port > 32767 || config.port == 31306) {
-      return self.test_mysql_ssl_connection(config);
-    }
-    
     let connection_string = config.db_type.to_connection_string(config);
     println!(
       "🔗 准备测试数据库连接: {}",
@@ -193,60 +188,6 @@ impl ConnectionService {
     }
 
     println!("✅ 连接配置验证通过，返回连接字符串用于前端测试");
-    Ok(connection_string)
-  }
-  
-  /// MySQL SSL连接特殊处理，尝试多种配置
-  fn test_mysql_ssl_connection(&self, config: &ConnectionConfig) -> Result<String, String> {
-    println!("🔒 MySQL SSL连接测试，尝试多种配置...");
-    
-    // 对用户名和密码进行URL编码
-    let encoded_username = urlencoding::encode(&config.username);
-    let encoded_password = urlencoding::encode(&config.password);
-    
-    let base_url = format!(
-      "mysql://{}:{}@{}:{}/{}",
-      encoded_username,
-      encoded_password,
-      config.host,
-      config.port,
-      config.database.as_ref().unwrap_or(&"mysql".to_string())
-    );
-    
-    // SSL配置尝试列表，按优先级排列
-    // 使用SQLx MySQL驱动的正确参数名和更兼容的配置
-    // 对于MySQL 5.7容器环境，优先尝试禁用SSL
-    let ssl_configs = vec![
-      // 1. 首先尝试禁用SSL - 适用于MySQL 5.7容器环境
-      vec!["ssl-mode=DISABLED"],
-      // 2. 如果禁用失败，尝试优选模式
-      vec!["ssl-mode=PREFERRED"],
-      // 3. 最后尝试要求SSL但不验证证书
-      vec!["ssl-mode=REQUIRED", "ssl-ca="],
-    ];
-    
-    for (i, ssl_params) in ssl_configs.iter().enumerate() {
-      let mut params = ssl_params.to_vec();
-      params.extend(vec!["connectTimeout=30000", "acquireTimeout=30000"]);
-      
-      let connection_string = format!("{}?{}", base_url, params.join("&"));
-      println!(
-        "🔄 尝试SSL配置 {} ({}): {}",
-        i + 1,
-        ssl_params[0],
-        mask_password(&connection_string)
-      );
-      
-      // 返回第一个配置进行测试
-      // 如果失败，前端可以在备选方案中尝试其他配置
-      if i == 0 {
-        return Ok(connection_string);
-      }
-    }
-    
-    // 如果所有配置都失败，返回默认配置
-    let default_params = vec!["sslmode=require", "connectTimeout=30000"];
-    let connection_string = format!("{}?{}", base_url, default_params.join("&"));
     Ok(connection_string)
   }
 }

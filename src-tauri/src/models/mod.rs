@@ -142,16 +142,11 @@ impl DatabaseType {
           config.database.as_ref().unwrap_or(&"mysql".to_string())
         );
         
-        // Add SSL parameters if SSL is enabled or if connecting to a non-standard port (likely cloud/managed DB)
         let mut params = Vec::new();
-        
-        if config.ssl || config.port > 32767 || config.port == 31306 {
-          // For MySQL SSL connections using SQLx, use the correct parameter names
-          // SQLx MySQL uses different SSL parameters than PostgreSQL
-          // 对于MySQL 5.7容器环境，默认禁用SSL以避免握手失败
-          params.push("ssl-mode=DISABLED".to_string());
+
+        if config.ssl {
+          params.push("ssl-mode=REQUIRED".to_string());
         } else {
-          // Explicitly disable SSL for non-SSL connections  
           params.push("ssl-mode=DISABLED".to_string());
         }
         
@@ -297,5 +292,39 @@ impl Default for ConnectionConfig {
       created_at: chrono::Utc::now().to_rfc3339(),
       updated_at: chrono::Utc::now().to_rfc3339(),
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn mysql_config(ssl: bool) -> ConnectionConfig {
+    ConnectionConfig {
+      db_type: DatabaseType::MySQL,
+      host: "localhost".to_string(),
+      port: 3306,
+      database: Some("dataomni".to_string()),
+      username: "user".to_string(),
+      password: "password".to_string(),
+      ssl,
+      ..ConnectionConfig::default()
+    }
+  }
+
+  #[test]
+  fn mysql_connection_string_requires_tls_when_enabled() {
+    let connection_string = DatabaseType::MySQL.to_connection_string(&mysql_config(true));
+
+    assert!(connection_string.contains("ssl-mode=REQUIRED"));
+    assert!(!connection_string.contains("ssl-mode=DISABLED"));
+  }
+
+  #[test]
+  fn mysql_connection_string_disables_tls_when_disabled() {
+    let connection_string = DatabaseType::MySQL.to_connection_string(&mysql_config(false));
+
+    assert!(connection_string.contains("ssl-mode=DISABLED"));
+    assert!(!connection_string.contains("ssl-mode=REQUIRED"));
   }
 }

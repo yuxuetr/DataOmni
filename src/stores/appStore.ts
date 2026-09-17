@@ -188,8 +188,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
             const encodedUsername = encodeURIComponent(connection.username);
             const encodedPassword = encodeURIComponent(connection.password);
             const mysqlBase = `mysql://${encodedUsername}:${encodedPassword}@${connection.host}:${connection.port}/${connection.database}`;
-            // 对于MySQL 5.7容器环境，统一使用DISABLED模式以避免SSL握手失败
-            connectionString = `${mysqlBase}?ssl-mode=DISABLED&connectTimeout=30000`;
+            connectionString = `${mysqlBase}?ssl-mode=${connection.ssl ? 'REQUIRED' : 'DISABLED'}&connectTimeout=30000`;
             break;
           case 'postgresql':
             const encodedUsernamePg = encodeURIComponent(connection.username);
