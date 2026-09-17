@@ -169,37 +169,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       // 如果连接不同，需要设置新的连接
       console.log('🔄 切换到新的数据库连接:', connection.name);
       
-      // 使用后端的test_connection来获取正确的连接字符串(包含SSL参数)
-      let connectionString = '';
-      try {
-        // 调用后端生成带SSL参数的连接字符串
-        connectionString = await invoke<string>('test_connection', { config: connection });
-        console.log('✅ 获取到带SSL参数的连接字符串:', connectionString.replace(/:([^:@]+)@/, ':***@'));
-      } catch (error) {
-        console.error('❌ 获取连接字符串失败，使用简化版本:', error);
-        // 如果后端调用失败，使用简化的连接字符串生成
-        switch (connection.db_type) {
-          case 'sqlite':
-            const dbPath = connection.database || 'data.db';
-            connectionString = `sqlite:${dbPath}`;
-            break;
-          case 'mysql':
-            // 为MySQL连接添加基本的SSL参数，并对用户名和密码进行URL编码
-            const encodedUsername = encodeURIComponent(connection.username);
-            const encodedPassword = encodeURIComponent(connection.password);
-            const mysqlBase = `mysql://${encodedUsername}:${encodedPassword}@${connection.host}:${connection.port}/${connection.database}`;
-            connectionString = `${mysqlBase}?ssl-mode=${connection.ssl ? 'REQUIRED' : 'DISABLED'}&connectTimeout=30000`;
-            break;
-          case 'postgresql':
-            const encodedUsernamePg = encodeURIComponent(connection.username);
-            const encodedPasswordPg = encodeURIComponent(connection.password);
-            const pgBase = `postgres://${encodedUsernamePg}:${encodedPasswordPg}@${connection.host}:${connection.port}/${connection.database}`;
-            connectionString = connection.ssl || connection.port > 32767
-              ? `${pgBase}?sslmode=require&connect_timeout=30`
-              : `${pgBase}?sslmode=disable&connect_timeout=30`;
-            break;
-        }
-      }
+      const connectionString = await invoke<string>('test_connection', { config: connection });
+      console.log('✅ 获取到连接字符串:', connectionString.replace(/:([^:@]+)@/, ':***@'));
       
       set({ 
         activeConnection: { config: connection, connectionString },

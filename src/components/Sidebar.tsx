@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Database, ChevronDown, Edit, Trash2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
-import { ConnectionConfig, DatabaseType, useConnectionStore } from '../stores/connectionStore';
+import { ConnectionConfig, useConnectionStore } from '../stores/connectionStore';
 import DatabaseExplorer from './DatabaseExplorer';
 import { ConnectionForm } from './ConnectionForm';
 import { confirm } from '@tauri-apps/plugin-dialog';
@@ -59,43 +59,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       setShowConnectionMenu(false);
     } catch (error) {
       console.error('连接失败:', error);
-      
-      // 如果后端调用失败，使用简化的连接字符串作为备选方案
-      console.warn('⚠️ 后端连接字符串生成失败，使用前端备选方案');
-      let fallbackConnectionString = '';
-      
-      switch (connection.db_type) {
-        case DatabaseType.SQLite:
-          const dbPath = connection.database || 'data.db';
-          fallbackConnectionString = `sqlite:${dbPath}`;
-          break;
-        case DatabaseType.MySQL:
-          // 为MySQL连接添加SSL参数，并对用户名和密码进行URL编码
-          const encodedUsername = encodeURIComponent(connection.username);
-          const encodedPassword = encodeURIComponent(connection.password);
-          const mysqlBase = `mysql://${encodedUsername}:${encodedPassword}@${connection.host}:${connection.port}/${connection.database}`;
-          fallbackConnectionString = `${mysqlBase}?ssl-mode=${connection.ssl ? 'REQUIRED' : 'DISABLED'}&connectTimeout=30000&acquireTimeout=30000`;
-          break;
-        case DatabaseType.PostgreSQL:
-          const encodedUsernamePg = encodeURIComponent(connection.username);
-          const encodedPasswordPg = encodeURIComponent(connection.password);
-          const pgBase = `postgres://${encodedUsernamePg}:${encodedPasswordPg}@${connection.host}:${connection.port}/${connection.database}`;
-          fallbackConnectionString = connection.ssl || connection.port > 32767
-            ? `${pgBase}?sslmode=require&connect_timeout=30`
-            : `${pgBase}?sslmode=disable&connect_timeout=30`;
-          break;
-      }
-      
-      if (fallbackConnectionString) {
-        try {
-          console.log('🔄 尝试使用备选连接字符串:', fallbackConnectionString.replace(/:([^:@]+)@/, ':***@'));
-          await onConnect(connection, fallbackConnectionString);
-          setShowConnectionMenu(false);
-        } catch (fallbackError) {
-          console.error('备选连接方案也失败:', fallbackError);
-          // 这里可以添加用户友好的错误提示
-        }
-      }
     }
   };
 
