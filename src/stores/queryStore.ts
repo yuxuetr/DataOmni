@@ -358,6 +358,11 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     // 关闭旧连接
     if (currentState.database) {
       try {
+        if (currentState.session) {
+          await invoke('release_database_session', {
+            sessionId: currentState.session.id
+          });
+        }
         await currentState.database.close();
         console.log('🔌 旧数据库连接已关闭');
       } catch (error) {
@@ -441,6 +446,11 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
     if (currentState.database) {
       try {
+        if (currentState.session) {
+          await invoke('release_database_session', {
+            sessionId: currentState.session.id
+          });
+        }
         await currentState.database.close();
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : '关闭数据库连接失败';
@@ -549,10 +559,13 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       let queryResult: QueryResult;
       const sql = statement.sql.trim();
       const driverResult = await invoke<DriverQueryResult>('execute_query', {
-        connectionId,
-        executionId: execution.id,
-        sql: statement.sql,
-        timeoutMs: queryTimeoutMs
+        request: {
+          connectionId,
+          sessionId: session.id,
+          executionId: execution.id,
+          sql: statement.sql,
+          timeoutMs: queryTimeoutMs
+        }
       });
       const executionTime = Date.now() - startTime;
 

@@ -1,5 +1,6 @@
 use dataomni_lib::services::{
-  execute_query, execute_query_with_timeout, QueryExecutionResult, QUERY_TIMEOUT_CODE,
+  execute_query, execute_query_with_timeout, QueryExecutionResult, QuerySessionState,
+  QUERY_TIMEOUT_CODE,
 };
 use sqlx::{mysql::MySqlPoolOptions, postgres::PgPoolOptions, sqlite::SqlitePoolOptions};
 use std::time::Duration;
@@ -87,6 +88,16 @@ async fn postgres_supports_basic_read_write() {
     )
     .await,
   );
+
+  assert_transaction_binding(
+    &QuerySessionState::default(),
+    "postgres-session",
+    &url,
+    &DbPool::Postgres(pool),
+    "CREATE TEMP TABLE transaction_binding_test (value TEXT NOT NULL)",
+    "INSERT INTO transaction_binding_test (value) VALUES ('pending')",
+  )
+  .await;
 }
 
 #[tokio::test]
@@ -133,6 +144,53 @@ async fn mysql_supports_basic_read_write() {
     )
     .await,
   );
+
+  assert_transaction_binding(
+    &QuerySessionState::default(),
+    "mysql-session",
+    &url,
+    &DbPool::MySql(pool),
+    "CREATE TEMPORARY TABLE transaction_binding_test (value TEXT NOT NULL)",
+    "INSERT INTO transaction_binding_test (value) VALUES ('pending')",
+  )
+  .await;
+}
+
+async fn assert_transaction_binding(
+  sessions: &QuerySessionState,
+  session_id: &str,
+  pool_key: &str,
+  pool: &DbPool,
+  create_table_sql: &str,
+  insert_sql: &str,
+) {
+  let timeout = Duration::from_secs(5);
+  sessions
+    .execute(session_id, pool_key, pool, create_table_sql, timeout)
+    .await
+    .expect("create session-local temporary table");
+  sessions.execute(session_id, pool_key, pool, "BEGIN", timeout).await.expect("begin transaction");
+  sessions
+    .execute(session_id, pool_key, pool, insert_sql, timeout)
+    .await
+    .expect("insert inside transaction");
+
+  let result = sessions
+    .execute(session_id, pool_key, pool, "SELECT value FROM transaction_binding_test", timeout)
+    .await
+    .expect("read inside transaction");
+  assert_single_row_result(result, "value", "pending");
+
+  sessions
+    .execute(session_id, pool_key, pool, "ROLLBACK", timeout)
+    .await
+    .expect("rollback transaction");
+  let result = sessions
+    .execute(session_id, pool_key, pool, "SELECT value FROM transaction_binding_test", timeout)
+    .await
+    .expect("read after rollback");
+  assert_empty_row_result(result, "value");
+  assert!(sessions.release(session_id).await);
 }
 
 fn assert_empty_row_result(result: QueryExecutionResult, column: &str) {

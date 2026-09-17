@@ -4,7 +4,8 @@ use sqlx::{
   mysql::{MySqlRow, MySqlValueRef},
   postgres::{PgRow, PgValueRef},
   sqlite::{SqliteRow, SqliteValueRef},
-  Column, Executor, MySql, Pool, Postgres, Row, Sqlite, TypeInfo, Value, ValueRef,
+  Column, Executor, MySql, MySqlConnection, PgConnection, Pool, Postgres, Row, Sqlite,
+  SqliteConnection, TypeInfo, Value, ValueRef,
 };
 use std::future::Future;
 use tauri_plugin_sql::DbPool;
@@ -28,6 +29,36 @@ pub async fn execute_query(pool: &DbPool, sql: &str) -> Result<QueryExecutionRes
   }
 }
 
+pub enum SessionConnection {
+  Sqlite(sqlx::pool::PoolConnection<Sqlite>),
+  MySql(sqlx::pool::PoolConnection<MySql>),
+  Postgres(sqlx::pool::PoolConnection<Postgres>),
+}
+
+impl SessionConnection {
+  pub async fn acquire(pool: &DbPool) -> Result<Self, String> {
+    match pool {
+      DbPool::Sqlite(pool) => {
+        pool.acquire().await.map(Self::Sqlite).map_err(|error| error.to_string())
+      }
+      DbPool::MySql(pool) => {
+        pool.acquire().await.map(Self::MySql).map_err(|error| error.to_string())
+      }
+      DbPool::Postgres(pool) => {
+        pool.acquire().await.map(Self::Postgres).map_err(|error| error.to_string())
+      }
+    }
+  }
+
+  pub async fn execute(&mut self, sql: &str) -> Result<QueryExecutionResult, String> {
+    match self {
+      Self::Sqlite(connection) => execute_sqlite_connection(connection, sql).await,
+      Self::MySql(connection) => execute_mysql_connection(connection, sql).await,
+      Self::Postgres(connection) => execute_postgres_connection(connection, sql).await,
+    }
+  }
+}
+
 pub async fn execute_query_with_timeout(
   pool: &DbPool,
   sql: &str,
@@ -46,7 +77,20 @@ where
 }
 
 async fn execute_sqlite(pool: &Pool<Sqlite>, sql: &str) -> Result<QueryExecutionResult, String> {
-  let columns = pool
+  let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+  execute_sqlite_connection(&mut connection, sql).await
+}
+
+async fn execute_sqlite_connection(
+  connection: &mut SqliteConnection,
+  sql: &str,
+) -> Result<QueryExecutionResult, String> {
+  if is_transaction_control_statement(sql) {
+    let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
+    return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
+  }
+
+  let columns = (&mut *connection)
     .describe(sql)
     .await
     .map_err(|error| error.to_string())?
@@ -56,17 +100,30 @@ async fn execute_sqlite(pool: &Pool<Sqlite>, sql: &str) -> Result<QueryExecution
     .collect::<Vec<_>>();
 
   if columns.is_empty() {
-    let result = pool.execute(sql).await.map_err(|error| error.to_string())?;
+    let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
     return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
   }
 
-  let rows = pool.fetch_all(sql).await.map_err(|error| error.to_string())?;
+  let rows = (&mut *connection).fetch_all(sql).await.map_err(|error| error.to_string())?;
   let rows = rows.iter().map(decode_sqlite_row).collect::<Result<Vec<_>, _>>()?;
   Ok(QueryExecutionResult::Rows { columns, rows })
 }
 
 async fn execute_mysql(pool: &Pool<MySql>, sql: &str) -> Result<QueryExecutionResult, String> {
-  let columns = pool
+  let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+  execute_mysql_connection(&mut connection, sql).await
+}
+
+async fn execute_mysql_connection(
+  connection: &mut MySqlConnection,
+  sql: &str,
+) -> Result<QueryExecutionResult, String> {
+  if is_transaction_control_statement(sql) {
+    let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
+    return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
+  }
+
+  let columns = (&mut *connection)
     .describe(sql)
     .await
     .map_err(|error| error.to_string())?
@@ -76,11 +133,11 @@ async fn execute_mysql(pool: &Pool<MySql>, sql: &str) -> Result<QueryExecutionRe
     .collect::<Vec<_>>();
 
   if columns.is_empty() {
-    let result = pool.execute(sql).await.map_err(|error| error.to_string())?;
+    let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
     return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
   }
 
-  let rows = pool.fetch_all(sql).await.map_err(|error| error.to_string())?;
+  let rows = (&mut *connection).fetch_all(sql).await.map_err(|error| error.to_string())?;
   let rows = rows.iter().map(decode_mysql_row).collect::<Result<Vec<_>, _>>()?;
   Ok(QueryExecutionResult::Rows { columns, rows })
 }
@@ -89,7 +146,20 @@ async fn execute_postgres(
   pool: &Pool<Postgres>,
   sql: &str,
 ) -> Result<QueryExecutionResult, String> {
-  let columns = pool
+  let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+  execute_postgres_connection(&mut connection, sql).await
+}
+
+async fn execute_postgres_connection(
+  connection: &mut PgConnection,
+  sql: &str,
+) -> Result<QueryExecutionResult, String> {
+  if is_transaction_control_statement(sql) {
+    let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
+    return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
+  }
+
+  let columns = (&mut *connection)
     .describe(sql)
     .await
     .map_err(|error| error.to_string())?
@@ -99,13 +169,28 @@ async fn execute_postgres(
     .collect::<Vec<_>>();
 
   if columns.is_empty() {
-    let result = pool.execute(sql).await.map_err(|error| error.to_string())?;
+    let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
     return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
   }
 
-  let rows = pool.fetch_all(sql).await.map_err(|error| error.to_string())?;
+  let rows = (&mut *connection).fetch_all(sql).await.map_err(|error| error.to_string())?;
   let rows = rows.iter().map(decode_postgres_row).collect::<Result<Vec<_>, _>>()?;
   Ok(QueryExecutionResult::Rows { columns, rows })
+}
+
+fn is_transaction_control_statement(sql: &str) -> bool {
+  let normalized = sql.trim().trim_end_matches(';').trim().to_ascii_uppercase();
+  [
+    "BEGIN",
+    "START TRANSACTION",
+    "COMMIT",
+    "ROLLBACK",
+    "SAVEPOINT",
+    "RELEASE SAVEPOINT",
+    "SET TRANSACTION",
+  ]
+  .iter()
+  .any(|keyword| normalized == *keyword || normalized.starts_with(&format!("{keyword} ")))
 }
 
 fn decode_sqlite_row(row: &SqliteRow) -> Result<Map<String, JsonValue>, String> {
@@ -236,6 +321,25 @@ mod tests {
   use super::*;
   use sqlx::sqlite::SqlitePoolOptions;
   use std::future::pending;
+
+  #[test]
+  fn recognizes_transaction_control_statements_without_matching_prefixes() {
+    for sql in [
+      "BEGIN",
+      "begin transaction;",
+      "START TRANSACTION",
+      "COMMIT WORK",
+      "ROLLBACK TO SAVEPOINT before_update",
+      "SAVEPOINT before_update",
+      "RELEASE SAVEPOINT before_update",
+      "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE",
+    ] {
+      assert!(is_transaction_control_statement(sql), "expected transaction SQL: {sql}");
+    }
+
+    assert!(!is_transaction_control_statement("SELECT 'BEGIN'"));
+    assert!(!is_transaction_control_statement("BEGINNING"));
+  }
 
   #[tokio::test]
   async fn uses_driver_metadata_for_empty_result_sets() {

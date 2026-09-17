@@ -1,7 +1,8 @@
 use crate::commands::connection_commands::ConnectionServiceState;
-use crate::services::QueryExecutionResult;
+use crate::services::{QueryExecutionResult, QuerySessionState};
 // use crate::models::{ColumnInfo, ConnectionConfig, DatabaseInfo, QueryResult, TableInfo};
 // use crate::services::{ConnectionService, DatabaseService};
+use serde::Deserialize;
 use std::collections::HashMap;
 use tauri::{AppHandle, State};
 use tauri_plugin_sql::DbInstances;
@@ -12,6 +13,16 @@ use tokio::time::Duration;
 // pub type DatabaseServiceState = Mutex<crate::services::DatabaseService>;
 
 pub const QUERY_CANCELLED_CODE: &str = "QUERY_CANCELLED";
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryExecutionRequest {
+  connection_id: String,
+  session_id: String,
+  execution_id: String,
+  sql: String,
+  timeout_ms: u64,
+}
 
 #[derive(Default)]
 pub struct QueryCancellationState {
@@ -46,15 +57,13 @@ impl QueryCancellationState {
 
 #[tauri::command]
 pub async fn execute_query(
-  connection_id: String,
-  execution_id: String,
-  sql: String,
-  timeout_ms: u64,
+  request: QueryExecutionRequest,
   connection_service_state: State<'_, ConnectionServiceState>,
   database_instances: State<'_, DbInstances>,
   cancellation_state: State<'_, QueryCancellationState>,
+  query_session_state: State<'_, QuerySessionState>,
 ) -> Result<QueryExecutionResult, String> {
-  if !(100..=3_600_000).contains(&timeout_ms) {
+  if !(100..=3_600_000).contains(&request.timeout_ms) {
     return Err("查询超时必须在 100 毫秒到 1 小时之间".to_string());
   }
 
@@ -63,23 +72,33 @@ pub async fn execute_query(
       connection_service_state.lock().map_err(|e| format!("获取连接服务状态失败: {e}"))?;
     let service =
       connection_service_guard.as_ref().ok_or_else(|| "连接服务未初始化".to_string())?;
-    service.resolve_connection_string(&connection_id)?
+    service.resolve_connection_string(&request.connection_id)?
   };
 
   let instances = database_instances.0.read().await;
   let pool = instances.get(&connection_string).ok_or_else(|| "数据库会话未连接".to_string())?;
-  let receiver = cancellation_state.register(&execution_id).await?;
+  let receiver = cancellation_state.register(&request.execution_id).await?;
 
   let result = tokio::select! {
-    result = crate::services::execute_query_with_timeout(
+    result = query_session_state.execute(
+      &request.session_id,
+      &connection_string,
       pool,
-      &sql,
-      Duration::from_millis(timeout_ms)
+      &request.sql,
+      Duration::from_millis(request.timeout_ms)
     ) => result,
     _ = receiver => Err(format!("{QUERY_CANCELLED_CODE}: 查询已取消")),
   };
-  cancellation_state.finish(&execution_id).await;
+  cancellation_state.finish(&request.execution_id).await;
   result
+}
+
+#[tauri::command]
+pub async fn release_database_session(
+  session_id: String,
+  query_session_state: State<'_, QuerySessionState>,
+) -> Result<bool, String> {
+  Ok(query_session_state.release(&session_id).await)
 }
 
 #[tauri::command]
