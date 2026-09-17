@@ -37,6 +37,7 @@ export interface QueryState {
   statements: SqlStatement[];
   executions: QueryExecution[];
   latestExecutionIdByStatement: Record<string, string>;
+  queryTimeoutMs: number;
   isConnecting: boolean;
   error: string | null;
 }
@@ -59,6 +60,7 @@ interface QueryActions {
   executeSql: (sql: string) => Promise<void>;
   executeStatement: (statementId: string) => Promise<void>;
   executeAllStatements: () => Promise<void>;
+  setQueryTimeoutMs: (timeoutMs: number) => void;
   
   // 结果管理
   clearResults: () => void;
@@ -324,6 +326,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   statements: [],
   executions: [],
   latestExecutionIdByStatement: {},
+  queryTimeoutMs: 30_000,
   isConnecting: false,
   error: null,
 
@@ -458,6 +461,10 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     set({ sqlInput: sql });
   },
 
+  setQueryTimeoutMs: (queryTimeoutMs: number) => {
+    set({ queryTimeoutMs });
+  },
+
   parseStatements: () => {
     const { sqlInput, statements } = get();
     if (!sqlInput.trim()) {
@@ -496,7 +503,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   },
 
   executeStatement: async (statementId: string) => {
-    const { connectionId, database, session, statements } = get();
+    const { connectionId, database, session, statements, queryTimeoutMs } = get();
     if (!database || !session || !connectionId) {
       set({ error: '数据库未连接' });
       return;
@@ -540,7 +547,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       const sql = statement.sql.trim();
       const driverResult = await invoke<DriverQueryResult>('execute_query', {
         connectionId,
-        sql: statement.sql
+        sql: statement.sql,
+        timeoutMs: queryTimeoutMs
       });
       const executionTime = Date.now() - startTime;
 
@@ -598,7 +606,11 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       console.log(`✅ SQL执行成功，耗时: ${formatExecutionTime(queryResult.execution_time)}`);
     } catch (error) {
       console.error('❌ SQL执行失败:', error);
-      const errorMessage = error instanceof Error ? error.message : 'SQL执行失败';
+      const rawErrorMessage = error instanceof Error ? error.message : String(error);
+      const timedOut = rawErrorMessage.startsWith('QUERY_TIMEOUT:');
+      const errorMessage = timedOut
+        ? `查询已超时（${formatExecutionTime(queryTimeoutMs)}）`
+        : rawErrorMessage;
       
       // 更新错误状态
       set((state) => ({
@@ -609,7 +621,16 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         ),
         executions: state.executions.map((candidate) =>
           candidate.id === execution.id
-            ? failQueryExecution(candidate, { message: errorMessage })
+            ? failQueryExecution(
+                candidate,
+                {
+                  message: errorMessage,
+                  code: timedOut ? 'QUERY_TIMEOUT' : undefined,
+                  details: rawErrorMessage
+                },
+                undefined,
+                timedOut ? 'timed-out' : 'failed'
+              )
             : candidate
         )
       }));

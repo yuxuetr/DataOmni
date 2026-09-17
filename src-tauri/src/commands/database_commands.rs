@@ -4,6 +4,7 @@ use crate::services::QueryExecutionResult;
 // use crate::services::{ConnectionService, DatabaseService};
 use tauri::{AppHandle, State};
 use tauri_plugin_sql::DbInstances;
+use tokio::time::Duration;
 
 // 全局数据库服务状态
 // pub type DatabaseServiceState = Mutex<crate::services::DatabaseService>;
@@ -12,9 +13,14 @@ use tauri_plugin_sql::DbInstances;
 pub async fn execute_query(
   connection_id: String,
   sql: String,
+  timeout_ms: u64,
   connection_service_state: State<'_, ConnectionServiceState>,
   database_instances: State<'_, DbInstances>,
 ) -> Result<QueryExecutionResult, String> {
+  if !(100..=3_600_000).contains(&timeout_ms) {
+    return Err("查询超时必须在 100 毫秒到 1 小时之间".to_string());
+  }
+
   let connection_string = {
     let connection_service_guard =
       connection_service_state.lock().map_err(|e| format!("获取连接服务状态失败: {e}"))?;
@@ -25,7 +31,7 @@ pub async fn execute_query(
 
   let instances = database_instances.0.read().await;
   let pool = instances.get(&connection_string).ok_or_else(|| "数据库会话未连接".to_string())?;
-  crate::services::execute_query(pool, &sql).await
+  crate::services::execute_query_with_timeout(pool, &sql, Duration::from_millis(timeout_ms)).await
 }
 
 #[tauri::command]

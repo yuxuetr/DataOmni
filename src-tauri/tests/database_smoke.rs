@@ -1,5 +1,8 @@
-use dataomni_lib::services::{execute_query, QueryExecutionResult};
+use dataomni_lib::services::{
+  execute_query, execute_query_with_timeout, QueryExecutionResult, QUERY_TIMEOUT_CODE,
+};
 use sqlx::{mysql::MySqlPoolOptions, postgres::PgPoolOptions, sqlite::SqlitePoolOptions};
+use std::time::Duration;
 use tauri_plugin_sql::DbPool;
 
 const REQUIRE_NETWORK_DATABASES_ENV: &str = "DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS";
@@ -31,12 +34,10 @@ async fn sqlite_supports_basic_read_write() {
 
   assert_eq!(value, "ready");
 
-  let result = execute_query(
-    &DbPool::Sqlite(pool.clone()),
-    "SELECT value FROM smoke_test WHERE id = -1",
-  )
-  .await
-  .expect("describe empty SQLite result");
+  let result =
+    execute_query(&DbPool::Sqlite(pool.clone()), "SELECT value FROM smoke_test WHERE id = -1")
+      .await
+      .expect("describe empty SQLite result");
   assert_empty_row_result(result, "value");
 }
 
@@ -77,6 +78,15 @@ async fn postgres_supports_basic_read_write() {
   .await
   .expect("execute PostgreSQL returning query");
   assert_single_row_result(result, "value", "updated");
+
+  assert_query_times_out(
+    execute_query_with_timeout(
+      &DbPool::Postgres(pool.clone()),
+      "SELECT pg_sleep(1)",
+      Duration::from_millis(20),
+    )
+    .await,
+  );
 }
 
 #[tokio::test]
@@ -109,13 +119,20 @@ async fn mysql_supports_basic_read_write() {
 
   assert_eq!(value, "ready");
 
-  let result = execute_query(
-    &DbPool::MySql(pool.clone()),
-    "SELECT value FROM smoke_test WHERE id = -1",
-  )
-  .await
-  .expect("describe empty MySQL result");
+  let result =
+    execute_query(&DbPool::MySql(pool.clone()), "SELECT value FROM smoke_test WHERE id = -1")
+      .await
+      .expect("describe empty MySQL result");
   assert_empty_row_result(result, "value");
+
+  assert_query_times_out(
+    execute_query_with_timeout(
+      &DbPool::MySql(pool.clone()),
+      "SELECT SLEEP(1)",
+      Duration::from_millis(20),
+    )
+    .await,
+  );
 }
 
 fn assert_empty_row_result(result: QueryExecutionResult, column: &str) {
@@ -137,6 +154,11 @@ fn assert_single_row_result(result: QueryExecutionResult, column: &str, value: &
     }
     QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
   }
+}
+
+fn assert_query_times_out(result: Result<QueryExecutionResult, String>) {
+  let error = result.expect_err("query should exceed its timeout");
+  assert!(error.starts_with(QUERY_TIMEOUT_CODE), "unexpected timeout error: {error}");
 }
 
 fn network_database_url(variable: &str) -> Option<String> {

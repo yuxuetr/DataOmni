@@ -104,4 +104,22 @@ describe('QueryExecution', () => {
     });
     expect(failed.durationMs).toBe(50);
   });
+
+  it('records timed-out executions separately from ordinary failures', () => {
+    const queued = createQueryExecution('tab-1', 'SELECT pg_sleep(10);', session, 'postgresql');
+    const running = startQueryExecution(queued, '2026-09-17T06:30:01.000Z');
+    const timedOut = failQueryExecution(
+      running,
+      {
+        code: 'QUERY_TIMEOUT',
+        message: '查询已超时（5s）'
+      },
+      '2026-09-17T06:30:06.000Z',
+      'timed-out'
+    );
+
+    expect(timedOut.status).toBe('timed-out');
+    expect(timedOut.error?.code).toBe('QUERY_TIMEOUT');
+    expect(timedOut.durationMs).toBe(5000);
+  });
 });

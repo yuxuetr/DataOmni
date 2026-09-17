@@ -6,8 +6,12 @@ use sqlx::{
   sqlite::{SqliteRow, SqliteValueRef},
   Column, Executor, MySql, Pool, Postgres, Row, Sqlite, TypeInfo, Value, ValueRef,
 };
+use std::future::Future;
 use tauri_plugin_sql::DbPool;
 use time::{Date, OffsetDateTime, PrimitiveDateTime, Time};
+use tokio::time::{timeout, Duration};
+
+pub const QUERY_TIMEOUT_CODE: &str = "QUERY_TIMEOUT";
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -22,6 +26,23 @@ pub async fn execute_query(pool: &DbPool, sql: &str) -> Result<QueryExecutionRes
     DbPool::MySql(pool) => execute_mysql(pool, sql).await,
     DbPool::Postgres(pool) => execute_postgres(pool, sql).await,
   }
+}
+
+pub async fn execute_query_with_timeout(
+  pool: &DbPool,
+  sql: &str,
+  timeout_duration: Duration,
+) -> Result<QueryExecutionResult, String> {
+  with_timeout(execute_query(pool, sql), timeout_duration).await
+}
+
+async fn with_timeout<F, T>(future: F, timeout_duration: Duration) -> Result<T, String>
+where
+  F: Future<Output = Result<T, String>>,
+{
+  timeout(timeout_duration, future).await.map_err(|_| {
+    format!("{QUERY_TIMEOUT_CODE}: 查询执行超过 {} 毫秒", timeout_duration.as_millis())
+  })?
 }
 
 async fn execute_sqlite(pool: &Pool<Sqlite>, sql: &str) -> Result<QueryExecutionResult, String> {
@@ -214,6 +235,7 @@ where
 mod tests {
   use super::*;
   use sqlx::sqlite::SqlitePoolOptions;
+  use std::future::pending;
 
   #[tokio::test]
   async fn uses_driver_metadata_for_empty_result_sets() {
@@ -264,5 +286,22 @@ mod tests {
       }
       QueryExecutionResult::Affected { .. } => panic!("expected returned rows"),
     }
+  }
+
+  #[tokio::test]
+  async fn reports_timeout_with_a_stable_error_code() {
+    let error = with_timeout(
+      async {
+        pending::<()>().await;
+        Ok::<(), String>(())
+      },
+      Duration::from_millis(1),
+    )
+    .await;
+
+    assert_eq!(
+      error.expect_err("pending query should time out"),
+      "QUERY_TIMEOUT: 查询执行超过 1 毫秒"
+    );
   }
 }

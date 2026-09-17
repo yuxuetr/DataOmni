@@ -77,6 +77,7 @@ export const SqlEditor: React.FC = () => {
   const {
     sqlInput,
     statements,
+    queryTimeoutMs,
     isConnecting,
     error,
     setSqlInput,
@@ -84,6 +85,7 @@ export const SqlEditor: React.FC = () => {
     executeSql,
     executeStatement,
     executeAllStatements,
+    setQueryTimeoutMs,
     clearResults,
     removeStatement,
     setError
@@ -199,6 +201,23 @@ export const SqlEditor: React.FC = () => {
         </div>
         
         <div className="flex items-center space-x-2">
+          <label className="flex items-center space-x-2 text-sm text-gray-600">
+            <span>超时</span>
+            <select
+              value={queryTimeoutMs}
+              onChange={(event) => setQueryTimeoutMs(Number(event.target.value))}
+              className="px-2 py-1.5 border border-gray-300 rounded-md bg-white text-sm"
+              aria-label="查询超时时间"
+            >
+              <option value={5000}>5 秒</option>
+              <option value={15000}>15 秒</option>
+              <option value={30000}>30 秒</option>
+              <option value={60000}>1 分钟</option>
+              <option value={120000}>2 分钟</option>
+              <option value={300000}>5 分钟</option>
+            </select>
+          </label>
+
           {/* 深色模式开关 */}
           <label className="flex items-center space-x-2 text-sm text-gray-600">
             <input
