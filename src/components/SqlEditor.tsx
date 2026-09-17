@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { clsx } from 'clsx';
 import {
   Play,
@@ -17,6 +17,11 @@ import { sql } from '@codemirror/lang-sql';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { autocompletion, CompletionContext } from '@codemirror/autocomplete';
 import { QueryResultScrollTable } from './QueryResultScrollTable';
+import type { EditorView } from '@codemirror/view';
+import {
+  findSqlStatementAtOffset,
+  splitSqlStatements
+} from '../utils/sqlStatements';
 
 // SQL关键字列表
 const SQL_KEYWORDS = [
@@ -76,6 +81,7 @@ export const SqlEditor: React.FC = () => {
     error,
     setSqlInput,
     parseStatements,
+    executeSql,
     executeStatement,
     executeAllStatements,
     clearResults,
@@ -85,6 +91,8 @@ export const SqlEditor: React.FC = () => {
 
   const [autoParseEnabled, setAutoParseEnabled] = useState(true);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [hasSelection, setHasSelection] = useState(false);
+  const editorViewRef = useRef<EditorView | null>(null);
 
   // CodeMirror扩展配置
   const extensions = useMemo(() => [
@@ -118,6 +126,51 @@ export const SqlEditor: React.FC = () => {
   // 清除错误
   const clearError = () => {
     setError(null);
+  };
+
+  const executeCurrentStatement = async () => {
+    const view = editorViewRef.current;
+    const cursor = view?.state.selection.main.head ?? 0;
+    const current = findSqlStatementAtOffset(sqlInput, cursor);
+    if (current) {
+      const parsedStatement = statements[current.index];
+      if (parsedStatement?.sql === current.sql) {
+        await executeStatement(parsedStatement.id);
+      } else {
+        await executeSql(current.sql);
+      }
+    }
+  };
+
+  const executeSelectedSql = async () => {
+    const selection = editorViewRef.current?.state.selection.main;
+    if (!selection || selection.empty) {
+      return;
+    }
+
+    const selectedStatements = splitSqlStatements(
+      sqlInput.slice(selection.from, selection.to)
+    );
+    for (const statement of selectedStatements) {
+      await executeSql(statement);
+    }
+  };
+
+  const handleEditorKeyDown = (event: React.KeyboardEvent) => {
+    if (!(event.metaKey || event.ctrlKey) || event.key !== 'Enter') {
+      return;
+    }
+
+    event.preventDefault();
+    if (event.shiftKey) {
+      void executeAllStatements();
+      return;
+    }
+
+    const selection = editorViewRef.current?.state.selection.main;
+    void (selection && !selection.empty
+      ? executeSelectedSql()
+      : executeCurrentStatement());
   };
 
   // 格式化执行时间
@@ -194,6 +247,26 @@ export const SqlEditor: React.FC = () => {
             <span>清除结果</span>
           </button>
 
+          <button
+            onClick={executeSelectedSql}
+            disabled={!hasSelection || isConnecting}
+            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors disabled:text-gray-400 disabled:border-gray-200 disabled:cursor-not-allowed"
+            title="执行选中内容"
+          >
+            <Play size={14} />
+            <span>执行选中</span>
+          </button>
+
+          <button
+            onClick={executeCurrentStatement}
+            disabled={statements.length === 0 || isConnecting}
+            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors disabled:text-gray-400 disabled:border-gray-200 disabled:cursor-not-allowed"
+            title="执行光标所在语句 (Cmd/Ctrl+Enter)"
+          >
+            <Play size={14} />
+            <span>执行当前</span>
+          </button>
+
           {/* 执行所有语句 */}
           <button
             onClick={executeAllStatements}
@@ -233,6 +306,15 @@ export const SqlEditor: React.FC = () => {
           <CodeMirror
             value={sqlInput}
             onChange={(value) => setSqlInput(value)}
+            onCreateEditor={(view) => {
+              editorViewRef.current = view;
+            }}
+            onUpdate={(update) => {
+              if (update.selectionSet || update.docChanged) {
+                setHasSelection(!update.state.selection.main.empty);
+              }
+            }}
+            onKeyDown={handleEditorKeyDown}
             theme={theme}
             extensions={extensions}
             placeholder="在此输入SQL语句... 多个语句请用分号(;)分隔"
@@ -256,7 +338,7 @@ export const SqlEditor: React.FC = () => {
         </div>
         <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
           <span>
-            提示: 使用分号 (;) 分隔多个SQL语句，每个语句将独立执行
+            Cmd/Ctrl+Enter 执行选中或当前语句，Cmd/Ctrl+Shift+Enter 执行全部
           </span>
           <span>
             支持语法高亮、自动补全和括号匹配

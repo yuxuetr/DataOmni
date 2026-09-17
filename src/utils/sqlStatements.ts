@@ -9,6 +9,13 @@ type LexerState =
 
 const NORMAL_STATE: LexerState = { type: 'normal' };
 
+export interface SqlStatementRange {
+  index: number;
+  sql: string;
+  from: number;
+  to: number;
+}
+
 export const splitSqlStatements = (sqlText: string): string[] => {
   const statements: string[] = [];
   let buffer = '';
@@ -143,6 +150,52 @@ export const splitSqlStatements = (sqlText: string): string[] => {
 
   flush();
   return statements;
+};
+
+export const getSqlStatementRanges = (sqlText: string): SqlStatementRange[] => {
+  const statements = splitSqlStatements(sqlText);
+  let searchFrom = 0;
+
+  return statements.flatMap((statement, index) => {
+    const from = sqlText.indexOf(statement, searchFrom);
+    if (from === -1) {
+      return [];
+    }
+
+    const to = from + statement.length;
+    searchFrom = to;
+    return [{ index, sql: statement, from, to }];
+  });
+};
+
+export const findSqlStatementAtOffset = (
+  sqlText: string,
+  offset: number
+): SqlStatementRange | undefined => {
+  const ranges = getSqlStatementRanges(sqlText);
+  const boundedOffset = Math.max(0, Math.min(offset, sqlText.length));
+  const containing = ranges.find(
+    (statement) => boundedOffset >= statement.from && boundedOffset <= statement.to
+  );
+  if (containing) {
+    return containing;
+  }
+
+  return ranges.reduce<SqlStatementRange | undefined>((nearest, statement) => {
+    if (!nearest) {
+      return statement;
+    }
+
+    const nearestDistance = Math.min(
+      Math.abs(boundedOffset - nearest.from),
+      Math.abs(boundedOffset - nearest.to)
+    );
+    const statementDistance = Math.min(
+      Math.abs(boundedOffset - statement.from),
+      Math.abs(boundedOffset - statement.to)
+    );
+    return statementDistance < nearestDistance ? statement : nearest;
+  }, undefined);
 };
 
 export const isSelectStatement = (sql: string): boolean =>

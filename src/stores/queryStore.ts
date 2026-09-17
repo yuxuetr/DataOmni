@@ -56,6 +56,7 @@ interface QueryActions {
   parseStatements: () => void;
   
   // SQL 执行
+  executeSql: (sql: string) => Promise<void>;
   executeStatement: (statementId: string) => Promise<void>;
   executeAllStatements: () => Promise<void>;
   
@@ -471,6 +472,27 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     }
     
     set({ statements: reconcileSqlStatements(sqlInput, statements) });
+  },
+
+  executeSql: async (sql: string) => {
+    const normalizedSql = sql.trim();
+    if (!normalizedSql) {
+      return;
+    }
+
+    const existing = get().statements.find((statement) => statement.sql === normalizedSql);
+    if (existing) {
+      await get().executeStatement(existing.id);
+      return;
+    }
+
+    const statement: SqlStatement = {
+      id: `statement_${Date.now()}_${crypto.randomUUID()}`,
+      sql: normalizedSql,
+      isExecuting: false
+    };
+    set((state) => ({ statements: [...state.statements, statement] }));
+    await get().executeStatement(statement.id);
   },
 
   executeStatement: async (statementId: string) => {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  findSqlStatementAtOffset,
+  getSqlStatementRanges,
   isSelectStatement,
   returnsResultSet,
   splitSqlStatements
@@ -75,6 +77,26 @@ describe('splitSqlStatements', () => {
       END`,
       'CALL load_users()'
     ]);
+  });
+});
+
+describe('SQL statement ranges', () => {
+  it('locates statements using source offsets', () => {
+    const sql = '  SELECT 1;\n\nSELECT 2;';
+
+    expect(getSqlStatementRanges(sql)).toEqual([
+      { index: 0, sql: 'SELECT 1', from: 2, to: 10 },
+      { index: 1, sql: 'SELECT 2', from: 13, to: 21 },
+    ]);
+    expect(findSqlStatementAtOffset(sql, 6)?.sql).toBe('SELECT 1');
+    expect(findSqlStatementAtOffset(sql, 17)?.sql).toBe('SELECT 2');
+  });
+
+  it('uses the nearest statement when the cursor is on a delimiter', () => {
+    const sql = 'SELECT 1;\nSELECT 2;';
+
+    expect(findSqlStatementAtOffset(sql, 8)?.sql).toBe('SELECT 1');
+    expect(findSqlStatementAtOffset(sql, 10)?.sql).toBe('SELECT 2');
   });
 });
 
