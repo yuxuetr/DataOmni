@@ -159,7 +159,10 @@ export const SqlEditor: React.FC = () => {
       sqlInput.slice(selection.from, selection.to)
     );
     for (const statement of selectedStatements) {
-      await executeSql(statement);
+      const succeeded = await executeSql(statement);
+      if (!succeeded) {
+        break;
+      }
     }
   };
 
@@ -362,7 +365,7 @@ export const SqlEditor: React.FC = () => {
         </div>
         <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
           <span>
-            Cmd/Ctrl+Enter 执行选中或当前语句，Cmd/Ctrl+Shift+Enter 执行全部
+            多语句按顺序执行，失败、超时或取消后停止
           </span>
           <span>
             支持语法高亮、自动补全和括号匹配

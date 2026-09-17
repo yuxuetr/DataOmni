@@ -26,6 +26,7 @@ import {
   reconcileSqlStatements
 } from '../utils/queryStatements';
 import { quoteSqlIdentifier } from '../utils/sqlIdentifiers';
+import { executeSequentially } from '../utils/queryExecutionPolicy';
 
 export type { QueryResult, SqlHistory, SqlStatement } from '../contracts/query';
 
@@ -59,8 +60,8 @@ interface QueryActions {
   parseStatements: () => void;
   
   // SQL 执行
-  executeSql: (sql: string) => Promise<void>;
-  executeStatement: (statementId: string) => Promise<void>;
+  executeSql: (sql: string) => Promise<boolean>;
+  executeStatement: (statementId: string) => Promise<boolean>;
   executeAllStatements: () => Promise<void>;
   cancelExecution: (executionId: string) => Promise<void>;
   setQueryTimeoutMs: (timeoutMs: number) => void;
@@ -487,13 +488,12 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   executeSql: async (sql: string) => {
     const normalizedSql = sql.trim();
     if (!normalizedSql) {
-      return;
+      return false;
     }
 
     const existing = get().statements.find((statement) => statement.sql === normalizedSql);
     if (existing) {
-      await get().executeStatement(existing.id);
-      return;
+      return get().executeStatement(existing.id);
     }
 
     const statement: SqlStatement = {
@@ -502,18 +502,18 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       isExecuting: false
     };
     set((state) => ({ statements: [...state.statements, statement] }));
-    await get().executeStatement(statement.id);
+    return get().executeStatement(statement.id);
   },
 
   executeStatement: async (statementId: string) => {
     const { connectionId, database, session, statements, queryTimeoutMs } = get();
     if (!database || !session || !connectionId) {
       set({ error: '数据库未连接' });
-      return;
+      return false;
     }
 
     const statement = statements.find(s => s.id === statementId);
-    if (!statement) return;
+    if (!statement) return false;
     const dialect = getSqlDialect(get().connectionString);
     const execution = startQueryExecution(
       createQueryExecution(
@@ -608,6 +608,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       }));
 
       console.log(`✅ SQL执行成功，耗时: ${formatExecutionTime(queryResult.execution_time)}`);
+      return true;
     } catch (error) {
       console.error('❌ SQL执行失败:', error);
       const rawErrorMessage = error instanceof Error ? error.message : String(error);
@@ -649,6 +650,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
             : candidate
         )
       }));
+      return false;
     }
   },
 
@@ -702,12 +704,10 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     const { statements } = get();
     const { executeStatement } = get();
     
-    // 按顺序执行所有语句
-    for (const statement of statements) {
-      if (!statement.isExecuting) {
-        await executeStatement(statement.id);
-      }
-    }
+    await executeSequentially(
+      statements.filter((statement) => !statement.isExecuting),
+      (statement) => executeStatement(statement.id)
+    );
   },
 
   clearResults: () => {
