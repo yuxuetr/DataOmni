@@ -209,7 +209,7 @@ impl ConnectionService {
     }
 
     let connection_string = resolved_config.db_type.to_connection_string(&resolved_config);
-    println!("🔗 准备测试数据库连接: {}", mask_password(&connection_string));
+    println!("🔗 准备测试数据库连接: {}", redact_connection_string(&connection_string));
 
     // 基本验证
     match config.db_type {
@@ -286,8 +286,32 @@ fn credential_ref(profile_id: &str) -> String {
   format!("{CREDENTIAL_REF_PREFIX}{profile_id}")
 }
 
-/// 隐藏连接字符串中的密码用于日志记录
-fn mask_password(connection_string: &str) -> String {
+fn redact_connection_string(connection_string: &str) -> String {
+  let redacted_credentials = redact_url_credentials(connection_string);
+  let Some((base, query)) = redacted_credentials.split_once('?') else {
+    return redacted_credentials;
+  };
+
+  let redacted_query = query
+    .split('&')
+    .map(|parameter| {
+      let Some((key, value)) = parameter.split_once('=') else {
+        return parameter.to_string();
+      };
+
+      if is_sensitive_parameter(key) {
+        format!("{key}=***")
+      } else {
+        format!("{key}={value}")
+      }
+    })
+    .collect::<Vec<_>>()
+    .join("&");
+
+  format!("{base}?{redacted_query}")
+}
+
+fn redact_url_credentials(connection_string: &str) -> String {
   if let Some(start) = connection_string.find("://") {
     if let Some(at_pos) = connection_string[start + 3..].find('@') {
       let prefix = &connection_string[..start + 3];
@@ -299,6 +323,21 @@ fn mask_password(connection_string: &str) -> String {
     }
   }
   connection_string.to_string()
+}
+
+fn is_sensitive_parameter(key: &str) -> bool {
+  matches!(
+    key.to_ascii_lowercase().as_str(),
+    "password"
+      | "passwd"
+      | "pwd"
+      | "token"
+      | "access_token"
+      | "refresh_token"
+      | "api_key"
+      | "apikey"
+      | "secret"
+  )
 }
 
 #[cfg(test)]
@@ -405,5 +444,16 @@ mod tests {
     );
 
     fs::remove_file(config_path).unwrap();
+  }
+
+  #[test]
+  fn redacts_connection_credentials_and_sensitive_parameters() {
+    let redacted = redact_connection_string(
+      "postgres://admin:secret@localhost/app?sslmode=require&token=abc123",
+    );
+
+    assert_eq!(redacted, "postgres://admin:***@localhost/app?sslmode=require&token=***");
+    assert!(!redacted.contains("secret"));
+    assert!(!redacted.contains("abc123"));
   }
 }
