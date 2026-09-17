@@ -494,11 +494,11 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       // 执行SQL查询
       let queryResult: QueryResult;
       const sql = statement.sql.trim();
-      const executionTime = Date.now() - startTime;
       
       if (sql.toLowerCase().startsWith('select')) {
         // SELECT查询使用select方法
         const selectResult = await database.select(statement.sql);
+        const executionTime = Date.now() - startTime;
         
         // 处理SELECT结果
         console.log('📊 原始查询结果:', selectResult);
@@ -535,6 +535,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       } else {
         // 非SELECT查询使用execute方法
         const execResult = await database.execute(statement.sql);
+        const executionTime = Date.now() - startTime;
         
         queryResult = {
           columns: [],
@@ -559,7 +560,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         )
       });
 
-      console.log(`✅ SQL执行成功，耗时: ${formatExecutionTime(executionTime)}`);
+      console.log(`✅ SQL执行成功，耗时: ${formatExecutionTime(queryResult.execution_time)}`);
     } catch (error) {
       console.error('❌ SQL执行失败:', error);
       const errorMessage = error instanceof Error ? error.message : 'SQL执行失败';
