@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import Database from '@tauri-apps/plugin-sql';
 import { assertSingleRowAffected } from '../utils/executeResult';
 import { quoteSqlIdentifier, type SqlIdentifierDialect } from '../utils/sqlIdentifiers';
+import { isSelectStatement, splitSqlStatements } from '../utils/sqlStatements';
 
 // 查询结果接口
 export interface QueryResult {
@@ -80,11 +81,7 @@ type QueryStore = QueryState & QueryActions;
 
 // 解析SQL语句的工具函数
 const parseSqlStatements = (sqlText: string): SqlStatement[] => {
-  // 简单的SQL语句分割逻辑，按分号分割
-  const statements = sqlText
-    .split(';')
-    .map(stmt => stmt.trim())
-    .filter(stmt => stmt.length > 0)
+  const statements = splitSqlStatements(sqlText)
     .map((sql, index) => ({
       id: `stmt_${Date.now()}_${index}`,
       sql: sql + ';', // 添加回分号
@@ -512,7 +509,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       let queryResult: QueryResult;
       const sql = statement.sql.trim();
       
-      if (sql.toLowerCase().startsWith('select')) {
+      if (isSelectStatement(sql)) {
         // SELECT查询使用select方法
         const selectResult = await database.select(statement.sql);
         const executionTime = Date.now() - startTime;
