@@ -1,4 +1,4 @@
-use crate::models::{ConnectionConfig, DatabaseType};
+use crate::models::{ConnectionProfile, DatabaseType};
 use serde_json;
 use std::collections::HashMap;
 use std::fs;
@@ -8,7 +8,7 @@ use tauri::Manager;
 #[derive(Debug)]
 pub struct ConnectionService {
   config_path: PathBuf,
-  connections: HashMap<String, ConnectionConfig>,
+  connections: HashMap<String, ConnectionProfile>,
 }
 
 impl ConnectionService {
@@ -30,13 +30,13 @@ impl ConnectionService {
   /// 加载已保存的连接配置
   fn load_connections(
     config_path: &PathBuf,
-  ) -> Result<HashMap<String, ConnectionConfig>, Box<dyn std::error::Error>> {
+  ) -> Result<HashMap<String, ConnectionProfile>, Box<dyn std::error::Error>> {
     if !config_path.exists() {
       return Ok(HashMap::new());
     }
 
     let content = fs::read_to_string(config_path)?;
-    let connections: Vec<ConnectionConfig> = serde_json::from_str(&content)?;
+    let connections: Vec<ConnectionProfile> = serde_json::from_str(&content)?;
     let mut map = HashMap::new();
 
     for conn in connections {
@@ -48,14 +48,14 @@ impl ConnectionService {
 
   /// 保存连接配置到文件
   fn save_connections(&self) -> Result<(), Box<dyn std::error::Error>> {
-    let connections: Vec<&ConnectionConfig> = self.connections.values().collect();
+    let connections: Vec<&ConnectionProfile> = self.connections.values().collect();
     let content = serde_json::to_string_pretty(&connections)?;
     fs::write(&self.config_path, content)?;
     Ok(())
   }
 
   /// 创建新的数据库连接配置
-  pub fn create_connection(&mut self, mut config: ConnectionConfig) -> Result<String, String> {
+  pub fn create_connection(&mut self, mut config: ConnectionProfile) -> Result<String, String> {
     // 确保ID唯一
     if config.id.is_empty() {
       config.id = uuid::Uuid::new_v4().to_string();
@@ -81,7 +81,7 @@ impl ConnectionService {
   pub fn update_connection(
     &mut self,
     id: &str,
-    mut config: ConnectionConfig,
+    mut config: ConnectionProfile,
   ) -> Result<(), String> {
     if !self.connections.contains_key(id) {
       return Err("连接不存在".to_string());
@@ -109,17 +109,17 @@ impl ConnectionService {
   }
 
   /// 获取所有连接配置
-  pub fn get_connections(&self) -> Vec<ConnectionConfig> {
+  pub fn get_connections(&self) -> Vec<ConnectionProfile> {
     self.connections.values().cloned().collect()
   }
 
   /// 根据ID获取连接配置
-  pub fn get_connection(&self, id: &str) -> Option<&ConnectionConfig> {
+  pub fn get_connection(&self, id: &str) -> Option<&ConnectionProfile> {
     self.connections.get(id)
   }
 
   /// 测试数据库连接 - 实际尝试连接并返回连接字符串
-  pub fn test_connection(&self, config: &ConnectionConfig) -> Result<String, String> {
+  pub fn test_connection(&self, config: &ConnectionProfile) -> Result<String, String> {
     let connection_string = config.db_type.to_connection_string(config);
     println!("🔗 准备测试数据库连接: {}", mask_password(&connection_string));
 

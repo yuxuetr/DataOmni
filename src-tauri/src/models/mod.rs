@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use urlencoding::encode;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConnectionConfig {
+pub struct ConnectionProfile {
   pub id: String,
   pub name: String,
   pub db_type: DatabaseType,
@@ -15,8 +15,22 @@ pub struct ConnectionConfig {
   pub ssl: bool,
   pub options: HashMap<String, String>,
   pub tags: Vec<String>,
+  #[serde(default)]
+  pub environment: ConnectionEnvironment,
+  #[serde(default)]
+  pub credential_ref: Option<String>,
   pub created_at: String,
   pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ConnectionEnvironment {
+  #[default]
+  Development,
+  Testing,
+  Staging,
+  Production,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -130,7 +144,7 @@ impl DatabaseType {
     }
   }
 
-  pub fn to_connection_string(&self, config: &ConnectionConfig) -> String {
+  pub fn to_connection_string(&self, config: &ConnectionProfile) -> String {
     match self {
       DatabaseType::MySQL => {
         let base_url = format!(
@@ -269,7 +283,7 @@ impl DatabaseType {
   }
 }
 
-impl Default for ConnectionConfig {
+impl Default for ConnectionProfile {
   fn default() -> Self {
     Self {
       id: uuid::Uuid::new_v4().to_string(),
@@ -283,6 +297,8 @@ impl Default for ConnectionConfig {
       ssl: false,
       options: HashMap::new(),
       tags: Vec::new(),
+      environment: ConnectionEnvironment::Development,
+      credential_ref: None,
       created_at: chrono::Utc::now().to_rfc3339(),
       updated_at: chrono::Utc::now().to_rfc3339(),
     }
@@ -293,8 +309,8 @@ impl Default for ConnectionConfig {
 mod tests {
   use super::*;
 
-  fn mysql_config(ssl: bool) -> ConnectionConfig {
-    ConnectionConfig {
+  fn mysql_config(ssl: bool) -> ConnectionProfile {
+    ConnectionProfile {
       db_type: DatabaseType::MySQL,
       host: "localhost".to_string(),
       port: 3306,
@@ -302,7 +318,7 @@ mod tests {
       username: "user".to_string(),
       password: "password".to_string(),
       ssl,
-      ..ConnectionConfig::default()
+      ..ConnectionProfile::default()
     }
   }
 
@@ -320,5 +336,30 @@ mod tests {
 
     assert!(connection_string.contains("ssl-mode=DISABLED"));
     assert!(!connection_string.contains("ssl-mode=REQUIRED"));
+  }
+
+  #[test]
+  fn legacy_connection_profile_defaults_new_fields() {
+    let json = r#"{
+      "id":"profile-1",
+      "name":"Local",
+      "db_type":"sqlite",
+      "host":"",
+      "port":0,
+      "database":":memory:",
+      "username":"",
+      "password":"",
+      "ssl":false,
+      "options":{},
+      "tags":[],
+      "created_at":"2026-01-01T00:00:00Z",
+      "updated_at":"2026-01-01T00:00:00Z"
+    }"#;
+
+    let profile: ConnectionProfile =
+      serde_json::from_str(json).expect("legacy profile should load");
+
+    assert_eq!(profile.environment, ConnectionEnvironment::Development);
+    assert_eq!(profile.credential_ref, None);
   }
 }

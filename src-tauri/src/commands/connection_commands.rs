@@ -1,4 +1,4 @@
-use crate::models::ConnectionConfig;
+use crate::models::ConnectionProfile;
 use crate::services::ConnectionService;
 use std::sync::Mutex;
 use tauri::{AppHandle, State};
@@ -8,7 +8,7 @@ pub type ConnectionServiceState = Mutex<Option<ConnectionService>>;
 
 #[tauri::command]
 pub async fn create_connection(
-  config: ConnectionConfig,
+  config: ConnectionProfile,
   app_handle: AppHandle,
   service_state: State<'_, ConnectionServiceState>,
 ) -> Result<String, String> {
@@ -33,7 +33,7 @@ pub async fn create_connection(
 #[tauri::command]
 pub async fn update_connection(
   id: String,
-  config: ConnectionConfig,
+  config: ConnectionProfile,
   app_handle: AppHandle,
   service_state: State<'_, ConnectionServiceState>,
 ) -> Result<(), String> {
@@ -83,7 +83,7 @@ pub async fn delete_connection(
 pub async fn get_connections(
   app_handle: AppHandle,
   service_state: State<'_, ConnectionServiceState>,
-) -> Result<Vec<ConnectionConfig>, String> {
+) -> Result<Vec<ConnectionProfile>, String> {
   println!("📋 获取所有数据库连接");
 
   let mut service_guard = service_state.lock().map_err(|e| format!("获取服务状态失败: {}", e))?;
@@ -104,7 +104,7 @@ pub async fn get_connections(
 
 #[tauri::command]
 pub fn test_connection(
-  config: ConnectionConfig,
+  config: ConnectionProfile,
   app_handle: AppHandle,
   service_state: State<'_, ConnectionServiceState>,
 ) -> Result<String, String> {

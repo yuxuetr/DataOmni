@@ -19,8 +19,10 @@ export enum DatabaseType {
   Elasticsearch = 'elasticsearch',
 }
 
-// 连接配置接口
-export interface ConnectionConfig {
+export type ConnectionEnvironment = 'development' | 'testing' | 'staging' | 'production';
+
+// 保存的连接资料；运行时状态由 Session 管理
+export interface ConnectionProfile {
   id: string;
   name: string;
   db_type: DatabaseType;
@@ -32,9 +34,14 @@ export interface ConnectionConfig {
   ssl: boolean;
   options: Record<string, string>;
   tags: string[];
+  environment: ConnectionEnvironment;
+  credential_ref?: string;
   created_at: string;
   updated_at: string;
 }
+
+/** @deprecated 使用 ConnectionProfile。 */
+export type ConnectionConfig = ConnectionProfile;
 
 // 连接状态
 export interface ConnectionState {
@@ -77,6 +84,8 @@ export const createDefaultConfig = (type: DatabaseType = DatabaseType.SQLite): P
         ssl: false,
     options: {},
     tags: [],
+    environment: 'development' as ConnectionEnvironment,
+    credential_ref: undefined,
   };
 
   switch (type) {

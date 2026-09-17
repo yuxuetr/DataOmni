@@ -68,7 +68,7 @@
 
 ### 1.1 定义核心领域模型
 
-- [ ] 定义 `ConnectionProfile`：保存配置、环境标签和凭据引用
+- [x] 定义 `ConnectionProfile`：保存配置、环境标签和凭据引用
 - [ ] 定义 `Session`：实际数据库连接、当前数据库、事务上下文和能力集合
 - [ ] 定义 `WorkspaceTab`：标签类型、连接绑定、草稿和未保存状态
 - [ ] 定义 `QueryExecution`：SQL 快照、状态、耗时、错误、取消和结果引用
