@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import Database from '@tauri-apps/plugin-sql';
+import { assertSingleRowAffected } from '../utils/executeResult';
 
 // 查询结果接口
 export interface QueryResult {
@@ -692,7 +693,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       console.log('🔄 执行更新操作:', updateSql, params);
       
       // 执行更新
-      await database.execute(updateSql, params);
+      const updateResult = await database.execute(updateSql, params);
+      assertSingleRowAffected(updateResult, '更新');
 
       // 更新本地数据
       const columnIndex = result.columns.indexOf(columnName);
@@ -765,7 +767,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       console.log('🗑️ 执行删除操作:', deleteSql, params);
       
       // 执行删除
-      await database.execute(deleteSql, params);
+      const deleteResult = await database.execute(deleteSql, params);
+      assertSingleRowAffected(deleteResult, '删除');
 
       // 更新本地数据
       const updatedRows = result.rows.filter((_, index) => index !== rowIndex);

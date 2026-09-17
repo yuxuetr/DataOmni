@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 import { ConnectionConfig } from '../stores/connectionStore';
+import { assertSingleRowAffected } from '../utils/executeResult';
 
 interface ColumnInfo {
   name: string;
@@ -620,7 +621,8 @@ export default function TableDataViewer({
     console.log('更新查询:', updateQuery);
     console.log('更新值:', values);
     
-    await database.execute(updateQuery, values);
+    const updateResult = await database.execute(updateQuery, values);
+    assertSingleRowAffected(updateResult, '更新');
   };
 
   // 删除行
@@ -662,7 +664,8 @@ export default function TableDataViewer({
     console.log('删除查询:', deleteQuery);
     console.log('删除值:', values);
     
-    await database.execute(deleteQuery, values);
+    const deleteResult = await database.execute(deleteQuery, values);
+    assertSingleRowAffected(deleteResult, '删除');
   };
 
   // 可编辑单元格组件
