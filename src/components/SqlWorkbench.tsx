@@ -29,7 +29,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
   const {
     database,
     connectionId,
-    sessionId,
+    session,
     isConnecting,
     error,
     setError,
@@ -151,9 +151,9 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
                 {statusDisplay.icon}
                 <span>{statusDisplay.text}</span>
               </div>
-              {connectionId && sessionId && (
+              {connectionId && session && (
                 <div className="text-xs text-gray-500">
-                  配置: {connectionId} · Session: {sessionId.slice(0, 8)}
+                  配置: {connectionId} · Session: {session.id.slice(0, 8)}
                 </div>
               )}
             </div>

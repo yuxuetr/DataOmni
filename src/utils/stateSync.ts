@@ -5,6 +5,7 @@
 import { useAppStore } from '../stores/appStore';
 import { useQueryStore } from '../stores/queryStore';
 import { ConnectionConfig } from '../stores/connectionStore';
+import { createDatabaseSession } from '../contracts/session';
 
 /**
  * 数据库连接状态
@@ -159,7 +160,11 @@ export class SessionManager {
     appStore.setConnectionReady(false);
 
     // 5. 建立新连接
-    await queryStore.connectToDatabase(connectionString, connection.id, crypto.randomUUID());
+    await queryStore.connectToDatabase(
+      connectionString,
+      connection.id,
+      createDatabaseSession(connection)
+    );
 
     // 6. 等待数据库连接对象就绪
     await this.waitForDatabaseReady();
