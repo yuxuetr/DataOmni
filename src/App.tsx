@@ -3,7 +3,7 @@ import { SqlWorkbench } from './components/SqlWorkbench';
 import TableDataViewer from './components/TableDataViewer';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { useAppStore } from './stores/appStore';
-import { useConnectionStateManager } from './utils/stateSync';
+import { useSessionManager } from './utils/stateSync';
 
 function App() {
   const { 
@@ -11,11 +11,10 @@ function App() {
     viewMode, 
     tableViewerState, 
     selectedTable,
-    handleConnectionDeleted,
     closeTableViewer
   } = useAppStore();
   
-  const connectionManager = useConnectionStateManager();
+  const sessionManager = useSessionManager();
 
   return (
     <div className="h-screen flex bg-gray-100">
@@ -24,14 +23,14 @@ function App() {
         <Sidebar 
           onConnect={async (connection, connectionString) => {
             try {
-              await connectionManager.switchConnection(connection, connectionString);
+              await sessionManager.switchConnection(connection, connectionString);
             } catch (error) {
               console.error('连接失败:', error);
               throw error;
             }
           }}
           activeConnectionId={activeConnection?.config.id}
-          onConnectionDeleted={handleConnectionDeleted}
+          onConnectionDeleted={(connectionId) => sessionManager.handleConnectionDeleted(connectionId)}
           onTableSelect={(tableName, schema) => {
             if (activeConnection) {
               useAppStore.getState().openTableViewer(activeConnection.config, tableName, schema);
@@ -46,8 +45,8 @@ function App() {
           activeConnection ? (
             <SqlWorkbench
               connection={activeConnection.config}
-              onDisconnect={() => useAppStore.getState().clearActiveConnection()}
-              onReconnect={() => connectionManager.switchConnection(
+              onDisconnect={() => sessionManager.disconnect()}
+              onReconnect={() => sessionManager.switchConnection(
                 activeConnection.config,
                 activeConnection.connectionString
               )}

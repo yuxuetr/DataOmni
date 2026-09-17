@@ -1,6 +1,5 @@
 /**
- * 状态同步工具
- * 用于解决数据库连接切换时的状态管理问题
+ * 数据库会话管理工具
  */
 
 import { useAppStore } from '../stores/appStore';
@@ -18,19 +17,19 @@ export enum ConnectionState {
 }
 
 /**
- * 连接状态管理器
+ * 数据库会话管理器
  */
-export class ConnectionStateManager {
-  private static instance: ConnectionStateManager;
+export class SessionManager {
+  private static instance: SessionManager;
   private connectionPromises: Map<string, Promise<void>> = new Map();
 
   private constructor() {}
 
-  static getInstance(): ConnectionStateManager {
-    if (!ConnectionStateManager.instance) {
-      ConnectionStateManager.instance = new ConnectionStateManager();
+  static getInstance(): SessionManager {
+    if (!SessionManager.instance) {
+      SessionManager.instance = new SessionManager();
     }
-    return ConnectionStateManager.instance;
+    return SessionManager.instance;
   }
 
   /**
@@ -40,7 +39,7 @@ export class ConnectionStateManager {
    */
   async switchConnection(connection: ConnectionConfig, connectionString: string): Promise<void> {
     const connectionId = connection.id;
-    console.log('🔄 ConnectionStateManager: 开始切换连接:', connectionId);
+    console.log('🔄 SessionManager: 开始切换连接:', connectionId);
 
     // 如果已经有相同的连接正在进行，等待完成
     if (this.connectionPromises.has(connectionId)) {
@@ -63,6 +62,42 @@ export class ConnectionStateManager {
       // 清理Promise
       this.connectionPromises.delete(connectionId);
     }
+  }
+
+  /**
+   * 关闭当前数据库会话并清理关联的应用状态
+   */
+  async disconnect(): Promise<void> {
+    const appStore = useAppStore.getState();
+    const activeConnectionId = appStore.activeConnection?.config.id;
+
+    await useQueryStore.getState().disconnect();
+
+    if (activeConnectionId) {
+      appStore.clearDatabaseMetadata(activeConnectionId);
+    }
+
+    useAppStore.setState({
+      activeConnection: null,
+      selectedTable: null,
+      tableViewerState: null,
+      viewMode: 'workbench',
+      connectionReady: false
+    });
+  }
+
+  /**
+   * 清理被删除连接关联的运行时状态
+   */
+  async handleConnectionDeleted(connectionId: string): Promise<void> {
+    const appStore = useAppStore.getState();
+
+    if (appStore.activeConnection?.config.id === connectionId) {
+      await this.disconnect();
+      return;
+    }
+
+    appStore.clearDatabaseMetadata(connectionId);
   }
 
   /**
@@ -167,8 +202,8 @@ export class ConnectionStateManager {
 /**
  * Hook用于获取连接状态管理器
  */
-export function useConnectionStateManager(): ConnectionStateManager {
-  return ConnectionStateManager.getInstance();
+export function useSessionManager(): SessionManager {
+  return SessionManager.getInstance();
 }
 
 /**
@@ -176,7 +211,7 @@ export function useConnectionStateManager(): ConnectionStateManager {
  */
 export async function waitForConnectionReady(timeoutMs: number = 5000): Promise<boolean> {
   const startTime = Date.now();
-  const manager = ConnectionStateManager.getInstance();
+  const manager = SessionManager.getInstance();
 
   while (Date.now() - startTime < timeoutMs) {
     const state = manager.getConnectionState();

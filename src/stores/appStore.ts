@@ -1,7 +1,5 @@
 import { create } from 'zustand';
-import { invoke } from '@tauri-apps/api/core';
 import { ConnectionConfig } from './connectionStore';
-import { useQueryStore } from './queryStore';
 
 // 视图模式类型
 export type ViewMode = 'workbench' | 'table-viewer';
@@ -50,15 +48,11 @@ export interface AppState {
 
 // 应用操作接口
 export interface AppActions {
-  // 数据库连接管理
-  setActiveConnection: (connection: ConnectionConfig, connectionString: string) => Promise<void>;
-  clearActiveConnection: () => Promise<void>;
-  
   // 视图模式管理
   setViewMode: (mode: ViewMode) => void;
   
   // 表数据查看器管理
-  openTableViewer: (connection: ConnectionConfig, tableName: string, schema?: string) => Promise<void>;
+  openTableViewer: (connection: ConnectionConfig, tableName: string, schema?: string) => void;
   closeTableViewer: () => void;
   
   // 表选择管理
@@ -68,9 +62,6 @@ export interface AppActions {
   // 数据库元数据管理
   setDatabaseMetadata: (connectionId: string, metadata: AppState['databaseMetadata'][string]) => void;
   clearDatabaseMetadata: (connectionId?: string) => void;
-  
-  // 连接删除处理
-  handleConnectionDeleted: (deletedConnectionId: string) => Promise<void>;
   
   // 连接状态管理
   setConnectionReady: (ready: boolean) => void;
@@ -89,104 +80,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
   databaseMetadata: {},
   connectionReady: false,
 
-  // Actions
-  setActiveConnection: async (connection: ConnectionConfig, connectionString: string) => {
-    console.log('🔄 设置活跃连接:', connection.name);
-    
-    const currentState = get();
-    const previousConnectionId = currentState.activeConnection?.config.id;
-    
-    // 先断开旧连接并保存历史
-    if (previousConnectionId && previousConnectionId !== connection.id) {
-      console.log('🔌 断开旧连接并保存历史:', previousConnectionId);
-      const { disconnect, saveSqlHistory } = useQueryStore.getState();
-      saveSqlHistory(); // 保存当前SQL历史
-      await disconnect(); // 断开旧连接
-      get().clearDatabaseMetadata(previousConnectionId);
-    }
-    
-    // 设置连接状态为连接中
-    set({ 
-      activeConnection: { config: connection, connectionString },
-      selectedTable: null,
-      connectionReady: false
-    });
-    
-    // 建立数据库连接
-    try {
-      console.log('🔗 正在建立数据库连接...');
-      const { connectToDatabase } = useQueryStore.getState();
-      
-      // 等待连接完成
-      await connectToDatabase(connectionString, connection.id);
-      
-      // 验证连接状态
-      const { database } = useQueryStore.getState();
-      if (!database) {
-        throw new Error('数据库连接对象为空');
-      }
-      
-      // 连接成功后设置状态为准备就绪
-      console.log('✅ 数据库连接成功，设置状态为准备就绪');
-      set({ connectionReady: true });
-    } catch (error) {
-      console.error('❌ 数据库连接失败:', error);
-      set({ 
-        activeConnection: null,
-        connectionReady: false
-      });
-      throw error;
-    }
-  },
-
-  clearActiveConnection: async () => {
-    console.log('🔌 清除活跃连接');
-    
-    // 断开数据库连接
-    const { disconnect } = useQueryStore.getState();
-    await disconnect();
-    
-    set({ 
-      activeConnection: null,
-      selectedTable: null,
-      tableViewerState: null,
-      viewMode: 'workbench',
-      connectionReady: false
-    });
-  },
-
   setViewMode: (mode: ViewMode) => {
     console.log('📋 切换视图模式:', mode);
     set({ viewMode: mode });
   },
 
-  openTableViewer: async (connection: ConnectionConfig, tableName: string, schema?: string) => {
+  openTableViewer: (connection: ConnectionConfig, tableName: string, schema?: string) => {
     console.log('🖱️ 打开表数据查看器:', tableName, 'schema:', schema);
     
-    // 确保连接是活跃的
     const currentState = get();
-    if (!currentState.activeConnection || currentState.activeConnection.config.id !== connection.id) {
-      // 如果连接不同，需要设置新的连接
-      console.log('🔄 切换到新的数据库连接:', connection.name);
-      
-      const connectionString = await invoke<string>('test_connection', { config: connection });
-      console.log('✅ 获取到连接字符串:', connectionString.replace(/:([^:@]+)@/, ':***@'));
-      
-      set({ 
-        activeConnection: { config: connection, connectionString },
-        tableViewerState: { connection, tableName, schema },
-        viewMode: 'table-viewer',
-        selectedTable: null
-      });
-    } else {
-      // 使用现有连接
-      console.log('✅ 使用现有连接');
-      set({ 
-        tableViewerState: { connection, tableName, schema },
-        viewMode: 'table-viewer',
-        selectedTable: null
-      });
+    if (
+      !currentState.activeConnection ||
+      currentState.activeConnection.config.id !== connection.id ||
+      !currentState.connectionReady
+    ) {
+      throw new Error('无法打开数据表：数据库会话未连接或尚未就绪');
     }
+
+    set({
+      tableViewerState: { connection, tableName, schema },
+      viewMode: 'table-viewer',
+      selectedTable: null
+    });
   },
 
   closeTableViewer: () => {
@@ -232,25 +147,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
       console.log('🗑️ 清除所有数据库元数据');
       set({ databaseMetadata: {} });
     }
-  },
-
-  handleConnectionDeleted: async (deletedConnectionId: string) => {
-    console.log('🗑️ 处理连接删除:', deletedConnectionId);
-    const currentState = get();
-    
-    // 如果删除的是当前活跃连接，清除活跃连接状态
-    if (currentState.activeConnection && currentState.activeConnection.config.id === deletedConnectionId) {
-      await useQueryStore.getState().disconnect();
-      set({ 
-        activeConnection: null,
-        selectedTable: null,
-        tableViewerState: null,
-        viewMode: 'workbench'
-      });
-    }
-    
-    // 清除相关的元数据缓存
-    get().clearDatabaseMetadata(deletedConnectionId);
   },
 
   setConnectionReady: (ready: boolean) => {
