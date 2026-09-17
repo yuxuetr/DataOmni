@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import Database from '@tauri-apps/plugin-sql';
 import { assertSingleRowAffected } from '../utils/executeResult';
+import { quoteSqlIdentifier, type SqlIdentifierDialect } from '../utils/sqlIdentifiers';
 
 // 查询结果接口
 export interface QueryResult {
@@ -209,6 +210,16 @@ const formatExecutionTime = (ms: number): string => {
   } else {
     return `${Math.floor(ms / 60000)}m ${((ms % 60000) / 1000).toFixed(2)}s`;
   }
+};
+
+const getSqlDialect = (connectionString: string | null): SqlIdentifierDialect => {
+  if (connectionString?.startsWith('mysql://')) {
+    return 'mysql';
+  }
+  if (connectionString?.startsWith('postgres://')) {
+    return 'postgresql';
+  }
+  return 'sqlite';
 };
 
 // 生成连接ID的工具函数
@@ -684,14 +695,18 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       // 根据数据库类型构建正确的UPDATE语句
       let updateSql: string;
       let params: any[];
+      const dialect = getSqlDialect(connectionString);
+      const quotedTable = quoteSqlIdentifier(result.table_name, dialect);
+      const quotedColumn = quoteSqlIdentifier(columnName, dialect);
+      const quotedPrimaryKey = quoteSqlIdentifier(result.primary_key, dialect);
       
       if (connectionString?.startsWith('postgres://')) {
         // PostgreSQL 使用 $1, $2 占位符
-        updateSql = `UPDATE ${result.table_name} SET ${columnName} = $1 WHERE ${result.primary_key} = $2`;
+        updateSql = `UPDATE ${quotedTable} SET ${quotedColumn} = $1 WHERE ${quotedPrimaryKey} = $2`;
         params = [newValue, primaryKeyValue];
       } else {
         // MySQL 和 SQLite 使用 ? 占位符
-        updateSql = `UPDATE ${result.table_name} SET ${columnName} = ? WHERE ${result.primary_key} = ?`;
+        updateSql = `UPDATE ${quotedTable} SET ${quotedColumn} = ? WHERE ${quotedPrimaryKey} = ?`;
         params = [newValue, primaryKeyValue];
       }
       
@@ -758,14 +773,17 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       // 根据数据库类型构建正确的DELETE语句
       let deleteSql: string;
       let params: any[];
+      const dialect = getSqlDialect(connectionString);
+      const quotedTable = quoteSqlIdentifier(result.table_name, dialect);
+      const quotedPrimaryKey = quoteSqlIdentifier(result.primary_key, dialect);
       
       if (connectionString?.startsWith('postgres://')) {
         // PostgreSQL 使用 $1 占位符
-        deleteSql = `DELETE FROM ${result.table_name} WHERE ${result.primary_key} = $1`;
+        deleteSql = `DELETE FROM ${quotedTable} WHERE ${quotedPrimaryKey} = $1`;
         params = [primaryKeyValue];
       } else {
         // MySQL 和 SQLite 使用 ? 占位符
-        deleteSql = `DELETE FROM ${result.table_name} WHERE ${result.primary_key} = ?`;
+        deleteSql = `DELETE FROM ${quotedTable} WHERE ${quotedPrimaryKey} = ?`;
         params = [primaryKeyValue];
       }
       
@@ -892,6 +910,9 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       // 构建INSERT语句
       const columns = Object.keys(processedData);
       const values = Object.values(processedData);
+      const dialect = getSqlDialect(connectionString);
+      const quotedTable = quoteSqlIdentifier(result.table_name, dialect);
+      const quotedColumns = columns.map(column => quoteSqlIdentifier(column, dialect));
       
       let insertSql: string;
       let params: any[];
@@ -926,12 +947,12 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           }
         });
         
-        insertSql = `INSERT INTO ${result.table_name} (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`;
+        insertSql = `INSERT INTO ${quotedTable} (${quotedColumns.join(', ')}) VALUES (${placeholders.join(', ')})`;
         params = sqlParams;
       } else {
         // MySQL 和 SQLite 使用 ? 占位符
         const placeholders = values.map(() => '?').join(', ');
-        insertSql = `INSERT INTO ${result.table_name} (${columns.join(', ')}) VALUES (${placeholders})`;
+        insertSql = `INSERT INTO ${quotedTable} (${quotedColumns.join(', ')}) VALUES (${placeholders})`;
         params = values;
       }
       
@@ -943,7 +964,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       await database.execute(insertSql, params);
       
       // 重新查询数据以获取最新结果（包括自动生成的ID等）
-      const refreshSql = `SELECT * FROM ${result.table_name}`;
+      const refreshSql = `SELECT * FROM ${quotedTable}`;
       const refreshResult = await database.select(refreshSql);
       
       if (Array.isArray(refreshResult) && refreshResult.length > 0) {

@@ -25,6 +25,7 @@ import {
 import clsx from 'clsx';
 import { ConnectionConfig } from '../stores/connectionStore';
 import { assertSingleRowAffected } from '../utils/executeResult';
+import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from '../utils/sqlIdentifiers';
 
 interface ColumnInfo {
   name: string;
@@ -193,7 +194,7 @@ export default function TableDataViewer({
           `;
           break;
         case 'sqlite':
-          schemaQuery = `PRAGMA table_info(${tableName})`;
+          schemaQuery = `PRAGMA table_info(${quoteSqlIdentifier(tableName, 'sqlite')})`;
           break;
       }
       
@@ -222,10 +223,14 @@ export default function TableDataViewer({
     setError(null);
     
     try {
+      const dialect = connection.db_type === 'mysql' ? 'mysql' : connection.db_type === 'postgresql' ? 'postgresql' : 'sqlite';
+      const tableReference = quoteQualifiedSqlIdentifier(
+        schema ? [schema, tableName] : [tableName],
+        dialect
+      );
+
       // 获取总行数
-      const countQuery = schema 
-        ? `SELECT COUNT(*) as total FROM ${schema}.${tableName}`
-        : `SELECT COUNT(*) as total FROM ${tableName}`;
+      const countQuery = `SELECT COUNT(*) as total FROM ${tableReference}`;
       
       const countResult = await database!.select(countQuery);
       const total = Array.isArray(countResult) && countResult.length > 0 
@@ -240,17 +245,13 @@ export default function TableDataViewer({
       
       switch (connection.db_type) {
         case 'postgresql':
-          dataQuery = schema 
-            ? `SELECT * FROM ${schema}.${tableName} LIMIT $1 OFFSET $2`
-            : `SELECT * FROM ${tableName} LIMIT $1 OFFSET $2`;
+          dataQuery = `SELECT * FROM ${tableReference} LIMIT $1 OFFSET $2`;
           break;
         case 'mysql':
-          dataQuery = schema 
-            ? `SELECT * FROM ${schema}.${tableName} LIMIT ? OFFSET ?`
-            : `SELECT * FROM ${tableName} LIMIT ? OFFSET ?`;
+          dataQuery = `SELECT * FROM ${tableReference} LIMIT ? OFFSET ?`;
           break;
         case 'sqlite':
-          dataQuery = `SELECT * FROM ${tableName} LIMIT ${pageSize} OFFSET ${offset}`;
+          dataQuery = `SELECT * FROM ${tableReference} LIMIT ${pageSize} OFFSET ${offset}`;
           break;
       }
       
@@ -521,8 +522,13 @@ export default function TableDataViewer({
       }
     });
     
-    const tableNameWithSchema = schema ? `${schema}.${tableName}` : tableName;
-    const insertQuery = `INSERT INTO ${tableNameWithSchema} (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`;
+    const dialect = connection.db_type === 'mysql' ? 'mysql' : connection.db_type === 'postgresql' ? 'postgresql' : 'sqlite';
+    const tableNameWithSchema = quoteQualifiedSqlIdentifier(
+      schema ? [schema, tableName] : [tableName],
+      dialect
+    );
+    const quotedColumns = columns.map(column => quoteSqlIdentifier(column, dialect));
+    const insertQuery = `INSERT INTO ${tableNameWithSchema} (${quotedColumns.join(', ')}) VALUES (${placeholders.join(', ')})`;
     
     console.log('插入查询:', insertQuery);
     console.log('插入值:', values);
@@ -566,23 +572,29 @@ export default function TableDataViewer({
       return;
     }
     
+    const dialect = connection.db_type === 'mysql' ? 'mysql' : connection.db_type === 'postgresql' ? 'postgresql' : 'sqlite';
     const setClause = updateColumns.map((col, index) => {
+      const quotedColumn = quoteSqlIdentifier(col, dialect);
       switch (connection.db_type) {
         case 'postgresql':
-          return `${col} = $${index + 1}`;
+          return `${quotedColumn} = $${index + 1}`;
         case 'mysql':
         case 'sqlite':
-          return `${col} = ?`;
+          return `${quotedColumn} = ?`;
         default:
-          return `${col} = ?`;
+          return `${quotedColumn} = ?`;
       }
     }).join(', ');
     
+    const quotedPrimaryKey = quoteSqlIdentifier(pkColumn, dialect);
     const whereClause = connection.db_type === 'postgresql' 
-      ? `${pkColumn} = $${updateColumns.length + 1}`
-      : `${pkColumn} = ?`;
+      ? `${quotedPrimaryKey} = $${updateColumns.length + 1}`
+      : `${quotedPrimaryKey} = ?`;
     
-    const tableNameWithSchema = schema ? `${schema}.${tableName}` : tableName;
+    const tableNameWithSchema = quoteQualifiedSqlIdentifier(
+      schema ? [schema, tableName] : [tableName],
+      dialect
+    );
     const updateQuery = `UPDATE ${tableNameWithSchema} SET ${setClause} WHERE ${whereClause}`;
     
     // 转换数据类型
@@ -640,7 +652,12 @@ export default function TableDataViewer({
     const pkValue = rowData[primaryKeyColumn.name];
     const pkColumn = primaryKeyColumn.name;
     
-    const tableNameWithSchema = schema ? `${schema}.${tableName}` : tableName;
+    const dialect = connection.db_type === 'mysql' ? 'mysql' : connection.db_type === 'postgresql' ? 'postgresql' : 'sqlite';
+    const tableNameWithSchema = quoteQualifiedSqlIdentifier(
+      schema ? [schema, tableName] : [tableName],
+      dialect
+    );
+    const quotedPrimaryKey = quoteSqlIdentifier(pkColumn, dialect);
     
     // 根据数据库类型构建不同的DELETE语句
     let deleteQuery: string;
@@ -648,16 +665,16 @@ export default function TableDataViewer({
     
     switch (connection.db_type) {
       case 'postgresql':
-        deleteQuery = `DELETE FROM ${tableNameWithSchema} WHERE ${pkColumn} = $1`;
+        deleteQuery = `DELETE FROM ${tableNameWithSchema} WHERE ${quotedPrimaryKey} = $1`;
         values = [pkValue];
         break;
       case 'mysql':
       case 'sqlite':
-        deleteQuery = `DELETE FROM ${tableNameWithSchema} WHERE ${pkColumn} = ?`;
+        deleteQuery = `DELETE FROM ${tableNameWithSchema} WHERE ${quotedPrimaryKey} = ?`;
         values = [pkValue];
         break;
       default:
-        deleteQuery = `DELETE FROM ${tableNameWithSchema} WHERE ${pkColumn} = ?`;
+        deleteQuery = `DELETE FROM ${tableNameWithSchema} WHERE ${quotedPrimaryKey} = ?`;
         values = [pkValue];
     }
     
