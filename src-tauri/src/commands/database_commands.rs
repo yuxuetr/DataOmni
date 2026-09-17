@@ -15,14 +15,10 @@ pub fn get_databases_query(
   println!("📋 获取数据库查询语句 - 连接ID: {}", connection_id);
 
   // 获取连接配置
-  let connection_service_guard = connection_service_state
-    .lock()
-    .map_err(|e| format!("获取连接服务状态失败: {}", e))?;
+  let connection_service_guard =
+    connection_service_state.lock().map_err(|e| format!("获取连接服务状态失败: {}", e))?;
   let connection_config = if let Some(service) = connection_service_guard.as_ref() {
-    service
-      .get_connection(&connection_id)
-      .ok_or_else(|| "连接不存在".to_string())?
-      .clone()
+    service.get_connection(&connection_id).ok_or_else(|| "连接不存在".to_string())?.clone()
   } else {
     return Err("连接服务未初始化".to_string());
   };
@@ -40,20 +36,13 @@ pub fn get_tables_query(
   _app_handle: AppHandle,
   connection_service_state: State<'_, ConnectionServiceState>,
 ) -> Result<String, String> {
-  println!(
-    "📋 获取表查询语句 - 连接ID: {}, 数据库: {}",
-    connection_id, database
-  );
+  println!("📋 获取表查询语句 - 连接ID: {}, 数据库: {}", connection_id, database);
 
   // 获取连接配置
-  let connection_service_guard = connection_service_state
-    .lock()
-    .map_err(|e| format!("获取连接服务状态失败: {}", e))?;
+  let connection_service_guard =
+    connection_service_state.lock().map_err(|e| format!("获取连接服务状态失败: {}", e))?;
   let connection_config = if let Some(service) = connection_service_guard.as_ref() {
-    service
-      .get_connection(&connection_id)
-      .ok_or_else(|| "连接不存在".to_string())?
-      .clone()
+    service.get_connection(&connection_id).ok_or_else(|| "连接不存在".to_string())?.clone()
   } else {
     return Err("连接服务未初始化".to_string());
   };
@@ -72,20 +61,13 @@ pub fn get_table_columns_query(
   _app_handle: AppHandle,
   connection_service_state: State<'_, ConnectionServiceState>,
 ) -> Result<String, String> {
-  println!(
-    "📋 获取表列查询语句 - 连接ID: {}, 数据库: {}, 表: {}",
-    connection_id, database, table
-  );
+  println!("📋 获取表列查询语句 - 连接ID: {}, 数据库: {}, 表: {}", connection_id, database, table);
 
   // 获取连接配置
-  let connection_service_guard = connection_service_state
-    .lock()
-    .map_err(|e| format!("获取连接服务状态失败: {}", e))?;
+  let connection_service_guard =
+    connection_service_state.lock().map_err(|e| format!("获取连接服务状态失败: {}", e))?;
   let connection_config = if let Some(service) = connection_service_guard.as_ref() {
-    service
-      .get_connection(&connection_id)
-      .ok_or_else(|| "连接不存在".to_string())?
-      .clone()
+    service.get_connection(&connection_id).ok_or_else(|| "连接不存在".to_string())?.clone()
   } else {
     return Err("连接服务未初始化".to_string());
   };
@@ -112,14 +94,10 @@ pub fn get_table_data_query(
   );
 
   // 获取连接配置
-  let connection_service_guard = connection_service_state
-    .lock()
-    .map_err(|e| format!("获取连接服务状态失败: {}", e))?;
+  let connection_service_guard =
+    connection_service_state.lock().map_err(|e| format!("获取连接服务状态失败: {}", e))?;
   let connection_config = if let Some(service) = connection_service_guard.as_ref() {
-    service
-      .get_connection(&connection_id)
-      .ok_or_else(|| "连接不存在".to_string())?
-      .clone()
+    service.get_connection(&connection_id).ok_or_else(|| "连接不存在".to_string())?.clone()
   } else {
     return Err("连接服务未初始化".to_string());
   };
@@ -165,14 +143,10 @@ pub fn get_table_list_query(
   println!("📋 获取表列表查询语句 - 连接ID: {}", connection_id);
 
   // 获取连接配置
-  let connection_service_guard = connection_service_state
-    .lock()
-    .map_err(|e| format!("获取连接服务状态失败: {}", e))?;
+  let connection_service_guard =
+    connection_service_state.lock().map_err(|e| format!("获取连接服务状态失败: {}", e))?;
   let connection_config = if let Some(service) = connection_service_guard.as_ref() {
-    service
-      .get_connection(&connection_id)
-      .ok_or_else(|| "连接不存在".to_string())?
-      .clone()
+    service.get_connection(&connection_id).ok_or_else(|| "连接不存在".to_string())?.clone()
   } else {
     return Err("连接服务未初始化".to_string());
   };
@@ -222,14 +196,10 @@ pub fn get_database_metadata_query(
   println!("📋 获取数据库元数据查询语句 - 连接ID: {}", connection_id);
 
   // 获取连接配置
-  let connection_service_guard = connection_service_state
-    .lock()
-    .map_err(|e| format!("获取连接服务状态失败: {}", e))?;
+  let connection_service_guard =
+    connection_service_state.lock().map_err(|e| format!("获取连接服务状态失败: {}", e))?;
   let connection_config = if let Some(service) = connection_service_guard.as_ref() {
-    service
-      .get_connection(&connection_id)
-      .ok_or_else(|| "连接不存在".to_string())?
-      .clone()
+    service.get_connection(&connection_id).ok_or_else(|| "连接不存在".to_string())?.clone()
   } else {
     return Err("连接服务未初始化".to_string());
   };
@@ -328,20 +298,13 @@ pub fn get_table_quick_view_query(
   _app_handle: AppHandle,
   connection_service_state: State<'_, ConnectionServiceState>,
 ) -> Result<String, String> {
-  println!(
-    "📊 获取表快速查看查询语句 - 连接ID: {}, 表: {}",
-    connection_id, table_name
-  );
+  println!("📊 获取表快速查看查询语句 - 连接ID: {}, 表: {}", connection_id, table_name);
 
   // 获取连接配置
-  let connection_service_guard = connection_service_state
-    .lock()
-    .map_err(|e| format!("获取连接服务状态失败: {}", e))?;
+  let connection_service_guard =
+    connection_service_state.lock().map_err(|e| format!("获取连接服务状态失败: {}", e))?;
   let connection_config = if let Some(service) = connection_service_guard.as_ref() {
-    service
-      .get_connection(&connection_id)
-      .ok_or_else(|| "连接不存在".to_string())?
-      .clone()
+    service.get_connection(&connection_id).ok_or_else(|| "连接不存在".to_string())?.clone()
   } else {
     return Err("连接服务未初始化".to_string());
   };
@@ -363,11 +326,9 @@ pub fn get_table_quick_view_query(
     crate::models::DatabaseType::MongoDB => {
       format!("// MongoDB 查询: db.{}.find().limit(100)", table_name)
     }
-    crate::models::DatabaseType::Redis => {
-      format!("// Redis 查询: 需要特殊处理")
-    }
+    crate::models::DatabaseType::Redis => "// Redis 查询: 需要特殊处理".to_string(),
     crate::models::DatabaseType::Neo4j => {
-      format!("// Neo4j Cypher 查询: MATCH (n) RETURN n LIMIT 100")
+      "// Neo4j Cypher 查询: MATCH (n) RETURN n LIMIT 100".to_string()
     }
     crate::models::DatabaseType::DuckDB => {
       format!("SELECT * FROM {} LIMIT 100", table_name)
@@ -375,9 +336,7 @@ pub fn get_table_quick_view_query(
     crate::models::DatabaseType::ClickHouse => {
       format!("SELECT * FROM {} LIMIT 100", table_name)
     }
-    crate::models::DatabaseType::Elasticsearch => {
-      format!("// Elasticsearch 查询: 需要特殊处理")
-    }
+    crate::models::DatabaseType::Elasticsearch => "// Elasticsearch 查询: 需要特殊处理".to_string(),
   };
 
   Ok(query)

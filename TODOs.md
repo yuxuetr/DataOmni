@@ -32,7 +32,7 @@
 ### 0.1 建立可验证的工程基线
 
 - [x] 为前端增加并固定 `lint`、`typecheck`、`test` 命令
-- [ ] 为 Rust 增加并固定 `fmt`、`clippy`、`test` 命令
+- [x] 为 Rust 增加并固定 `fmt`、`clippy`、`test` 命令
 - [ ] 建立 CI，至少覆盖前端构建、类型检查和 Rust 检查
 - [ ] 为连接串生成、SQL 分句、查询分类和行变更增加单元测试
 - [ ] 建立 MySQL、PostgreSQL、SQLite 的最小集成测试数据库

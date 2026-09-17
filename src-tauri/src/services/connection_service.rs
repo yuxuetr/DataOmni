@@ -13,10 +13,8 @@ pub struct ConnectionService {
 
 impl ConnectionService {
   pub fn new(app_handle: &tauri::AppHandle) -> Result<Self, Box<dyn std::error::Error>> {
-    let app_dir = app_handle
-      .path()
-      .app_config_dir()
-      .map_err(|e| format!("无法获取应用配置目录: {}", e))?;
+    let app_dir =
+      app_handle.path().app_config_dir().map_err(|e| format!("无法获取应用配置目录: {}", e))?;
 
     // 确保配置目录存在
     if !app_dir.exists() {
@@ -26,10 +24,7 @@ impl ConnectionService {
     let config_path = app_dir.join("connections.json");
     let connections = Self::load_connections(&config_path)?;
 
-    Ok(Self {
-      config_path,
-      connections,
-    })
+    Ok(Self { config_path, connections })
   }
 
   /// 加载已保存的连接配置
@@ -77,9 +72,7 @@ impl ConnectionService {
     let id = config.id.clone();
     self.connections.insert(id.clone(), config);
 
-    self
-      .save_connections()
-      .map_err(|e| format!("保存连接配置失败: {}", e))?;
+    self.save_connections().map_err(|e| format!("保存连接配置失败: {}", e))?;
 
     Ok(id)
   }
@@ -99,9 +92,7 @@ impl ConnectionService {
 
     self.connections.insert(id.to_string(), config);
 
-    self
-      .save_connections()
-      .map_err(|e| format!("更新连接配置失败: {}", e))?;
+    self.save_connections().map_err(|e| format!("更新连接配置失败: {}", e))?;
 
     Ok(())
   }
@@ -112,9 +103,7 @@ impl ConnectionService {
       return Err("连接不存在".to_string());
     }
 
-    self
-      .save_connections()
-      .map_err(|e| format!("删除连接配置失败: {}", e))?;
+    self.save_connections().map_err(|e| format!("删除连接配置失败: {}", e))?;
 
     Ok(())
   }
@@ -132,10 +121,7 @@ impl ConnectionService {
   /// 测试数据库连接 - 实际尝试连接并返回连接字符串
   pub fn test_connection(&self, config: &ConnectionConfig) -> Result<String, String> {
     let connection_string = config.db_type.to_connection_string(config);
-    println!(
-      "🔗 准备测试数据库连接: {}",
-      mask_password(&connection_string)
-    );
+    println!("🔗 准备测试数据库连接: {}", mask_password(&connection_string));
 
     // 基本验证
     match config.db_type {
@@ -151,7 +137,7 @@ impl ConnectionService {
         if config.username.is_empty() {
           return Err("用户名不能为空".to_string());
         }
-        if config.port == 0 || config.port > 65535 {
+        if config.port == 0 {
           return Err("端口号无效，必须在1-65535范围内".to_string());
         }
         if config.database.is_none() || config.database.as_ref().unwrap().is_empty() {
@@ -162,7 +148,7 @@ impl ConnectionService {
         if config.host.is_empty() {
           return Err("主机地址不能为空".to_string());
         }
-        if config.port == 0 || config.port > 65535 {
+        if config.port == 0 {
           return Err("端口号无效，必须在1-65535范围内".to_string());
         }
         // MongoDB 和 Neo4j 可以不需要用户名密码
@@ -171,7 +157,7 @@ impl ConnectionService {
         if config.host.is_empty() {
           return Err("主机地址不能为空".to_string());
         }
-        if config.port == 0 || config.port > 65535 {
+        if config.port == 0 {
           return Err("端口号无效，必须在1-65535范围内".to_string());
         }
         // Redis 可以不需要用户名密码
@@ -180,7 +166,7 @@ impl ConnectionService {
         if config.host.is_empty() {
           return Err("主机地址不能为空".to_string());
         }
-        if config.port == 0 || config.port > 65535 {
+        if config.port == 0 {
           return Err("端口号无效，必须在1-65535范围内".to_string());
         }
         // Elasticsearch 可以不需要用户名密码

@@ -14,9 +14,7 @@ pub async fn create_connection(
 ) -> Result<String, String> {
   println!("🔧 创建数据库连接: {}", config.name);
 
-  let mut service_guard = service_state
-    .lock()
-    .map_err(|e| format!("获取服务状态失败: {}", e))?;
+  let mut service_guard = service_state.lock().map_err(|e| format!("获取服务状态失败: {}", e))?;
 
   // 初始化服务（如果尚未初始化）
   if service_guard.is_none() {
@@ -41,9 +39,7 @@ pub async fn update_connection(
 ) -> Result<(), String> {
   println!("📝 更新数据库连接: {} (ID: {})", config.name, id);
 
-  let mut service_guard = service_state
-    .lock()
-    .map_err(|e| format!("获取服务状态失败: {}", e))?;
+  let mut service_guard = service_state.lock().map_err(|e| format!("获取服务状态失败: {}", e))?;
 
   // 初始化服务（如果尚未初始化）
   if service_guard.is_none() {
@@ -67,9 +63,7 @@ pub async fn delete_connection(
 ) -> Result<(), String> {
   println!("🗑️ 删除数据库连接: {}", id);
 
-  let mut service_guard = service_state
-    .lock()
-    .map_err(|e| format!("获取服务状态失败: {}", e))?;
+  let mut service_guard = service_state.lock().map_err(|e| format!("获取服务状态失败: {}", e))?;
 
   // 初始化服务（如果尚未初始化）
   if service_guard.is_none() {
@@ -92,9 +86,7 @@ pub async fn get_connections(
 ) -> Result<Vec<ConnectionConfig>, String> {
   println!("📋 获取所有数据库连接");
 
-  let mut service_guard = service_state
-    .lock()
-    .map_err(|e| format!("获取服务状态失败: {}", e))?;
+  let mut service_guard = service_state.lock().map_err(|e| format!("获取服务状态失败: {}", e))?;
 
   // 初始化服务（如果尚未初始化）
   if service_guard.is_none() {
@@ -118,9 +110,7 @@ pub fn test_connection(
 ) -> Result<String, String> {
   println!("🧪 测试数据库连接: {}", config.name);
 
-  let mut service_guard = service_state
-    .lock()
-    .map_err(|e| format!("获取服务状态失败: {}", e))?;
+  let mut service_guard = service_state.lock().map_err(|e| format!("获取服务状态失败: {}", e))?;
 
   // 初始化服务（如果尚未初始化）
   if service_guard.is_none() {

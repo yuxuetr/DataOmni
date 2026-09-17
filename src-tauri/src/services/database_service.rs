@@ -177,53 +177,29 @@ impl DatabaseService {
   ) -> String {
     match db_type {
       crate::models::DatabaseType::MySQL => {
-        format!(
-          "SELECT * FROM `{}`.`{}` LIMIT {} OFFSET {}",
-          database, table, limit, offset
-        )
+        format!("SELECT * FROM `{}`.`{}` LIMIT {} OFFSET {}", database, table, limit, offset)
       }
       crate::models::DatabaseType::PostgreSQL => {
-        format!(
-          "SELECT * FROM \"{}\".\"{}\" LIMIT {} OFFSET {}",
-          database, table, limit, offset
-        )
+        format!("SELECT * FROM \"{}\".\"{}\" LIMIT {} OFFSET {}", database, table, limit, offset)
       }
       crate::models::DatabaseType::SQLite => {
-        format!(
-          "SELECT * FROM \"{}\" LIMIT {} OFFSET {}",
-          table, limit, offset
-        )
+        format!("SELECT * FROM \"{}\" LIMIT {} OFFSET {}", table, limit, offset)
       }
       crate::models::DatabaseType::MongoDB => {
-        format!(
-          "// MongoDB 查询: db.{}.find().skip({}).limit({})",
-          table, offset, limit
-        )
+        format!("// MongoDB 查询: db.{}.find().skip({}).limit({})", table, offset, limit)
       }
       crate::models::DatabaseType::Redis => "// Redis 查询: 需要特殊处理".to_string(),
       crate::models::DatabaseType::Neo4j => {
-        format!(
-          "// Neo4j Cypher 查询: MATCH (n) RETURN n SKIP {} LIMIT {}",
-          offset, limit
-        )
+        format!("// Neo4j Cypher 查询: MATCH (n) RETURN n SKIP {} LIMIT {}", offset, limit)
       }
       crate::models::DatabaseType::DuckDB => {
-        format!(
-          "SELECT * FROM \"{}\" LIMIT {} OFFSET {}",
-          table, limit, offset
-        )
+        format!("SELECT * FROM \"{}\" LIMIT {} OFFSET {}", table, limit, offset)
       }
       crate::models::DatabaseType::ClickHouse => {
-        format!(
-          "SELECT * FROM \"{}\" LIMIT {} OFFSET {}",
-          table, limit, offset
-        )
+        format!("SELECT * FROM \"{}\" LIMIT {} OFFSET {}", table, limit, offset)
       }
       crate::models::DatabaseType::Elasticsearch => {
-        format!(
-          "// Elasticsearch 查询: GET /{}/_search?from={}&size={}",
-          table, offset, limit
-        )
+        format!("// Elasticsearch 查询: GET /{}/_search?from={}&size={}", table, offset, limit)
       }
     }
   }

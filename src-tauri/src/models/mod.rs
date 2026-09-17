@@ -141,7 +141,7 @@ impl DatabaseType {
           config.port,
           config.database.as_ref().unwrap_or(&"mysql".to_string())
         );
-        
+
         let mut params = Vec::new();
 
         if config.ssl {
@@ -149,11 +149,11 @@ impl DatabaseType {
         } else {
           params.push("ssl-mode=DISABLED".to_string());
         }
-        
+
         // Add connection timeout and other stability parameters
         params.push("connectTimeout=30000".to_string());
         params.push("acquireTimeout=30000".to_string());
-        
+
         if !params.is_empty() {
           format!("{}?{}", base_url, params.join("&"))
         } else {
@@ -169,19 +169,19 @@ impl DatabaseType {
           config.port,
           config.database.as_ref().unwrap_or(&"postgres".to_string())
         );
-        
+
         // Add SSL parameters if SSL is enabled or connecting to non-standard ports
         let mut params = Vec::new();
-        
+
         if config.ssl || config.port > 32767 {
           params.push("sslmode=require".to_string());
         } else {
           params.push("sslmode=disable".to_string());
         }
-        
+
         // Add connection timeout
         params.push("connect_timeout=30".to_string());
-        
+
         if !params.is_empty() {
           format!("{}?{}", base_url, params.join("&"))
         } else {
@@ -189,10 +189,7 @@ impl DatabaseType {
         }
       }
       DatabaseType::SQLite => {
-        format!(
-          "sqlite:{}",
-          config.database.as_ref().unwrap_or(&":memory:".to_string())
-        )
+        format!("sqlite:{}", config.database.as_ref().unwrap_or(&":memory:".to_string()))
       }
       DatabaseType::MongoDB => {
         if !config.username.is_empty() && !config.password.is_empty() {
@@ -243,10 +240,7 @@ impl DatabaseType {
         )
       }
       DatabaseType::DuckDB => {
-        format!(
-          "duckdb:{}",
-          config.database.as_ref().unwrap_or(&":memory:".to_string())
-        )
+        format!("duckdb:{}", config.database.as_ref().unwrap_or(&":memory:".to_string()))
       }
       DatabaseType::ClickHouse => {
         format!(
@@ -262,9 +256,9 @@ impl DatabaseType {
         if !config.username.is_empty() && !config.password.is_empty() {
           format!(
             "http://{}:{}@{}:{}",
-            encode(&config.username), 
-            encode(&config.password), 
-            config.host, 
+            encode(&config.username),
+            encode(&config.password),
+            config.host,
             config.port
           )
         } else {
