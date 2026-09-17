@@ -181,7 +181,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
     try {
       await testConnection(formData as ConnectionConfig);
-    } catch (error) {
+    } catch {
       // 错误已在store中处理
     }
   };
@@ -197,7 +197,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         await updateConnection(connection.id, formData as ConnectionConfig);
       }
       onClose();
-    } catch (error) {
+    } catch {
       // 错误已在store中处理
     }
   };
