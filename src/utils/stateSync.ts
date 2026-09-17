@@ -7,16 +7,13 @@ import { useQueryStore } from '../stores/queryStore';
 import { useWorkspaceStore } from '../stores/workspaceStore';
 import { ConnectionConfig } from '../stores/connectionStore';
 import { createDatabaseSession } from '../contracts/session';
-
-/**
- * 数据库连接状态
- */
-export enum ConnectionState {
-  DISCONNECTED = 'disconnected',
-  CONNECTING = 'connecting', 
-  CONNECTED = 'connected',
-  ERROR = 'error'
-}
+import {
+  classifyConnectionFailure,
+  createConnectionLifecycleState,
+  transitionConnectionLifecycle,
+  type ConnectionFailureKind,
+  type ConnectionLifecycleState
+} from '../contracts/connectionLifecycle';
 
 /**
  * 数据库会话管理器
@@ -25,6 +22,11 @@ export class SessionManager {
   private static instance: SessionManager;
   private connectionPromises: Map<string, Promise<void>> = new Map();
   private shutdownPromise: Promise<void> | null = null;
+  private lifecycle = createConnectionLifecycleState();
+  private reconnectTarget: {
+    connection: ConnectionConfig;
+    connectionString: string;
+  } | null = null;
 
   private constructor() {}
 
@@ -41,10 +43,65 @@ export class SessionManager {
    * @param connectionString 连接字符串
    */
   async switchConnection(connection: ConnectionConfig, connectionString: string): Promise<void> {
-    if (this.shutdownPromise) {
-      throw new Error('应用正在关闭，无法建立新的数据库会话');
+    this.assertCanConnect();
+    this.reconnectTarget = { connection, connectionString };
+    this.transition({
+      type: 'connect-requested',
+      profileId: connection.id
+    });
+    await this.connect(connection, connectionString);
+  }
+
+  async manualReconnect(connection: ConnectionConfig, connectionString: string): Promise<void> {
+    this.assertCanConnect();
+    this.reconnectTarget = { connection, connectionString };
+    this.transition({
+      type: 'manual-reconnect-requested',
+      profileId: connection.id
+    });
+    await this.connect(connection, connectionString);
+  }
+
+  async handleNetworkRestored(): Promise<void> {
+    this.assertCanConnect();
+
+    if (
+      this.lifecycle.status !== 'offline'
+      || !this.reconnectTarget
+      || this.lifecycle.profileId !== this.reconnectTarget.connection.id
+    ) {
+      return;
     }
 
+    this.transition({ type: 'network-restored' });
+    await this.connect(
+      this.reconnectTarget.connection,
+      this.reconnectTarget.connectionString
+    );
+  }
+
+  reportConnectionLost(kind: ConnectionFailureKind, error: string): void {
+    const profileId = this.lifecycle.profileId
+      ?? useAppStore.getState().activeConnection?.config.id;
+
+    if (!profileId) {
+      return;
+    }
+
+    this.transition({
+      type: 'connection-lost',
+      profileId,
+      kind,
+      error
+    });
+    useAppStore.getState().setConnectionReady(false);
+  }
+
+  getConnectionState(): ConnectionLifecycleState {
+    return this.lifecycle;
+  }
+
+  private async connect(connection: ConnectionConfig, connectionString: string): Promise<void> {
     const connectionId = connection.id;
     console.log('🔄 SessionManager: 开始切换连接:', connectionId);
 
@@ -61,8 +118,15 @@ export class SessionManager {
 
     try {
       await connectionPromise;
+      this.transition({ type: 'connected', profileId: connectionId });
       console.log('✅ 连接切换完成:', connectionId);
     } catch (error) {
+      this.transition({
+        type: 'connection-failed',
+        profileId: connectionId,
+        kind: classifyConnectionFailure(error),
+        error: error instanceof Error ? error.message : String(error)
+      });
       console.error('❌ 连接切换失败:', connectionId, error);
       throw error;
     } finally {
@@ -92,6 +156,8 @@ export class SessionManager {
       connectionReady: false
     });
     useWorkspaceStore.getState().selectSidebarProfile(null);
+    this.reconnectTarget = null;
+    this.transition({ type: 'disconnected' });
   }
 
   /**
@@ -205,26 +271,16 @@ export class SessionManager {
     throw new Error('数据库连接对象超时未就绪');
   }
 
-  /**
-   * 获取当前连接状态
-   */
-  getConnectionState(): ConnectionState {
-    const appStore = useAppStore.getState();
-    const queryStore = useQueryStore.getState();
+  private transition(
+    event: Parameters<typeof transitionConnectionLifecycle>[1]
+  ): void {
+    this.lifecycle = transitionConnectionLifecycle(this.lifecycle, event);
+  }
 
-    if (queryStore.isConnecting) {
-      return ConnectionState.CONNECTING;
+  private assertCanConnect(): void {
+    if (this.shutdownPromise) {
+      throw new Error('应用正在关闭，无法建立新的数据库会话');
     }
-
-    if (queryStore.error) {
-      return ConnectionState.ERROR;
-    }
-
-    if (appStore.activeConnection && appStore.connectionReady && queryStore.database) {
-      return ConnectionState.CONNECTED;
-    }
-
-    return ConnectionState.DISCONNECTED;
   }
 
   /**
@@ -233,6 +289,8 @@ export class SessionManager {
   cleanup(): void {
     console.log('🧹 清理连接状态管理器');
     this.connectionPromises.clear();
+    this.reconnectTarget = null;
+    this.transition({ type: 'disconnected' });
   }
 }
 
@@ -251,13 +309,13 @@ export async function waitForConnectionReady(timeoutMs: number = 5000): Promise<
   const manager = SessionManager.getInstance();
 
   while (Date.now() - startTime < timeoutMs) {
-    const state = manager.getConnectionState();
+    const { status } = manager.getConnectionState();
     
-    if (state === ConnectionState.CONNECTED) {
+    if (status === 'connected') {
       return true;
     }
     
-    if (state === ConnectionState.ERROR) {
+    if (status === 'error' || status === 'offline' || status === 'authentication-expired') {
       return false;
     }
 

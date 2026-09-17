@@ -48,6 +48,25 @@ function App() {
     };
   }, [sessionManager]);
 
+  useEffect(() => {
+    const handleOffline = () => {
+      sessionManager.reportConnectionLost('network', '设备网络连接已断开');
+    };
+    const handleOnline = () => {
+      void sessionManager.handleNetworkRestored().catch((error) => {
+        console.error('网络恢复后重新连接失败:', error);
+      });
+    };
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [sessionManager]);
+
   return (
     <div className="h-screen flex bg-gray-100">
       {/* 左侧侧边栏 - 包含连接选择和数据库浏览器 */}
@@ -78,7 +97,7 @@ function App() {
             <SqlWorkbench
               connection={activeConnection.config}
               onDisconnect={() => sessionManager.disconnect()}
-              onReconnect={() => sessionManager.switchConnection(
+              onReconnect={() => sessionManager.manualReconnect(
                 activeConnection.config,
                 activeConnection.connectionString
               )}
