@@ -11,6 +11,7 @@ pub struct ConnectionProfile {
   pub port: u16,
   pub database: Option<String>,
   pub username: String,
+  #[serde(default)]
   pub password: String,
   pub ssl: bool,
   pub options: HashMap<String, String>,

@@ -1,14 +1,47 @@
 use crate::models::{ConnectionProfile, DatabaseType};
+use keyring::Entry;
 use serde_json;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
 
-#[derive(Debug)]
+const CREDENTIAL_SERVICE: &str = "DataOmni";
+const CREDENTIAL_REF_PREFIX: &str = "system-keyring://connection/";
+
+trait CredentialStore: Send + Sync {
+  fn set_password(&self, profile_id: &str, password: &str) -> Result<(), String>;
+  fn get_password(&self, profile_id: &str) -> Result<String, String>;
+  fn delete_password(&self, profile_id: &str) -> Result<(), String>;
+}
+
+struct SystemCredentialStore;
+
+impl CredentialStore for SystemCredentialStore {
+  fn set_password(&self, profile_id: &str, password: &str) -> Result<(), String> {
+    credential_entry(profile_id)?
+      .set_password(password)
+      .map_err(|error| format!("无法将凭据保存到系统凭据库: {error}"))
+  }
+
+  fn get_password(&self, profile_id: &str) -> Result<String, String> {
+    credential_entry(profile_id)?
+      .get_password()
+      .map_err(|error| format!("无法从系统凭据库读取凭据: {error}"))
+  }
+
+  fn delete_password(&self, profile_id: &str) -> Result<(), String> {
+    match credential_entry(profile_id)?.delete_credential() {
+      Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+      Err(error) => Err(format!("无法从系统凭据库删除凭据: {error}")),
+    }
+  }
+}
+
 pub struct ConnectionService {
   config_path: PathBuf,
   connections: HashMap<String, ConnectionProfile>,
+  credential_store: Box<dyn CredentialStore>,
 }
 
 impl ConnectionService {
@@ -22,33 +55,66 @@ impl ConnectionService {
     }
 
     let config_path = app_dir.join("connections.json");
-    let connections = Self::load_connections(&config_path)?;
-
-    Ok(Self { config_path, connections })
+    Self::from_path(&config_path, Box::new(SystemCredentialStore))
   }
 
   /// 加载已保存的连接配置
+  fn from_path(
+    config_path: &PathBuf,
+    credential_store: Box<dyn CredentialStore>,
+  ) -> Result<Self, Box<dyn std::error::Error>> {
+    let (connections, migrated) = Self::load_connections(config_path, credential_store.as_ref())?;
+    let service = Self { config_path: config_path.clone(), connections, credential_store };
+
+    if migrated {
+      service.save_connections()?;
+    }
+
+    Ok(service)
+  }
+
   fn load_connections(
     config_path: &PathBuf,
-  ) -> Result<HashMap<String, ConnectionProfile>, Box<dyn std::error::Error>> {
+    credential_store: &dyn CredentialStore,
+  ) -> Result<(HashMap<String, ConnectionProfile>, bool), Box<dyn std::error::Error>> {
     if !config_path.exists() {
-      return Ok(HashMap::new());
+      return Ok((HashMap::new(), false));
     }
 
     let content = fs::read_to_string(config_path)?;
-    let connections: Vec<ConnectionProfile> = serde_json::from_str(&content)?;
+    let mut connections: Vec<ConnectionProfile> = serde_json::from_str(&content)?;
     let mut map = HashMap::new();
+    let mut migrated = false;
 
-    for conn in connections {
+    for mut conn in connections.drain(..) {
+      if !conn.password.is_empty() {
+        credential_store
+          .set_password(&conn.id, &conn.password)
+          .map_err(|error| format!("迁移连接 {} 的凭据失败: {error}", conn.name))?;
+        conn.credential_ref = Some(credential_ref(&conn.id));
+        conn.password.clear();
+        migrated = true;
+      }
+
       map.insert(conn.id.clone(), conn);
     }
 
-    Ok(map)
+    Ok((map, migrated))
   }
 
   /// 保存连接配置到文件
   fn save_connections(&self) -> Result<(), Box<dyn std::error::Error>> {
-    let connections: Vec<&ConnectionProfile> = self.connections.values().collect();
+    let connections = self
+      .connections
+      .values()
+      .map(|connection| {
+        let mut value = serde_json::to_value(connection)?;
+        if let Some(object) = value.as_object_mut() {
+          object.remove("password");
+        }
+        Ok(value)
+      })
+      .collect::<Result<Vec<_>, serde_json::Error>>()?;
     let content = serde_json::to_string_pretty(&connections)?;
     fs::write(&self.config_path, content)?;
     Ok(())
@@ -70,6 +136,7 @@ impl ConnectionService {
     config.updated_at = chrono::Utc::now().to_rfc3339();
 
     let id = config.id.clone();
+    self.persist_profile_password(&mut config)?;
     self.connections.insert(id.clone(), config);
 
     self.save_connections().map_err(|e| format!("保存连接配置失败: {}", e))?;
@@ -89,6 +156,12 @@ impl ConnectionService {
 
     config.id = id.to_string();
     config.updated_at = chrono::Utc::now().to_rfc3339();
+    if config.password.is_empty() {
+      config.credential_ref =
+        self.connections.get(id).and_then(|connection| connection.credential_ref.clone());
+    } else {
+      self.persist_profile_password(&mut config)?;
+    }
 
     self.connections.insert(id.to_string(), config);
 
@@ -99,11 +172,21 @@ impl ConnectionService {
 
   /// 删除数据库连接配置
   pub fn delete_connection(&mut self, id: &str) -> Result<(), String> {
-    if self.connections.remove(id).is_none() {
+    let Some(connection) = self.connections.remove(id) else {
       return Err("连接不存在".to_string());
+    };
+
+    if connection.credential_ref.is_some() {
+      if let Err(error) = self.credential_store.delete_password(id) {
+        self.connections.insert(id.to_string(), connection);
+        return Err(error);
+      }
     }
 
-    self.save_connections().map_err(|e| format!("删除连接配置失败: {}", e))?;
+    if let Err(error) = self.save_connections() {
+      self.connections.insert(id.to_string(), connection);
+      return Err(format!("删除连接配置失败: {error}"));
+    }
 
     Ok(())
   }
@@ -120,7 +203,12 @@ impl ConnectionService {
 
   /// 测试数据库连接 - 实际尝试连接并返回连接字符串
   pub fn test_connection(&self, config: &ConnectionProfile) -> Result<String, String> {
-    let connection_string = config.db_type.to_connection_string(config);
+    let mut resolved_config = config.clone();
+    if resolved_config.password.is_empty() && resolved_config.credential_ref.is_some() {
+      resolved_config.password = self.credential_store.get_password(&resolved_config.id)?;
+    }
+
+    let connection_string = resolved_config.db_type.to_connection_string(&resolved_config);
     println!("🔗 准备测试数据库连接: {}", mask_password(&connection_string));
 
     // 基本验证
@@ -176,6 +264,26 @@ impl ConnectionService {
     println!("✅ 连接配置验证通过，返回连接字符串用于前端测试");
     Ok(connection_string)
   }
+
+  fn persist_profile_password(&self, config: &mut ConnectionProfile) -> Result<(), String> {
+    if config.password.is_empty() {
+      config.credential_ref = None;
+      return Ok(());
+    }
+
+    self.credential_store.set_password(&config.id, &config.password)?;
+    config.password.clear();
+    config.credential_ref = Some(credential_ref(&config.id));
+    Ok(())
+  }
+}
+
+fn credential_entry(profile_id: &str) -> Result<Entry, String> {
+  Entry::new(CREDENTIAL_SERVICE, profile_id).map_err(|error| format!("无法访问系统凭据库: {error}"))
+}
+
+fn credential_ref(profile_id: &str) -> String {
+  format!("{CREDENTIAL_REF_PREFIX}{profile_id}")
 }
 
 /// 隐藏连接字符串中的密码用于日志记录
@@ -191,4 +299,110 @@ fn mask_password(connection_string: &str) -> String {
     }
   }
   connection_string.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::models::ConnectionEnvironment;
+  use std::sync::Mutex;
+
+  #[derive(Default)]
+  struct MemoryCredentialStore {
+    passwords: Mutex<HashMap<String, String>>,
+  }
+
+  impl CredentialStore for MemoryCredentialStore {
+    fn set_password(&self, profile_id: &str, password: &str) -> Result<(), String> {
+      self
+        .passwords
+        .lock()
+        .map_err(|error| error.to_string())?
+        .insert(profile_id.to_string(), password.to_string());
+      Ok(())
+    }
+
+    fn get_password(&self, profile_id: &str) -> Result<String, String> {
+      self
+        .passwords
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(profile_id)
+        .cloned()
+        .ok_or_else(|| "凭据不存在".to_string())
+    }
+
+    fn delete_password(&self, profile_id: &str) -> Result<(), String> {
+      self.passwords.lock().map_err(|error| error.to_string())?.remove(profile_id);
+      Ok(())
+    }
+  }
+
+  fn profile(id: &str, password: &str) -> ConnectionProfile {
+    ConnectionProfile {
+      id: id.to_string(),
+      name: "Local PostgreSQL".to_string(),
+      db_type: DatabaseType::PostgreSQL,
+      host: "localhost".to_string(),
+      port: 5432,
+      database: Some("postgres".to_string()),
+      username: "postgres".to_string(),
+      password: password.to_string(),
+      ssl: false,
+      options: HashMap::new(),
+      tags: Vec::new(),
+      environment: ConnectionEnvironment::Development,
+      credential_ref: None,
+      created_at: "2026-09-17T00:00:00Z".to_string(),
+      updated_at: "2026-09-17T00:00:00Z".to_string(),
+    }
+  }
+
+  fn temporary_config_path() -> PathBuf {
+    std::env::temp_dir().join(format!("dataomni-{}.json", uuid::Uuid::new_v4()))
+  }
+
+  #[test]
+  fn saves_passwords_only_in_the_credential_store() {
+    let config_path = temporary_config_path();
+    let store = Box::<MemoryCredentialStore>::default();
+    let mut service = ConnectionService::from_path(&config_path, store).unwrap();
+
+    service.create_connection(profile("profile-1", "secret")).unwrap();
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(!content.contains("secret"));
+    assert!(!content.contains("\"password\""));
+    assert!(content.contains("system-keyring://connection/profile-1"));
+
+    let saved = service.get_connection("profile-1").unwrap();
+    assert!(saved.password.is_empty());
+    assert_eq!(
+      service.test_connection(saved).unwrap(),
+      "postgres://postgres:secret@localhost:5432/postgres?sslmode=disable&connect_timeout=30"
+    );
+
+    fs::remove_file(config_path).unwrap();
+  }
+
+  #[test]
+  fn migrates_legacy_plaintext_passwords() {
+    let config_path = temporary_config_path();
+    let mut legacy_profile = serde_json::to_value(profile("profile-1", "")).unwrap();
+    legacy_profile["password"] = serde_json::Value::String("legacy-secret".to_string());
+    fs::write(&config_path, serde_json::to_string_pretty(&vec![legacy_profile]).unwrap()).unwrap();
+
+    let service =
+      ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()).unwrap();
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(!content.contains("legacy-secret"));
+    assert!(!content.contains("\"password\""));
+    assert_eq!(
+      service.test_connection(service.get_connection("profile-1").unwrap()).unwrap(),
+      "postgres://postgres:legacy-secret@localhost:5432/postgres?sslmode=disable&connect_timeout=30"
+    );
+
+    fs::remove_file(config_path).unwrap();
+  }
 }
