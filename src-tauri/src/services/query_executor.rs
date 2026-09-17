@@ -1,3 +1,4 @@
+use futures_util::TryStreamExt;
 use serde::Serialize;
 use serde_json::{Map, Value as JsonValue};
 use sqlx::{
@@ -13,19 +14,35 @@ use time::{Date, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::time::{timeout, Duration};
 
 pub const QUERY_TIMEOUT_CODE: &str = "QUERY_TIMEOUT";
+pub const DEFAULT_QUERY_ROW_LIMIT: usize = 1_000;
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum QueryExecutionResult {
-  Rows { columns: Vec<String>, rows: Vec<Map<String, JsonValue>> },
-  Affected { rows_affected: u64 },
+  Rows {
+    columns: Vec<String>,
+    rows: Vec<Map<String, JsonValue>>,
+    truncated: bool,
+    row_limit: usize,
+  },
+  Affected {
+    rows_affected: u64,
+  },
 }
 
 pub async fn execute_query(pool: &DbPool, sql: &str) -> Result<QueryExecutionResult, String> {
+  execute_query_with_limit(pool, sql, DEFAULT_QUERY_ROW_LIMIT).await
+}
+
+pub async fn execute_query_with_limit(
+  pool: &DbPool,
+  sql: &str,
+  row_limit: usize,
+) -> Result<QueryExecutionResult, String> {
   match pool {
-    DbPool::Sqlite(pool) => execute_sqlite(pool, sql).await,
-    DbPool::MySql(pool) => execute_mysql(pool, sql).await,
-    DbPool::Postgres(pool) => execute_postgres(pool, sql).await,
+    DbPool::Sqlite(pool) => execute_sqlite(pool, sql, row_limit).await,
+    DbPool::MySql(pool) => execute_mysql(pool, sql, row_limit).await,
+    DbPool::Postgres(pool) => execute_postgres(pool, sql, row_limit).await,
   }
 }
 
@@ -50,11 +67,15 @@ impl SessionConnection {
     }
   }
 
-  pub async fn execute(&mut self, sql: &str) -> Result<QueryExecutionResult, String> {
+  pub async fn execute(
+    &mut self,
+    sql: &str,
+    row_limit: usize,
+  ) -> Result<QueryExecutionResult, String> {
     match self {
-      Self::Sqlite(connection) => execute_sqlite_connection(connection, sql).await,
-      Self::MySql(connection) => execute_mysql_connection(connection, sql).await,
-      Self::Postgres(connection) => execute_postgres_connection(connection, sql).await,
+      Self::Sqlite(connection) => execute_sqlite_connection(connection, sql, row_limit).await,
+      Self::MySql(connection) => execute_mysql_connection(connection, sql, row_limit).await,
+      Self::Postgres(connection) => execute_postgres_connection(connection, sql, row_limit).await,
     }
   }
 }
@@ -76,14 +97,19 @@ where
   })?
 }
 
-async fn execute_sqlite(pool: &Pool<Sqlite>, sql: &str) -> Result<QueryExecutionResult, String> {
+async fn execute_sqlite(
+  pool: &Pool<Sqlite>,
+  sql: &str,
+  row_limit: usize,
+) -> Result<QueryExecutionResult, String> {
   let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
-  execute_sqlite_connection(&mut connection, sql).await
+  execute_sqlite_connection(&mut connection, sql, row_limit).await
 }
 
 async fn execute_sqlite_connection(
   connection: &mut SqliteConnection,
   sql: &str,
+  row_limit: usize,
 ) -> Result<QueryExecutionResult, String> {
   if is_transaction_control_statement(sql) {
     let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
@@ -104,19 +130,32 @@ async fn execute_sqlite_connection(
     return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
   }
 
-  let rows = (&mut *connection).fetch_all(sql).await.map_err(|error| error.to_string())?;
-  let rows = rows.iter().map(decode_sqlite_row).collect::<Result<Vec<_>, _>>()?;
-  Ok(QueryExecutionResult::Rows { columns, rows })
+  let mut stream = (&mut *connection).fetch(sql);
+  let mut rows = Vec::with_capacity(row_limit.min(1_000));
+  while rows.len() <= row_limit {
+    let Some(row) = stream.try_next().await.map_err(|error| error.to_string())? else {
+      break;
+    };
+    rows.push(decode_sqlite_row(&row)?);
+  }
+  let truncated = rows.len() > row_limit;
+  rows.truncate(row_limit);
+  Ok(QueryExecutionResult::Rows { columns, rows, truncated, row_limit })
 }
 
-async fn execute_mysql(pool: &Pool<MySql>, sql: &str) -> Result<QueryExecutionResult, String> {
+async fn execute_mysql(
+  pool: &Pool<MySql>,
+  sql: &str,
+  row_limit: usize,
+) -> Result<QueryExecutionResult, String> {
   let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
-  execute_mysql_connection(&mut connection, sql).await
+  execute_mysql_connection(&mut connection, sql, row_limit).await
 }
 
 async fn execute_mysql_connection(
   connection: &mut MySqlConnection,
   sql: &str,
+  row_limit: usize,
 ) -> Result<QueryExecutionResult, String> {
   if is_transaction_control_statement(sql) {
     let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
@@ -137,22 +176,32 @@ async fn execute_mysql_connection(
     return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
   }
 
-  let rows = (&mut *connection).fetch_all(sql).await.map_err(|error| error.to_string())?;
-  let rows = rows.iter().map(decode_mysql_row).collect::<Result<Vec<_>, _>>()?;
-  Ok(QueryExecutionResult::Rows { columns, rows })
+  let mut stream = (&mut *connection).fetch(sql);
+  let mut rows = Vec::with_capacity(row_limit.min(1_000));
+  while rows.len() <= row_limit {
+    let Some(row) = stream.try_next().await.map_err(|error| error.to_string())? else {
+      break;
+    };
+    rows.push(decode_mysql_row(&row)?);
+  }
+  let truncated = rows.len() > row_limit;
+  rows.truncate(row_limit);
+  Ok(QueryExecutionResult::Rows { columns, rows, truncated, row_limit })
 }
 
 async fn execute_postgres(
   pool: &Pool<Postgres>,
   sql: &str,
+  row_limit: usize,
 ) -> Result<QueryExecutionResult, String> {
   let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
-  execute_postgres_connection(&mut connection, sql).await
+  execute_postgres_connection(&mut connection, sql, row_limit).await
 }
 
 async fn execute_postgres_connection(
   connection: &mut PgConnection,
   sql: &str,
+  row_limit: usize,
 ) -> Result<QueryExecutionResult, String> {
   if is_transaction_control_statement(sql) {
     let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
@@ -173,9 +222,17 @@ async fn execute_postgres_connection(
     return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
   }
 
-  let rows = (&mut *connection).fetch_all(sql).await.map_err(|error| error.to_string())?;
-  let rows = rows.iter().map(decode_postgres_row).collect::<Result<Vec<_>, _>>()?;
-  Ok(QueryExecutionResult::Rows { columns, rows })
+  let mut stream = (&mut *connection).fetch(sql);
+  let mut rows = Vec::with_capacity(row_limit.min(1_000));
+  while rows.len() <= row_limit {
+    let Some(row) = stream.try_next().await.map_err(|error| error.to_string())? else {
+      break;
+    };
+    rows.push(decode_postgres_row(&row)?);
+  }
+  let truncated = rows.len() > row_limit;
+  rows.truncate(row_limit);
+  Ok(QueryExecutionResult::Rows { columns, rows, truncated, row_limit })
 }
 
 fn is_transaction_control_statement(sql: &str) -> bool {
@@ -353,9 +410,36 @@ mod tests {
       .expect("execute empty query");
 
     match result {
-      QueryExecutionResult::Rows { columns, rows } => {
+      QueryExecutionResult::Rows { columns, rows, truncated, row_limit } => {
         assert_eq!(columns, vec!["value"]);
         assert!(rows.is_empty());
+        assert!(!truncated);
+        assert_eq!(row_limit, DEFAULT_QUERY_ROW_LIMIT);
+      }
+      QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
+    }
+  }
+
+  #[tokio::test]
+  async fn stops_fetching_after_the_configured_row_limit() {
+    let pool = SqlitePoolOptions::new()
+      .max_connections(1)
+      .connect("sqlite::memory:")
+      .await
+      .expect("connect to SQLite");
+    let result = execute_query_with_limit(
+      &DbPool::Sqlite(pool),
+      "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3",
+      2,
+    )
+    .await
+    .expect("execute limited query");
+
+    match result {
+      QueryExecutionResult::Rows { rows, truncated, row_limit, .. } => {
+        assert_eq!(rows.len(), 2);
+        assert!(truncated);
+        assert_eq!(row_limit, 2);
       }
       QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
     }
@@ -383,7 +467,7 @@ mod tests {
         .await
         .expect("insert returning row");
     match returned {
-      QueryExecutionResult::Rows { columns, rows } => {
+      QueryExecutionResult::Rows { columns, rows, .. } => {
         assert_eq!(columns, vec!["id", "name"]);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["name"], "second");

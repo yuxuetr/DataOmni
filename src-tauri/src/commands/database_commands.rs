@@ -22,6 +22,7 @@ pub struct QueryExecutionRequest {
   execution_id: String,
   sql: String,
   timeout_ms: u64,
+  row_limit: usize,
 }
 
 #[derive(Default)]
@@ -66,6 +67,9 @@ pub async fn execute_query(
   if !(100..=3_600_000).contains(&request.timeout_ms) {
     return Err("查询超时必须在 100 毫秒到 1 小时之间".to_string());
   }
+  if !(1..=100_000).contains(&request.row_limit) {
+    return Err("结果行数上限必须在 1 到 100000 之间".to_string());
+  }
 
   let connection_string = {
     let connection_service_guard =
@@ -85,6 +89,7 @@ pub async fn execute_query(
       &connection_string,
       pool,
       &request.sql,
+      request.row_limit,
       Duration::from_millis(request.timeout_ms)
     ) => result,
     _ = receiver => Err(format!("{QUERY_CANCELLED_CODE}: 查询已取消")),

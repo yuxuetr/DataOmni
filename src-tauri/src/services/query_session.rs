@@ -23,6 +23,7 @@ impl QuerySessionState {
     pool_key: &str,
     pool: &DbPool,
     sql: &str,
+    row_limit: usize,
     timeout_duration: Duration,
   ) -> Result<QueryExecutionResult, String> {
     if session_id.trim().is_empty() {
@@ -36,7 +37,7 @@ impl QuerySessionState {
 
     timeout(timeout_duration, async {
       let mut connection = entry.connection.lock().await;
-      connection.execute(sql).await
+      connection.execute(sql, row_limit).await
     })
     .await
     .map_err(|_| {
@@ -88,12 +89,13 @@ mod tests {
         "sqlite::memory:",
         &db_pool,
         "CREATE TEMP TABLE transaction_test (value TEXT NOT NULL)",
+        100,
         timeout,
       )
       .await
       .expect("create temporary table");
     sessions
-      .execute("session-1", "sqlite::memory:", &db_pool, "BEGIN", timeout)
+      .execute("session-1", "sqlite::memory:", &db_pool, "BEGIN", 100, timeout)
       .await
       .expect("begin transaction");
     sessions
@@ -102,6 +104,7 @@ mod tests {
         "sqlite::memory:",
         &db_pool,
         "INSERT INTO transaction_test (value) VALUES ('pending')",
+        100,
         timeout,
       )
       .await
@@ -113,6 +116,7 @@ mod tests {
         "sqlite::memory:",
         &db_pool,
         "SELECT value FROM transaction_test",
+        100,
         timeout,
       )
       .await
@@ -123,7 +127,7 @@ mod tests {
     }
 
     sessions
-      .execute("session-1", "sqlite::memory:", &db_pool, "ROLLBACK", timeout)
+      .execute("session-1", "sqlite::memory:", &db_pool, "ROLLBACK", 100, timeout)
       .await
       .expect("rollback transaction");
     let result = sessions
@@ -132,6 +136,7 @@ mod tests {
         "sqlite::memory:",
         &db_pool,
         "SELECT value FROM transaction_test",
+        100,
         timeout,
       )
       .await
@@ -153,11 +158,11 @@ mod tests {
     let sessions = QuerySessionState::default();
 
     sessions
-      .execute("session-1", "pool-1", &pool, "SELECT 1", Duration::from_secs(1))
+      .execute("session-1", "pool-1", &pool, "SELECT 1", 100, Duration::from_secs(1))
       .await
       .expect("bind session");
     let error = sessions
-      .execute("session-1", "pool-2", &pool, "SELECT 1", Duration::from_secs(1))
+      .execute("session-1", "pool-2", &pool, "SELECT 1", 100, Duration::from_secs(1))
       .await
       .expect_err("reject another pool");
 

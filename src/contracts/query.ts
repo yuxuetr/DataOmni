@@ -3,6 +3,8 @@ export interface QueryResult {
   rows: unknown[][];
   affected_rows: number;
   execution_time: number;
+  truncated?: boolean;
+  row_limit?: number;
   table_name?: string;
   primary_key?: string;
 }
@@ -12,6 +14,8 @@ export type DriverQueryResult =
       kind: 'rows';
       columns: string[];
       rows: Record<string, unknown>[];
+      truncated: boolean;
+      row_limit: number;
     }
   | {
       kind: 'affected';

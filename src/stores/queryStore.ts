@@ -41,6 +41,7 @@ export interface QueryState {
   executions: QueryExecution[];
   latestExecutionIdByStatement: Record<string, string>;
   queryTimeoutMs: number;
+  queryResultRowLimit: number;
   isConnecting: boolean;
   error: string | null;
 }
@@ -65,6 +66,7 @@ interface QueryActions {
   executeAllStatements: () => Promise<void>;
   cancelExecution: (executionId: string) => Promise<void>;
   setQueryTimeoutMs: (timeoutMs: number) => void;
+  setQueryResultRowLimit: (rowLimit: number) => void;
   
   // 结果管理
   clearResults: () => void;
@@ -331,6 +333,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   executions: [],
   latestExecutionIdByStatement: {},
   queryTimeoutMs: 30_000,
+  queryResultRowLimit: 1_000,
   isConnecting: false,
   error: null,
 
@@ -479,6 +482,10 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     set({ queryTimeoutMs });
   },
 
+  setQueryResultRowLimit: (queryResultRowLimit: number) => {
+    set({ queryResultRowLimit });
+  },
+
   parseStatements: () => {
     const { sqlInput, statements } = get();
     if (!sqlInput.trim()) {
@@ -516,7 +523,14 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   },
 
   executeStatement: async (statementId: string) => {
-    const { connectionId, database, session, statements, queryTimeoutMs } = get();
+    const {
+      connectionId,
+      database,
+      session,
+      statements,
+      queryTimeoutMs,
+      queryResultRowLimit
+    } = get();
     if (!database || !session || !connectionId) {
       set({ error: '数据库未连接' });
       return false;
@@ -564,7 +578,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           sessionId: session.id,
           executionId: execution.id,
           sql: statement.sql,
-          timeoutMs: queryTimeoutMs
+          timeoutMs: queryTimeoutMs,
+          rowLimit: queryResultRowLimit
         }
       });
       const executionTime = Date.now() - startTime;
@@ -586,6 +601,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           rows,
           affected_rows: rows.length,
           execution_time: executionTime,
+          truncated: driverResult.truncated,
+          row_limit: driverResult.row_limit,
           table_name: tableName,
           primary_key: primaryKey,
         };

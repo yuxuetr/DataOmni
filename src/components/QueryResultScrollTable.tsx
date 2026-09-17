@@ -195,6 +195,11 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
       <div className="px-4 py-3 bg-gray-50 border-b flex items-center justify-between">
         <div className="flex items-center space-x-4 text-sm text-gray-600">
           <span>共 {totalRows} 行</span>
+          {result.truncated && (
+            <span className="text-amber-700">
+              已达到 {result.row_limit?.toLocaleString()} 行上限，结果已截断
+            </span>
+          )}
           <span>影响行数: {result.affected_rows}</span>
           <span>执行时间: {formatExecutionTime(result.execution_time)}</span>
           {canEdit && <span className="text-green-600">✓ 支持数据编辑</span>}

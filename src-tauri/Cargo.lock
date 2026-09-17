@@ -941,6 +941,7 @@ name = "dataomni"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "futures-util",
  "keyring",
  "serde",
  "serde_json",

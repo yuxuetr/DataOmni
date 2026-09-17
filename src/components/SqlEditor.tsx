@@ -82,6 +82,7 @@ export const SqlEditor: React.FC = () => {
     executions,
     latestExecutionIdByStatement,
     queryTimeoutMs,
+    queryResultRowLimit,
     isConnecting,
     error,
     setSqlInput,
@@ -91,6 +92,7 @@ export const SqlEditor: React.FC = () => {
     executeAllStatements,
     cancelExecution,
     setQueryTimeoutMs,
+    setQueryResultRowLimit,
     clearResults,
     removeStatement,
     setError
@@ -209,6 +211,22 @@ export const SqlEditor: React.FC = () => {
         </div>
         
         <div className="flex items-center space-x-2">
+          <label className="flex items-center space-x-2 text-sm text-gray-600">
+            <span>结果上限</span>
+            <select
+              value={queryResultRowLimit}
+              onChange={(event) => setQueryResultRowLimit(Number(event.target.value))}
+              className="px-2 py-1.5 border border-gray-300 rounded-md bg-white text-sm"
+              aria-label="查询结果行数上限"
+            >
+              <option value={100}>100 行</option>
+              <option value={500}>500 行</option>
+              <option value={1000}>1,000 行</option>
+              <option value={5000}>5,000 行</option>
+              <option value={10000}>10,000 行</option>
+            </select>
+          </label>
+
           <label className="flex items-center space-x-2 text-sm text-gray-600">
             <span>超时</span>
             <select

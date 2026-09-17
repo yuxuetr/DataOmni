@@ -1,6 +1,6 @@
 use dataomni_lib::services::{
-  execute_query, execute_query_with_timeout, QueryExecutionResult, QuerySessionState,
-  QUERY_TIMEOUT_CODE,
+  execute_query, execute_query_with_limit, execute_query_with_timeout, QueryExecutionResult,
+  QuerySessionState, QUERY_TIMEOUT_CODE,
 };
 use sqlx::{mysql::MySqlPoolOptions, postgres::PgPoolOptions, sqlite::SqlitePoolOptions};
 use std::time::Duration;
@@ -40,6 +40,17 @@ async fn sqlite_supports_basic_read_write() {
       .await
       .expect("describe empty SQLite result");
   assert_empty_row_result(result, "value");
+
+  assert_truncated_result(
+    execute_query_with_limit(
+      &DbPool::Sqlite(pool),
+      "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3",
+      2,
+    )
+    .await
+    .expect("limit SQLite result"),
+    2,
+  );
 }
 
 #[tokio::test]
@@ -87,6 +98,16 @@ async fn postgres_supports_basic_read_write() {
       Duration::from_millis(20),
     )
     .await,
+  );
+  assert_truncated_result(
+    execute_query_with_limit(
+      &DbPool::Postgres(pool.clone()),
+      "SELECT value FROM generate_series(1, 3) AS value",
+      2,
+    )
+    .await
+    .expect("limit PostgreSQL result"),
+    2,
   );
 
   assert_transaction_binding(
@@ -144,6 +165,16 @@ async fn mysql_supports_basic_read_write() {
     )
     .await,
   );
+  assert_truncated_result(
+    execute_query_with_limit(
+      &DbPool::MySql(pool.clone()),
+      "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3",
+      2,
+    )
+    .await
+    .expect("limit MySQL result"),
+    2,
+  );
 
   assert_transaction_binding(
     &QuerySessionState::default(),
@@ -166,27 +197,30 @@ async fn assert_transaction_binding(
 ) {
   let timeout = Duration::from_secs(5);
   sessions
-    .execute(session_id, pool_key, pool, create_table_sql, timeout)
+    .execute(session_id, pool_key, pool, create_table_sql, 100, timeout)
     .await
     .expect("create session-local temporary table");
-  sessions.execute(session_id, pool_key, pool, "BEGIN", timeout).await.expect("begin transaction");
   sessions
-    .execute(session_id, pool_key, pool, insert_sql, timeout)
+    .execute(session_id, pool_key, pool, "BEGIN", 100, timeout)
+    .await
+    .expect("begin transaction");
+  sessions
+    .execute(session_id, pool_key, pool, insert_sql, 100, timeout)
     .await
     .expect("insert inside transaction");
 
   let result = sessions
-    .execute(session_id, pool_key, pool, "SELECT value FROM transaction_binding_test", timeout)
+    .execute(session_id, pool_key, pool, "SELECT value FROM transaction_binding_test", 100, timeout)
     .await
     .expect("read inside transaction");
   assert_single_row_result(result, "value", "pending");
 
   sessions
-    .execute(session_id, pool_key, pool, "ROLLBACK", timeout)
+    .execute(session_id, pool_key, pool, "ROLLBACK", 100, timeout)
     .await
     .expect("rollback transaction");
   let result = sessions
-    .execute(session_id, pool_key, pool, "SELECT value FROM transaction_binding_test", timeout)
+    .execute(session_id, pool_key, pool, "SELECT value FROM transaction_binding_test", 100, timeout)
     .await
     .expect("read after rollback");
   assert_empty_row_result(result, "value");
@@ -195,7 +229,7 @@ async fn assert_transaction_binding(
 
 fn assert_empty_row_result(result: QueryExecutionResult, column: &str) {
   match result {
-    QueryExecutionResult::Rows { columns, rows } => {
+    QueryExecutionResult::Rows { columns, rows, .. } => {
       assert_eq!(columns, vec![column]);
       assert!(rows.is_empty());
     }
@@ -205,7 +239,7 @@ fn assert_empty_row_result(result: QueryExecutionResult, column: &str) {
 
 fn assert_single_row_result(result: QueryExecutionResult, column: &str, value: &str) {
   match result {
-    QueryExecutionResult::Rows { columns, rows } => {
+    QueryExecutionResult::Rows { columns, rows, .. } => {
       assert_eq!(columns, vec![column]);
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0][column], value);
@@ -217,6 +251,17 @@ fn assert_single_row_result(result: QueryExecutionResult, column: &str, value: &
 fn assert_query_times_out(result: Result<QueryExecutionResult, String>) {
   let error = result.expect_err("query should exceed its timeout");
   assert!(error.starts_with(QUERY_TIMEOUT_CODE), "unexpected timeout error: {error}");
+}
+
+fn assert_truncated_result(result: QueryExecutionResult, expected_limit: usize) {
+  match result {
+    QueryExecutionResult::Rows { rows, truncated, row_limit, .. } => {
+      assert_eq!(rows.len(), expected_limit);
+      assert!(truncated);
+      assert_eq!(row_limit, expected_limit);
+    }
+    QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
+  }
 }
 
 fn network_database_url(variable: &str) -> Option<String> {
