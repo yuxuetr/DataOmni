@@ -203,6 +203,8 @@ impl ConnectionService {
 
   /// 测试数据库连接 - 实际尝试连接并返回连接字符串
   pub fn test_connection(&self, config: &ConnectionProfile) -> Result<String, String> {
+    validate_tls_configuration(config)?;
+
     let mut resolved_config = config.clone();
     if resolved_config.password.is_empty() && resolved_config.credential_ref.is_some() {
       resolved_config.password = self.credential_store.get_password(&resolved_config.id)?;
@@ -284,6 +286,27 @@ fn credential_entry(profile_id: &str) -> Result<Entry, String> {
 
 fn credential_ref(profile_id: &str) -> String {
   format!("{CREDENTIAL_REF_PREFIX}{profile_id}")
+}
+
+fn validate_tls_configuration(config: &ConnectionProfile) -> Result<(), String> {
+  let has_client_certificate =
+    config.client_certificate_path.as_ref().is_some_and(|path| !path.is_empty());
+  let has_client_key = config.client_key_path.as_ref().is_some_and(|path| !path.is_empty());
+
+  if has_client_certificate != has_client_key {
+    return Err("客户端证书和私钥必须同时配置".to_string());
+  }
+
+  let has_certificate_paths =
+    config.ca_certificate_path.as_ref().is_some_and(|path| !path.is_empty())
+      || has_client_certificate;
+  if has_certificate_paths
+    && !matches!(config.db_type, DatabaseType::MySQL | DatabaseType::PostgreSQL)
+  {
+    return Err("当前数据库驱动不支持自定义 TLS 证书".to_string());
+  }
+
+  Ok(())
 }
 
 fn redact_connection_string(connection_string: &str) -> String {
@@ -389,6 +412,9 @@ mod tests {
       password: password.to_string(),
       ssl: false,
       tls_mode: None,
+      ca_certificate_path: None,
+      client_certificate_path: None,
+      client_key_path: None,
       options: HashMap::new(),
       tags: Vec::new(),
       environment: ConnectionEnvironment::Development,
@@ -455,5 +481,16 @@ mod tests {
     assert_eq!(redacted, "postgres://admin:***@localhost/app?sslmode=require&token=***");
     assert!(!redacted.contains("secret"));
     assert!(!redacted.contains("abc123"));
+  }
+
+  #[test]
+  fn rejects_incomplete_client_certificate_configuration() {
+    let mut config = profile("profile-1", "secret");
+    config.client_certificate_path = Some("/certs/client.pem".to_string());
+
+    assert_eq!(
+      validate_tls_configuration(&config),
+      Err("客户端证书和私钥必须同时配置".to_string())
+    );
   }
 }

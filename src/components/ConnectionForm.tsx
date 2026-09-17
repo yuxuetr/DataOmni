@@ -607,29 +607,86 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 {(formData.db_type === DatabaseType.MySQL || 
                   formData.db_type === DatabaseType.PostgreSQL ||
                   formData.db_type === DatabaseType.Elasticsearch) && (
-                  <div>
-                   <label htmlFor="tls-mode" className="block text-sm font-medium text-gray-700 mb-1">
-                     TLS 模式
-                   </label>
-                   <select
-                     id="tls-mode"
-                     value={formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')}
-                     onChange={(event) => {
-                       const tlsMode = event.target.value as TlsMode;
-                       setFormData((previous) => ({
-                         ...previous,
-                         tls_mode: tlsMode,
-                         ssl: tlsMode !== 'disabled'
-                       }));
-                     }}
-                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                   >
-                     <option value="disabled">禁用</option>
-                     <option value="preferred">优先使用 TLS</option>
-                     <option value="required">要求 TLS</option>
-                     <option value="verify-ca">校验证书颁发机构</option>
-                     <option value="verify-full">校验证书和主机名</option>
-                   </select>
+                  <div className="space-y-4">
+                    <div>
+                      <label htmlFor="tls-mode" className="block text-sm font-medium text-gray-700 mb-1">
+                        TLS 模式
+                      </label>
+                      <select
+                        id="tls-mode"
+                        value={formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')}
+                        onChange={(event) => {
+                          const tlsMode = event.target.value as TlsMode;
+                          setFormData((previous) => ({
+                            ...previous,
+                            tls_mode: tlsMode,
+                            ssl: tlsMode !== 'disabled'
+                          }));
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="disabled">禁用</option>
+                        <option value="preferred">优先使用 TLS</option>
+                        <option value="required">要求 TLS</option>
+                        <option value="verify-ca">校验证书颁发机构</option>
+                        <option value="verify-full">校验证书和主机名</option>
+                      </select>
+                    </div>
+
+                    {(formData.db_type === DatabaseType.MySQL
+                      || formData.db_type === DatabaseType.PostgreSQL)
+                      && (formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')) !== 'disabled' && (
+                      <div className="space-y-3 rounded-md border border-gray-200 bg-gray-50 p-3">
+                        <div>
+                          <label htmlFor="ca-certificate" className="block text-sm font-medium text-gray-700 mb-1">
+                            CA 证书路径
+                          </label>
+                          <input
+                            id="ca-certificate"
+                            type="text"
+                            value={formData.ca_certificate_path ?? ''}
+                            onChange={(event) => setFormData((previous) => ({
+                              ...previous,
+                              ca_certificate_path: event.target.value
+                            }))}
+                            placeholder="/path/to/ca.pem"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="client-certificate" className="block text-sm font-medium text-gray-700 mb-1">
+                            客户端证书路径
+                          </label>
+                          <input
+                            id="client-certificate"
+                            type="text"
+                            value={formData.client_certificate_path ?? ''}
+                            onChange={(event) => setFormData((previous) => ({
+                              ...previous,
+                              client_certificate_path: event.target.value
+                            }))}
+                            placeholder="/path/to/client.crt"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="client-key" className="block text-sm font-medium text-gray-700 mb-1">
+                            客户端私钥路径
+                          </label>
+                          <input
+                            id="client-key"
+                            type="text"
+                            value={formData.client_key_path ?? ''}
+                            onChange={(event) => setFormData((previous) => ({
+                              ...previous,
+                              client_key_path: event.target.value
+                            }))}
+                            placeholder="/path/to/client.key"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </>

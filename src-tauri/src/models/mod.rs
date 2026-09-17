@@ -16,6 +16,12 @@ pub struct ConnectionProfile {
   pub ssl: bool,
   #[serde(default)]
   pub tls_mode: Option<TlsMode>,
+  #[serde(default)]
+  pub ca_certificate_path: Option<String>,
+  #[serde(default)]
+  pub client_certificate_path: Option<String>,
+  #[serde(default)]
+  pub client_key_path: Option<String>,
   pub options: HashMap<String, String>,
   pub tags: Vec<String>,
   #[serde(default)]
@@ -181,6 +187,11 @@ impl DatabaseType {
             TlsMode::VerifyFull => "VERIFY_IDENTITY",
           }
         ));
+        if config.effective_tls_mode() != TlsMode::Disabled {
+          push_parameter(&mut params, "ssl-ca", config.ca_certificate_path.as_deref());
+          push_parameter(&mut params, "ssl-cert", config.client_certificate_path.as_deref());
+          push_parameter(&mut params, "ssl-key", config.client_key_path.as_deref());
+        }
 
         // Add connection timeout and other stability parameters
         params.push("connectTimeout=30000".to_string());
@@ -214,6 +225,11 @@ impl DatabaseType {
             TlsMode::VerifyFull => "verify-full",
           }
         ));
+        if config.effective_tls_mode() != TlsMode::Disabled {
+          push_parameter(&mut params, "sslrootcert", config.ca_certificate_path.as_deref());
+          push_parameter(&mut params, "sslcert", config.client_certificate_path.as_deref());
+          push_parameter(&mut params, "sslkey", config.client_key_path.as_deref());
+        }
 
         // Add connection timeout
         params.push("connect_timeout=30".to_string());
@@ -315,6 +331,12 @@ impl ConnectionProfile {
   }
 }
 
+fn push_parameter(parameters: &mut Vec<String>, name: &str, value: Option<&str>) {
+  if let Some(value) = value.filter(|value| !value.is_empty()) {
+    parameters.push(format!("{name}={}", encode(value)));
+  }
+}
+
 impl Default for ConnectionProfile {
   fn default() -> Self {
     Self {
@@ -328,6 +350,9 @@ impl Default for ConnectionProfile {
       password: "".to_string(),
       ssl: false,
       tls_mode: Some(TlsMode::Disabled),
+      ca_certificate_path: None,
+      client_certificate_path: None,
+      client_key_path: None,
       options: HashMap::new(),
       tags: Vec::new(),
       environment: ConnectionEnvironment::Development,
@@ -376,10 +401,16 @@ mod tests {
 
   #[test]
   fn mysql_connection_string_verifies_host_identity() {
-    let connection_string =
-      DatabaseType::MySQL.to_connection_string(&mysql_config(Some(TlsMode::VerifyFull), false));
+    let mut config = mysql_config(Some(TlsMode::VerifyFull), false);
+    config.ca_certificate_path = Some("/certs/root ca.pem".to_string());
+    config.client_certificate_path = Some("/certs/client.pem".to_string());
+    config.client_key_path = Some("/certs/client.key".to_string());
+    let connection_string = DatabaseType::MySQL.to_connection_string(&config);
 
     assert!(connection_string.contains("ssl-mode=VERIFY_IDENTITY"));
+    assert!(connection_string.contains("ssl-ca=%2Fcerts%2Froot%20ca.pem"));
+    assert!(connection_string.contains("ssl-cert=%2Fcerts%2Fclient.pem"));
+    assert!(connection_string.contains("ssl-key=%2Fcerts%2Fclient.key"));
   }
 
   #[test]
@@ -387,6 +418,30 @@ mod tests {
     let connection_string = DatabaseType::MySQL.to_connection_string(&mysql_config(None, true));
 
     assert!(connection_string.contains("ssl-mode=REQUIRED"));
+  }
+
+  #[test]
+  fn postgres_connection_string_uses_certificate_paths() {
+    let config = ConnectionProfile {
+      db_type: DatabaseType::PostgreSQL,
+      host: "localhost".to_string(),
+      port: 5432,
+      database: Some("dataomni".to_string()),
+      username: "user".to_string(),
+      password: "password".to_string(),
+      tls_mode: Some(TlsMode::VerifyFull),
+      ca_certificate_path: Some("/certs/root ca.pem".to_string()),
+      client_certificate_path: Some("/certs/client.pem".to_string()),
+      client_key_path: Some("/certs/client.key".to_string()),
+      ..ConnectionProfile::default()
+    };
+
+    let connection_string = DatabaseType::PostgreSQL.to_connection_string(&config);
+
+    assert!(connection_string.contains("sslmode=verify-full"));
+    assert!(connection_string.contains("sslrootcert=%2Fcerts%2Froot%20ca.pem"));
+    assert!(connection_string.contains("sslcert=%2Fcerts%2Fclient.pem"));
+    assert!(connection_string.contains("sslkey=%2Fcerts%2Fclient.key"));
   }
 
   #[test]
@@ -413,6 +468,9 @@ mod tests {
     assert_eq!(profile.environment, ConnectionEnvironment::Development);
     assert_eq!(profile.credential_ref, None);
     assert_eq!(profile.tls_mode, None);
+    assert_eq!(profile.ca_certificate_path, None);
+    assert_eq!(profile.client_certificate_path, None);
+    assert_eq!(profile.client_key_path, None);
     assert_eq!(profile.effective_tls_mode(), TlsMode::Disabled);
   }
 }

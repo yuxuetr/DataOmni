@@ -24,6 +24,9 @@ export interface ConnectionProfile {
   password: string;
   ssl: boolean;
   tls_mode?: TlsMode;
+  ca_certificate_path?: string;
+  client_certificate_path?: string;
+  client_key_path?: string;
   options: Record<string, string>;
   tags: string[];
   environment: ConnectionEnvironment;

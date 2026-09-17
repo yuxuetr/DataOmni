@@ -94,7 +94,7 @@
 - [x] 使用 macOS Keychain、Windows Credential Manager、Linux Secret Service 保存凭据
 - [x] 配置文件只保存凭据引用和非敏感字段
 - [x] 定义明确的 TLS 模式：禁用、优先、要求、校验证书、校验主机名
-- [ ] 支持 CA、客户端证书和私钥配置
+- [x] 支持 CA、客户端证书和私钥配置
 - [x] 日志统一脱敏，禁止打印密码、Token 和完整连接串
 - [ ] 支持“不保存密码”和每次连接时输入
 
