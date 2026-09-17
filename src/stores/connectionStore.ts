@@ -267,13 +267,16 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   testConnection: async (config) => {
     set({ isLoading: true, error: null, testResult: null });
     try {
+      const requiresNetworkPort = config.db_type !== DatabaseType.SQLite &&
+        config.db_type !== DatabaseType.DuckDB;
+
       // 前端预验证
-      if (config.port > 65535 || config.port < 1) {
+      if (requiresNetworkPort && (config.port > 65535 || config.port < 1)) {
         throw new Error(`端口号无效: ${config.port}。端口号必须在1-65535范围内。`);
       }
       
-      // 检查Tauri SQL插件的端口限制（适用于所有数据库类型）
-      if (config.port > 32767) {
+      // 检查网络数据库的Tauri SQL插件端口限制
+      if (requiresNetworkPort && config.port > 32767) {
         const errorMessage = `端口兼容性错误：端口 ${config.port} 超出了Tauri SQL插件支持的范围（最大32767）。这是由于底层驱动使用16位有符号整数的限制。
 
 解决方案：
