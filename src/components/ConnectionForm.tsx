@@ -600,6 +600,24 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         </button>
                       </div>
                     </div>
+                    <div className="flex items-start">
+                      <input
+                        id="save-password"
+                        type="checkbox"
+                        checked={formData.save_password ?? true}
+                        onChange={(event) => setFormData((previous) => ({
+                          ...previous,
+                          save_password: event.target.checked
+                        }))}
+                        className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <label htmlFor="save-password" className="ml-2 text-sm text-gray-700">
+                        将密码保存到系统凭据库
+                        <span className="block text-xs text-gray-500">
+                          关闭后密码仅在本次应用会话中使用，重启后需要重新输入。
+                        </span>
+                      </label>
+                    </div>
                   </div>
                 )}
 

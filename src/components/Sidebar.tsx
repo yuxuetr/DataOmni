@@ -63,7 +63,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
       setShowConnectionMenu(false);
     } catch (error) {
       console.error('连接失败:', error);
-      setConnectionError(error instanceof Error ? error.message : '数据库连接失败');
+      const message = error instanceof Error ? error.message : String(error);
+      setConnectionError(
+        message.includes('SESSION_PASSWORD_REQUIRED')
+          ? '该连接未保存密码，请输入本次会话密码。'
+          : message || '数据库连接失败'
+      );
+      if (message.includes('SESSION_PASSWORD_REQUIRED')) {
+        setEditingConnection(connection);
+        setIsFormOpen(true);
+        setShowConnectionMenu(false);
+      }
     }
   };
 

@@ -22,6 +22,8 @@ pub struct ConnectionProfile {
   pub client_certificate_path: Option<String>,
   #[serde(default)]
   pub client_key_path: Option<String>,
+  #[serde(default = "default_save_password")]
+  pub save_password: bool,
   pub options: HashMap<String, String>,
   pub tags: Vec<String>,
   #[serde(default)]
@@ -50,6 +52,10 @@ pub enum TlsMode {
   Required,
   VerifyCa,
   VerifyFull,
+}
+
+fn default_save_password() -> bool {
+  true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -353,6 +359,7 @@ impl Default for ConnectionProfile {
       ca_certificate_path: None,
       client_certificate_path: None,
       client_key_path: None,
+      save_password: true,
       options: HashMap::new(),
       tags: Vec::new(),
       environment: ConnectionEnvironment::Development,
@@ -471,6 +478,7 @@ mod tests {
     assert_eq!(profile.ca_certificate_path, None);
     assert_eq!(profile.client_certificate_path, None);
     assert_eq!(profile.client_key_path, None);
+    assert!(profile.save_password);
     assert_eq!(profile.effective_tls_mode(), TlsMode::Disabled);
   }
 }

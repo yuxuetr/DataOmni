@@ -8,6 +8,7 @@ use tauri::Manager;
 
 const CREDENTIAL_SERVICE: &str = "DataOmni";
 const CREDENTIAL_REF_PREFIX: &str = "system-keyring://connection/";
+const SESSION_PASSWORD_REQUIRED: &str = "SESSION_PASSWORD_REQUIRED";
 
 trait CredentialStore: Send + Sync {
   fn set_password(&self, profile_id: &str, password: &str) -> Result<(), String>;
@@ -42,6 +43,7 @@ pub struct ConnectionService {
   config_path: PathBuf,
   connections: HashMap<String, ConnectionProfile>,
   credential_store: Box<dyn CredentialStore>,
+  session_passwords: HashMap<String, String>,
 }
 
 impl ConnectionService {
@@ -64,7 +66,12 @@ impl ConnectionService {
     credential_store: Box<dyn CredentialStore>,
   ) -> Result<Self, Box<dyn std::error::Error>> {
     let (connections, migrated) = Self::load_connections(config_path, credential_store.as_ref())?;
-    let service = Self { config_path: config_path.clone(), connections, credential_store };
+    let service = Self {
+      config_path: config_path.clone(),
+      connections,
+      credential_store,
+      session_passwords: HashMap::new(),
+    };
 
     if migrated {
       service.save_connections()?;
@@ -136,7 +143,7 @@ impl ConnectionService {
     config.updated_at = chrono::Utc::now().to_rfc3339();
 
     let id = config.id.clone();
-    self.persist_profile_password(&mut config)?;
+    self.persist_submitted_password(&mut config)?;
     self.connections.insert(id.clone(), config);
 
     self.save_connections().map_err(|e| format!("保存连接配置失败: {}", e))?;
@@ -150,17 +157,16 @@ impl ConnectionService {
     id: &str,
     mut config: ConnectionProfile,
   ) -> Result<(), String> {
-    if !self.connections.contains_key(id) {
+    let Some(existing) = self.connections.get(id).cloned() else {
       return Err("连接不存在".to_string());
-    }
+    };
 
     config.id = id.to_string();
     config.updated_at = chrono::Utc::now().to_rfc3339();
     if config.password.is_empty() {
-      config.credential_ref =
-        self.connections.get(id).and_then(|connection| connection.credential_ref.clone());
+      self.apply_existing_password_policy(&existing, &mut config)?;
     } else {
-      self.persist_profile_password(&mut config)?;
+      self.persist_submitted_password(&mut config)?;
     }
 
     self.connections.insert(id.to_string(), config);
@@ -182,6 +188,7 @@ impl ConnectionService {
         return Err(error);
       }
     }
+    self.session_passwords.remove(id);
 
     if let Err(error) = self.save_connections() {
       self.connections.insert(id.to_string(), connection);
@@ -208,6 +215,11 @@ impl ConnectionService {
     let mut resolved_config = config.clone();
     if resolved_config.password.is_empty() && resolved_config.credential_ref.is_some() {
       resolved_config.password = self.credential_store.get_password(&resolved_config.id)?;
+    } else if resolved_config.password.is_empty() && !resolved_config.save_password {
+      resolved_config.password =
+        self.session_passwords.get(&resolved_config.id).cloned().ok_or_else(|| {
+          format!("{SESSION_PASSWORD_REQUIRED}: 此连接未保存密码，请输入本次会话密码")
+        })?;
     }
 
     let connection_string = resolved_config.db_type.to_connection_string(&resolved_config);
@@ -267,15 +279,56 @@ impl ConnectionService {
     Ok(connection_string)
   }
 
-  fn persist_profile_password(&self, config: &mut ConnectionProfile) -> Result<(), String> {
+  fn persist_submitted_password(&mut self, config: &mut ConnectionProfile) -> Result<(), String> {
     if config.password.is_empty() {
       config.credential_ref = None;
       return Ok(());
     }
 
-    self.credential_store.set_password(&config.id, &config.password)?;
+    if config.save_password {
+      self.credential_store.set_password(&config.id, &config.password)?;
+      self.session_passwords.remove(&config.id);
+      config.credential_ref = Some(credential_ref(&config.id));
+    } else {
+      if config.credential_ref.is_some() {
+        self.credential_store.delete_password(&config.id)?;
+      }
+      self.session_passwords.insert(config.id.clone(), config.password.clone());
+      config.credential_ref = None;
+    }
+
     config.password.clear();
-    config.credential_ref = Some(credential_ref(&config.id));
+    Ok(())
+  }
+
+  fn apply_existing_password_policy(
+    &mut self,
+    existing: &ConnectionProfile,
+    config: &mut ConnectionProfile,
+  ) -> Result<(), String> {
+    if existing.save_password == config.save_password {
+      config.credential_ref = existing.credential_ref.clone();
+      return Ok(());
+    }
+
+    if config.save_password {
+      let password = self
+        .session_passwords
+        .get(&config.id)
+        .cloned()
+        .ok_or_else(|| format!("{SESSION_PASSWORD_REQUIRED}: 保存密码前请重新输入密码"))?;
+      self.credential_store.set_password(&config.id, &password)?;
+      self.session_passwords.remove(&config.id);
+      config.credential_ref = Some(credential_ref(&config.id));
+      return Ok(());
+    }
+
+    if existing.credential_ref.is_some() {
+      let password = self.credential_store.get_password(&config.id)?;
+      self.session_passwords.insert(config.id.clone(), password);
+      self.credential_store.delete_password(&config.id)?;
+    }
+    config.credential_ref = None;
     Ok(())
   }
 }
@@ -415,6 +468,7 @@ mod tests {
       ca_certificate_path: None,
       client_certificate_path: None,
       client_key_path: None,
+      save_password: true,
       options: HashMap::new(),
       tags: Vec::new(),
       environment: ConnectionEnvironment::Development,
@@ -468,6 +522,35 @@ mod tests {
       service.test_connection(service.get_connection("profile-1").unwrap()).unwrap(),
       "postgres://postgres:legacy-secret@localhost:5432/postgres?sslmode=disable&connect_timeout=30"
     );
+
+    fs::remove_file(config_path).unwrap();
+  }
+
+  #[test]
+  fn keeps_session_only_passwords_out_of_disk_and_system_storage() {
+    let config_path = temporary_config_path();
+    let store = Box::<MemoryCredentialStore>::default();
+    let mut service = ConnectionService::from_path(&config_path, store).unwrap();
+    let mut config = profile("profile-1", "session-secret");
+    config.save_password = false;
+
+    service.create_connection(config).unwrap();
+
+    let content = fs::read_to_string(&config_path).unwrap();
+    assert!(!content.contains("session-secret"));
+    assert!(!content.contains("system-keyring://"));
+    assert!(content.contains("\"save_password\": false"));
+    assert!(service
+      .test_connection(service.get_connection("profile-1").unwrap())
+      .unwrap()
+      .contains("session-secret"));
+
+    let restarted_service =
+      ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()).unwrap();
+    assert!(restarted_service
+      .test_connection(restarted_service.get_connection("profile-1").unwrap())
+      .unwrap_err()
+      .starts_with(SESSION_PASSWORD_REQUIRED));
 
     fs::remove_file(config_path).unwrap();
   }

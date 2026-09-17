@@ -58,6 +58,7 @@ export const createDefaultConfig = (type: DatabaseType = DatabaseType.SQLite): P
     ca_certificate_path: '',
     client_certificate_path: '',
     client_key_path: '',
+    save_password: true,
     options: {},
     tags: [],
     environment: 'development' as ConnectionEnvironment,

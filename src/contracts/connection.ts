@@ -27,6 +27,7 @@ export interface ConnectionProfile {
   ca_certificate_path?: string;
   client_certificate_path?: string;
   client_key_path?: string;
+  save_password: boolean;
   options: Record<string, string>;
   tags: string[];
   environment: ConnectionEnvironment;

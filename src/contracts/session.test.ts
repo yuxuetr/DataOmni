@@ -11,6 +11,7 @@ const profile: ConnectionProfile = {
   database: 'postgres',
   username: 'postgres',
   password: '',
+  save_password: true,
   ssl: false,
   options: {},
   tags: [],
