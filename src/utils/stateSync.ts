@@ -4,6 +4,7 @@
 
 import { useAppStore } from '../stores/appStore';
 import { useQueryStore } from '../stores/queryStore';
+import { useWorkspaceStore } from '../stores/workspaceStore';
 import { ConnectionConfig } from '../stores/connectionStore';
 import { createDatabaseSession } from '../contracts/session';
 
@@ -90,6 +91,7 @@ export class SessionManager {
       viewMode: 'workbench',
       connectionReady: false
     });
+    useWorkspaceStore.getState().selectSidebarProfile(null);
   }
 
   /**
@@ -175,6 +177,7 @@ export class SessionManager {
       connectionReady: true,
       selectedTable: null
     });
+    useWorkspaceStore.getState().selectSidebarProfile(connection.id);
 
     console.log('✅ 连接状态同步完成:', connection.id);
   }
