@@ -5,7 +5,7 @@ export const quoteSqlIdentifier = (
   dialect: SqlIdentifierDialect
 ): string => {
   const quote = dialect === 'mysql' ? '`' : '"';
-  return `${quote}${identifier.replaceAll(quote, quote + quote)}${quote}`;
+  return `${quote}${identifier.split(quote).join(quote + quote)}${quote}`;
 };
 
 export const quoteQualifiedSqlIdentifier = (
