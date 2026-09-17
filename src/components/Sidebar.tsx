@@ -9,7 +9,7 @@ import { confirm } from '@tauri-apps/plugin-dialog';
 interface SidebarProps {
   onConnect: (connection: ConnectionConfig, connectionString: string) => Promise<void>;
   activeConnectionId?: string | null;
-  onConnectionDeleted?: (deletedConnectionId: string) => void;
+  onConnectionDeleted?: (deletedConnectionId: string) => Promise<void>;
   onTableSelect?: (tableName: string, schema?: string) => void;
 }
 
@@ -85,7 +85,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       try {
         await deleteConnection(connection.id);
         if (activeConnectionId === connection.id && onConnectionDeleted) {
-          onConnectionDeleted(connection.id);
+          await onConnectionDeleted(connection.id);
         }
       } catch (error) {
         console.error('删除连接失败:', error);

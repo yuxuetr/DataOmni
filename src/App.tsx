@@ -46,9 +46,7 @@ function App() {
           activeConnection ? (
             <SqlWorkbench
               connection={activeConnection.config}
-              onDisconnect={() => {
-                useAppStore.getState().clearActiveConnection();
-              }}
+              onDisconnect={() => useAppStore.getState().clearActiveConnection()}
               onReconnect={() => connectionManager.switchConnection(
                 activeConnection.config,
                 activeConnection.connectionString

@@ -87,7 +87,7 @@ export class ConnectionStateManager {
     // 3. 断开旧连接
     if (appStore.activeConnection && appStore.activeConnection.config.id !== connection.id) {
       console.log('🔌 断开旧连接:', appStore.activeConnection.config.id);
-      queryStore.disconnect();
+      await queryStore.disconnect();
       appStore.clearDatabaseMetadata(appStore.activeConnection.config.id);
     }
 

@@ -51,8 +51,8 @@ export interface AppState {
 // 应用操作接口
 export interface AppActions {
   // 数据库连接管理
-  setActiveConnection: (connection: ConnectionConfig, connectionString: string) => void;
-  clearActiveConnection: () => void;
+  setActiveConnection: (connection: ConnectionConfig, connectionString: string) => Promise<void>;
+  clearActiveConnection: () => Promise<void>;
   
   // 视图模式管理
   setViewMode: (mode: ViewMode) => void;
@@ -70,7 +70,7 @@ export interface AppActions {
   clearDatabaseMetadata: (connectionId?: string) => void;
   
   // 连接删除处理
-  handleConnectionDeleted: (deletedConnectionId: string) => void;
+  handleConnectionDeleted: (deletedConnectionId: string) => Promise<void>;
   
   // 连接状态管理
   setConnectionReady: (ready: boolean) => void;
@@ -101,7 +101,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       console.log('🔌 断开旧连接并保存历史:', previousConnectionId);
       const { disconnect, saveSqlHistory } = useQueryStore.getState();
       saveSqlHistory(); // 保存当前SQL历史
-      disconnect(); // 断开旧连接
+      await disconnect(); // 断开旧连接
       get().clearDatabaseMetadata(previousConnectionId);
     }
     
@@ -139,12 +139,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  clearActiveConnection: () => {
+  clearActiveConnection: async () => {
     console.log('🔌 清除活跃连接');
     
     // 断开数据库连接
     const { disconnect } = useQueryStore.getState();
-    disconnect();
+    await disconnect();
     
     set({ 
       activeConnection: null,
@@ -234,12 +234,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  handleConnectionDeleted: (deletedConnectionId: string) => {
+  handleConnectionDeleted: async (deletedConnectionId: string) => {
     console.log('🗑️ 处理连接删除:', deletedConnectionId);
     const currentState = get();
     
     // 如果删除的是当前活跃连接，清除活跃连接状态
     if (currentState.activeConnection && currentState.activeConnection.config.id === deletedConnectionId) {
+      await useQueryStore.getState().disconnect();
       set({ 
         activeConnection: null,
         selectedTable: null,

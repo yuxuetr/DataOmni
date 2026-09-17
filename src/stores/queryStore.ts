@@ -47,7 +47,7 @@ export interface QueryState {
 interface QueryActions {
   // 数据库连接
   connectToDatabase: (connectionString: string, connectionId: string) => Promise<void>;
-  disconnect: () => void;
+  disconnect: () => Promise<void>;
   
   // SQL 编辑
   setSqlInput: (sql: string) => void;
@@ -424,12 +424,22 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     }
   },
 
-  disconnect: () => {
+  disconnect: async () => {
     // 在断开连接前保存SQL历史
     const currentState = get();
     if (currentState.connectionId && (currentState.sqlInput.trim() || currentState.statements.length > 0)) {
       const { saveSqlHistory } = get();
       saveSqlHistory();
+    }
+
+    if (currentState.database) {
+      try {
+        await currentState.database.close();
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : '关闭数据库连接失败';
+        set({ error: errorMessage });
+        throw new Error(errorMessage);
+      }
     }
 
     set({

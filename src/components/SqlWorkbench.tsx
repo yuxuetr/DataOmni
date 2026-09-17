@@ -15,7 +15,7 @@ import { SqlEditor } from './SqlEditor';
 
 interface SqlWorkbenchProps {
   connection: ConnectionConfig;
-  onDisconnect: () => void;
+  onDisconnect: () => Promise<void>;
   onReconnect: () => Promise<void>;
   selectedTable?: { name: string; schema?: string };
 }
@@ -31,7 +31,6 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
     connectionId,
     isConnecting,
     error,
-    disconnect,
     setError,
     setSqlInput,
     parseStatements,
@@ -89,9 +88,8 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
   };
 
   // 关闭工作台
-  const handleClose = () => {
-    disconnect();
-    onDisconnect();
+  const handleClose = async () => {
+    await onDisconnect();
   };
 
   // 获取连接状态显示
