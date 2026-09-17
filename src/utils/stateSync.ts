@@ -159,7 +159,7 @@ export class SessionManager {
     appStore.setConnectionReady(false);
 
     // 5. 建立新连接
-    await queryStore.connectToDatabase(connectionString, connection.id);
+    await queryStore.connectToDatabase(connectionString, connection.id, crypto.randomUUID());
 
     // 6. 等待数据库连接对象就绪
     await this.waitForDatabaseReady();

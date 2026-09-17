@@ -35,7 +35,8 @@ export interface SqlHistory {
 // 查询状态
 export interface QueryState {
   connectionString: string | null;
-  connectionId: string | null; // 用于标识唯一连接的ID
+  connectionId: string | null; // 保存的连接配置 ID，用于草稿和元数据
+  sessionId: string | null; // 每次实际建立数据库连接时生成的运行时 ID
   database: Database | null;
   sqlInput: string;
   statements: SqlStatement[];
@@ -46,7 +47,7 @@ export interface QueryState {
 // Store Actions
 interface QueryActions {
   // 数据库连接
-  connectToDatabase: (connectionString: string, connectionId: string) => Promise<void>;
+  connectToDatabase: (connectionString: string, connectionId: string, sessionId: string) => Promise<void>;
   disconnect: () => Promise<void>;
   
   // SQL 编辑
@@ -327,6 +328,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   // 初始状态
   connectionString: null,
   connectionId: null,
+  sessionId: null,
   database: null,
   sqlInput: '',
   statements: [],
@@ -334,7 +336,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   error: null,
 
   // Actions
-  connectToDatabase: async (connectionString: string, connectionId: string) => {
+  connectToDatabase: async (connectionString: string, connectionId: string, sessionId: string) => {
     const currentState = get();
     
     // 如果连接ID相同，且已经有正常的连接，则直接返回
@@ -388,6 +390,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         database: db, 
         connectionString,
         connectionId,
+        sessionId,
         isConnecting: false,
         error: null 
       });
@@ -418,7 +421,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         isConnecting: false,
         database: null,
         connectionString: null,
-        connectionId: null
+        connectionId: null,
+        sessionId: null
       });
       throw new Error(errorMessage);
     }
@@ -446,6 +450,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       database: null,
       connectionString: null,
       connectionId: null,
+      sessionId: null,
       sqlInput: '',
       statements: [],
       error: null
