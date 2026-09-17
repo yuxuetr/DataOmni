@@ -93,26 +93,31 @@ const parseSqlStatements = (sqlText: string): SqlStatement[] => {
   return statements;
 };
 
-// 从SELECT语句中提取表名
-const extractTableNameFromSelect = (sql: string): string | undefined => {
-  try {
-    // 简单的正则表达式匹配 FROM 子句中的表名
-    const fromMatch = sql.match(/\bFROM\s+([`"]?)(\w+)\1/i);
-    if (fromMatch) {
-      return fromMatch[2];
-    }
-    
-    // 匹配 JOIN 子句中的第一个表名作为备选
-    const joinMatch = sql.match(/\bJOIN\s+([`"]?)(\w+)\1/i);
-    if (joinMatch) {
-      return joinMatch[2];
-    }
-    
-    return undefined;
-  } catch (error) {
-    console.warn('⚠️ 无法解析表名:', error);
+// 只有能明确映射到单表完整行的查询结果才允许编辑
+const extractEditableTableName = (sql: string): string | undefined => {
+  const normalizedSql = sql.trim().replace(/;$/, '').trim();
+  const unsupportedClauses = /\b(join|union|intersect|except|group\s+by|having)\b/i;
+
+  if (unsupportedClauses.test(normalizedSql)) {
     return undefined;
   }
+
+  const match = normalizedSql.match(
+    /^select\s+\*\s+from\s+([`"]?)([a-zA-Z_][a-zA-Z0-9_$]*)\1(?=\s|$)([\s\S]*)$/i
+  );
+  if (!match) {
+    return undefined;
+  }
+
+  const remainder = match[3].trim();
+  if (
+    remainder &&
+    !/^(where\b|order\s+by\b|limit\b|offset\b)/i.test(remainder)
+  ) {
+    return undefined;
+  }
+
+  return match[2];
 };
 
 // 检测表的主键
@@ -513,7 +518,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           console.log('📊 解析的行数:', rows.length);
           
           // 尝试从SQL语句中提取表名和主键信息
-          const tableName = extractTableNameFromSelect(sql);
+          const tableName = extractEditableTableName(sql);
           const primaryKey = await detectPrimaryKey(database, tableName, columns, connectionString);
           
           queryResult = {
