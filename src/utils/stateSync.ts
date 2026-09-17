@@ -22,6 +22,7 @@ export enum ConnectionState {
 export class SessionManager {
   private static instance: SessionManager;
   private connectionPromises: Map<string, Promise<void>> = new Map();
+  private shutdownPromise: Promise<void> | null = null;
 
   private constructor() {}
 
@@ -38,6 +39,10 @@ export class SessionManager {
    * @param connectionString 连接字符串
    */
   async switchConnection(connection: ConnectionConfig, connectionString: string): Promise<void> {
+    if (this.shutdownPromise) {
+      throw new Error('应用正在关闭，无法建立新的数据库会话');
+    }
+
     const connectionId = connection.id;
     console.log('🔄 SessionManager: 开始切换连接:', connectionId);
 
@@ -98,6 +103,30 @@ export class SessionManager {
     }
 
     appStore.clearDatabaseMetadata(connectionId);
+  }
+
+  /**
+   * 等待连接任务结束并关闭当前数据库会话
+   */
+  async shutdown(): Promise<void> {
+    if (!this.shutdownPromise) {
+      this.shutdownPromise = this.performShutdown().catch((error) => {
+        this.shutdownPromise = null;
+        throw error;
+      });
+    }
+
+    return this.shutdownPromise;
+  }
+
+  private async performShutdown(): Promise<void> {
+    await Promise.allSettled(Array.from(this.connectionPromises.values()));
+
+    try {
+      await this.disconnect();
+    } finally {
+      this.connectionPromises.clear();
+    }
   }
 
   /**

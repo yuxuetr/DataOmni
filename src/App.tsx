@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Sidebar } from './components/Sidebar';
 import { SqlWorkbench } from './components/SqlWorkbench';
 import TableDataViewer from './components/TableDataViewer';
@@ -15,6 +17,36 @@ function App() {
   } = useAppStore();
   
   const sessionManager = useSessionManager();
+
+  useEffect(() => {
+    const appWindow = getCurrentWindow();
+    let closing = false;
+    let unlisten: (() => void) | undefined;
+
+    void appWindow.onCloseRequested(async (event) => {
+      event.preventDefault();
+
+      if (closing) {
+        return;
+      }
+
+      closing = true;
+
+      try {
+        await sessionManager.shutdown();
+        await appWindow.destroy();
+      } catch (error) {
+        closing = false;
+        console.error('关闭数据库会话失败，应用退出已取消:', error);
+      }
+    }).then((cleanup) => {
+      unlisten = cleanup;
+    });
+
+    return () => {
+      unlisten?.();
+    };
+  }, [sessionManager]);
 
   return (
     <div className="h-screen flex bg-gray-100">
