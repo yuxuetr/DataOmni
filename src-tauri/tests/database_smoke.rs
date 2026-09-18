@@ -53,9 +53,19 @@ async fn sqlite_supports_basic_read_write() {
     2,
   );
   assert_byte_limited_result(
-    execute_query_with_limits(&DbPool::Sqlite(pool), "SELECT 'too large' AS value", 100, 1)
+    execute_query_with_limits(&DbPool::Sqlite(pool.clone()), "SELECT 'too large' AS value", 100, 1)
       .await
       .expect("limit SQLite result bytes"),
+  );
+  let precise = execute_query(
+    &DbPool::Sqlite(pool),
+    "SELECT 9007199254740993 AS large_integer, X'00ff10' AS binary_value",
+  )
+  .await
+  .expect("read precise SQLite values");
+  assert_tagged_values(
+    precise,
+    &[("large_integer", "bigint", "9007199254740993"), ("binary_value", "binary", "00ff10")],
   );
 }
 
@@ -124,6 +134,22 @@ async fn postgres_supports_basic_read_write() {
     )
     .await
     .expect("limit PostgreSQL result bytes"),
+  );
+  let precise = execute_query(
+    &DbPool::Postgres(pool.clone()),
+    "SELECT 9007199254740993::BIGINT AS large_integer, 12345678901234567890.12345678::NUMERIC AS decimal_value, '2026-09-18 10:00:00+08'::TIMESTAMPTZ AS zoned_time, decode('00ff10', 'hex') AS binary_value, '{\"enabled\":true}'::JSONB AS json_value",
+  )
+  .await
+  .expect("read precise PostgreSQL values");
+  assert_tagged_values(
+    precise,
+    &[
+      ("large_integer", "bigint", "9007199254740993"),
+      ("decimal_value", "decimal", "12345678901234567890.12345678"),
+      ("zoned_time", "datetime", "2026-09-18T02:00:00+00:00"),
+      ("binary_value", "binary", "00ff10"),
+      ("json_value", "json", "{\"enabled\":true}"),
+    ],
   );
 
   assert_transaction_binding(
@@ -195,6 +221,21 @@ async fn mysql_supports_basic_read_write() {
     execute_query_with_limits(&DbPool::MySql(pool.clone()), "SELECT 'too large' AS value", 100, 1)
       .await
       .expect("limit MySQL result bytes"),
+  );
+  let precise = execute_query(
+    &DbPool::MySql(pool.clone()),
+    "SELECT CAST(9007199254740993 AS UNSIGNED) AS large_integer, CAST(12345678901234567890.12345678 AS DECIMAL(30,8)) AS decimal_value, X'00ff10' AS binary_value, JSON_OBJECT('enabled', TRUE) AS json_value",
+  )
+  .await
+  .expect("read precise MySQL values");
+  assert_tagged_values(
+    precise,
+    &[
+      ("large_integer", "bigint", "9007199254740993"),
+      ("decimal_value", "decimal", "12345678901234567890.12345678"),
+      ("binary_value", "binary", "00ff10"),
+      ("json_value", "json", "{\"enabled\":true}"),
+    ],
   );
 
   assert_transaction_binding(
@@ -334,6 +375,17 @@ fn assert_byte_limited_result(result: QueryExecutionResult) {
       assert_eq!(bytes_read, 0);
     }
     QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
+  }
+}
+
+fn assert_tagged_values(result: QueryExecutionResult, expected: &[(&str, &str, &str)]) {
+  let QueryExecutionResult::Rows { rows, .. } = result else {
+    panic!("expected a row result");
+  };
+  assert_eq!(rows.len(), 1);
+  for (column, value_type, value) in expected {
+    assert_eq!(rows[0][*column]["type"], *value_type);
+    assert_eq!(rows[0][*column]["value"], *value);
   }
 }
 

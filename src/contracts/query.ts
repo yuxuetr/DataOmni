@@ -1,7 +1,9 @@
+import type { SerializedResultValue } from './resultSet';
+
 export interface QueryResult {
   columns: string[];
   column_metadata?: DriverQueryColumn[];
-  rows: unknown[][];
+  rows: SerializedResultValue[][];
   affected_rows: number;
   execution_time: number;
   truncated?: boolean;
@@ -34,7 +36,7 @@ export interface DriverQueryColumn {
 export interface DriverQueryBatch {
   index: number;
   offset: number;
-  rows: Record<string, unknown>[];
+  rows: Record<string, SerializedResultValue>[];
 }
 
 export type DriverQueryResult =

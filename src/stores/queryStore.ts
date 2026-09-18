@@ -19,6 +19,7 @@ import type {
   SqlHistory,
   SqlStatement
 } from '../contracts/query';
+import type { SerializedResultValue } from '../contracts/resultSet';
 import { assertSingleRowAffected } from '../utils/executeResult';
 import {
   clearSqlStatementResult,
@@ -576,7 +577,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       // 由数据库驱动返回的列元数据判断语句是否产生结果集
       let queryResult: QueryResult;
       const sql = statement.sql.trim();
-      const streamedRows: Record<string, unknown>[] = [];
+      const streamedRows: Record<string, SerializedResultValue>[] = [];
       let expectedBatchCount = 0;
       let batchError: Error | null = null;
       let receivedBytes = 0;

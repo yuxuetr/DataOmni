@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
 use serde::Serialize;
 use serde_json::{Map, Value as JsonValue};
@@ -665,7 +666,10 @@ fn decode_sqlite_row(row: &SqliteRow) -> Result<Map<String, JsonValue>, String> 
   let mut values = Map::new();
   for (index, column) in row.columns().iter().enumerate() {
     let value = row.try_get_raw(index).map_err(|error| error.to_string())?;
-    values.insert(column.name().to_string(), decode_sqlite(value)?);
+    let decoded = decode_sqlite(value).map_err(|error| {
+      format!("SQLite 列 {} ({}) 解码失败: {error}", column.name(), column.type_info().name())
+    })?;
+    values.insert(column.name().to_string(), decoded);
   }
   Ok(values)
 }
@@ -674,7 +678,10 @@ fn decode_mysql_row(row: &MySqlRow) -> Result<Map<String, JsonValue>, String> {
   let mut values = Map::new();
   for (index, column) in row.columns().iter().enumerate() {
     let value = row.try_get_raw(index).map_err(|error| error.to_string())?;
-    values.insert(column.name().to_string(), decode_mysql(value)?);
+    let decoded = decode_mysql(value).map_err(|error| {
+      format!("MySQL 列 {} ({}) 解码失败: {error}", column.name(), column.type_info().name())
+    })?;
+    values.insert(column.name().to_string(), decoded);
   }
   Ok(values)
 }
@@ -683,7 +690,10 @@ fn decode_postgres_row(row: &PgRow) -> Result<Map<String, JsonValue>, String> {
   let mut values = Map::new();
   for (index, column) in row.columns().iter().enumerate() {
     let value = row.try_get_raw(index).map_err(|error| error.to_string())?;
-    values.insert(column.name().to_string(), decode_postgres(value)?);
+    let decoded = decode_postgres(value).map_err(|error| {
+      format!("PostgreSQL 列 {} ({}) 解码失败: {error}", column.name(), column.type_info().name())
+    })?;
+    values.insert(column.name().to_string(), decoded);
   }
   Ok(values)
 }
@@ -695,13 +705,17 @@ fn decode_sqlite(value: SqliteValueRef<'_>) -> Result<JsonValue, String> {
 
   match value.type_info().name() {
     "TEXT" => json_value(ValueRef::to_owned(&value).try_decode::<String>()),
-    "INTEGER" | "NUMERIC" => json_value(ValueRef::to_owned(&value).try_decode::<i64>()),
+    "INTEGER" | "NUMERIC" => {
+      tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<i64>())
+    }
     "REAL" => json_value(ValueRef::to_owned(&value).try_decode::<f64>()),
     "BOOLEAN" => json_value(ValueRef::to_owned(&value).try_decode::<bool>()),
-    "DATE" => display_value(ValueRef::to_owned(&value).try_decode::<Date>()),
-    "TIME" => display_value(ValueRef::to_owned(&value).try_decode::<Time>()),
-    "DATETIME" => display_value(ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>()),
-    "BLOB" => json_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>()),
+    "DATE" => tagged_display_value("date", ValueRef::to_owned(&value).try_decode::<Date>()),
+    "TIME" => tagged_display_value("time", ValueRef::to_owned(&value).try_decode::<Time>()),
+    "DATETIME" => {
+      tagged_display_value("datetime", ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>())
+    }
+    "BLOB" => tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>()),
     "NULL" => Ok(JsonValue::Null),
     type_name => Err(format!("不支持的 SQLite 数据类型: {type_name}")),
   }
@@ -715,24 +729,34 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, String> {
   let type_info = value.type_info();
   let type_name = type_info.name();
   match type_name {
-    "JSON" => json_value(ValueRef::to_owned(&value).try_decode::<JsonValue>()),
+    "JSON" => tagged_json_value(ValueRef::to_owned(&value).try_decode::<JsonValue>()),
+    "DECIMAL" => tagged_display_value(
+      "decimal",
+      ValueRef::to_owned(&value).try_decode::<sqlx::types::BigDecimal>(),
+    ),
     "TINYINT UNSIGNED" | "SMALLINT UNSIGNED" | "INT UNSIGNED" | "MEDIUMINT UNSIGNED"
-    | "BIGINT UNSIGNED" | "YEAR" => json_value(ValueRef::to_owned(&value).try_decode::<u64>()),
+    | "BIGINT UNSIGNED" | "YEAR" => {
+      tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<u64>())
+    }
     "CHAR" | "VARCHAR" | "TINYTEXT" | "TEXT" | "MEDIUMTEXT" | "LONGTEXT" | "ENUM" => {
       json_value(ValueRef::to_owned(&value).try_decode::<String>())
     }
     "TINYINT" | "SMALLINT" | "INT" | "MEDIUMINT" | "BIGINT" => {
-      json_value(ValueRef::to_owned(&value).try_decode::<i64>())
+      tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<i64>())
     }
     "FLOAT" => json_value(ValueRef::to_owned(&value).try_decode::<f32>()),
     "DOUBLE" => json_value(ValueRef::to_owned(&value).try_decode::<f64>()),
     "BOOLEAN" => json_value(ValueRef::to_owned(&value).try_decode::<bool>()),
-    "DATE" => display_value(ValueRef::to_owned(&value).try_decode::<Date>()),
-    "TIME" => display_value(ValueRef::to_owned(&value).try_decode::<Time>()),
-    "DATETIME" => display_value(ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>()),
-    "TIMESTAMP" => display_value(ValueRef::to_owned(&value).try_decode::<OffsetDateTime>()),
-    "TINYBLOB" | "MEDIUMBLOB" | "BLOB" | "LONGBLOB" => {
-      json_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>())
+    "DATE" => tagged_display_value("date", ValueRef::to_owned(&value).try_decode::<Date>()),
+    "TIME" => tagged_display_value("time", ValueRef::to_owned(&value).try_decode::<Time>()),
+    "DATETIME" => {
+      tagged_display_value("datetime", ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>())
+    }
+    "TIMESTAMP" => {
+      tagged_display_value("datetime", ValueRef::to_owned(&value).try_decode::<OffsetDateTime>())
+    }
+    "TINYBLOB" | "MEDIUMBLOB" | "BLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => {
+      tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>())
     }
     "NULL" => Ok(JsonValue::Null),
     _ => Err(format!("不支持的 MySQL 数据类型: {type_name}")),
@@ -749,19 +773,30 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, String> {
   match type_name {
     "INT2" => json_value(ValueRef::to_owned(&value).try_decode::<i16>()),
     "INT4" => json_value(ValueRef::to_owned(&value).try_decode::<i32>()),
-    "JSON" | "JSONB" => json_value(ValueRef::to_owned(&value).try_decode::<JsonValue>()),
+    "JSON" | "JSONB" => tagged_json_value(ValueRef::to_owned(&value).try_decode::<JsonValue>()),
     "CHAR" | "VARCHAR" | "TEXT" | "NAME" | "UUID" => {
       json_value(ValueRef::to_owned(&value).try_decode::<String>())
     }
-    "INT8" => json_value(ValueRef::to_owned(&value).try_decode::<i64>()),
+    "INT8" => tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<i64>()),
+    "NUMERIC" => tagged_display_value(
+      "decimal",
+      ValueRef::to_owned(&value).try_decode::<sqlx::types::BigDecimal>(),
+    ),
     "FLOAT4" => json_value(ValueRef::to_owned(&value).try_decode::<f32>()),
     "FLOAT8" => json_value(ValueRef::to_owned(&value).try_decode::<f64>()),
     "BOOL" => json_value(ValueRef::to_owned(&value).try_decode::<bool>()),
-    "DATE" => display_value(ValueRef::to_owned(&value).try_decode::<Date>()),
-    "TIME" => display_value(ValueRef::to_owned(&value).try_decode::<Time>()),
-    "TIMESTAMP" => display_value(ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>()),
-    "TIMESTAMPTZ" => display_value(ValueRef::to_owned(&value).try_decode::<OffsetDateTime>()),
-    "BYTEA" => json_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>()),
+    "DATE" => tagged_display_value("date", ValueRef::to_owned(&value).try_decode::<Date>()),
+    "TIME" => tagged_display_value("time", ValueRef::to_owned(&value).try_decode::<Time>()),
+    "TIMESTAMP" => {
+      tagged_display_value("datetime", ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>())
+    }
+    "TIMESTAMPTZ" => {
+      let value = ValueRef::to_owned(&value)
+        .try_decode::<DateTime<Utc>>()
+        .map_err(|error| error.to_string())?;
+      Ok(tagged_value("datetime", value.to_rfc3339()))
+    }
+    "BYTEA" => tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>()),
     "VOID" => Ok(JsonValue::Null),
     _ => Err(format!("不支持的 PostgreSQL 数据类型: {type_name}")),
   }
@@ -776,12 +811,40 @@ where
   serde_json::to_value(decoded).map_err(|error| error.to_string())
 }
 
-fn display_value<T, E>(value: Result<T, E>) -> Result<JsonValue, String>
+fn tagged_display_value<T, E>(value_type: &str, value: Result<T, E>) -> Result<JsonValue, String>
 where
   T: std::fmt::Display,
   E: std::fmt::Display,
 {
-  value.map(|value| JsonValue::String(value.to_string())).map_err(|error| error.to_string())
+  value.map(|value| tagged_value(value_type, value.to_string())).map_err(|error| error.to_string())
+}
+
+fn tagged_json_value<E>(value: Result<JsonValue, E>) -> Result<JsonValue, String>
+where
+  E: std::fmt::Display,
+{
+  let value = value.map_err(|error| error.to_string())?;
+  let serialized = serde_json::to_string(&value).map_err(|error| error.to_string())?;
+  Ok(tagged_value("json", serialized))
+}
+
+fn tagged_binary_value<E>(value: Result<Vec<u8>, E>) -> Result<JsonValue, String>
+where
+  E: std::fmt::Display,
+{
+  value
+    .map(|bytes| {
+      let encoded = bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+      tagged_value("binary", encoded)
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn tagged_value(value_type: &str, value: String) -> JsonValue {
+  JsonValue::Object(Map::from_iter([
+    ("type".to_string(), JsonValue::String(value_type.to_string())),
+    ("value".to_string(), JsonValue::String(value)),
+  ]))
 }
 
 #[cfg(test)]

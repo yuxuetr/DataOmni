@@ -11,6 +11,7 @@ import {
 import { clsx } from 'clsx';
 import type { QueryResult } from '../contracts/query';
 import { useQueryStore } from '../stores/queryStore';
+import { formatResultValue, resultValueTypeLabel } from '../utils/resultValues';
 
 interface QueryResultScrollTableProps {
   result: QueryResult;
@@ -91,7 +92,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   const startEditing = (rowIndex: number, columnIndex: number, currentValue: any) => {
     if (!canEdit) return;
     setEditingCell({ rowIndex, columnIndex });
-    setEditValue(currentValue === null ? '' : String(currentValue));
+    setEditValue(currentValue === null ? '' : formatResultValue(currentValue));
   };
   
   const cancelEditing = () => {
@@ -345,6 +346,8 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                 <tr key={startIndex + rowIndex} className="hover:bg-gray-50">
                   {row.map((cell, cellIndex) => {
                     const isEditing = editingCell?.rowIndex === rowIndex && editingCell?.columnIndex === cellIndex;
+                    const formattedValue = formatResultValue(cell);
+                    const valueType = resultValueTypeLabel(cell);
                     return (
                       <td
                         key={cellIndex}
@@ -366,8 +369,15 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                             autoFocus
                           />
                         ) : (
-                          <div className="truncate" title={String(cell)}>
-                            {cell === null ? <span className="text-gray-400 italic">NULL</span> : String(cell)}
+                          <div className="flex items-center gap-1 truncate" title={formattedValue}>
+                            {cell === null
+                              ? <span className="text-gray-400 italic">NULL</span>
+                              : <span className="truncate whitespace-pre">{formattedValue}</span>}
+                            {valueType && (
+                              <span className="shrink-0 text-[10px] text-gray-400">
+                                {valueType}
+                              </span>
+                            )}
                           </div>
                         )}
                       </td>
