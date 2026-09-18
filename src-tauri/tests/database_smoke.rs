@@ -281,9 +281,15 @@ async fn assert_transaction_binding(
 
 fn assert_empty_row_result(result: QueryExecutionResult, column: &str) {
   match result {
-    QueryExecutionResult::Rows { columns, rows, .. } => {
+    QueryExecutionResult::Rows { columns, column_metadata, rows, .. } => {
       assert_eq!(columns, vec![column]);
       assert!(rows.is_empty());
+      assert_eq!(column_metadata.len(), 1);
+      assert_eq!(column_metadata[0].name, column);
+      assert_eq!(column_metadata[0].ordinal, 0);
+      assert!(!column_metadata[0].database_type.is_empty());
+      assert_eq!(column_metadata[0].logical_type, "text");
+      assert_eq!(column_metadata[0].nullable, Some(false));
     }
     QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
   }
@@ -291,10 +297,13 @@ fn assert_empty_row_result(result: QueryExecutionResult, column: &str) {
 
 fn assert_single_row_result(result: QueryExecutionResult, column: &str, value: &str) {
   match result {
-    QueryExecutionResult::Rows { columns, rows, .. } => {
+    QueryExecutionResult::Rows { columns, column_metadata, rows, .. } => {
       assert_eq!(columns, vec![column]);
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0][column], value);
+      assert_eq!(column_metadata.len(), columns.len());
+      assert_eq!(column_metadata[0].name, column);
+      assert!(!column_metadata[0].database_type.is_empty());
     }
     QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
   }

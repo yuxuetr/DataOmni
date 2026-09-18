@@ -21,6 +21,15 @@ pub const DEFAULT_QUERY_BYTE_LIMIT: usize = 16 * 1024 * 1024;
 pub type QueryRow = Map<String, JsonValue>;
 
 #[derive(Debug, Clone, Serialize)]
+pub struct QueryColumnMetadata {
+  pub name: String,
+  pub ordinal: usize,
+  pub database_type: String,
+  pub logical_type: String,
+  pub nullable: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct QueryResultBatch {
   pub index: usize,
   pub offset: usize,
@@ -39,6 +48,7 @@ pub enum QueryTruncationReason {
 pub enum QueryExecutionSummary {
   Rows {
     columns: Vec<String>,
+    column_metadata: Vec<QueryColumnMetadata>,
     row_count: usize,
     batch_count: usize,
     truncated: bool,
@@ -57,6 +67,7 @@ pub enum QueryExecutionSummary {
 pub enum QueryExecutionResult {
   Rows {
     columns: Vec<String>,
+    column_metadata: Vec<QueryColumnMetadata>,
     rows: Vec<Map<String, JsonValue>>,
     truncated: bool,
     truncation_reason: Option<QueryTruncationReason>,
@@ -226,14 +237,20 @@ async fn execute_sqlite_connection_streaming(
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let columns = (&mut *connection)
-    .describe(sql)
-    .await
-    .map_err(|error| error.to_string())?
+  let description = (&mut *connection).describe(sql).await.map_err(|error| error.to_string())?;
+  let column_metadata = description
     .columns()
     .iter()
-    .map(|column| column.name().to_string())
+    .enumerate()
+    .map(|(ordinal, column)| QueryColumnMetadata {
+      name: column.name().to_string(),
+      ordinal,
+      database_type: column.type_info().name().to_string(),
+      logical_type: sqlite_logical_type(column.type_info().name()).to_string(),
+      nullable: description.nullable(ordinal),
+    })
     .collect::<Vec<_>>();
+  let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
   if columns.is_empty() {
     let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
@@ -270,6 +287,7 @@ async fn execute_sqlite_connection_streaming(
   flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
   Ok(QueryExecutionSummary::Rows {
     columns,
+    column_metadata,
     row_count,
     batch_count,
     truncated: truncation_reason.is_some(),
@@ -333,14 +351,20 @@ async fn execute_mysql_connection_streaming(
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let columns = (&mut *connection)
-    .describe(sql)
-    .await
-    .map_err(|error| error.to_string())?
+  let description = (&mut *connection).describe(sql).await.map_err(|error| error.to_string())?;
+  let column_metadata = description
     .columns()
     .iter()
-    .map(|column| column.name().to_string())
+    .enumerate()
+    .map(|(ordinal, column)| QueryColumnMetadata {
+      name: column.name().to_string(),
+      ordinal,
+      database_type: column.type_info().name().to_string(),
+      logical_type: mysql_logical_type(column.type_info().name()).to_string(),
+      nullable: description.nullable(ordinal),
+    })
     .collect::<Vec<_>>();
+  let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
   if columns.is_empty() {
     let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
@@ -377,6 +401,7 @@ async fn execute_mysql_connection_streaming(
   flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
   Ok(QueryExecutionSummary::Rows {
     columns,
+    column_metadata,
     row_count,
     batch_count,
     truncated: truncation_reason.is_some(),
@@ -441,14 +466,20 @@ async fn execute_postgres_connection_streaming(
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let columns = (&mut *connection)
-    .describe(sql)
-    .await
-    .map_err(|error| error.to_string())?
+  let description = (&mut *connection).describe(sql).await.map_err(|error| error.to_string())?;
+  let column_metadata = description
     .columns()
     .iter()
-    .map(|column| column.name().to_string())
+    .enumerate()
+    .map(|(ordinal, column)| QueryColumnMetadata {
+      name: column.name().to_string(),
+      ordinal,
+      database_type: column.type_info().name().to_string(),
+      logical_type: postgres_logical_type(column.type_info().name()).to_string(),
+      nullable: description.nullable(ordinal),
+    })
     .collect::<Vec<_>>();
+  let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
   if columns.is_empty() {
     let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
@@ -485,6 +516,7 @@ async fn execute_postgres_connection_streaming(
   flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
   Ok(QueryExecutionSummary::Rows {
     columns,
+    column_metadata,
     row_count,
     batch_count,
     truncated: truncation_reason.is_some(),
@@ -537,6 +569,53 @@ fn serialized_row_size(row: &QueryRow) -> Result<usize, String> {
   serde_json::to_vec(row).map(|bytes| bytes.len()).map_err(|error| error.to_string())
 }
 
+fn sqlite_logical_type(database_type: &str) -> &'static str {
+  match database_type {
+    "BOOLEAN" => "boolean",
+    "INTEGER" => "integer",
+    "REAL" | "NUMERIC" => "decimal",
+    "BLOB" => "binary",
+    "DATE" => "date",
+    "TIME" => "time",
+    "DATETIME" => "datetime",
+    "TEXT" => "text",
+    _ => "unknown",
+  }
+}
+
+fn mysql_logical_type(database_type: &str) -> &'static str {
+  match database_type {
+    "BOOLEAN" => "boolean",
+    "TINYINT" | "SMALLINT" | "INT" | "MEDIUMINT" | "BIGINT" | "TINYINT UNSIGNED"
+    | "SMALLINT UNSIGNED" | "INT UNSIGNED" | "MEDIUMINT UNSIGNED" | "BIGINT UNSIGNED" | "YEAR" => {
+      "integer"
+    }
+    "DECIMAL" | "FLOAT" | "DOUBLE" => "decimal",
+    "TINYBLOB" | "MEDIUMBLOB" | "BLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => "binary",
+    "DATE" => "date",
+    "TIME" => "time",
+    "DATETIME" | "TIMESTAMP" => "datetime",
+    "JSON" => "json",
+    "CHAR" | "VARCHAR" | "TINYTEXT" | "TEXT" | "MEDIUMTEXT" | "LONGTEXT" | "ENUM" | "SET" => "text",
+    _ => "unknown",
+  }
+}
+
+fn postgres_logical_type(database_type: &str) -> &'static str {
+  match database_type {
+    "BOOL" => "boolean",
+    "INT2" | "INT4" | "INT8" => "integer",
+    "NUMERIC" | "FLOAT4" | "FLOAT8" => "decimal",
+    "BYTEA" => "binary",
+    "DATE" => "date",
+    "TIME" | "TIMETZ" => "time",
+    "TIMESTAMP" | "TIMESTAMPTZ" => "datetime",
+    "JSON" | "JSONB" => "json",
+    "CHAR" | "VARCHAR" | "TEXT" | "NAME" | "UUID" => "text",
+    _ => "unknown",
+  }
+}
+
 fn summary_with_rows(
   summary: QueryExecutionSummary,
   rows: Vec<QueryRow>,
@@ -544,6 +623,7 @@ fn summary_with_rows(
   match summary {
     QueryExecutionSummary::Rows {
       columns,
+      column_metadata,
       truncated,
       truncation_reason,
       row_limit,
@@ -552,6 +632,7 @@ fn summary_with_rows(
       ..
     } => Ok(QueryExecutionResult::Rows {
       columns,
+      column_metadata,
       rows,
       truncated,
       truncation_reason,
@@ -726,6 +807,17 @@ mod tests {
 
     assert!(!is_transaction_control_statement("SELECT 'BEGIN'"));
     assert!(!is_transaction_control_statement("BEGINNING"));
+  }
+
+  #[test]
+  fn maps_driver_types_to_logical_types() {
+    assert_eq!(sqlite_logical_type("INTEGER"), "integer");
+    assert_eq!(sqlite_logical_type("BLOB"), "binary");
+    assert_eq!(mysql_logical_type("DECIMAL"), "decimal");
+    assert_eq!(mysql_logical_type("JSON"), "json");
+    assert_eq!(postgres_logical_type("TIMESTAMPTZ"), "datetime");
+    assert_eq!(postgres_logical_type("UUID"), "text");
+    assert_eq!(postgres_logical_type("CUSTOM"), "unknown");
   }
 
   #[tokio::test]

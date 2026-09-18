@@ -249,7 +249,20 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                     style={{ width: `${COLUMN_WIDTH}px` }}
                   >
                     <div className="flex items-center space-x-1">
-                      <span>{column}</span>
+                      <div className="flex flex-col">
+                        <span>{column}</span>
+                        {result.column_metadata?.[index] && (
+                          <span className="text-[10px] font-normal normal-case text-gray-400">
+                            {result.column_metadata[index].database_type}
+                            {' · '}
+                            {result.column_metadata[index].nullable === null
+                              ? 'NULL 未知'
+                              : result.column_metadata[index].nullable
+                                ? 'NULL'
+                                : 'NOT NULL'}
+                          </span>
+                        )}
+                      </div>
                       {result.primary_key === column && (
                         <span className="text-yellow-600" title="主键">🔑</span>
                       )}

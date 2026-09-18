@@ -1,5 +1,6 @@
 export interface QueryResult {
   columns: string[];
+  column_metadata?: DriverQueryColumn[];
   rows: unknown[][];
   affected_rows: number;
   execution_time: number;
@@ -12,6 +13,24 @@ export interface QueryResult {
   primary_key?: string;
 }
 
+export interface DriverQueryColumn {
+  name: string;
+  ordinal: number;
+  database_type: string;
+  logical_type:
+    | 'boolean'
+    | 'integer'
+    | 'decimal'
+    | 'text'
+    | 'binary'
+    | 'date'
+    | 'time'
+    | 'datetime'
+    | 'json'
+    | 'unknown';
+  nullable: boolean | null;
+}
+
 export interface DriverQueryBatch {
   index: number;
   offset: number;
@@ -22,6 +41,7 @@ export type DriverQueryResult =
   | {
       kind: 'rows';
       columns: string[];
+      column_metadata: DriverQueryColumn[];
       row_count: number;
       batch_count: number;
       truncated: boolean;

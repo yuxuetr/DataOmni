@@ -646,6 +646,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
         queryResult = {
           columns: driverResult.columns,
+          column_metadata: driverResult.column_metadata,
           rows,
           affected_rows: rows.length,
           execution_time: executionTime,
