@@ -1,6 +1,6 @@
 use dataomni_lib::services::{
   execute_query, execute_query_with_limit, execute_query_with_timeout, QueryExecutionResult,
-  QuerySessionState, QUERY_TIMEOUT_CODE,
+  QueryExecutionSummary, QuerySessionState, StreamingQueryOptions, QUERY_TIMEOUT_CODE,
 };
 use sqlx::{mysql::MySqlPoolOptions, postgres::PgPoolOptions, sqlite::SqlitePoolOptions};
 use std::time::Duration;
@@ -224,6 +224,36 @@ async fn assert_transaction_binding(
     .await
     .expect("read after rollback");
   assert_empty_row_result(result, "value");
+
+  let mut batches = Vec::new();
+  let summary = sessions
+    .execute_streaming(
+      StreamingQueryOptions {
+        session_id,
+        pool_key,
+        pool,
+        sql: "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5",
+        row_limit: 5,
+        batch_size: 2,
+        timeout_duration: timeout,
+      },
+      &mut |batch| {
+        batches.push(batch);
+        Ok(())
+      },
+    )
+    .await
+    .expect("stream result batches");
+  match summary {
+    QueryExecutionSummary::Rows { row_count, batch_count, truncated, .. } => {
+      assert_eq!(row_count, 5);
+      assert_eq!(batch_count, 3);
+      assert!(!truncated);
+    }
+    QueryExecutionSummary::Affected { .. } => panic!("expected row summary"),
+  }
+  assert_eq!(batches.iter().map(|batch| batch.offset).collect::<Vec<_>>(), vec![0, 2, 4]);
+
   assert!(sessions.release(session_id).await);
 }
 

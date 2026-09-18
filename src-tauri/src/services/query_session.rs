@@ -1,4 +1,7 @@
-use crate::services::{QueryExecutionResult, SessionConnection, QUERY_TIMEOUT_CODE};
+use crate::services::{
+  QueryExecutionResult, QueryExecutionSummary, QueryResultBatch, SessionConnection,
+  QUERY_TIMEOUT_CODE,
+};
 use std::{collections::HashMap, sync::Arc};
 use tauri_plugin_sql::DbPool;
 use tokio::{
@@ -14,6 +17,16 @@ struct SessionEntry {
 #[derive(Default)]
 pub struct QuerySessionState {
   sessions: Mutex<HashMap<String, Arc<SessionEntry>>>,
+}
+
+pub struct StreamingQueryOptions<'a> {
+  pub session_id: &'a str,
+  pub pool_key: &'a str,
+  pub pool: &'a DbPool,
+  pub sql: &'a str,
+  pub row_limit: usize,
+  pub batch_size: usize,
+  pub timeout_duration: Duration,
 }
 
 impl QuerySessionState {
@@ -47,6 +60,30 @@ impl QuerySessionState {
 
   pub async fn release(&self, session_id: &str) -> bool {
     self.sessions.lock().await.remove(session_id).is_some()
+  }
+
+  pub async fn execute_streaming(
+    &self,
+    options: StreamingQueryOptions<'_>,
+    sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
+  ) -> Result<QueryExecutionSummary, String> {
+    if options.session_id.trim().is_empty() {
+      return Err("数据库 Session ID 不能为空".to_string());
+    }
+
+    let entry = self.get_or_create(options.session_id, options.pool_key, options.pool).await?;
+    if entry.pool_key != options.pool_key {
+      return Err("数据库 Session 已绑定到其他连接".to_string());
+    }
+
+    timeout(options.timeout_duration, async {
+      let mut connection = entry.connection.lock().await;
+      connection.execute_streaming(options.sql, options.row_limit, options.batch_size, sink).await
+    })
+    .await
+    .map_err(|_| {
+      format!("{QUERY_TIMEOUT_CODE}: 查询执行超过 {} 毫秒", options.timeout_duration.as_millis())
+    })?
   }
 
   async fn get_or_create(

@@ -1,10 +1,13 @@
 use crate::commands::connection_commands::ConnectionServiceState;
-use crate::services::{QueryExecutionResult, QuerySessionState};
+use crate::services::{
+  QueryExecutionSummary, QueryResultBatch, QuerySessionState, StreamingQueryOptions,
+  DEFAULT_QUERY_BATCH_SIZE,
+};
 // use crate::models::{ColumnInfo, ConnectionConfig, DatabaseInfo, QueryResult, TableInfo};
 // use crate::services::{ConnectionService, DatabaseService};
 use serde::Deserialize;
 use std::collections::HashMap;
-use tauri::{AppHandle, State};
+use tauri::{ipc::Channel, AppHandle, State};
 use tauri_plugin_sql::DbInstances;
 use tokio::sync::{oneshot, Mutex};
 use tokio::time::Duration;
@@ -59,11 +62,12 @@ impl QueryCancellationState {
 #[tauri::command]
 pub async fn execute_query(
   request: QueryExecutionRequest,
+  on_batch: Channel<QueryResultBatch>,
   connection_service_state: State<'_, ConnectionServiceState>,
   database_instances: State<'_, DbInstances>,
   cancellation_state: State<'_, QueryCancellationState>,
   query_session_state: State<'_, QuerySessionState>,
-) -> Result<QueryExecutionResult, String> {
+) -> Result<QueryExecutionSummary, String> {
   if !(100..=3_600_000).contains(&request.timeout_ms) {
     return Err("查询超时必须在 100 毫秒到 1 小时之间".to_string());
   }
@@ -82,15 +86,20 @@ pub async fn execute_query(
   let instances = database_instances.0.read().await;
   let pool = instances.get(&connection_string).ok_or_else(|| "数据库会话未连接".to_string())?;
   let receiver = cancellation_state.register(&request.execution_id).await?;
+  let mut send_batch = |batch| on_batch.send(batch).map_err(|error| error.to_string());
 
   let result = tokio::select! {
-    result = query_session_state.execute(
-      &request.session_id,
-      &connection_string,
-      pool,
-      &request.sql,
-      request.row_limit,
-      Duration::from_millis(request.timeout_ms)
+    result = query_session_state.execute_streaming(
+      StreamingQueryOptions {
+        session_id: &request.session_id,
+        pool_key: &connection_string,
+        pool,
+        sql: &request.sql,
+        row_limit: request.row_limit,
+        batch_size: DEFAULT_QUERY_BATCH_SIZE,
+        timeout_duration: Duration::from_millis(request.timeout_ms),
+      },
+      &mut send_batch
     ) => result,
     _ = receiver => Err(format!("{QUERY_CANCELLED_CODE}: 查询已取消")),
   };

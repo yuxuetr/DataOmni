@@ -9,11 +9,18 @@ export interface QueryResult {
   primary_key?: string;
 }
 
+export interface DriverQueryBatch {
+  index: number;
+  offset: number;
+  rows: Record<string, unknown>[];
+}
+
 export type DriverQueryResult =
   | {
       kind: 'rows';
       columns: string[];
-      rows: Record<string, unknown>[];
+      row_count: number;
+      batch_count: number;
       truncated: boolean;
       row_limit: number;
     }

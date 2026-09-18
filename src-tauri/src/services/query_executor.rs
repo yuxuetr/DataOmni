@@ -15,6 +15,31 @@ use tokio::time::{timeout, Duration};
 
 pub const QUERY_TIMEOUT_CODE: &str = "QUERY_TIMEOUT";
 pub const DEFAULT_QUERY_ROW_LIMIT: usize = 1_000;
+pub const DEFAULT_QUERY_BATCH_SIZE: usize = 250;
+
+pub type QueryRow = Map<String, JsonValue>;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct QueryResultBatch {
+  pub index: usize,
+  pub offset: usize,
+  pub rows: Vec<QueryRow>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum QueryExecutionSummary {
+  Rows {
+    columns: Vec<String>,
+    row_count: usize,
+    batch_count: usize,
+    truncated: bool,
+    row_limit: usize,
+  },
+  Affected {
+    rows_affected: u64,
+  },
+}
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -78,6 +103,26 @@ impl SessionConnection {
       Self::Postgres(connection) => execute_postgres_connection(connection, sql, row_limit).await,
     }
   }
+
+  pub async fn execute_streaming(
+    &mut self,
+    sql: &str,
+    row_limit: usize,
+    batch_size: usize,
+    sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
+  ) -> Result<QueryExecutionSummary, String> {
+    match self {
+      Self::Sqlite(connection) => {
+        execute_sqlite_connection_streaming(connection, sql, row_limit, batch_size, sink).await
+      }
+      Self::MySql(connection) => {
+        execute_mysql_connection_streaming(connection, sql, row_limit, batch_size, sink).await
+      }
+      Self::Postgres(connection) => {
+        execute_postgres_connection_streaming(connection, sql, row_limit, batch_size, sink).await
+      }
+    }
+  }
 }
 
 pub async fn execute_query_with_timeout(
@@ -111,9 +156,31 @@ async fn execute_sqlite_connection(
   sql: &str,
   row_limit: usize,
 ) -> Result<QueryExecutionResult, String> {
+  let mut rows = Vec::new();
+  let summary = execute_sqlite_connection_streaming(
+    connection,
+    sql,
+    row_limit,
+    row_limit.max(1),
+    &mut |batch| {
+      rows.extend(batch.rows);
+      Ok(())
+    },
+  )
+  .await?;
+  summary_with_rows(summary, rows)
+}
+
+async fn execute_sqlite_connection_streaming(
+  connection: &mut SqliteConnection,
+  sql: &str,
+  row_limit: usize,
+  batch_size: usize,
+  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
+) -> Result<QueryExecutionSummary, String> {
   if is_transaction_control_statement(sql) {
     let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
-    return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
+    return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
   let columns = (&mut *connection)
@@ -127,20 +194,25 @@ async fn execute_sqlite_connection(
 
   if columns.is_empty() {
     let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
-    return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
+    return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
   let mut stream = (&mut *connection).fetch(sql);
-  let mut rows = Vec::with_capacity(row_limit.min(1_000));
-  while rows.len() <= row_limit {
+  let mut rows = Vec::with_capacity(batch_size);
+  let mut row_count = 0;
+  let mut batch_count = 0;
+  while row_count < row_limit {
     let Some(row) = stream.try_next().await.map_err(|error| error.to_string())? else {
       break;
     };
     rows.push(decode_sqlite_row(&row)?);
+    row_count += 1;
+    flush_full_batch(&mut rows, batch_size, &mut batch_count, row_count, sink)?;
   }
-  let truncated = rows.len() > row_limit;
-  rows.truncate(row_limit);
-  Ok(QueryExecutionResult::Rows { columns, rows, truncated, row_limit })
+  let truncated =
+    row_count == row_limit && stream.try_next().await.map_err(|error| error.to_string())?.is_some();
+  flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
+  Ok(QueryExecutionSummary::Rows { columns, row_count, batch_count, truncated, row_limit })
 }
 
 async fn execute_mysql(
@@ -157,9 +229,31 @@ async fn execute_mysql_connection(
   sql: &str,
   row_limit: usize,
 ) -> Result<QueryExecutionResult, String> {
+  let mut rows = Vec::new();
+  let summary = execute_mysql_connection_streaming(
+    connection,
+    sql,
+    row_limit,
+    row_limit.max(1),
+    &mut |batch| {
+      rows.extend(batch.rows);
+      Ok(())
+    },
+  )
+  .await?;
+  summary_with_rows(summary, rows)
+}
+
+async fn execute_mysql_connection_streaming(
+  connection: &mut MySqlConnection,
+  sql: &str,
+  row_limit: usize,
+  batch_size: usize,
+  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
+) -> Result<QueryExecutionSummary, String> {
   if is_transaction_control_statement(sql) {
     let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
-    return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
+    return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
   let columns = (&mut *connection)
@@ -173,20 +267,25 @@ async fn execute_mysql_connection(
 
   if columns.is_empty() {
     let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
-    return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
+    return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
   let mut stream = (&mut *connection).fetch(sql);
-  let mut rows = Vec::with_capacity(row_limit.min(1_000));
-  while rows.len() <= row_limit {
+  let mut rows = Vec::with_capacity(batch_size);
+  let mut row_count = 0;
+  let mut batch_count = 0;
+  while row_count < row_limit {
     let Some(row) = stream.try_next().await.map_err(|error| error.to_string())? else {
       break;
     };
     rows.push(decode_mysql_row(&row)?);
+    row_count += 1;
+    flush_full_batch(&mut rows, batch_size, &mut batch_count, row_count, sink)?;
   }
-  let truncated = rows.len() > row_limit;
-  rows.truncate(row_limit);
-  Ok(QueryExecutionResult::Rows { columns, rows, truncated, row_limit })
+  let truncated =
+    row_count == row_limit && stream.try_next().await.map_err(|error| error.to_string())?.is_some();
+  flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
+  Ok(QueryExecutionSummary::Rows { columns, row_count, batch_count, truncated, row_limit })
 }
 
 async fn execute_postgres(
@@ -203,9 +302,31 @@ async fn execute_postgres_connection(
   sql: &str,
   row_limit: usize,
 ) -> Result<QueryExecutionResult, String> {
+  let mut rows = Vec::new();
+  let summary = execute_postgres_connection_streaming(
+    connection,
+    sql,
+    row_limit,
+    row_limit.max(1),
+    &mut |batch| {
+      rows.extend(batch.rows);
+      Ok(())
+    },
+  )
+  .await?;
+  summary_with_rows(summary, rows)
+}
+
+async fn execute_postgres_connection_streaming(
+  connection: &mut PgConnection,
+  sql: &str,
+  row_limit: usize,
+  batch_size: usize,
+  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
+) -> Result<QueryExecutionSummary, String> {
   if is_transaction_control_statement(sql) {
     let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
-    return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
+    return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
   let columns = (&mut *connection)
@@ -219,20 +340,77 @@ async fn execute_postgres_connection(
 
   if columns.is_empty() {
     let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
-    return Ok(QueryExecutionResult::Affected { rows_affected: result.rows_affected() });
+    return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
   let mut stream = (&mut *connection).fetch(sql);
-  let mut rows = Vec::with_capacity(row_limit.min(1_000));
-  while rows.len() <= row_limit {
+  let mut rows = Vec::with_capacity(batch_size);
+  let mut row_count = 0;
+  let mut batch_count = 0;
+  while row_count < row_limit {
     let Some(row) = stream.try_next().await.map_err(|error| error.to_string())? else {
       break;
     };
     rows.push(decode_postgres_row(&row)?);
+    row_count += 1;
+    flush_full_batch(&mut rows, batch_size, &mut batch_count, row_count, sink)?;
   }
-  let truncated = rows.len() > row_limit;
-  rows.truncate(row_limit);
-  Ok(QueryExecutionResult::Rows { columns, rows, truncated, row_limit })
+  let truncated =
+    row_count == row_limit && stream.try_next().await.map_err(|error| error.to_string())?.is_some();
+  flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
+  Ok(QueryExecutionSummary::Rows { columns, row_count, batch_count, truncated, row_limit })
+}
+
+fn flush_full_batch(
+  rows: &mut Vec<QueryRow>,
+  batch_size: usize,
+  batch_count: &mut usize,
+  row_count: usize,
+  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
+) -> Result<(), String> {
+  if rows.len() < batch_size.max(1) {
+    return Ok(());
+  }
+  send_batch(rows, batch_count, row_count, sink)
+}
+
+fn flush_remaining_batch(
+  rows: &mut Vec<QueryRow>,
+  batch_count: &mut usize,
+  row_count: usize,
+  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
+) -> Result<(), String> {
+  if rows.is_empty() {
+    return Ok(());
+  }
+  send_batch(rows, batch_count, row_count, sink)
+}
+
+fn send_batch(
+  rows: &mut Vec<QueryRow>,
+  batch_count: &mut usize,
+  row_count: usize,
+  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
+) -> Result<(), String> {
+  let batch_rows = std::mem::take(rows);
+  let offset = row_count - batch_rows.len();
+  sink(QueryResultBatch { index: *batch_count, offset, rows: batch_rows })?;
+  *batch_count += 1;
+  Ok(())
+}
+
+fn summary_with_rows(
+  summary: QueryExecutionSummary,
+  rows: Vec<QueryRow>,
+) -> Result<QueryExecutionResult, String> {
+  match summary {
+    QueryExecutionSummary::Rows { columns, truncated, row_limit, .. } => {
+      Ok(QueryExecutionResult::Rows { columns, rows, truncated, row_limit })
+    }
+    QueryExecutionSummary::Affected { rows_affected } => {
+      Ok(QueryExecutionResult::Affected { rows_affected })
+    }
+  }
 }
 
 fn is_transaction_control_statement(sql: &str) -> bool {
@@ -443,6 +621,40 @@ mod tests {
       }
       QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
     }
+  }
+
+  #[tokio::test]
+  async fn streams_ordered_result_batches() {
+    let pool = SqlitePoolOptions::new()
+      .max_connections(1)
+      .connect("sqlite::memory:")
+      .await
+      .expect("connect to SQLite");
+    let mut connection = pool.acquire().await.expect("acquire SQLite connection");
+    let mut batches = Vec::new();
+    let summary = execute_sqlite_connection_streaming(
+      &mut connection,
+      "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5",
+      5,
+      2,
+      &mut |batch| {
+        batches.push(batch);
+        Ok(())
+      },
+    )
+    .await
+    .expect("stream rows");
+
+    match summary {
+      QueryExecutionSummary::Rows { row_count, batch_count, truncated, .. } => {
+        assert_eq!(row_count, 5);
+        assert_eq!(batch_count, 3);
+        assert!(!truncated);
+      }
+      QueryExecutionSummary::Affected { .. } => panic!("expected rows"),
+    }
+    assert_eq!(batches.iter().map(|batch| batch.offset).collect::<Vec<_>>(), vec![0, 2, 4]);
+    assert_eq!(batches.iter().map(|batch| batch.rows.len()).collect::<Vec<_>>(), vec![2, 2, 1]);
   }
 
   #[tokio::test]

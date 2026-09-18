@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import Database from '@tauri-apps/plugin-sql';
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 import {
   completeQueryExecution,
   cancelQueryExecution,
@@ -14,6 +14,7 @@ import {
 import { DatabaseSession } from '../contracts/session';
 import type {
   DriverQueryResult,
+  DriverQueryBatch,
   QueryResult,
   SqlHistory,
   SqlStatement
@@ -572,7 +573,31 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       // 由数据库驱动返回的列元数据判断语句是否产生结果集
       let queryResult: QueryResult;
       const sql = statement.sql.trim();
+      const streamedRows: Record<string, unknown>[] = [];
+      let expectedBatchCount = 0;
+      let batchError: Error | null = null;
+      let resolveBatches: (() => void) | null = null;
+      const batchesComplete = new Promise<void>((resolve) => {
+        resolveBatches = resolve;
+      });
+      const onBatch = new Channel<DriverQueryBatch>((batch) => {
+        if (batchError) {
+          return;
+        }
+        if (batch.offset !== streamedRows.length) {
+          batchError = new Error(
+            `查询结果批次顺序错误: 预期偏移 ${streamedRows.length}，实际 ${batch.offset}`
+          );
+          resolveBatches?.();
+          return;
+        }
+        streamedRows.push(...batch.rows);
+        if (expectedBatchCount > 0 && batch.index + 1 === expectedBatchCount) {
+          resolveBatches?.();
+        }
+      });
       const driverResult = await invoke<DriverQueryResult>('execute_query', {
+        onBatch,
         request: {
           connectionId,
           sessionId: session.id,
@@ -585,7 +610,19 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       const executionTime = Date.now() - startTime;
 
       if (driverResult.kind === 'rows') {
-        const rows = driverResult.rows.map((row) =>
+        expectedBatchCount = driverResult.batch_count;
+        if (streamedRows.length < driverResult.row_count && !batchError) {
+          await batchesComplete;
+        }
+        if (batchError) {
+          throw batchError;
+        }
+        if (streamedRows.length !== driverResult.row_count) {
+          throw new Error(
+            `查询结果批次数量不完整: 预期 ${driverResult.row_count} 行，实际 ${streamedRows.length} 行`
+          );
+        }
+        const rows = streamedRows.map((row) =>
           driverResult.columns.map((column) => row[column])
         );
         const tableName = extractEditableTableName(sql);
