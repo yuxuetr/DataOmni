@@ -26,6 +26,7 @@ pub struct QueryExecutionRequest {
   sql: String,
   timeout_ms: u64,
   row_limit: usize,
+  byte_limit: usize,
 }
 
 #[derive(Default)]
@@ -74,6 +75,9 @@ pub async fn execute_query(
   if !(1..=100_000).contains(&request.row_limit) {
     return Err("结果行数上限必须在 1 到 100000 之间".to_string());
   }
+  if !(1_048_576..=67_108_864).contains(&request.byte_limit) {
+    return Err("结果内存上限必须在 1 MiB 到 64 MiB 之间".to_string());
+  }
 
   let connection_string = {
     let connection_service_guard =
@@ -96,6 +100,7 @@ pub async fn execute_query(
         pool,
         sql: &request.sql,
         row_limit: request.row_limit,
+        byte_limit: request.byte_limit,
         batch_size: DEFAULT_QUERY_BATCH_SIZE,
         timeout_duration: Duration::from_millis(request.timeout_ms),
       },

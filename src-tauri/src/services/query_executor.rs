@@ -16,6 +16,7 @@ use tokio::time::{timeout, Duration};
 pub const QUERY_TIMEOUT_CODE: &str = "QUERY_TIMEOUT";
 pub const DEFAULT_QUERY_ROW_LIMIT: usize = 1_000;
 pub const DEFAULT_QUERY_BATCH_SIZE: usize = 250;
+pub const DEFAULT_QUERY_BYTE_LIMIT: usize = 16 * 1024 * 1024;
 
 pub type QueryRow = Map<String, JsonValue>;
 
@@ -26,6 +27,13 @@ pub struct QueryResultBatch {
   pub rows: Vec<QueryRow>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryTruncationReason {
+  RowLimit,
+  ByteLimit,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum QueryExecutionSummary {
@@ -34,7 +42,10 @@ pub enum QueryExecutionSummary {
     row_count: usize,
     batch_count: usize,
     truncated: bool,
+    truncation_reason: Option<QueryTruncationReason>,
     row_limit: usize,
+    byte_limit: usize,
+    bytes_read: usize,
   },
   Affected {
     rows_affected: u64,
@@ -48,7 +59,10 @@ pub enum QueryExecutionResult {
     columns: Vec<String>,
     rows: Vec<Map<String, JsonValue>>,
     truncated: bool,
+    truncation_reason: Option<QueryTruncationReason>,
     row_limit: usize,
+    byte_limit: usize,
+    bytes_read: usize,
   },
   Affected {
     rows_affected: u64,
@@ -64,10 +78,19 @@ pub async fn execute_query_with_limit(
   sql: &str,
   row_limit: usize,
 ) -> Result<QueryExecutionResult, String> {
+  execute_query_with_limits(pool, sql, row_limit, DEFAULT_QUERY_BYTE_LIMIT).await
+}
+
+pub async fn execute_query_with_limits(
+  pool: &DbPool,
+  sql: &str,
+  row_limit: usize,
+  byte_limit: usize,
+) -> Result<QueryExecutionResult, String> {
   match pool {
-    DbPool::Sqlite(pool) => execute_sqlite(pool, sql, row_limit).await,
-    DbPool::MySql(pool) => execute_mysql(pool, sql, row_limit).await,
-    DbPool::Postgres(pool) => execute_postgres(pool, sql, row_limit).await,
+    DbPool::Sqlite(pool) => execute_sqlite(pool, sql, row_limit, byte_limit).await,
+    DbPool::MySql(pool) => execute_mysql(pool, sql, row_limit, byte_limit).await,
+    DbPool::Postgres(pool) => execute_postgres(pool, sql, row_limit, byte_limit).await,
   }
 }
 
@@ -108,18 +131,26 @@ impl SessionConnection {
     &mut self,
     sql: &str,
     row_limit: usize,
+    byte_limit: usize,
     batch_size: usize,
     sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
   ) -> Result<QueryExecutionSummary, String> {
     match self {
       Self::Sqlite(connection) => {
-        execute_sqlite_connection_streaming(connection, sql, row_limit, batch_size, sink).await
+        execute_sqlite_connection_streaming(
+          connection, sql, row_limit, byte_limit, batch_size, sink,
+        )
+        .await
       }
       Self::MySql(connection) => {
-        execute_mysql_connection_streaming(connection, sql, row_limit, batch_size, sink).await
+        execute_mysql_connection_streaming(connection, sql, row_limit, byte_limit, batch_size, sink)
+          .await
       }
       Self::Postgres(connection) => {
-        execute_postgres_connection_streaming(connection, sql, row_limit, batch_size, sink).await
+        execute_postgres_connection_streaming(
+          connection, sql, row_limit, byte_limit, batch_size, sink,
+        )
+        .await
       }
     }
   }
@@ -146,9 +177,10 @@ async fn execute_sqlite(
   pool: &Pool<Sqlite>,
   sql: &str,
   row_limit: usize,
+  byte_limit: usize,
 ) -> Result<QueryExecutionResult, String> {
   let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
-  execute_sqlite_connection(&mut connection, sql, row_limit).await
+  execute_sqlite_connection_with_limits(&mut connection, sql, row_limit, byte_limit).await
 }
 
 async fn execute_sqlite_connection(
@@ -156,11 +188,21 @@ async fn execute_sqlite_connection(
   sql: &str,
   row_limit: usize,
 ) -> Result<QueryExecutionResult, String> {
+  execute_sqlite_connection_with_limits(connection, sql, row_limit, DEFAULT_QUERY_BYTE_LIMIT).await
+}
+
+async fn execute_sqlite_connection_with_limits(
+  connection: &mut SqliteConnection,
+  sql: &str,
+  row_limit: usize,
+  byte_limit: usize,
+) -> Result<QueryExecutionResult, String> {
   let mut rows = Vec::new();
   let summary = execute_sqlite_connection_streaming(
     connection,
     sql,
     row_limit,
+    byte_limit,
     row_limit.max(1),
     &mut |batch| {
       rows.extend(batch.rows);
@@ -175,6 +217,7 @@ async fn execute_sqlite_connection_streaming(
   connection: &mut SqliteConnection,
   sql: &str,
   row_limit: usize,
+  byte_limit: usize,
   batch_size: usize,
   sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
 ) -> Result<QueryExecutionSummary, String> {
@@ -201,27 +244,50 @@ async fn execute_sqlite_connection_streaming(
   let mut rows = Vec::with_capacity(batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
+  let mut bytes_read: usize = 0;
+  let mut truncation_reason = None;
   while row_count < row_limit {
     let Some(row) = stream.try_next().await.map_err(|error| error.to_string())? else {
       break;
     };
-    rows.push(decode_sqlite_row(&row)?);
+    let row = decode_sqlite_row(&row)?;
+    let row_bytes = serialized_row_size(&row)?;
+    if bytes_read.saturating_add(row_bytes) > byte_limit {
+      truncation_reason = Some(QueryTruncationReason::ByteLimit);
+      break;
+    }
+    bytes_read += row_bytes;
+    rows.push(row);
     row_count += 1;
     flush_full_batch(&mut rows, batch_size, &mut batch_count, row_count, sink)?;
   }
-  let truncated =
-    row_count == row_limit && stream.try_next().await.map_err(|error| error.to_string())?.is_some();
+  if truncation_reason.is_none()
+    && row_count == row_limit
+    && stream.try_next().await.map_err(|error| error.to_string())?.is_some()
+  {
+    truncation_reason = Some(QueryTruncationReason::RowLimit);
+  }
   flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
-  Ok(QueryExecutionSummary::Rows { columns, row_count, batch_count, truncated, row_limit })
+  Ok(QueryExecutionSummary::Rows {
+    columns,
+    row_count,
+    batch_count,
+    truncated: truncation_reason.is_some(),
+    truncation_reason,
+    row_limit,
+    byte_limit,
+    bytes_read,
+  })
 }
 
 async fn execute_mysql(
   pool: &Pool<MySql>,
   sql: &str,
   row_limit: usize,
+  byte_limit: usize,
 ) -> Result<QueryExecutionResult, String> {
   let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
-  execute_mysql_connection(&mut connection, sql, row_limit).await
+  execute_mysql_connection_with_limits(&mut connection, sql, row_limit, byte_limit).await
 }
 
 async fn execute_mysql_connection(
@@ -229,11 +295,21 @@ async fn execute_mysql_connection(
   sql: &str,
   row_limit: usize,
 ) -> Result<QueryExecutionResult, String> {
+  execute_mysql_connection_with_limits(connection, sql, row_limit, DEFAULT_QUERY_BYTE_LIMIT).await
+}
+
+async fn execute_mysql_connection_with_limits(
+  connection: &mut MySqlConnection,
+  sql: &str,
+  row_limit: usize,
+  byte_limit: usize,
+) -> Result<QueryExecutionResult, String> {
   let mut rows = Vec::new();
   let summary = execute_mysql_connection_streaming(
     connection,
     sql,
     row_limit,
+    byte_limit,
     row_limit.max(1),
     &mut |batch| {
       rows.extend(batch.rows);
@@ -248,6 +324,7 @@ async fn execute_mysql_connection_streaming(
   connection: &mut MySqlConnection,
   sql: &str,
   row_limit: usize,
+  byte_limit: usize,
   batch_size: usize,
   sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
 ) -> Result<QueryExecutionSummary, String> {
@@ -274,27 +351,50 @@ async fn execute_mysql_connection_streaming(
   let mut rows = Vec::with_capacity(batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
+  let mut bytes_read: usize = 0;
+  let mut truncation_reason = None;
   while row_count < row_limit {
     let Some(row) = stream.try_next().await.map_err(|error| error.to_string())? else {
       break;
     };
-    rows.push(decode_mysql_row(&row)?);
+    let row = decode_mysql_row(&row)?;
+    let row_bytes = serialized_row_size(&row)?;
+    if bytes_read.saturating_add(row_bytes) > byte_limit {
+      truncation_reason = Some(QueryTruncationReason::ByteLimit);
+      break;
+    }
+    bytes_read += row_bytes;
+    rows.push(row);
     row_count += 1;
     flush_full_batch(&mut rows, batch_size, &mut batch_count, row_count, sink)?;
   }
-  let truncated =
-    row_count == row_limit && stream.try_next().await.map_err(|error| error.to_string())?.is_some();
+  if truncation_reason.is_none()
+    && row_count == row_limit
+    && stream.try_next().await.map_err(|error| error.to_string())?.is_some()
+  {
+    truncation_reason = Some(QueryTruncationReason::RowLimit);
+  }
   flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
-  Ok(QueryExecutionSummary::Rows { columns, row_count, batch_count, truncated, row_limit })
+  Ok(QueryExecutionSummary::Rows {
+    columns,
+    row_count,
+    batch_count,
+    truncated: truncation_reason.is_some(),
+    truncation_reason,
+    row_limit,
+    byte_limit,
+    bytes_read,
+  })
 }
 
 async fn execute_postgres(
   pool: &Pool<Postgres>,
   sql: &str,
   row_limit: usize,
+  byte_limit: usize,
 ) -> Result<QueryExecutionResult, String> {
   let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
-  execute_postgres_connection(&mut connection, sql, row_limit).await
+  execute_postgres_connection_with_limits(&mut connection, sql, row_limit, byte_limit).await
 }
 
 async fn execute_postgres_connection(
@@ -302,11 +402,22 @@ async fn execute_postgres_connection(
   sql: &str,
   row_limit: usize,
 ) -> Result<QueryExecutionResult, String> {
+  execute_postgres_connection_with_limits(connection, sql, row_limit, DEFAULT_QUERY_BYTE_LIMIT)
+    .await
+}
+
+async fn execute_postgres_connection_with_limits(
+  connection: &mut PgConnection,
+  sql: &str,
+  row_limit: usize,
+  byte_limit: usize,
+) -> Result<QueryExecutionResult, String> {
   let mut rows = Vec::new();
   let summary = execute_postgres_connection_streaming(
     connection,
     sql,
     row_limit,
+    byte_limit,
     row_limit.max(1),
     &mut |batch| {
       rows.extend(batch.rows);
@@ -321,6 +432,7 @@ async fn execute_postgres_connection_streaming(
   connection: &mut PgConnection,
   sql: &str,
   row_limit: usize,
+  byte_limit: usize,
   batch_size: usize,
   sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
 ) -> Result<QueryExecutionSummary, String> {
@@ -347,18 +459,40 @@ async fn execute_postgres_connection_streaming(
   let mut rows = Vec::with_capacity(batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
+  let mut bytes_read: usize = 0;
+  let mut truncation_reason = None;
   while row_count < row_limit {
     let Some(row) = stream.try_next().await.map_err(|error| error.to_string())? else {
       break;
     };
-    rows.push(decode_postgres_row(&row)?);
+    let row = decode_postgres_row(&row)?;
+    let row_bytes = serialized_row_size(&row)?;
+    if bytes_read.saturating_add(row_bytes) > byte_limit {
+      truncation_reason = Some(QueryTruncationReason::ByteLimit);
+      break;
+    }
+    bytes_read += row_bytes;
+    rows.push(row);
     row_count += 1;
     flush_full_batch(&mut rows, batch_size, &mut batch_count, row_count, sink)?;
   }
-  let truncated =
-    row_count == row_limit && stream.try_next().await.map_err(|error| error.to_string())?.is_some();
+  if truncation_reason.is_none()
+    && row_count == row_limit
+    && stream.try_next().await.map_err(|error| error.to_string())?.is_some()
+  {
+    truncation_reason = Some(QueryTruncationReason::RowLimit);
+  }
   flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
-  Ok(QueryExecutionSummary::Rows { columns, row_count, batch_count, truncated, row_limit })
+  Ok(QueryExecutionSummary::Rows {
+    columns,
+    row_count,
+    batch_count,
+    truncated: truncation_reason.is_some(),
+    truncation_reason,
+    row_limit,
+    byte_limit,
+    bytes_read,
+  })
 }
 
 fn flush_full_batch(
@@ -399,14 +533,32 @@ fn send_batch(
   Ok(())
 }
 
+fn serialized_row_size(row: &QueryRow) -> Result<usize, String> {
+  serde_json::to_vec(row).map(|bytes| bytes.len()).map_err(|error| error.to_string())
+}
+
 fn summary_with_rows(
   summary: QueryExecutionSummary,
   rows: Vec<QueryRow>,
 ) -> Result<QueryExecutionResult, String> {
   match summary {
-    QueryExecutionSummary::Rows { columns, truncated, row_limit, .. } => {
-      Ok(QueryExecutionResult::Rows { columns, rows, truncated, row_limit })
-    }
+    QueryExecutionSummary::Rows {
+      columns,
+      truncated,
+      truncation_reason,
+      row_limit,
+      byte_limit,
+      bytes_read,
+      ..
+    } => Ok(QueryExecutionResult::Rows {
+      columns,
+      rows,
+      truncated,
+      truncation_reason,
+      row_limit,
+      byte_limit,
+      bytes_read,
+    }),
     QueryExecutionSummary::Affected { rows_affected } => {
       Ok(QueryExecutionResult::Affected { rows_affected })
     }
@@ -588,7 +740,7 @@ mod tests {
       .expect("execute empty query");
 
     match result {
-      QueryExecutionResult::Rows { columns, rows, truncated, row_limit } => {
+      QueryExecutionResult::Rows { columns, rows, truncated, row_limit, .. } => {
         assert_eq!(columns, vec!["value"]);
         assert!(rows.is_empty());
         assert!(!truncated);
@@ -636,6 +788,7 @@ mod tests {
       &mut connection,
       "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5",
       5,
+      DEFAULT_QUERY_BYTE_LIMIT,
       2,
       &mut |batch| {
         batches.push(batch);
@@ -655,6 +808,43 @@ mod tests {
     }
     assert_eq!(batches.iter().map(|batch| batch.offset).collect::<Vec<_>>(), vec![0, 2, 4]);
     assert_eq!(batches.iter().map(|batch| batch.rows.len()).collect::<Vec<_>>(), vec![2, 2, 1]);
+  }
+
+  #[tokio::test]
+  async fn stops_streaming_before_exceeding_the_byte_budget() {
+    let pool = SqlitePoolOptions::new()
+      .max_connections(1)
+      .connect("sqlite::memory:")
+      .await
+      .expect("connect to SQLite");
+    let mut connection = pool.acquire().await.expect("acquire SQLite connection");
+    let mut batches = Vec::new();
+    let summary = execute_sqlite_connection_streaming(
+      &mut connection,
+      "SELECT 'a value larger than the budget' AS value",
+      100,
+      1,
+      10,
+      &mut |batch| {
+        batches.push(batch);
+        Ok(())
+      },
+    )
+    .await
+    .expect("enforce byte budget");
+
+    match summary {
+      QueryExecutionSummary::Rows {
+        row_count, truncated, truncation_reason, bytes_read, ..
+      } => {
+        assert_eq!(row_count, 0);
+        assert!(truncated);
+        assert_eq!(truncation_reason, Some(QueryTruncationReason::ByteLimit));
+        assert_eq!(bytes_read, 0);
+      }
+      QueryExecutionSummary::Affected { .. } => panic!("expected rows"),
+    }
+    assert!(batches.is_empty());
   }
 
   #[tokio::test]

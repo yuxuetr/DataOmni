@@ -197,7 +197,9 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
           <span>共 {totalRows} 行</span>
           {result.truncated && (
             <span className="text-amber-700">
-              已达到 {result.row_limit?.toLocaleString()} 行上限，结果已截断
+              {result.truncation_reason === 'byte_limit'
+                ? `已达到 ${Math.round((result.byte_limit ?? 0) / 1024 / 1024)} MiB 内存上限，结果已截断`
+                : `已达到 ${result.row_limit?.toLocaleString()} 行上限，结果已截断`}
             </span>
           )}
           <span>影响行数: {result.affected_rows}</span>

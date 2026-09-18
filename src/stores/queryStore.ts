@@ -31,6 +31,9 @@ import { executeSequentially } from '../utils/queryExecutionPolicy';
 
 export type { QueryResult, SqlHistory, SqlStatement } from '../contracts/query';
 
+const QUERY_RESULT_BACKEND_BYTE_LIMIT = 12 * 1024 * 1024;
+const QUERY_RESULT_FRONTEND_BYTE_LIMIT = 16 * 1024 * 1024;
+
 // 查询状态
 export interface QueryState {
   connectionString: string | null;
@@ -576,6 +579,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       const streamedRows: Record<string, unknown>[] = [];
       let expectedBatchCount = 0;
       let batchError: Error | null = null;
+      let receivedBytes = 0;
       let resolveBatches: (() => void) | null = null;
       const batchesComplete = new Promise<void>((resolve) => {
         resolveBatches = resolve;
@@ -588,6 +592,12 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           batchError = new Error(
             `查询结果批次顺序错误: 预期偏移 ${streamedRows.length}，实际 ${batch.offset}`
           );
+          resolveBatches?.();
+          return;
+        }
+        receivedBytes += new TextEncoder().encode(JSON.stringify(batch.rows)).byteLength;
+        if (receivedBytes > QUERY_RESULT_FRONTEND_BYTE_LIMIT) {
+          batchError = new Error('查询结果超过前端 16 MiB 内存预算');
           resolveBatches?.();
           return;
         }
@@ -604,7 +614,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           executionId: execution.id,
           sql: statement.sql,
           timeoutMs: queryTimeoutMs,
-          rowLimit: queryResultRowLimit
+          rowLimit: queryResultRowLimit,
+          byteLimit: QUERY_RESULT_BACKEND_BYTE_LIMIT
         }
       });
       const executionTime = Date.now() - startTime;
@@ -639,7 +650,10 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           affected_rows: rows.length,
           execution_time: executionTime,
           truncated: driverResult.truncated,
+          truncation_reason: driverResult.truncation_reason,
           row_limit: driverResult.row_limit,
+          byte_limit: driverResult.byte_limit,
+          bytes_read: driverResult.bytes_read,
           table_name: tableName,
           primary_key: primaryKey,
         };

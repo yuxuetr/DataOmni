@@ -25,6 +25,7 @@ pub struct StreamingQueryOptions<'a> {
   pub pool: &'a DbPool,
   pub sql: &'a str,
   pub row_limit: usize,
+  pub byte_limit: usize,
   pub batch_size: usize,
   pub timeout_duration: Duration,
 }
@@ -78,7 +79,15 @@ impl QuerySessionState {
 
     timeout(options.timeout_duration, async {
       let mut connection = entry.connection.lock().await;
-      connection.execute_streaming(options.sql, options.row_limit, options.batch_size, sink).await
+      connection
+        .execute_streaming(
+          options.sql,
+          options.row_limit,
+          options.byte_limit,
+          options.batch_size,
+          sink,
+        )
+        .await
     })
     .await
     .map_err(|_| {

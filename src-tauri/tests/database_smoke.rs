@@ -1,6 +1,7 @@
 use dataomni_lib::services::{
-  execute_query, execute_query_with_limit, execute_query_with_timeout, QueryExecutionResult,
-  QueryExecutionSummary, QuerySessionState, StreamingQueryOptions, QUERY_TIMEOUT_CODE,
+  execute_query, execute_query_with_limit, execute_query_with_limits, execute_query_with_timeout,
+  QueryExecutionResult, QueryExecutionSummary, QuerySessionState, QueryTruncationReason,
+  StreamingQueryOptions, QUERY_TIMEOUT_CODE,
 };
 use sqlx::{mysql::MySqlPoolOptions, postgres::PgPoolOptions, sqlite::SqlitePoolOptions};
 use std::time::Duration;
@@ -43,13 +44,18 @@ async fn sqlite_supports_basic_read_write() {
 
   assert_truncated_result(
     execute_query_with_limit(
-      &DbPool::Sqlite(pool),
+      &DbPool::Sqlite(pool.clone()),
       "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3",
       2,
     )
     .await
     .expect("limit SQLite result"),
     2,
+  );
+  assert_byte_limited_result(
+    execute_query_with_limits(&DbPool::Sqlite(pool), "SELECT 'too large' AS value", 100, 1)
+      .await
+      .expect("limit SQLite result bytes"),
   );
 }
 
@@ -108,6 +114,16 @@ async fn postgres_supports_basic_read_write() {
     .await
     .expect("limit PostgreSQL result"),
     2,
+  );
+  assert_byte_limited_result(
+    execute_query_with_limits(
+      &DbPool::Postgres(pool.clone()),
+      "SELECT 'too large'::text AS value",
+      100,
+      1,
+    )
+    .await
+    .expect("limit PostgreSQL result bytes"),
   );
 
   assert_transaction_binding(
@@ -175,6 +191,11 @@ async fn mysql_supports_basic_read_write() {
     .expect("limit MySQL result"),
     2,
   );
+  assert_byte_limited_result(
+    execute_query_with_limits(&DbPool::MySql(pool.clone()), "SELECT 'too large' AS value", 100, 1)
+      .await
+      .expect("limit MySQL result bytes"),
+  );
 
   assert_transaction_binding(
     &QuerySessionState::default(),
@@ -234,6 +255,7 @@ async fn assert_transaction_binding(
         pool,
         sql: "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5",
         row_limit: 5,
+        byte_limit: 16 * 1024 * 1024,
         batch_size: 2,
         timeout_duration: timeout,
       },
@@ -289,6 +311,18 @@ fn assert_truncated_result(result: QueryExecutionResult, expected_limit: usize) 
       assert_eq!(rows.len(), expected_limit);
       assert!(truncated);
       assert_eq!(row_limit, expected_limit);
+    }
+    QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
+  }
+}
+
+fn assert_byte_limited_result(result: QueryExecutionResult) {
+  match result {
+    QueryExecutionResult::Rows { rows, truncated, truncation_reason, bytes_read, .. } => {
+      assert!(rows.is_empty());
+      assert!(truncated);
+      assert_eq!(truncation_reason, Some(QueryTruncationReason::ByteLimit));
+      assert_eq!(bytes_read, 0);
     }
     QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
   }

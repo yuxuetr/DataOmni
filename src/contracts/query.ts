@@ -4,7 +4,10 @@ export interface QueryResult {
   affected_rows: number;
   execution_time: number;
   truncated?: boolean;
+  truncation_reason?: 'row_limit' | 'byte_limit' | null;
   row_limit?: number;
+  byte_limit?: number;
+  bytes_read?: number;
   table_name?: string;
   primary_key?: string;
 }
@@ -22,7 +25,10 @@ export type DriverQueryResult =
       row_count: number;
       batch_count: number;
       truncated: boolean;
+      truncation_reason: 'row_limit' | 'byte_limit' | null;
       row_limit: number;
+      byte_limit: number;
+      bytes_read: number;
     }
   | {
       kind: 'affected';
