@@ -30,6 +30,10 @@ import type {
 } from '../contracts';
 import { assertSingleRowAffected } from '../utils/executeResult';
 import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from '../utils/sqlIdentifiers';
+import {
+  createTablePaginationOrder,
+  type TablePaginationOrder
+} from '../utils/tablePagination';
 
 // 编辑模式类型
 type EditMode = 'view' | 'edit' | 'add';
@@ -66,12 +70,14 @@ export default function TableDataViewer({
   onClose 
 }: TableDataViewerProps) {
   const [tableSchema, setTableSchema] = useState<TableSchema | null>(null);
+  const [tableSchemaKey, setTableSchemaKey] = useState<string | null>(null);
   const [tableData, setTableData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [totalRows, setTotalRows] = useState(0);
+  const [paginationOrder, setPaginationOrder] = useState<TablePaginationOrder | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>('data'); // 默认显示数据标签页
   
   // 编辑功能相关状态
@@ -87,6 +93,7 @@ export default function TableDataViewer({
   });
   
   const { database } = useQueryStore();
+  const currentTableKey = `${connection.id}:${schema ?? ''}:${tableName}`;
 
   // 标签页配置
   const tabs = [
@@ -124,8 +131,8 @@ export default function TableDataViewer({
   };
 
   // 加载表结构信息
-  const loadTableSchema = async () => {
-    if (!await ensureDatabaseConnection()) return;
+  const loadTableSchema = async (): Promise<TableSchema | null> => {
+    if (!await ensureDatabaseConnection()) return null;
     
     try {
       let schemaQuery = '';
@@ -138,29 +145,45 @@ export default function TableDataViewer({
               c.data_type,
               c.is_nullable,
               c.column_default,
-              CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END as is_primary_key
+              CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END as is_primary_key,
+              pk.primary_key_ordinal
             FROM information_schema.columns c
             LEFT JOIN (
-              SELECT kcu.column_name
+              SELECT kcu.table_schema, kcu.table_name, kcu.column_name,
+                     kcu.ordinal_position as primary_key_ordinal
               FROM information_schema.table_constraints tc
-              JOIN information_schema.key_column_usage kcu ON tc.constraint_name = kcu.constraint_name
-              WHERE tc.table_name = $1 AND tc.constraint_type = 'PRIMARY KEY'
-            ) pk ON c.column_name = pk.column_name
-            WHERE c.table_name = $1 ${schema ? "AND c.table_schema = $2" : ""}
+              JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_schema = kcu.constraint_schema
+               AND tc.constraint_name = kcu.constraint_name
+               AND tc.table_schema = kcu.table_schema
+               AND tc.table_name = kcu.table_name
+              WHERE tc.constraint_type = 'PRIMARY KEY'
+            ) pk ON c.table_schema = pk.table_schema
+                AND c.table_name = pk.table_name
+                AND c.column_name = pk.column_name
+            WHERE c.table_name = $1
+              AND c.table_schema = COALESCE($2, current_schema())
             ORDER BY c.ordinal_position
           `;
           break;
         case 'mysql':
           schemaQuery = `
             SELECT 
-              COLUMN_NAME as column_name,
-              DATA_TYPE as data_type,
-              IS_NULLABLE as is_nullable,
-              COLUMN_DEFAULT as column_default,
-              COLUMN_KEY = 'PRI' as is_primary_key
-            FROM INFORMATION_SCHEMA.COLUMNS 
-            WHERE TABLE_NAME = ? ${schema ? "AND TABLE_SCHEMA = ?" : ""}
-            ORDER BY ORDINAL_POSITION
+              c.COLUMN_NAME as column_name,
+              c.DATA_TYPE as data_type,
+              c.IS_NULLABLE as is_nullable,
+              c.COLUMN_DEFAULT as column_default,
+              kcu.COLUMN_NAME IS NOT NULL as is_primary_key,
+              kcu.ORDINAL_POSITION as primary_key_ordinal
+            FROM INFORMATION_SCHEMA.COLUMNS c
+            LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+              ON c.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+             AND c.TABLE_NAME = kcu.TABLE_NAME
+             AND c.COLUMN_NAME = kcu.COLUMN_NAME
+             AND kcu.CONSTRAINT_NAME = 'PRIMARY'
+            WHERE c.TABLE_NAME = ?
+              AND c.TABLE_SCHEMA = COALESCE(?, DATABASE())
+            ORDER BY c.ORDINAL_POSITION
           `;
           break;
         case 'sqlite':
@@ -168,25 +191,36 @@ export default function TableDataViewer({
           break;
       }
       
-      const columnsResult = await database!.select(schemaQuery, schema ? [tableName, schema] : [tableName]);
+      const columnsResult = await database!.select(
+        schemaQuery,
+        connection.db_type === 'sqlite' ? [] : [tableName, schema ?? null]
+      );
       
-      const columns: ColumnInfo[] = Array.isArray(columnsResult) ? columnsResult.map((col: any) => ({
-        name: col.column_name || col.name,
-        data_type: col.data_type || col.type,
-        is_nullable: col.is_nullable === 'YES' || col.notnull === 0,
-        is_primary_key: col.is_primary_key || col.pk === 1,
-        default_value: col.column_default || col.dflt_value
-      })) : [];
+      const columns: ColumnInfo[] = Array.isArray(columnsResult) ? columnsResult.map((col: any) => {
+        const primaryKeyOrdinal = Number(col.primary_key_ordinal ?? col.pk ?? 0);
+        return {
+          name: col.column_name || col.name,
+          data_type: col.data_type || col.type,
+          is_nullable: col.is_nullable === 'YES' || col.notnull === 0,
+          is_primary_key: primaryKeyOrdinal > 0 || col.is_primary_key === true,
+          primary_key_ordinal: primaryKeyOrdinal > 0 ? primaryKeyOrdinal : undefined,
+          default_value: col.column_default || col.dflt_value
+        };
+      }) : [];
       
-      setTableSchema({ columns });
+      const loadedSchema = { columns };
+      setTableSchema(loadedSchema);
+      setTableSchemaKey(currentTableKey);
+      return loadedSchema;
     } catch (err) {
       console.error('加载表结构失败:', err);
       setError('加载表结构失败');
+      return null;
     }
   };
 
   // 加载表数据
-  const loadTableData = async (page: number = 1) => {
+  const loadTableData = async (page: number = 1, requestedPageSize: number = pageSize) => {
     if (!await ensureDatabaseConnection()) return;
     
     setLoading(true);
@@ -198,6 +232,14 @@ export default function TableDataViewer({
         schema ? [schema, tableName] : [tableName],
         dialect
       );
+      const loadedSchema = tableSchemaKey === currentTableKey
+        ? tableSchema
+        : await loadTableSchema();
+      if (!loadedSchema) {
+        throw new Error('无法加载表结构，已停止不稳定的分页查询');
+      }
+      const order = createTablePaginationOrder(loadedSchema.columns, dialect);
+      setPaginationOrder(order);
 
       // 获取总行数
       const countQuery = `SELECT COUNT(*) as total FROM ${tableReference}`;
@@ -210,23 +252,23 @@ export default function TableDataViewer({
       setTotalRows(total);
       
       // 获取分页数据
-      const offset = (page - 1) * pageSize;
+      const offset = (page - 1) * requestedPageSize;
       let dataQuery = '';
       
       switch (connection.db_type) {
         case 'postgresql':
-          dataQuery = `SELECT * FROM ${tableReference} LIMIT $1 OFFSET $2`;
+          dataQuery = `SELECT * FROM ${tableReference} ${order.clause} LIMIT $1 OFFSET $2`;
           break;
         case 'mysql':
-          dataQuery = `SELECT * FROM ${tableReference} LIMIT ? OFFSET ?`;
+          dataQuery = `SELECT * FROM ${tableReference} ${order.clause} LIMIT ? OFFSET ?`;
           break;
         case 'sqlite':
-          dataQuery = `SELECT * FROM ${tableReference} LIMIT ${pageSize} OFFSET ${offset}`;
+          dataQuery = `SELECT * FROM ${tableReference} ${order.clause} LIMIT ${requestedPageSize} OFFSET ${offset}`;
           break;
       }
       
       const dataResult = await database!.select(dataQuery, 
-        connection.db_type === 'sqlite' ? [] : [pageSize, offset]
+        connection.db_type === 'sqlite' ? [] : [requestedPageSize, offset]
       );
       
       setTableData(Array.isArray(dataResult) ? dataResult : []);
@@ -284,7 +326,7 @@ export default function TableDataViewer({
   const handlePageSizeChange = (newPageSize: number) => {
     setPageSize(newPageSize);
     setCurrentPage(1);
-    loadTableData(1);
+    loadTableData(1, newPageSize);
   };
 
   // 计算总页数
@@ -1055,6 +1097,18 @@ export default function TableDataViewer({
                 <p className="text-xs text-gray-500 mt-1">
                   共 {totalRows} 行数据
                 </p>
+                {paginationOrder && (
+                  <p
+                    className={clsx(
+                      'text-xs mt-1',
+                      paginationOrder.stableAcrossChanges ? 'text-green-600' : 'text-amber-600'
+                    )}
+                  >
+                    {paginationOrder.strategy === 'primary-key'
+                      ? `按主键 ${paginationOrder.columns.join(', ')} 稳定分页`
+                      : '表没有主键，正在使用数据库回退顺序；数据变更时页边界可能移动'}
+                  </p>
+                )}
               </div>
               
               <div className="flex items-center space-x-2">

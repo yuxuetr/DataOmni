@@ -8,6 +8,7 @@ export interface ColumnInfo {
   data_type: string;
   is_nullable: boolean;
   is_primary_key: boolean;
+  primary_key_ordinal?: number;
   default_value?: string;
 }
 
