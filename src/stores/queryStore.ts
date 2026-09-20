@@ -392,6 +392,17 @@ function writeSqlDocument(
 export const selectActiveSqlDocument = (state: QueryState): SqlDocument =>
   readSqlDocument(state, state.activeDocumentId);
 
+/**
+ * 关闭这个 SQL 标签是否会丢掉用户写的内容。
+ *
+ * 判据取草稿文本而不是执行结果：结果是可以重新跑出来的，用户手写的
+ * SQL 关掉就没了（当前还没有任何持久化去处）。
+ */
+export const selectSqlDocumentHasUnsavedContent = (
+  state: Pick<QueryState, 'documents'>,
+  documentId: string
+): boolean => readSqlDocument(state, documentId).sqlInput.trim().length > 0;
+
 export const useQueryStore = create<QueryStore>((set, get) => ({
   // 初始状态
   connectionString: null,

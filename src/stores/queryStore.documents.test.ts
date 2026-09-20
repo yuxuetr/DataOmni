@@ -15,7 +15,8 @@ vi.mock('@tauri-apps/api/core', () => ({
   Channel: FakeChannel
 }));
 
-const { selectActiveSqlDocument, useQueryStore } = await import('./queryStore');
+const { selectActiveSqlDocument, selectSqlDocumentHasUnsavedContent, useQueryStore } =
+  await import('./queryStore');
 
 function resetStore() {
   useQueryStore.setState({
@@ -165,6 +166,29 @@ describe('SQL 文档分片', () => {
     const { executions } = useQueryStore.getState();
     expect(executions).toHaveLength(1);
     expect(executions[0].tabId).toBe('tab-a');
+  });
+
+  it('有草稿文本的标签算作未保存', () => {
+    const store = useQueryStore.getState();
+
+    store.openDocument('tab-a');
+    store.setSqlInput('SELECT 1;');
+
+    expect(selectSqlDocumentHasUnsavedContent(useQueryStore.getState(), 'tab-a')).toBe(true);
+  });
+
+  it('空白草稿不算未保存，避免关闭刚建的空标签也被拦', () => {
+    const store = useQueryStore.getState();
+
+    store.openDocument('tab-a');
+    expect(selectSqlDocumentHasUnsavedContent(useQueryStore.getState(), 'tab-a')).toBe(false);
+
+    store.setSqlInput('   \n  ');
+    expect(selectSqlDocumentHasUnsavedContent(useQueryStore.getState(), 'tab-a')).toBe(false);
+  });
+
+  it('不存在的文档不算未保存', () => {
+    expect(selectSqlDocumentHasUnsavedContent(useQueryStore.getState(), 'missing')).toBe(false);
   });
 
   it('没有活动文档时不执行也不崩溃', async () => {

@@ -7,6 +7,8 @@ interface WorkspaceTabBarProps {
   activeTabId: string | null;
   /** 当前活跃会话所属的连接，用于标出「绑定的连接未激活」的标签 */
   activeProfileId: string | null;
+  /** 有未保存草稿的标签 id，脏点据此显示 */
+  unsavedTabIds: ReadonlySet<string>;
   onActivate: (tabId: string) => void;
   onClose: (tabId: string) => void;
   /** 未连接时不传，按钮隐藏 */
@@ -23,6 +25,7 @@ export function WorkspaceTabBar({
   tabs,
   activeTabId,
   activeProfileId,
+  unsavedTabIds,
   onActivate,
   onClose,
   onNewSqlTab
@@ -59,7 +62,7 @@ export function WorkspaceTabBar({
           >
             <Icon size={14} className="shrink-0" />
             <span className="max-w-[160px] truncate">{tab.title}</span>
-            {tab.dirty && (
+            {(tab.dirty || unsavedTabIds.has(tab.id)) && (
               <span
                 className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"
                 title="有未保存的更改"

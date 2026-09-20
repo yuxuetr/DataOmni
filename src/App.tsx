@@ -1,12 +1,13 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { confirm } from '@tauri-apps/plugin-dialog';
 import { Sidebar } from './components/Sidebar';
 import { SqlWorkbench } from './components/SqlWorkbench';
 import TableDataViewer from './components/TableDataViewer';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { WorkspaceTabBar } from './components/WorkspaceTabBar';
 import { useAppStore } from './stores/appStore';
-import { useQueryStore } from './stores/queryStore';
+import { selectSqlDocumentHasUnsavedContent, useQueryStore } from './stores/queryStore';
 import { useWorkspaceStore } from './stores/workspaceStore';
 import {
   createSqlWorkspaceTab,
@@ -19,6 +20,16 @@ function App() {
   const { activeConnection, selectedTable } = useAppStore();
   const { tabs, activeTabId, registerTab, activateTab, closeTab } = useWorkspaceStore();
   const { openDocument, closeDocument, setActiveDocument } = useQueryStore();
+  const documents = useQueryStore((state) => state.documents);
+
+  const unsavedTabIds = useMemo(
+    () => new Set(
+      Object.keys(documents).filter(
+        (documentId) => selectSqlDocumentHasUnsavedContent({ documents }, documentId)
+      )
+    ),
+    [documents]
+  );
 
   const sessionManager = useSessionManager();
   const activeProfileId = activeConnection?.config.id ?? null;
@@ -102,8 +113,23 @@ function App() {
     };
   }, [sessionManager]);
 
-  const closeWorkspaceTab = (tabId: string) => {
+  const closeWorkspaceTab = async (tabId: string) => {
     const tab = tabs.find((candidate) => candidate.id === tabId);
+
+    // 草稿目前只活在内存里，关掉标签就是销毁它，所以先问一次。
+    // 这里只有「丢弃」和「取消」：还没有任何可保存的去处
+    //（保存为 .sql 文件属于 P2.3），放一个不做事的保存按钮更糟。
+    if (tab?.kind === 'sql' && selectSqlDocumentHasUnsavedContent(useQueryStore.getState(), tabId)) {
+      const discard = await confirm(
+        `标签「${tab.title}」有尚未保存的 SQL 草稿，关闭后无法恢复。`,
+        { title: '关闭未保存的标签', kind: 'warning', okLabel: '丢弃', cancelLabel: '取消' }
+      );
+
+      if (!discard) {
+        return;
+      }
+    }
+
     closeTab(tabId);
     if (tab?.kind === 'sql') {
       closeDocument(tabId);
@@ -203,7 +229,7 @@ function App() {
         tableName={activeTab.object.table}
         schema={activeTab.object.schema ?? undefined}
         initialTab={activeTab.kind === 'table-structure' ? 'schema' : 'data'}
-        onClose={() => closeWorkspaceTab(activeTab.id)}
+        onClose={() => { void closeWorkspaceTab(activeTab.id); }}
       />
     );
   };
@@ -235,7 +261,8 @@ function App() {
             activeTabId={activeTabId}
             activeProfileId={activeProfileId}
             onActivate={activateTab}
-            onClose={closeWorkspaceTab}
+            unsavedTabIds={unsavedTabIds}
+            onClose={(tabId) => { void closeWorkspaceTab(tabId); }}
             onNewSqlTab={activeConnection ? openSqlTab : undefined}
           />
         )}
