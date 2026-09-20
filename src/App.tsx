@@ -5,8 +5,10 @@ import { Sidebar } from './components/Sidebar';
 import { SqlWorkbench } from './components/SqlWorkbench';
 import TableDataViewer from './components/TableDataViewer';
 import { WelcomeScreen } from './components/WelcomeScreen';
+import { OfflineTabView } from './components/OfflineTabView';
 import { WorkspaceTabBar } from './components/WorkspaceTabBar';
 import { useAppStore } from './stores/appStore';
+import { useConnectionStore } from './stores/connectionStore';
 import { selectSqlDocumentHasUnsavedContent, useQueryStore } from './stores/queryStore';
 import { useWorkspaceStore } from './stores/workspaceStore';
 import {
@@ -22,6 +24,7 @@ function App() {
   const { tabs, activeTabId, registerTab, activateTab, closeTab } = useWorkspaceStore();
   const { openDocument, closeDocument, setActiveDocument } = useQueryStore();
   const documents = useQueryStore((state) => state.documents);
+  const connections = useConnectionStore((state) => state.connections);
 
   const unsavedTabIds = useMemo(
     () => new Set(
@@ -196,22 +199,18 @@ function App() {
     }
 
     // 标签永久绑定到打开它的连接。只有一个活跃会话，所以绑定到别的连接的
-    // 标签不执行任何查询，而不是静默改到当前连接上执行。
+    // 标签不执行任何查询，而不是静默改到当前连接上执行；草稿仍然可以离线查看。
     if (activeTab.binding.profileId !== activeProfileId) {
       return (
-        <div className="flex-1 flex items-center justify-center p-8 text-center">
-          <div className="max-w-md">
-            <p className="text-gray-700">
-              标签「{activeTab.title}」绑定的连接
-              {activeTab.availability === 'profile-deleted' ? '已被删除' : '当前未激活'}。
-            </p>
-            <p className="mt-2 text-sm text-gray-500">
-              {activeTab.availability === 'profile-deleted'
-                ? '该连接的配置已删除，此标签只能查看，无法执行查询。'
-                : '请在左侧重新选择该连接后再操作，本标签不会改到当前连接上执行。'}
-            </p>
-          </div>
-        </div>
+        <OfflineTabView
+          tab={activeTab}
+          profileName={
+            connections.find(
+              (connection) => connection.id === activeTab.binding.profileId
+            )?.name ?? null
+          }
+          draft={documents[activeTab.id]?.sqlInput ?? ''}
+        />
       );
     }
 

@@ -167,7 +167,15 @@ export class SessionManager {
     const ownsRuntimeTarget = this.lifecycle.profileId === connectionId
       || this.reconnectTarget?.connection.id === connectionId;
 
-    workspaceStore.handleProfileDeleted(connectionId);
+    // 草稿正文在 queryStore 里，workspaceStore 自己看不到，必须由这里告诉它
+    // 哪些标签还有内容，否则带草稿的标签会被一并删掉
+    const documents = useQueryStore.getState().documents;
+    const tabIdsWithDrafts = new Set(
+      Object.entries(documents)
+        .filter(([, document]) => document.sqlInput.trim().length > 0)
+        .map(([tabId]) => tabId)
+    );
+    workspaceStore.handleProfileDeleted(connectionId, tabIdsWithDrafts);
 
     if (appStore.activeConnection?.config.id === connectionId || ownsRuntimeTarget) {
       await this.disconnect();

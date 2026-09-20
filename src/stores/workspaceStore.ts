@@ -16,7 +16,7 @@ interface WorkspaceActions {
   registerTab: (tab: WorkspaceTab) => void;
   activateTab: (tabId: string) => void;
   closeTab: (tabId: string) => void;
-  handleProfileDeleted: (profileId: string) => void;
+  handleProfileDeleted: (profileId: string, tabIdsWithDrafts?: ReadonlySet<string>) => void;
 }
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
@@ -76,14 +76,21 @@ export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
     });
   },
 
-  handleProfileDeleted: (profileId) => {
+  /**
+   * 连接被删除时清理它的标签，但保留还有内容的 SQL 草稿供离线查看。
+   *
+   * 「有没有内容」由调用方以 `tabIdsWithDrafts` 传入：草稿正文住在
+   * queryStore 的文档里，`tab.dirty` 只在创建标签时按初始 SQL 设过一次、
+   * 之后从不更新，单看它会把带草稿的标签一起删掉。
+   */
+  handleProfileDeleted: (profileId, tabIdsWithDrafts) => {
     set((state) => {
       const tabs = state.tabs.flatMap((tab) => {
         if (tab.binding.profileId !== profileId) {
           return [tab];
         }
 
-        if (tab.kind === 'sql' && tab.dirty) {
+        if (tab.kind === 'sql' && (tab.dirty || tabIdsWithDrafts?.has(tab.id))) {
           return [markWorkspaceTabProfileDeleted(tab)];
         }
 

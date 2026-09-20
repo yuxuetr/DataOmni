@@ -149,6 +149,22 @@ describe('workspace store', () => {
     expect(state.tabs.map((tab) => tab.binding.profileId)).toEqual(['profile-a', 'profile-b']);
   });
 
+  it('keeps a SQL tab whose draft only exists in the query store', () => {
+    // tab.dirty 只在创建时设过一次，带草稿的标签必须靠 tabIdsWithDrafts 保住
+    const tabWithDraft = createSqlWorkspaceTab('profile-a', { id: 'sql-a' });
+    const emptyTab = createSqlWorkspaceTab('profile-a', { id: 'sql-empty' });
+
+    useWorkspaceStore.getState().registerTab(tabWithDraft);
+    useWorkspaceStore.getState().registerTab(emptyTab);
+    expect(tabWithDraft.dirty).toBe(false);
+
+    useWorkspaceStore.getState().handleProfileDeleted('profile-a', new Set(['sql-a']));
+
+    const state = useWorkspaceStore.getState();
+    expect(state.tabs.map((tab) => tab.id)).toEqual(['sql-a']);
+    expect(state.tabs[0].availability).toBe('profile-deleted');
+  });
+
   it('moves focus when a deleted profile closes the active clean tab', () => {
     const retainedTab = createSqlWorkspaceTab('profile-b', { id: 'sql-b' });
     const deletedTab = createTableWorkspaceTab('profile-a', 'users', {
