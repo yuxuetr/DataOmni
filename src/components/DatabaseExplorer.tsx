@@ -109,6 +109,12 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
           break;
           
         case 'mysql':
+          // 没有库名时 `table_schema = NULL` 恒不匹配，会安静地查出 0 行，
+          // 让人以为库是空的。这里直接说清楚。
+          if (!connection.database) {
+            throw new Error('该连接没有指定数据库名，无法列出表。请在连接配置中填写数据库。');
+          }
+
           // MySQL: 获取当前数据库的所有表
           const tableResult = await database.select(`
             SELECT 
@@ -162,7 +168,8 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
       }
     } catch (err) {
       console.error('加载数据库元数据失败:', err);
-      setError('加载数据库元数据失败');
+      // 原始错误必须可见：只说「失败」等于没说，用户和我们都无从下手
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }

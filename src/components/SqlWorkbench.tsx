@@ -142,6 +142,9 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
             <div className="flex items-center space-x-3 text-sm text-gray-600">
               <span>
                 {connection.db_type} • {connection.host}:{connection.port}
+                {connection.database
+                  ? ` / ${connection.database}`
+                  : ' · 未指定数据库'}
               </span>
               <div className={clsx(
                 "flex items-center space-x-1 px-2 py-1 rounded-full text-xs",
@@ -222,11 +225,6 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
             <span className="text-sm text-green-700">
               数据库连接成功，可以开始执行SQL查询
             </span>
-            {connectionId && (
-              <span className="text-xs text-green-600 bg-green-100 px-2 py-1 rounded">
-                📝 SQL历史已恢复
-              </span>
-            )}
           </div>
         </div>
       )}
