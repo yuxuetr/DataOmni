@@ -338,7 +338,24 @@
     unnest、MySQL 去掉 EXPRESSION 回退、PG 列名改回 join pg_attribute，
     三次都精确变红。
 - [ ] 查看视图定义、函数、触发器和序列
-- [ ] 查看建表 DDL
+- [-] 查看建表 DDL
+  - MySQL 与 SQLite 已完成（`e7b6bc1`）：结构页新增「建表语句」一段，带复制
+    按钮，给的是数据库自己吐出来的原文。SQLite 一并取出索引与触发器——
+    只给 CREATE TABLE 的话，照着重建出来的表会少掉所有显式索引。
+  - **PostgreSQL 当前版本不做**：它没有 `SHOW CREATE TABLE`，从目录重建要
+    覆盖类型、默认值、identity、排序规则、存储参数、分区、继承、注释、触发器、
+    RLS。少任何一项，产出的就是看起来权威、照着重建却不等价的 DDL——比没有
+    更糟，因为没人会去核对它。页面直说这一点。
+  - 重估条件（可执行）：`services::schema_metadata::tests::postgres_has_no_ddl_query`。
+    哪天真的实现了 PostgreSQL DDL，这条断言会红，逼着回来改掉理由，而不是
+    让一个过期的判断留在代码里。
+  - 两种取法用枚举区分：`SHOW CREATE TABLE` 不接受占位符，表名必须作为引用过
+    的**标识符**插进去；`sqlite_master.tbl_name` 是**字符串字面量**，走绑定
+    参数。两种引用规则不同，混用会在含特殊字符的表名上出错。
+  - 判据：`mysql_returns_the_authoritative_create_table_statement` 钉住列名
+    字面就叫 `Create Table`（带空格）、类型是 VARCHAR；
+    `sqlite_returns_create_table_together_with_its_indexes` 钉住建表语句排在
+    索引之前、自动约束索引不重复出现。
 - [ ] 新建和修改表结构
 - [ ] 所有 DDL 变更先生成预览 SQL
 - [ ] 危险 DDL 明确显示影响对象并二次确认
