@@ -53,6 +53,19 @@
 - [x] MySQL TLS 设置必须与最终连接参数一致，禁止勾选 TLS 后静默使用 `DISABLED`
 - [x] 删除“后端失败后返回 mock 连接串”的成功形降级
 - [x] 所有连接和执行错误必须进入可见 UI，不只写入控制台
+  - 补一处长期失效（`a8462af`）：`error instanceof Error ? error.message : '兜底'`
+    这个写法在 Tauri 下永远走 else —— Rust 返回 `Err(String)` 时 reject 的是
+    普通字符串，不是 `Error` 实例。全部 17 处后端错误都被换成了占位文案，
+    "进入可见 UI" 成立但内容是空的。统一收到 `describeError()`：
+    字符串 / Error / 带 message 的对象 / 可序列化对象逐级取值。
+  - 另有 9 处 `String(error)`，对字符串正确但对象会变成 `[object Object]`，
+    一并并入同一个函数。
+- [x] 未保存的连接草稿可以「测试连接」
+  - `ConnectionProfile` 的 `id` / `created_at` / `updated_at` 缺 `#[serde(default)]`
+    （`a8462af`）。这三个字段由后端在保存时生成，新建表单的草稿本来就没有，
+    反序列化直接 `missing field \`id\``——表现为测试永远失败、保存后却能连上。
+  - 反向验证：`models::tests::draft_connection_without_id_deserializes`
+    去掉默认值就红，报的正是那句 `missing field \`id\``。
 - [x] 连接选择、连接列表加载和删除失败时显示可关闭的错误提示
 - [x] 更新、删除后检查影响行数；影响 0 行或多于预期时明确报错
 - [x] 在可靠行定位完成前，复杂查询结果默认只读
@@ -88,6 +101,11 @@
 - [x] 断开连接时显式调用驱动关闭并等待完成
 - [x] 应用退出时关闭所有 Session 和未完成任务
 - [x] 定义断线、认证过期、网络恢复和手动重连状态机
+- [x] 连接握手加超时，不让 UI 无限停在「连接中」
+  - `withTimeout` 给 `test_connection` 与 `switchConnection` 各加 15s 上界
+    （`86dfe5b`）。端口通但握手不完成（TLS 不匹配、认证卡住）时原本会永远
+    转圈，且没有任何提示。超时文案直接点出这几种可能。
+  - 原始 rejection 优先于超时文案——先失败的是谁就报谁，不拿超时掩盖真错误。
 - [x] 连接删除时处理关联标签页、草稿和元数据缓存
 
 ### 1.3 凭据和传输安全
