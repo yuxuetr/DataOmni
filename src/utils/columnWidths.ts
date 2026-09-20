@@ -30,6 +30,12 @@ export interface ColumnWidthOptions {
   charWidth?: number;
   /** 左右内边距加边框 */
   padding?: number;
+  /**
+   * 表头里除列名之外还占掉的宽度：排序按钮、主键钥匙、非空星号。
+   * 不算进去的话，短列名（name、balance）会被自己的表头截断——列宽够放内容，
+   * 却不够放「按钮 + 列名」。
+   */
+  headerExtra?: number;
 }
 
 const DEFAULTS: Required<ColumnWidthOptions> = {
@@ -37,7 +43,8 @@ const DEFAULTS: Required<ColumnWidthOptions> = {
   maxWidth: 360,
   sampleRows: 200,
   charWidth: 7.9,
-  padding: 26
+  padding: 26,
+  headerExtra: 26
 };
 
 /**
@@ -94,11 +101,12 @@ export function measureColumnWidths(
   rows: readonly (readonly SerializedResultValue[])[],
   options: ColumnWidthOptions = {}
 ): number[] {
-  const { minWidth, maxWidth, sampleRows, charWidth, padding } = { ...DEFAULTS, ...options };
+  const { minWidth, maxWidth, sampleRows, charWidth, padding, headerExtra } =
+    { ...DEFAULTS, ...options };
   const sample = rows.length > sampleRows ? rows.slice(0, sampleRows) : rows;
 
   return columns.map((column, index) => {
-    let widest = displayWidthInChars(column);
+    let widestContent = 0;
 
     for (const row of sample) {
       const value = row[index];
@@ -107,10 +115,14 @@ export function measureColumnWidths(
         continue;
       }
       // 量的必须是单元格真正显示的那个形态，否则宽度和内容对不上
-      widest = Math.max(widest, displayWidthInChars(formatResultValueOneLine(value)));
+      widestContent = Math.max(widestContent, displayWidthInChars(formatResultValueOneLine(value)));
     }
 
-    return clampColumnWidth(widest * charWidth + padding, { minWidth, maxWidth });
+    // 表头和内容各自算一遍取大：两者的额外开销不一样，表头多一个排序按钮
+    const contentPixels = widestContent * charWidth + padding;
+    const headerPixels = displayWidthInChars(column) * charWidth + padding + headerExtra;
+
+    return clampColumnWidth(Math.max(contentPixels, headerPixels), { minWidth, maxWidth });
   });
 }
 

@@ -15,6 +15,8 @@ import { formatResultValue, formatResultValueOneLine } from '../utils/resultValu
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
+import { ColumnSortButton } from './ColumnSortButton';
+import { nextColumnSort, sortRowsByColumn, type ColumnSort } from '../utils/resultSorting';
 
 interface QueryResultScrollTableProps {
   result: QueryResult;
@@ -31,6 +33,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   
   // 分页状态
   const [currentPage, setCurrentPage] = useState(1);
+  const [sort, setSort] = useState<ColumnSort | null>(null);
   const [pageSize, setPageSize] = useState(25);
   
   // 编辑状态
@@ -48,10 +51,16 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   
   // 计算分页数据
   const totalRows = result.rows.length;
+  // 先对整份结果排序再切页：只排当前页得到的是「这一页内部的次序」，
+  // 不是用户想要的「整份结果按这列排」
+  const sortedRows = React.useMemo(
+    () => sortRowsByColumn(result.columns, result.rows, sort),
+    [result.columns, result.rows, sort]
+  );
   const totalPages = Math.ceil(totalRows / pageSize);
   const startIndex = (currentPage - 1) * pageSize;
   const endIndex = Math.min(startIndex + pageSize, totalRows);
-  const currentRows = result.rows.slice(startIndex, endIndex);
+  const currentRows = sortedRows.slice(startIndex, endIndex);
   
   // 判断是否可以编辑
   const canEdit = Boolean(result.table_name && result.primary_key);
@@ -214,7 +223,9 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
           }}
         >
         <div style={{ width: `${tableWidth}px`, minWidth: '100%' }}>
-          <table className="w-full table-fixed border-collapse">
+          {/* 按量出来的宽度铺，不用 w-full：w-full 会把富余宽度按比例摊给
+              各列，量出来的列宽就失去意义了 */}
+          <table className="table-fixed border-collapse" style={{ width: `${tableWidth}px` }}>
             <colgroup>
               {widths.map((width, index) => (
                 <col key={index} style={{ width: `${width}px` }} />
@@ -229,10 +240,27 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                     className="relative border-r border-line px-2 py-1 text-left text-xs font-medium text-fg"
                   >
                     <div className="flex items-center gap-1">
+                      <ColumnSortButton
+                        columnLabel={column}
+                        direction={sort?.column === column ? sort.direction : null}
+                        onToggle={() => {
+                          setSort((current) => nextColumnSort(current, column));
+                          setCurrentPage(1);
+                        }}
+                      />
                       <div className="flex min-w-0 flex-col">
                         <span className="truncate" title={column}>{column}</span>
                         {result.column_metadata?.[index] && (
-                          <span className="truncate text-[10px] font-normal text-fg-subtle">
+                          // 去掉逐格类型标签后这里是唯一显示类型的地方，
+                          // 窄列会截断，所以挂个 title 让悬停能看全
+                          <span
+                            className="truncate text-[10px] font-normal text-fg-subtle"
+                            title={`${result.column_metadata[index].database_type} · ${
+                              result.column_metadata[index].nullable === null
+                                ? 'NULL 未知'
+                                : result.column_metadata[index].nullable ? 'NULL' : 'NOT NULL'
+                            }`}
+                          >
                             {result.column_metadata[index].database_type}
                             {' · '}
                             {result.column_metadata[index].nullable === null

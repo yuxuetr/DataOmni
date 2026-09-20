@@ -38,9 +38,12 @@ import type {
 import { assertSingleRowAffected } from '../utils/executeResult';
 import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from '../utils/sqlIdentifiers';
 import {
+  createSortedOrderClause,
   createTablePaginationOrder,
   type TablePaginationOrder
 } from '../utils/tablePagination';
+import { nextColumnSort, type ColumnSort } from '../utils/resultSorting';
+import { ColumnSortButton } from './ColumnSortButton';
 import { toPositionalRows } from '../utils/columnWidths';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
@@ -89,6 +92,10 @@ export default function TableDataViewer({
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+  // 排序在数据库里做：只排当前页得到的是「这一页内部的次序」
+  const [sort, setSort] = useState<ColumnSort | null>(null);
+  const sortRef = useRef<ColumnSort | null>(null);
+  sortRef.current = sort;
   const [totalRows, setTotalRows] = useState(0);
   const [paginationOrder, setPaginationOrder] = useState<TablePaginationOrder | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>(initialTab ?? 'data');
@@ -290,8 +297,11 @@ export default function TableDataViewer({
       // 算出来的页长与偏移，不是用户输入，下面再收敛成非负整数兜底。
       const limitValue = Math.max(1, Math.trunc(requestedPageSize));
       const offsetValue = Math.max(0, Math.trunc((page - 1) * requestedPageSize));
+      // 用户排序列拼在前，分页排序列追加在后作决胜条件——按不唯一的列排序时，
+      // 没有决胜条件翻页会重复或漏行
+      const orderClause = createSortedOrderClause(order, sortRef.current, dialect);
       const dataQuery =
-        `SELECT * FROM ${tableReference} ${order.clause} LIMIT ${limitValue} OFFSET ${offsetValue}`;
+        `SELECT * FROM ${tableReference} ${orderClause} LIMIT ${limitValue} OFFSET ${offsetValue}`;
 
       const dataResult = await runReadQuery(dataQuery);
 
@@ -1337,7 +1347,12 @@ export default function TableDataViewer({
                   {/* 列宽跟着内容走之后横向滚动是常态，不再用提示条解释它 */}
                   <div className="flex-1 overflow-auto">
                     <div style={{ width: `${gridWidth}px`, minWidth: '100%' }}>
-                      <table className="w-full table-fixed border-collapse">
+                      {/* 按量出来的宽度铺，不用 w-full：w-full 会把富余宽度按比例
+                          摊给各列，量出来的列宽就失去意义了 */}
+                      <table
+                        className="table-fixed border-collapse"
+                        style={{ width: `${gridWidth}px` }}
+                      >
                         <colgroup>
                           {columnWidths.map((width, index) => (
                             <col key={index} style={{ width: `${width}px` }} />
@@ -1352,6 +1367,17 @@ export default function TableDataViewer({
                                 className="relative border-r border-line px-2 py-1 text-left text-xs font-medium text-fg"
                               >
                                 <div className="flex items-center gap-1">
+                                  <ColumnSortButton
+                                    columnLabel={column.name}
+                                    direction={sort?.column === column.name ? sort.direction : null}
+                                    onToggle={() => {
+                                      const next = nextColumnSort(sortRef.current, column.name);
+                                      setSort(next);
+                                      sortRef.current = next;
+                                      setCurrentPage(1);
+                                      void loadTableData(1);
+                                    }}
+                                  />
                                   <span className="truncate" title={column.name}>{column.name}</span>
                                   {column.is_primary_key && (
                                     <span className="shrink-0 text-warning" title="主键">🔑</span>
@@ -1360,7 +1386,10 @@ export default function TableDataViewer({
                                     <span className="shrink-0 text-danger" title="非空">*</span>
                                   )}
                                 </div>
-                                <div className="truncate text-[10px] font-normal text-fg-subtle">
+                                <div
+                                  className="truncate text-[10px] font-normal text-fg-subtle"
+                                  title={column.data_type}
+                                >
                                   {column.data_type}
                                 </div>
                                 <ColumnResizeHandle

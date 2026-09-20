@@ -7,7 +7,7 @@ import {
   toPositionalRows
 } from './columnWidths';
 
-const options = { minWidth: 10, maxWidth: 1000, charWidth: 1, padding: 0 };
+const options = { minWidth: 10, maxWidth: 1000, charWidth: 1, padding: 0, headerExtra: 0 };
 
 describe('显示宽度', () => {
   it('半角字符每个算一位', () => {
@@ -105,7 +105,7 @@ describe('列宽估算', () => {
   });
 
   it('像素宽包含内边距', () => {
-    expect(measureColumnWidths(['ab'], [], { minWidth: 0, charWidth: 7, padding: 26 }))
+    expect(measureColumnWidths(['ab'], [], { minWidth: 0, charWidth: 7, padding: 26, headerExtra: 0 }))
       .toEqual([40]);
   });
 
@@ -182,5 +182,34 @@ describe('列对齐', () => {
 
   it('每列各自判定', () => {
     expect(measureColumnAlignments(['a', 'b'], [[1, 'x'], [2, 'y']])).toEqual(['right', 'left']);
+  });
+});
+
+describe('表头占位', () => {
+  it('表头宽度要额外容下排序按钮，短列名不会被自己的表头截断', () => {
+    // 内容只有 2 个字符，但表头是 7 个字符加一个排序按钮
+    const [width] = measureColumnWidths(['balance'], [['1']], {
+      minWidth: 0,
+      charWidth: 10,
+      padding: 0,
+      headerExtra: 30
+    });
+    expect(width).toBe(7 * 10 + 30);
+  });
+
+  it('默认常数下短列名放得下「排序按钮 + 列名」', () => {
+    // 不传选项，走真实默认值——上一版只测了显式传参的情形，改坏默认值不会红
+    const [width] = measureColumnWidths(['balance'], [['1']]);
+    expect(width).toBeGreaterThanOrEqual(displayWidthInChars('balance') * 7.9 + 26 + 20);
+  });
+
+  it('内容比表头宽时不再叠加表头占位', () => {
+    const [width] = measureColumnWidths(['id'], [['x'.repeat(20)]], {
+      minWidth: 0,
+      charWidth: 10,
+      padding: 0,
+      headerExtra: 30
+    });
+    expect(width).toBe(200);
   });
 });
