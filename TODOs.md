@@ -145,6 +145,10 @@
   - 改为按页重跑用户 SQL 会更差：任意语句没有稳定排序保证、会重复触发副作用、每翻一页重付查询代价。
   - 判据：`cargo test --manifest-path src-tauri/Cargo.toml --test database_smoke` 中的 `assert_truncated_result` 断言 `rows.len() == row_limit && truncated`；这条红了就说明上限失效，本条需重估。
   - 该判据已反向验证：把 `query_executor.rs` 的 `while row_count < row_limit` 改成 `row_limit + 10` 后测试确实变红（left: 3, right: 2），已还原。
+  - **本地跑要指向专用库**：连接串里的库名必须是 `dataomni_test`（CI 用的就是
+    这个），不能指向 MySQL 的 `mysql` 系统库——夹具表会被建进系统库，而且
+    MySQL 拒绝在系统表上建触发器，症状是「单独跑某些测试好好的，加了触发器
+    测试就报 1465」。
   - 覆盖范围：本地未设 `DATAOMNI_MYSQL_TEST_URL` / `DATAOMNI_POSTGRES_TEST_URL` 时，MySQL / PostgreSQL 冒烟测试会跳过，只有 SQLite 真正跑到这道门。CI 的 `database-smoke` job 起了 postgres:17 与 mysql:8.4 服务并注入两个连接串，同时设 `DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS=1`——缺连接串时 `network_database_url` 会 panic，不会静默跳过。
   - 重估条件：出现「单次执行返回行数可超过 `row_limit`」的路径，或前端需要展示超出内存预算的结果集。
 - [x] 表数据分页增加稳定排序策略
@@ -337,7 +341,25 @@
     PostgreSQL 16 断言复合键的列顺序与配对。已反向验证：外键改成分两次
     unnest、MySQL 去掉 EXPRESSION 回退、PG 列名改回 join pg_attribute，
     三次都精确变红。
-- [ ] 查看视图定义、函数、触发器和序列
+- [-] 查看视图定义、函数、触发器和序列
+  - 视图定义与触发器已完成（`b414e45`）。
+  - **视图**：三方言都有权威原文。PostgreSQL 在这一点上和建表语句正好相反——
+    没有 `SHOW CREATE TABLE`，但 `pg_get_viewdef` 是服务器自己反解的 SELECT。
+    PG 的定义查询只匹配 `relkind IN ('v','m')`：查视图给定义，查表返回 0 行。
+    MySQL / SQLite 不需要新查询，`SHOW CREATE TABLE` 对视图返回 `Create View`、
+    `sqlite_master` 按 tbl_name 也能查到。
+  - **触发器**：形态不统一就不强行统一。PG / SQLite 给完整 CREATE TRIGGER
+    原文；MySQL 只给拆开的组件，界面把时机与事件标成 `BEFORE INSERT`、语句体
+    单独显示。不把组件拼成 CREATE TRIGGER——拼出来的未必能执行，那是伪造原文。
+    PG 必须排掉 `tgisinternal`，否则每张带外键的表都凭空多出几条触发器。
+  - **函数与序列未做**：它们是库级对象，不属于某张表，需要先给对象树加上
+    非表对象的节点类型。序列还只有 PostgreSQL 有（MySQL 是 AUTO_INCREMENT，
+    SQLite 只有 `sqlite_sequence`），要连能力声明一起做。
+  - 判据：`postgres_returns_the_view_definition_but_not_a_create_table`、
+    `postgres_lists_user_triggers_without_the_foreign_key_internals`、
+    `mysql_returns_trigger_components_and_the_create_view_statement`、
+    `sqlite_returns_view_and_trigger_definitions`。已反向验证：去掉
+    tgisinternal 过滤、去掉 relkind 限制，两次都精确变红。
 - [-] 查看建表 DDL
   - MySQL 与 SQLite 已完成（`e7b6bc1`）：结构页新增「建表语句」一段，带复制
     按钮，给的是数据库自己吐出来的原文。SQLite 一并取出索引与触发器——
