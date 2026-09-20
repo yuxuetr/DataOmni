@@ -6,7 +6,7 @@
  * 撑爆配额，并且让用户看到一份可能早已过期的数据。
  */
 
-import type { WorkspaceTab } from '../contracts/workspace';
+import type { ClosedWorkspaceTab, WorkspaceTab } from '../contracts/workspace';
 import { useQueryStore } from '../stores/queryStore';
 import { useWorkspaceStore } from '../stores/workspaceStore';
 
@@ -19,6 +19,13 @@ export interface WorkspaceSnapshot {
   activeTabId: string | null;
   /** 标签 id -> SQL 草稿文本 */
   drafts: Record<string, string>;
+  /**
+   * 最近关闭但要求保留的标签。
+   *
+   * 作为可选字段加入，**没有提升 SNAPSHOT_VERSION**：升版本会让现有的 v1
+   * 快照整份被丢弃，用户正开着的标签全没。缺这个字段时按空数组处理即可。
+   */
+  closedTabs: ClosedWorkspaceTab[];
   savedAt: string;
 }
 
@@ -117,11 +124,21 @@ export function loadWorkspaceSnapshot(): WorkspaceSnapshot | null {
     ? snapshot.activeTabId
     : tabs[0]?.id ?? null;
 
+  const closedTabs = Array.isArray(snapshot.closedTabs)
+    ? snapshot.closedTabs.filter((closed): closed is ClosedWorkspaceTab => (
+        typeof closed === 'object'
+        && closed !== null
+        && isWorkspaceTab((closed as ClosedWorkspaceTab).tab)
+        && typeof (closed as ClosedWorkspaceTab).draft === 'string'
+      )).map((closed) => ({ ...closed, tab: normalizeTab(closed.tab) }))
+    : [];
+
   return {
     version: SNAPSHOT_VERSION,
     tabs,
     activeTabId,
     drafts,
+    closedTabs,
     savedAt: typeof snapshot.savedAt === 'string' ? snapshot.savedAt : new Date().toISOString()
   };
 }
@@ -135,6 +152,7 @@ export function saveWorkspaceSnapshot(
       tabs: snapshot.tabs,
       activeTabId: snapshot.activeTabId,
       drafts: snapshot.drafts,
+      closedTabs: snapshot.closedTabs,
       savedAt: new Date().toISOString()
     } satisfies WorkspaceSnapshot));
   } catch (error) {
@@ -159,10 +177,14 @@ export function clearWorkspaceSnapshot(): void {
  */
 export function restoreWorkspaceFromSnapshot(): void {
   const snapshot = loadWorkspaceSnapshot();
-  if (!snapshot || snapshot.tabs.length === 0) {
+  if (!snapshot || (snapshot.tabs.length === 0 && snapshot.closedTabs.length === 0)) {
     return;
   }
 
-  useWorkspaceStore.getState().restoreTabs(snapshot.tabs, snapshot.activeTabId);
+  useWorkspaceStore.getState().restoreTabs(
+    snapshot.tabs,
+    snapshot.activeTabId,
+    snapshot.closedTabs
+  );
   useQueryStore.getState().restoreDocuments(snapshot.drafts);
 }

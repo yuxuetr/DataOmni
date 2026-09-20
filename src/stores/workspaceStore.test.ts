@@ -11,7 +11,8 @@ describe('workspace store', () => {
     useWorkspaceStore.setState({
       sidebarProfileId: null,
       tabs: [],
-      activeTabId: null
+      activeTabId: null,
+      closedTabs: []
     });
   });
 
@@ -161,8 +162,57 @@ describe('workspace store', () => {
     useWorkspaceStore.getState().handleProfileDeleted('profile-a', new Set(['sql-a']));
 
     const state = useWorkspaceStore.getState();
-    expect(state.tabs.map((tab) => tab.id)).toEqual(['sql-a']);
+    expect(state.tabs.map((workspaceTab) => workspaceTab.id)).toEqual(['sql-a']);
     expect(state.tabs[0].availability).toBe('profile-deleted');
+  });
+
+  it('retains a closed tab with its draft and reopens the most recent one', () => {
+    const first = createSqlWorkspaceTab('profile-a', { id: 'sql-1' });
+    const second = createSqlWorkspaceTab('profile-a', { id: 'sql-2' });
+
+    useWorkspaceStore.getState().retainClosedTab(first, 'SELECT 1;');
+    useWorkspaceStore.getState().retainClosedTab(second, 'SELECT 2;');
+
+    const reopened = useWorkspaceStore.getState().reopenLastClosedTab();
+
+    expect(reopened?.tab.id).toBe('sql-2');
+    expect(reopened?.draft).toBe('SELECT 2;');
+
+    const state = useWorkspaceStore.getState();
+    expect(state.tabs.map((tab) => tab.id)).toEqual(['sql-2']);
+    expect(state.activeTabId).toBe('sql-2');
+    // 取回过的不该还留在列表里
+    expect(state.closedTabs.map((closed) => closed.tab.id)).toEqual(['sql-1']);
+  });
+
+  it('没有可取回的标签时返回 null', () => {
+    expect(useWorkspaceStore.getState().reopenLastClosedTab()).toBeNull();
+  });
+
+  it('同一个标签重复关闭只保留最新的一条', () => {
+    const tab = createSqlWorkspaceTab('profile-a', { id: 'sql-1' });
+
+    useWorkspaceStore.getState().retainClosedTab(tab, 'SELECT 1;');
+    useWorkspaceStore.getState().retainClosedTab(tab, 'SELECT 2;');
+
+    const { closedTabs } = useWorkspaceStore.getState();
+    expect(closedTabs).toHaveLength(1);
+    expect(closedTabs[0].draft).toBe('SELECT 2;');
+  });
+
+  it('最近关闭列表有上限，挤掉最旧的', () => {
+    for (let index = 0; index < 12; index += 1) {
+      useWorkspaceStore.getState().retainClosedTab(
+        createSqlWorkspaceTab('profile-a', { id: `sql-${index}` }),
+        `SELECT ${index};`
+      );
+    }
+
+    const { closedTabs } = useWorkspaceStore.getState();
+    expect(closedTabs).toHaveLength(10);
+    // 最新的在前，最旧的两个被挤掉
+    expect(closedTabs[0].tab.id).toBe('sql-11');
+    expect(closedTabs.map((closed) => closed.tab.id)).not.toContain('sql-0');
   });
 
   it('moves focus when a deleted profile closes the active clean tab', () => {

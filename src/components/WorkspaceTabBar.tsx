@@ -1,4 +1,4 @@
-import { FileText, Plus, Table, X } from 'lucide-react';
+import { FileText, History, Plus, Table, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { WorkspaceTab, WorkspaceTabKind } from '../contracts/workspace';
 
@@ -13,6 +13,9 @@ interface WorkspaceTabBarProps {
   onClose: (tabId: string) => void;
   /** 未连接时不传，按钮隐藏 */
   onNewSqlTab?: () => void;
+  /** 没有可重新打开的标签时不传，按钮隐藏 */
+  onReopenClosedTab?: () => void;
+  closedTabCount?: number;
 }
 
 const TAB_ICONS: Record<WorkspaceTabKind, typeof Table> = {
@@ -28,7 +31,9 @@ export function WorkspaceTabBar({
   unsavedTabIds,
   onActivate,
   onClose,
-  onNewSqlTab
+  onNewSqlTab,
+  onReopenClosedTab,
+  closedTabCount = 0
 }: WorkspaceTabBarProps) {
   return (
     <div className="flex items-stretch bg-gray-50 border-b border-gray-200 overflow-x-auto">
@@ -91,6 +96,18 @@ export function WorkspaceTabBar({
           className="flex items-center px-3 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
         >
           <Plus size={16} />
+        </button>
+      )}
+      {onReopenClosedTab && (
+        <button
+          type="button"
+          onClick={onReopenClosedTab}
+          title={`重新打开最近关闭的标签（还有 ${closedTabCount} 个，⌘⇧T）`}
+          aria-label="重新打开最近关闭的标签"
+          className="flex items-center gap-1 px-3 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+        >
+          <History size={16} />
+          <span className="text-xs">{closedTabCount}</span>
         </button>
       )}
     </div>

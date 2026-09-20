@@ -1,10 +1,10 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { confirm } from '@tauri-apps/plugin-dialog';
 import { Sidebar } from './components/Sidebar';
 import { SqlWorkbench } from './components/SqlWorkbench';
 import TableDataViewer from './components/TableDataViewer';
 import { WelcomeScreen } from './components/WelcomeScreen';
+import { CloseTabPrompt, type CloseTabChoice } from './components/CloseTabPrompt';
 import { OfflineTabView } from './components/OfflineTabView';
 import { WorkspaceTabBar } from './components/WorkspaceTabBar';
 import { useAppStore } from './stores/appStore';
@@ -21,8 +21,19 @@ import { saveWorkspaceSnapshot } from './utils/workspacePersistence';
 
 function App() {
   const { activeConnection, selectedTable } = useAppStore();
-  const { tabs, activeTabId, registerTab, activateTab, closeTab } = useWorkspaceStore();
-  const { openDocument, closeDocument, setActiveDocument } = useQueryStore();
+  const {
+    tabs,
+    activeTabId,
+    closedTabs,
+    registerTab,
+    activateTab,
+    closeTab,
+    retainClosedTab,
+    reopenLastClosedTab
+  } = useWorkspaceStore();
+  const { openDocument, closeDocument, setActiveDocument, setSqlInput } = useQueryStore();
+  // 等待用户在三选一里做决定的标签
+  const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
   const documents = useQueryStore((state) => state.documents);
   const connections = useConnectionStore((state) => state.connections);
 
@@ -38,6 +49,9 @@ function App() {
   const sessionManager = useSessionManager();
   const activeProfileId = activeConnection?.config.id ?? null;
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
+  const pendingCloseTab = pendingCloseTabId
+    ? tabs.find((tab) => tab.id === pendingCloseTabId) ?? null
+    : null;
 
   // 标签、最后活动标签和草稿的任一变化都写回快照
   // （恢复发生在 main.tsx 首次渲染之前，这里不会覆盖掉上次的内容）
@@ -50,8 +64,8 @@ function App() {
       }
     }
 
-    saveWorkspaceSnapshot({ tabs, activeTabId, drafts });
-  }, [tabs, activeTabId, documents]);
+    saveWorkspaceSnapshot({ tabs, activeTabId, drafts, closedTabs });
+  }, [tabs, activeTabId, documents, closedTabs]);
 
   // 活动标签决定当前编辑的是哪一份 SQL 文档；非 SQL 标签不改变它，
   // 这样在表标签里看数据不会影响后台仍在执行的查询写回哪个文档。
@@ -81,6 +95,18 @@ function App() {
       setActiveDocument(null);
     }
   }, [activeConnection, setActiveDocument]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 't') {
+        event.preventDefault();
+        reopenClosedTab();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
 
   useEffect(() => {
     const appWindow = getCurrentWindow();
@@ -131,26 +157,58 @@ function App() {
     };
   }, [sessionManager]);
 
-  const closeWorkspaceTab = async (tabId: string) => {
+  /** 真正执行关闭；retainDraft 决定草稿是进「最近关闭」还是被删掉 */
+  const finishCloseTab = (tabId: string, retainDraft: boolean) => {
     const tab = tabs.find((candidate) => candidate.id === tabId);
+    if (!tab) {
+      return;
+    }
 
-    // 草稿目前只活在内存里，关掉标签就是销毁它，所以先问一次。
-    // 这里只有「丢弃」和「取消」：还没有任何可保存的去处
-    //（保存为 .sql 文件属于 P2.3），放一个不做事的保存按钮更糟。
-    if (tab?.kind === 'sql' && selectSqlDocumentHasUnsavedContent(useQueryStore.getState(), tabId)) {
-      const discard = await confirm(
-        `标签「${tab.title}」有尚未保存的 SQL 草稿，关闭后无法恢复。`,
-        { title: '关闭未保存的标签', kind: 'warning', okLabel: '丢弃', cancelLabel: '取消' }
-      );
-
-      if (!discard) {
-        return;
-      }
+    if (retainDraft) {
+      retainClosedTab(tab, useQueryStore.getState().documents[tabId]?.sqlInput ?? '');
     }
 
     closeTab(tabId);
-    if (tab?.kind === 'sql') {
+    if (tab.kind === 'sql') {
       closeDocument(tabId);
+    }
+  };
+
+  const closeWorkspaceTab = (tabId: string) => {
+    const tab = tabs.find((candidate) => candidate.id === tabId);
+
+    // 关闭标签会连草稿一起从工作区快照里抹掉，所以带内容时先问一次。
+    // 三个选项各自做不同的事：保留草稿（进「最近关闭」，可重新打开）、
+    // 丢弃（永久删除）、取消（不关）。
+    if (tab?.kind === 'sql' && selectSqlDocumentHasUnsavedContent(useQueryStore.getState(), tabId)) {
+      setPendingCloseTabId(tabId);
+      return;
+    }
+
+    finishCloseTab(tabId, false);
+  };
+
+  const handleCloseChoice = (choice: CloseTabChoice) => {
+    const tabId = pendingCloseTabId;
+    setPendingCloseTabId(null);
+
+    if (!tabId || choice === 'cancel') {
+      return;
+    }
+
+    finishCloseTab(tabId, choice === 'retain');
+  };
+
+  const reopenClosedTab = () => {
+    const reopened = reopenLastClosedTab();
+    if (!reopened) {
+      return;
+    }
+
+    if (reopened.tab.kind === 'sql') {
+      // 先建文档再灌草稿：openDocument 对新 id 会建一份空的
+      openDocument(reopened.tab.id);
+      setSqlInput(reopened.draft);
     }
   };
 
@@ -243,7 +301,7 @@ function App() {
         tableName={activeTab.object.table}
         schema={activeTab.object.schema ?? undefined}
         initialTab={activeTab.kind === 'table-structure' ? 'schema' : 'data'}
-        onClose={() => { void closeWorkspaceTab(activeTab.id); }}
+        onClose={() => closeWorkspaceTab(activeTab.id)}
       />
     );
   };
@@ -276,14 +334,20 @@ function App() {
             activeProfileId={activeProfileId}
             onActivate={activateTab}
             unsavedTabIds={unsavedTabIds}
-            onClose={(tabId) => { void closeWorkspaceTab(tabId); }}
+            onClose={closeWorkspaceTab}
             onNewSqlTab={activeConnection ? openSqlTab : undefined}
+            onReopenClosedTab={closedTabs.length > 0 ? reopenClosedTab : undefined}
+            closedTabCount={closedTabs.length}
           />
         )}
         <div className="flex-1 flex flex-col overflow-hidden">
           {renderActiveTab()}
         </div>
       </div>
+
+      {pendingCloseTab && (
+        <CloseTabPrompt tabTitle={pendingCloseTab.title} onChoose={handleCloseChoice} />
+      )}
     </div>
   );
 }

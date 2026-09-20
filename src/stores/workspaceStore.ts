@@ -1,18 +1,32 @@
 import { create } from 'zustand';
 import {
   markWorkspaceTabProfileDeleted,
+  type ClosedWorkspaceTab,
   type WorkspaceTab
 } from '../contracts/workspace';
+
+/** 保留多少个最近关闭的标签。超出的最旧的一个被挤掉 */
+const CLOSED_TAB_LIMIT = 10;
 
 interface WorkspaceState {
   sidebarProfileId: string | null;
   tabs: WorkspaceTab[];
   activeTabId: string | null;
+  /** 最近关闭且要求保留的标签，最新的在前 */
+  closedTabs: ClosedWorkspaceTab[];
 }
 
 interface WorkspaceActions {
   selectSidebarProfile: (profileId: string | null) => void;
-  restoreTabs: (tabs: WorkspaceTab[], activeTabId: string | null) => void;
+  restoreTabs: (
+    tabs: WorkspaceTab[],
+    activeTabId: string | null,
+    closedTabs?: ClosedWorkspaceTab[]
+  ) => void;
+  /** 关闭标签但保留它，之后可以重新打开 */
+  retainClosedTab: (tab: WorkspaceTab, draft: string) => void;
+  /** 取回最近关闭的标签；没有可取回的返回 null */
+  reopenLastClosedTab: () => ClosedWorkspaceTab | null;
   registerTab: (tab: WorkspaceTab) => void;
   activateTab: (tabId: string) => void;
   closeTab: (tabId: string) => void;
@@ -21,22 +35,51 @@ interface WorkspaceActions {
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
 
-export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
+export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   sidebarProfileId: null,
   tabs: [],
   activeTabId: null,
+  closedTabs: [],
 
   selectSidebarProfile: (profileId) => {
     set({ sidebarProfileId: profileId });
   },
 
-  restoreTabs: (tabs, activeTabId) => {
+  restoreTabs: (tabs, activeTabId, closedTabs = []) => {
     set({
       tabs,
       activeTabId: activeTabId && tabs.some((tab) => tab.id === activeTabId)
         ? activeTabId
-        : tabs[0]?.id ?? null
+        : tabs[0]?.id ?? null,
+      closedTabs
     });
+  },
+
+  retainClosedTab: (tab, draft) => {
+    set((state) => ({
+      closedTabs: [
+        { tab, draft, closedAt: new Date().toISOString() },
+        // 同一个标签重复关闭时只留最新的一条
+        ...state.closedTabs.filter((closed) => closed.tab.id !== tab.id)
+      ].slice(0, CLOSED_TAB_LIMIT)
+    }));
+  },
+
+  reopenLastClosedTab: () => {
+    const [mostRecent] = get().closedTabs;
+    if (!mostRecent) {
+      return null;
+    }
+
+    set((state) => ({
+      closedTabs: state.closedTabs.filter((closed) => closed.tab.id !== mostRecent.tab.id),
+      tabs: state.tabs.some((tab) => tab.id === mostRecent.tab.id)
+        ? state.tabs
+        : [...state.tabs, mostRecent.tab],
+      activeTabId: mostRecent.tab.id
+    }));
+
+    return mostRecent;
   },
 
   registerTab: (tab) => {

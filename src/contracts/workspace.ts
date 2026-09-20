@@ -35,6 +35,14 @@ export interface TableWorkspaceTab extends WorkspaceTabBase {
 
 export type WorkspaceTab = SqlWorkspaceTab | TableWorkspaceTab;
 
+/** 关闭时要求保留的标签，连同它当时的草稿一起留待重新打开 */
+export interface ClosedWorkspaceTab {
+  tab: WorkspaceTab;
+  /** SQL 标签的草稿正文；其它类型为空串 */
+  draft: string;
+  closedAt: string;
+}
+
 /**
  * 标签的身份：同一个连接下的同一个对象只应存在一个标签。
  *

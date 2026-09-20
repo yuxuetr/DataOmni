@@ -42,7 +42,8 @@ describe('工作区快照', () => {
     saveWorkspaceSnapshot({
       tabs: [sqlTab, tableTab],
       activeTabId: 'table-1',
-      drafts: { 'sql-1': 'SELECT 1;' }
+      drafts: { 'sql-1': 'SELECT 1;' },
+      closedTabs: []
     });
 
     const restored = loadWorkspaceSnapshot();
@@ -57,7 +58,7 @@ describe('工作区快照', () => {
       sessionId: 'session-from-last-run'
     });
 
-    saveWorkspaceSnapshot({ tabs: [tab], activeTabId: 'sql-1', drafts: {} });
+    saveWorkspaceSnapshot({ tabs: [tab], activeTabId: 'sql-1', drafts: {}, closedTabs: [] });
 
     expect(loadWorkspaceSnapshot()?.tabs[0].binding).toEqual({
       profileId: 'profile-a',
@@ -112,7 +113,8 @@ describe('工作区快照', () => {
     saveWorkspaceSnapshot({
       tabs: [tab],
       activeTabId: 'sql-1',
-      drafts: { 'sql-1': 'SELECT 1;', 'closed-tab': 'SELECT 2;' }
+      drafts: { 'sql-1': 'SELECT 1;', 'closed-tab': 'SELECT 2;' },
+      closedTabs: []
     });
 
     expect(loadWorkspaceSnapshot()?.drafts).toEqual({ 'sql-1': 'SELECT 1;' });
@@ -121,9 +123,60 @@ describe('工作区快照', () => {
   it('活动标签已不存在时回落到第一个标签', () => {
     const tab = createSqlWorkspaceTab('profile-a', { id: 'sql-1' });
 
-    saveWorkspaceSnapshot({ tabs: [tab], activeTabId: 'gone', drafts: {} });
+    saveWorkspaceSnapshot({ tabs: [tab], activeTabId: 'gone', drafts: {}, closedTabs: [] });
 
     expect(loadWorkspaceSnapshot()?.activeTabId).toBe('sql-1');
+  });
+
+  it('往返保存与读取最近关闭的标签', () => {
+    const open = createSqlWorkspaceTab('profile-a', { id: 'sql-1' });
+    const closed = createSqlWorkspaceTab('profile-a', { id: 'sql-2' });
+
+    saveWorkspaceSnapshot({
+      tabs: [open],
+      activeTabId: 'sql-1',
+      drafts: {},
+      closedTabs: [{ tab: closed, draft: 'SELECT 2;', closedAt: '2026-09-20T00:00:00.000Z' }]
+    });
+
+    const restored = loadWorkspaceSnapshot();
+    expect(restored?.closedTabs).toHaveLength(1);
+    expect(restored?.closedTabs[0].tab.id).toBe('sql-2');
+    expect(restored?.closedTabs[0].draft).toBe('SELECT 2;');
+  });
+
+  it('旧版没有 closedTabs 字段的快照仍然可读，其余内容不丢', () => {
+    // 加 closedTabs 时刻意没有提升版本号，否则现有快照会被整份丢弃
+    const tab = createSqlWorkspaceTab('profile-a', { id: 'sql-1' });
+    storage.set(STORAGE_KEY, JSON.stringify({
+      version: 1,
+      tabs: [tab],
+      activeTabId: 'sql-1',
+      drafts: { 'sql-1': 'SELECT 1;' }
+    }));
+
+    const restored = loadWorkspaceSnapshot();
+    expect(restored?.tabs.map((each) => each.id)).toEqual(['sql-1']);
+    expect(restored?.drafts).toEqual({ 'sql-1': 'SELECT 1;' });
+    expect(restored?.closedTabs).toEqual([]);
+  });
+
+  it('坏掉的最近关闭条目被单独丢弃', () => {
+    const good = createSqlWorkspaceTab('profile-a', { id: 'sql-1' });
+    storage.set(STORAGE_KEY, JSON.stringify({
+      version: 1,
+      tabs: [],
+      activeTabId: null,
+      drafts: {},
+      closedTabs: [
+        { tab: good, draft: 'SELECT 1;', closedAt: '2026-09-20T00:00:00.000Z' },
+        null,
+        { draft: 'no tab' },
+        { tab: good, draft: 42 }
+      ]
+    }));
+
+    expect(loadWorkspaceSnapshot()?.closedTabs.map((closed) => closed.tab.id)).toEqual(['sql-1']);
   });
 
   it('localStorage 抛错时读取返回 null、写入不抛', () => {
@@ -140,7 +193,8 @@ describe('工作区快照', () => {
     });
 
     expect(loadWorkspaceSnapshot()).toBeNull();
-    expect(() => saveWorkspaceSnapshot({ tabs: [], activeTabId: null, drafts: {} })).not.toThrow();
+    expect(() => saveWorkspaceSnapshot({ tabs: [], activeTabId: null, drafts: {}, closedTabs: [] }))
+      .not.toThrow();
     expect(() => clearWorkspaceSnapshot()).not.toThrow();
   });
 });
