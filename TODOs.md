@@ -448,7 +448,14 @@
     命令面板（写成文字，切库前就能看见）。
   - 环境到标识的映射是完整的 `Record<ConnectionEnvironment, …>`，新增环境
     编译不过。
-- [ ] 破坏性操作支持明确确认和可恢复策略
+- [-] 破坏性操作支持明确确认和可恢复策略
+  - 明确确认已完成（`d1fe7ae`）：按语句破坏性分级拦截。不带 WHERE 的
+    UPDATE / DELETE 与 DROP / TRUNCATE / ALTER … DROP COLUMN 在任何环境都拦；
+    带 WHERE 的写入只在生产拦；SELECT 与 INSERT 不拦——见谁都弹窗只会让人
+    练出闭眼点确认的肌肉记忆。
+  - 判定复用 `topLevelKeywords`，跳过字符串与注释，不把子查询里的 WHERE
+    算进来。SQL 编辑器的五个执行入口全部过闸。
+  - 可恢复策略（执行前快照 / 撤销）未做。
 
 ### 5.4 性能与体验验收
 
