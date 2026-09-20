@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useQueryStore } from '../stores/queryStore';
 import {
   X,
@@ -94,6 +94,12 @@ export default function TableDataViewer({
   
   const { database } = useQueryStore();
   const currentTableKey = `${connection.id}:${schema ?? ''}:${tableName}`;
+
+  // COUNT(*) 在大表上是全表扫描（InnoDB 与 PostgreSQL 都没有常数级行数），
+  // 按数据集身份缓存，使翻页和调整页大小不再重复付这笔代价。
+  // 用 ref 而非 state：调用方在同一次事件中失效缓存并立即加载，
+  // 若用 state，loadTableData 闭包里仍是旧值，会读到本应失效的计数。
+  const rowCountCacheRef = useRef<{ key: string; total: number } | null>(null);
 
   // 标签页配置
   const tabs = [
@@ -241,14 +247,20 @@ export default function TableDataViewer({
       const order = createTablePaginationOrder(loadedSchema.columns, dialect);
       setPaginationOrder(order);
 
-      // 获取总行数
-      const countQuery = `SELECT COUNT(*) as total FROM ${tableReference}`;
-      
-      const countResult = await database!.select(countQuery);
-      const total = Array.isArray(countResult) && countResult.length > 0 
-        ? countResult[0].total || 0 
-        : 0;
-      
+      // 获取总行数：仅在数据集身份变化或缓存被显式失效时重新统计
+      const cachedRowCount = rowCountCacheRef.current;
+      let total: number;
+      if (cachedRowCount && cachedRowCount.key === currentTableKey) {
+        total = cachedRowCount.total;
+      } else {
+        const countQuery = `SELECT COUNT(*) as total FROM ${tableReference}`;
+        const countResult = await database!.select(countQuery);
+        total = Array.isArray(countResult) && countResult.length > 0
+          ? countResult[0].total || 0
+          : 0;
+        rowCountCacheRef.current = { key: currentTableKey, total };
+      }
+
       setTotalRows(total);
       
       // 获取分页数据
@@ -414,6 +426,8 @@ export default function TableDataViewer({
     try {
       if (editState.mode === 'add') {
         await insertRow(editState.editedData);
+        // 新增改变了表的基数，就地编辑不会，因此只在这里失效计数缓存
+        rowCountCacheRef.current = null;
       } else if (editState.mode === 'edit' && editState.rowIndex !== undefined) {
         await updateRow(editState.rowIndex, editState.editedData);
       }
@@ -440,6 +454,7 @@ export default function TableDataViewer({
     
     try {
       await removeRow(rowIndex);
+      rowCountCacheRef.current = null;
       // 重新加载当前页数据
       await loadTableData(currentPage);
     } catch (error) {
@@ -956,6 +971,8 @@ export default function TableDataViewer({
                 if (activeTab === 'schema') {
                   loadTableSchema();
                 } else if (activeTab === 'data') {
+                  // 刷新是用户显式要求读取最新数据，行数也要重新统计
+                  rowCountCacheRef.current = null;
                   loadTableData(currentPage);
                 }
               }}
