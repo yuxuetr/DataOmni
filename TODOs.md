@@ -182,7 +182,12 @@
     `tauri-runtime-wry` 顶到与当前 tauri 2.5.1 不兼容的版本，实测直接编译失败。
   - 「布局」当前无对应实现：侧边栏宽度是固定的 `w-80`，没有任何可调布局可存。出现可调整的
     分栏或面板后需回来补这一项。
-- [ ] 支持连接断开后的离线草稿查看
+- [x] 支持连接断开后的离线草稿查看
+  - 完成于 4872fe9：`OfflineTabView` 只读展示草稿，区分「连接未激活」与「连接已删除」。
+    未放「连接」按钮——连接需处理 `SESSION_PASSWORD_REQUIRED` 的密码提示，流程在 Sidebar，
+    复刻不全更糟，且侧边栏常驻可见。
+  - 同时修掉：删除连接会丢掉带草稿的 SQL 标签。`handleProfileDeleted` 只看 `tab.dirty`，
+    而它仅在创建标签时设过一次。改为由 `stateSync` 传入 `tabIdsWithDrafts`。
 
 ### 2.2 SQL 编辑体验
 
