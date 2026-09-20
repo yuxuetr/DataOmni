@@ -44,6 +44,7 @@ import {
 } from '../utils/tablePagination';
 import { nextColumnSort, type ColumnSort } from '../utils/resultSorting';
 import { ColumnSortButton } from './ColumnSortButton';
+import { useCellSelection } from '../hooks/useCellSelection';
 import { toPositionalRows } from '../utils/columnWidths';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
@@ -387,6 +388,8 @@ export default function TableDataViewer({
     resizingIndex
   } = useResizableColumns(columnNames, positionalRows);
   const gridWidth = totalWidth + ACTION_COLUMN_WIDTH;
+  // positionalRows 已经是 memo 过的稳定引用，符合 useCellSelection 的要求
+  const cells = useCellSelection(positionalRows, columnNames.length);
 
   // 处理标签页切换
   const handleTabChange = (tabId: TabType) => {
@@ -771,7 +774,10 @@ export default function TableDataViewer({
     isEditing,
     isPrimaryKey = false,
     dataType = 'text',
-    align = 'left'
+    align = 'left',
+    selected = false,
+    focused = false,
+    onSelect
   }: {
     value: any;
     field: string;
@@ -779,6 +785,9 @@ export default function TableDataViewer({
     isPrimaryKey?: boolean;
     dataType?: string;
     align?: 'left' | 'right';
+    selected?: boolean;
+    focused?: boolean;
+    onSelect?: (extend: boolean) => void;
   }) => {
     // 获取当前编辑的值
     const currentValue = isEditing && editState.editedData ? editState.editedData[field] : value;
@@ -796,9 +805,12 @@ export default function TableDataViewer({
 
       return (
         <td
+          onClick={(event) => onSelect?.(event.shiftKey)}
           className={clsx(
             'border-r border-line px-2 py-1 font-mono text-[13px] text-fg',
-            align === 'right' && 'text-right'
+            align === 'right' && 'text-right',
+            selected && 'bg-accent-soft',
+            focused && 'outline outline-1 -outline-offset-1 outline-accent'
           )}
         >
           {isNull
@@ -1345,7 +1357,13 @@ export default function TableDataViewer({
               ) : tableData.length > 0 ? (
                 <div className="h-full flex flex-col">
                   {/* 列宽跟着内容走之后横向滚动是常态，不再用提示条解释它 */}
-                  <div className="flex-1 overflow-auto">
+                  {cells.copyError && (
+                    <div className="border-b border-danger-line bg-danger-soft px-3 py-1.5 text-xs text-danger">
+                      复制失败：{cells.copyError}
+                    </div>
+                  )}
+
+                  <div {...cells.gridProps} className="flex-1 overflow-auto focus:outline-none">
                     <div style={{ width: `${gridWidth}px`, minWidth: '100%' }}>
                       {/* 按量出来的宽度铺，不用 w-full：w-full 会把富余宽度按比例
                           摊给各列，量出来的列宽就失去意义了 */}
@@ -1415,6 +1433,9 @@ export default function TableDataViewer({
                                   isPrimaryKey={column.is_primary_key}
                                   dataType={column.data_type}
                                   align={alignments[colIndex]}
+                                  selected={cells.isSelected(rowIndex, colIndex)}
+                                  focused={cells.isFocused(rowIndex, colIndex)}
+                                  onSelect={(extend) => cells.selectCell(rowIndex, colIndex, extend)}
                                 />
                               ))}
                               {/* 操作列 */}

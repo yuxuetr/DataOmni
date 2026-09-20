@@ -17,6 +17,7 @@ import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { ColumnSortButton } from './ColumnSortButton';
 import { nextColumnSort, sortRowsByColumn, type ColumnSort } from '../utils/resultSorting';
+import { useCellSelection } from '../hooks/useCellSelection';
 
 interface QueryResultScrollTableProps {
   result: QueryResult;
@@ -60,7 +61,13 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   const totalPages = Math.ceil(totalRows / pageSize);
   const startIndex = (currentPage - 1) * pageSize;
   const endIndex = Math.min(startIndex + pageSize, totalRows);
-  const currentRows = sortedRows.slice(startIndex, endIndex);
+  // 必须是稳定引用：useCellSelection 靠引用变化判断「换了一份数据」，
+  // 每次渲染现 slice 一个新数组会让选区刚选中就被清掉
+  const currentRows = React.useMemo(
+    () => sortedRows.slice(startIndex, endIndex),
+    [sortedRows, startIndex, endIndex]
+  );
+  const cells = useCellSelection(currentRows, result.columns.length);
   
   // 判断是否可以编辑
   const canEdit = Boolean(result.table_name && result.primary_key);
@@ -198,7 +205,8 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
           )}
           <span>影响行数: {result.affected_rows}</span>
           <span>执行时间: {formatExecutionTime(result.execution_time)}</span>
-          {canEdit && <span className="text-success">✓ 支持数据编辑</span>}
+          {canEdit && <span className="text-fg-subtle">双击单元格编辑</span>}
+          <span className="text-fg-subtle">点选单元格后 ⌘C 复制</span>
         </div>
         
         {canEdit && (
@@ -212,11 +220,18 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
         )}
       </div>
       
+      {cells.copyError && (
+        <div className="border-b border-danger-line bg-danger-soft px-3 py-1.5 text-xs text-danger">
+          复制失败：{cells.copyError}
+        </div>
+      )}
+
       {/* 表格滚动容器 */}
       <div className="relative">
-        <div 
+        <div
           ref={scrollContainerRef}
-          className="overflow-auto query-result-scroll"
+          {...cells.gridProps}
+          className="overflow-auto query-result-scroll focus:outline-none"
           style={{
             maxHeight: '600px',
             width: '100%'
@@ -357,11 +372,15 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                       <td
                         key={cellIndex}
                         className={clsx(
-                          'border-r border-line px-2 py-1 font-mono text-[13px]',
+                          'relative border-r border-line px-2 py-1 font-mono text-[13px]',
                           alignments[cellIndex] === 'right' && 'text-right',
-                          canEdit && !isEditing && 'cursor-pointer hover:bg-accent-soft'
+                          cells.isSelected(rowIndex, cellIndex) && 'bg-accent-soft',
+                          cells.isFocused(rowIndex, cellIndex) && 'outline outline-1 -outline-offset-1 outline-accent',
+                          canEdit && !isEditing && 'cursor-pointer'
                         )}
-                        onClick={() => canEdit && !isEditing && startEditing(rowIndex, cellIndex, cell)}
+                        onClick={(event) => cells.selectCell(rowIndex, cellIndex, event.shiftKey)}
+                        onDoubleClick={() => canEdit && !isEditing
+                          && startEditing(rowIndex, cellIndex, cell)}
                       >
                         {isEditing ? (
                           <input
