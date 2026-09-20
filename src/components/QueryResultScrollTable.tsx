@@ -191,13 +191,13 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   };
   
   return (
-    <div className="border rounded-lg overflow-hidden bg-white relative">
+    <div className="border rounded-panel overflow-hidden bg-surface relative">
       {/* 头部信息栏 */}
-      <div className="px-4 py-3 bg-gray-50 border-b flex items-center justify-between">
-        <div className="flex items-center space-x-4 text-sm text-gray-600">
+      <div className="px-4 py-3 bg-surface-sunken border-b flex items-center justify-between">
+        <div className="flex items-center space-x-4 text-sm text-fg-muted">
           <span>共 {totalRows} 行</span>
           {result.truncated && (
-            <span className="text-amber-700">
+            <span className="text-warning">
               {result.truncation_reason === 'byte_limit'
                 ? `已达到 ${Math.round((result.byte_limit ?? 0) / 1024 / 1024)} MiB 内存上限，结果已截断`
                 : `已达到 ${result.row_limit?.toLocaleString()} 行上限，结果已截断`}
@@ -205,13 +205,13 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
           )}
           <span>影响行数: {result.affected_rows}</span>
           <span>执行时间: {formatExecutionTime(result.execution_time)}</span>
-          {canEdit && <span className="text-green-600">✓ 支持数据编辑</span>}
+          {canEdit && <span className="text-success">✓ 支持数据编辑</span>}
         </div>
         
         {canEdit && (
           <button
             onClick={showAddRowForm}
-            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-green-600 border border-green-300 rounded hover:bg-green-50"
+            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-success border border-success-line rounded-control hover:bg-success-soft"
           >
             <Edit size={14} />
             <span>新增</span>
@@ -221,7 +221,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
       
       {/* 滚动提示 */}
       {hasHorizontalOverflow && (
-        <div className="px-4 py-2 bg-blue-50 text-xs text-blue-700">
+        <div className="px-4 py-2 bg-accent-soft text-xs text-accent">
           <span>💡 表格包含 {result.columns.length} 列，可以水平滚动查看所有内容</span>
         </div>
       )}
@@ -242,18 +242,18 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
         <div style={{ width: `${tableWidth}px`, minWidth: '100%' }}>
           <table className="w-full border-collapse">
             <thead>
-              <tr className="bg-gray-50 border-b">
+              <tr className="bg-surface-sunken border-b">
                 {result.columns.map((column, index) => (
                   <th
                     key={index}
-                    className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider border-r border-gray-200"
+                    className="px-3 py-2 text-left text-xs font-medium text-fg uppercase tracking-wider border-r border-line"
                     style={{ width: `${COLUMN_WIDTH}px` }}
                   >
                     <div className="flex items-center space-x-1">
                       <div className="flex flex-col">
                         <span>{column}</span>
                         {result.column_metadata?.[index] && (
-                          <span className="text-[10px] font-normal normal-case text-gray-400">
+                          <span className="text-[10px] font-normal normal-case text-fg-subtle">
                             {result.column_metadata[index].database_type}
                             {' · '}
                             {result.column_metadata[index].nullable === null
@@ -265,14 +265,14 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                         )}
                       </div>
                       {result.primary_key === column && (
-                        <span className="text-yellow-600" title="主键">🔑</span>
+                        <span className="text-warning" title="主键">🔑</span>
                       )}
                     </div>
                   </th>
                 ))}
                 {canEdit && (
                   <th 
-                    className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider"
+                    className="px-3 py-2 text-left text-xs font-medium text-fg uppercase tracking-wider"
                     style={{ width: `${ACTION_COLUMN_WIDTH}px` }}
                   >
                     操作
@@ -281,30 +281,30 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
               </tr>
             </thead>
             
-            <tbody className="divide-y divide-gray-200">
+            <tbody className="divide-y divide-line">
               {/* 新增行表单 */}
               {showAddForm && (
-                <tr className="bg-green-50">
+                <tr className="bg-success-soft">
                   {result.columns.map((column, columnIndex) => (
                     <td 
                       key={columnIndex} 
-                      className="px-3 py-2 border-r border-gray-200"
+                      className="px-3 py-2 border-r border-line"
                       style={{ width: `${COLUMN_WIDTH}px` }}
                     >
                       {column === result.primary_key ? (
-                        <span className="text-gray-400 italic text-xs">自动生成</span>
+                        <span className="text-fg-subtle italic text-xs">自动生成</span>
                       ) : isTimeField(column) ? (
                         <div className="flex items-center space-x-1">
                           <input
                             type="datetime-local"
                             value={newRowData[column] || ''}
                             onChange={(e) => updateNewRowData(column, e.target.value)}
-                            className="flex-1 px-2 py-1 text-sm border border-green-300 rounded"
+                            className="flex-1 px-2 py-1 text-sm border border-success-line rounded-control"
                           />
                           <button
                             type="button"
                             onClick={() => updateNewRowData(column, 'NOW')}
-                            className="px-2 py-1 text-xs text-green-600 border border-green-300 rounded hover:bg-green-50"
+                            className="px-2 py-1 text-xs text-success border border-success-line rounded-control hover:bg-success-soft"
                           >
                             NOW
                           </button>
@@ -315,7 +315,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                           value={newRowData[column] || ''}
                           onChange={(e) => updateNewRowData(column, e.target.value)}
                           placeholder={`输入${column}`}
-                          className="w-full px-2 py-1 text-sm border border-green-300 rounded"
+                          className="w-full px-2 py-1 text-sm border border-success-line rounded-control"
                         />
                       )}
                     </td>
@@ -325,13 +325,13 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                       <div className="flex items-center space-x-1">
                         <button
                           onClick={saveNewRow}
-                          className="p-1 text-green-600 hover:bg-green-50 rounded"
+                          className="p-1 text-success hover:bg-success-soft rounded-control"
                         >
                           <Edit size={14} />
                         </button>
                         <button
                           onClick={cancelAddRow}
-                          className="p-1 text-gray-600 hover:bg-gray-50 rounded"
+                          className="p-1 text-fg-muted hover:bg-surface-sunken rounded-control"
                         >
                           <Square size={14} />
                         </button>
@@ -343,7 +343,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
               
               {/* 数据行 */}
               {currentRows.map((row, rowIndex) => (
-                <tr key={startIndex + rowIndex} className="hover:bg-gray-50">
+                <tr key={startIndex + rowIndex} className="hover:bg-surface-sunken">
                   {row.map((cell, cellIndex) => {
                     const isEditing = editingCell?.rowIndex === rowIndex && editingCell?.columnIndex === cellIndex;
                     const formattedValue = formatResultValue(cell);
@@ -352,8 +352,8 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                       <td
                         key={cellIndex}
                         className={clsx(
-                          "px-3 py-2 text-sm border-r border-gray-200",
-                          canEdit && !isEditing ? "cursor-pointer hover:bg-blue-50" : ""
+                          "px-3 py-2 text-sm border-r border-line",
+                          canEdit && !isEditing ? "cursor-pointer hover:bg-accent-soft" : ""
                         )}
                         style={{ width: `${COLUMN_WIDTH}px` }}
                         onClick={() => canEdit && !isEditing && startEditing(rowIndex, cellIndex, cell)}
@@ -365,16 +365,16 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                             onChange={(e) => setEditValue(e.target.value)}
                             onKeyDown={handleKeyDown}
                             onBlur={cancelEditing}
-                            className="w-full px-2 py-1 text-sm border border-blue-300 rounded"
+                            className="w-full px-2 py-1 text-sm border border-accent-line rounded-control"
                             autoFocus
                           />
                         ) : (
                           <div className="flex items-center gap-1 truncate" title={formattedValue}>
                             {cell === null
-                              ? <span className="text-gray-400 italic">NULL</span>
+                              ? <span className="text-fg-subtle italic">NULL</span>
                               : <span className="truncate whitespace-pre">{formattedValue}</span>}
                             {valueType && (
-                              <span className="shrink-0 text-[10px] text-gray-400">
+                              <span className="shrink-0 text-[10px] text-fg-subtle">
                                 {valueType}
                               </span>
                             )}
@@ -387,7 +387,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                     <td className="px-3 py-2" style={{ width: `${ACTION_COLUMN_WIDTH}px` }}>
                       <button
                         onClick={() => deleteRow(rowIndex)}
-                        className="p-1 text-red-600 hover:bg-red-50 rounded"
+                        className="p-1 text-danger hover:bg-danger-soft rounded-control"
                       >
                         <Trash2 size={14} />
                       </button>
@@ -402,7 +402,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
       
       {/* 底部滚动提示 */}
       {hasHorizontalOverflow && (
-        <div className="h-6 bg-gradient-to-t from-gray-100 to-transparent flex items-center justify-center text-xs text-gray-500">
+        <div className="h-6 bg-gradient-to-t from-surface-sunken to-transparent flex items-center justify-center text-xs text-fg-muted">
           <span className="animate-pulse">⟵ 水平滚动查看更多内容 ⟶</span>
         </div>
       )}
@@ -412,9 +412,9 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
       
       {/* 分页控件 */}
       {totalPages > 1 && (
-        <div className="px-4 py-3 bg-gray-50 border-t flex items-center justify-between">
+        <div className="px-4 py-3 bg-surface-sunken border-t flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <span className="text-sm text-gray-700">
+            <span className="text-sm text-fg">
               显示 {startIndex + 1}-{endIndex} 行，共 {totalRows} 行
             </span>
             <select
@@ -423,7 +423,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                 setPageSize(Number(e.target.value));
                 setCurrentPage(1);
               }}
-              className="text-sm border border-gray-300 rounded px-2 py-1"
+              className="text-sm border border-line-strong rounded-control px-2 py-1"
             >
               <option value={10}>10条/页</option>
               <option value={25}>25条/页</option>
@@ -436,31 +436,31 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
             <button
               onClick={() => setCurrentPage(1)}
               disabled={currentPage === 1}
-              className="p-1 rounded hover:bg-gray-200 disabled:opacity-50"
+              className="p-1 rounded-control hover:bg-surface-active disabled:opacity-50"
             >
               <ChevronsLeft size={16} />
             </button>
             <button
               onClick={() => setCurrentPage(currentPage - 1)}
               disabled={currentPage === 1}
-              className="p-1 rounded hover:bg-gray-200 disabled:opacity-50"
+              className="p-1 rounded-control hover:bg-surface-active disabled:opacity-50"
             >
               <ChevronLeft size={16} />
             </button>
-            <span className="px-3 py-1 text-sm text-gray-700">
+            <span className="px-3 py-1 text-sm text-fg">
               第 {currentPage} 页，共 {totalPages} 页
             </span>
             <button
               onClick={() => setCurrentPage(currentPage + 1)}
               disabled={currentPage === totalPages}
-              className="p-1 rounded hover:bg-gray-200 disabled:opacity-50"
+              className="p-1 rounded-control hover:bg-surface-active disabled:opacity-50"
             >
               <ChevronRight size={16} />
             </button>
             <button
               onClick={() => setCurrentPage(totalPages)}
               disabled={currentPage === totalPages}
-              className="p-1 rounded hover:bg-gray-200 disabled:opacity-50"
+              className="p-1 rounded-control hover:bg-surface-active disabled:opacity-50"
             >
               <ChevronsRight size={16} />
             </button>

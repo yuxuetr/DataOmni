@@ -327,9 +327,9 @@ function App() {
   };
 
   return (
-    <div className="h-screen flex bg-gray-100">
+    <div className="h-screen flex bg-canvas text-fg">
       {/* 左侧侧边栏 - 包含连接选择和数据库浏览器 */}
-      <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
+      <div className="w-80 bg-surface border-r border-line flex flex-col">
         <Sidebar
           onConnect={async (connection, connectionString) => {
             try {

@@ -42,7 +42,7 @@ export function WorkspaceTabMenu({
     };
   }, [onDismiss]);
 
-  const itemClass = 'flex w-full items-center gap-2 px-3 py-1.5 text-sm text-left text-gray-700 hover:bg-gray-100';
+  const itemClass = 'flex w-full items-center gap-2 px-3 py-1.5 text-sm text-left text-fg hover:bg-surface-hover';
 
   return (
     <div
@@ -53,7 +53,7 @@ export function WorkspaceTabMenu({
         left: Math.min(position.x, window.innerWidth - 180),
         top: Math.min(position.y, window.innerHeight - 120)
       }}
-      className="fixed z-50 w-44 py-1 bg-white border border-gray-200 rounded-md shadow-lg"
+      className="fixed z-50 w-44 py-1 bg-surface border border-line rounded-control shadow-lg"
     >
       <button type="button" role="menuitem" className={itemClass} onClick={onTogglePinned}>
         {tab.pinned ? <PinOff size={14} /> : <Pin size={14} />}
@@ -67,7 +67,7 @@ export function WorkspaceTabMenu({
         </button>
       )}
 
-      <div className="my-1 border-t border-gray-200" />
+      <div className="my-1 border-t border-line" />
 
       <button type="button" role="menuitem" className={itemClass} onClick={onClose}>
         <X size={14} />

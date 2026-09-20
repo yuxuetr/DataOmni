@@ -98,31 +98,31 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
     switch (connectionStatus) {
       case 'connecting':
         return {
-          icon: <RefreshCw className="animate-spin text-blue-500" size={16} />,
+          icon: <RefreshCw className="animate-spin text-accent" size={16} />,
           text: '连接中',
-          color: 'text-blue-600',
-          bg: 'bg-blue-50'
+          color: 'text-accent',
+          bg: 'bg-accent-soft'
         };
       case 'connected':
         return {
-          icon: <Wifi className="text-green-500" size={16} />,
+          icon: <Wifi className="text-success" size={16} />,
           text: '已连接',
-          color: 'text-green-600',
-          bg: 'bg-green-50'
+          color: 'text-success',
+          bg: 'bg-success-soft'
         };
       case 'error':
         return {
-          icon: <WifiOff className="text-red-500" size={16} />,
+          icon: <WifiOff className="text-danger" size={16} />,
           text: '连接失败',
-          color: 'text-red-600',
-          bg: 'bg-red-50'
+          color: 'text-danger',
+          bg: 'bg-danger-soft'
         };
       default:
         return {
-          icon: <WifiOff className="text-gray-500" size={16} />,
+          icon: <WifiOff className="text-fg-muted" size={16} />,
           text: '未连接',
-          color: 'text-gray-600',
-          bg: 'bg-gray-50'
+          color: 'text-fg-muted',
+          bg: 'bg-surface-sunken'
         };
     }
   };
@@ -131,7 +131,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
   const [showConnectionInfo, setShowConnectionInfo] = useState(false);
 
   return (
-    <div className="h-full flex flex-col bg-white">
+    <div className="h-full flex flex-col bg-surface">
       {showConnectionInfo && (
         <ConnectionInfoDialog
           connection={connection}
@@ -141,11 +141,11 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
       )}
       {/* 工作台头部 */}
       {/* 压成一行：连接名在标签页和侧边栏已各出现一次，这里不再用大标题重复 */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-gray-50">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-line bg-surface-sunken">
         <div className="flex min-w-0 items-center gap-2 text-sm">
-          <Database className="shrink-0 text-gray-400" size={16} />
-          <span className="font-medium text-gray-900">{connection.name}</span>
-          <span className="truncate text-gray-500">
+          <Database className="shrink-0 text-fg-subtle" size={16} />
+          <span className="font-medium text-fg">{connection.name}</span>
+          <span className="truncate text-fg-muted">
             {connection.db_type} · {connection.host}:{connection.port}
             {connection.database
               ? ` / ${connection.database}`
@@ -161,7 +161,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
           {/* 连接信息按钮 */}
           <button
             onClick={() => setShowConnectionInfo(true)}
-            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken transition-colors"
             title="连接信息"
           >
             <Info size={14} />
@@ -172,7 +172,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
           {connectionStatus === 'error' && (
             <button
               onClick={handleReconnect}
-              className="flex items-center space-x-1 px-3 py-1.5 text-sm text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors"
+              className="flex items-center space-x-1 px-3 py-1.5 text-sm text-accent border border-accent-line rounded-control hover:bg-accent-soft transition-colors"
             >
               <RefreshCw size={14} />
               <span>重新连接</span>
@@ -182,7 +182,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
           {/* 关闭按钮 */}
           <button
             onClick={handleClose}
-            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken transition-colors"
             title="断开与该数据库的连接"
           >
             <X size={14} />
@@ -193,16 +193,16 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
 
       {/* 连接错误提示 */}
       {error && connectionStatus === 'error' && (
-        <div className="p-4 bg-red-50 border-b border-red-200">
+        <div className="p-4 bg-danger-soft border-b border-danger-line">
           <div className="flex items-start space-x-2">
-            <WifiOff className="text-red-500 mt-0.5" size={16} />
+            <WifiOff className="text-danger mt-0.5" size={16} />
             <div className="flex-1">
-              <h4 className="text-sm font-medium text-red-800 mb-1">数据库连接失败</h4>
-              <p className="text-sm text-red-700">{error}</p>
+              <h4 className="text-sm font-medium text-danger mb-1">数据库连接失败</h4>
+              <p className="text-sm text-danger">{error}</p>
               <div className="mt-2">
                 <button
                   onClick={handleReconnect}
-                  className="text-sm text-red-600 hover:text-red-800 underline"
+                  className="text-sm text-danger hover:text-danger underline"
                 >
                   点击重试
                 </button>

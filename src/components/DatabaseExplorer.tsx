@@ -212,7 +212,7 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
 
   if (!connection) {
     return (
-      <div className="h-full flex items-center justify-center text-gray-500">
+      <div className="h-full flex items-center justify-center text-fg-muted">
         连接不存在
       </div>
     );
@@ -245,23 +245,23 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
   };
 
   return (
-    <div className="h-full flex flex-col bg-white">
+    <div className="h-full flex flex-col bg-surface">
       {/* 头部 */}
-      <div className="flex items-center justify-between p-3 border-b bg-gray-50">
+      <div className="flex items-center justify-between p-3 border-b bg-surface-sunken">
         <div className="flex items-center space-x-2">
-          <Database className="text-blue-600" size={16} />
-          <h2 className="text-sm font-semibold text-gray-900">数据库浏览器</h2>
+          <Database className="text-accent" size={16} />
+          <h2 className="text-sm font-semibold text-fg">数据库浏览器</h2>
           {connectionReady ? (
-            <span className="text-xs text-green-600 bg-green-100 px-2 py-0.5 rounded">
+            <span className="text-xs text-success bg-success-soft px-2 py-0.5 rounded-control">
               已连接
             </span>
           ) : (
-            <span className="text-xs text-yellow-600 bg-yellow-100 px-2 py-0.5 rounded">
+            <span className="text-xs text-warning bg-warning-soft px-2 py-0.5 rounded-control">
               连接中...
             </span>
           )}
           {cachedMetadata && !isMetadataStale && (
-            <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded">
+            <span className="text-xs text-accent bg-accent-soft px-2 py-0.5 rounded-control">
               已缓存
             </span>
           )}
@@ -270,7 +270,7 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
         <button
           onClick={() => loadDatabaseMetadata(true)}
           disabled={loading}
-          className="p-1 text-gray-500 hover:text-blue-600 transition-colors"
+          className="p-1 text-fg-muted hover:text-accent transition-colors"
           title="刷新"
         >
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
@@ -279,10 +279,10 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
 
       {/* 错误提示 */}
       {error && (
-        <div className="p-3 bg-red-50 border-b border-red-200">
+        <div className="p-3 bg-danger-soft border-b border-danger-line">
           <div className="flex items-center space-x-2">
-            <AlertCircle className="text-red-500" size={14} />
-            <span className="text-red-700 text-sm">{error}</span>
+            <AlertCircle className="text-danger" size={14} />
+            <span className="text-danger text-sm">{error}</span>
           </div>
         </div>
       )}
@@ -291,23 +291,23 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
       <div className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center h-full">
-            <Loader className="animate-spin text-gray-400" size={16} />
-            <span className="ml-2 text-gray-600 text-sm">加载中...</span>
+            <Loader className="animate-spin text-fg-subtle" size={16} />
+            <span className="ml-2 text-fg-muted text-sm">加载中...</span>
           </div>
         ) : error ? (
           // 出错时不再同时显示「暂无数据库对象」：那会让人以为库是空的，
           // 而真实情况是我们根本没读到
-          <div className="p-4 text-center text-gray-500 text-sm">
+          <div className="p-4 text-center text-fg-muted text-sm">
             <p>未能读取数据库对象。</p>
             <button
               onClick={() => loadDatabaseMetadata(true)}
-              className="mt-2 text-blue-600 hover:underline"
+              className="mt-2 text-accent hover:underline"
             >
               重试
             </button>
           </div>
         ) : metadata.schemas.length === 0 ? (
-          <div className="p-4 text-center text-gray-500 text-sm">
+          <div className="p-4 text-center text-fg-muted text-sm">
             <Info className="mx-auto mb-2" size={16} />
             <p>暂无数据库对象</p>
           </div>
@@ -318,7 +318,7 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
                 {/* Schema 标题 */}
                 <button
                   onClick={() => toggleSchema(schema.name)}
-                  className="w-full flex items-center justify-between px-2 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded transition-colors"
+                  className="w-full flex items-center justify-between px-2 py-1.5 text-sm font-medium text-fg hover:bg-surface-hover rounded-control transition-colors"
                 >
                   <div className="flex items-center space-x-2">
                     {expandedSchemas.has(schema.name) ? (
@@ -326,9 +326,9 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
                     ) : (
                       <ChevronRight size={14} />
                     )}
-                    <Database size={14} className="text-blue-500" />
+                    <Database size={14} className="text-accent" />
                     <span>{schema.name}</span>
-                    <span className="text-xs text-gray-500">({schema.tables.length})</span>
+                    <span className="text-xs text-fg-muted">({schema.tables.length})</span>
                   </div>
                 </button>
                 
@@ -339,12 +339,12 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
                       <button
                         key={table.name}
                         onClick={() => handleTableClick(table.name, schema.name === 'default' ? undefined : schema.name)}
-                        className="w-full flex items-center space-x-2 px-2 py-1 text-sm text-gray-600 hover:bg-blue-50 hover:text-blue-600 rounded transition-colors"
+                        className="w-full flex items-center space-x-2 px-2 py-1 text-sm text-fg-muted hover:bg-accent-soft hover:text-accent rounded-control transition-colors"
                       >
                         {getTableIcon(table.type)}
                         <span className="truncate">{table.name}</span>
                         {table.type === 'VIEW' && (
-                          <span className="text-xs text-gray-400">(视图)</span>
+                          <span className="text-xs text-fg-subtle">(视图)</span>
                         )}
                       </button>
                     ))}

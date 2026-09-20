@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { ConnectionConfig, useConnectionStore } from '../stores/connectionStore';
 import DatabaseExplorer from './DatabaseExplorer';
 import { ConnectionForm } from './ConnectionForm';
+import { ThemeToggle } from './ThemeToggle';
 import { useAppStore } from '../stores/appStore';
 import { confirm } from '@tauri-apps/plugin-dialog';
 
@@ -103,29 +104,29 @@ export const Sidebar: React.FC<SidebarProps> = ({
   };
 
   return (
-    <div className="h-full flex flex-col bg-white border-r border-gray-200">
+    <div className="h-full flex flex-col bg-surface border-r border-line">
       {/* 头部 - 连接选择器 */}
-      <div className="px-4 py-4 border-b border-gray-200 bg-gray-50">
+      <div className="px-4 py-4 border-b border-line bg-surface-sunken">
         <div className="relative">
           <button
             onClick={() => setShowConnectionMenu(!showConnectionMenu)}
-            className="w-full flex items-center justify-between px-3 py-2.5 text-sm bg-white hover:bg-gray-50 rounded-lg border border-gray-200 transition-colors shadow-sm"
+            className="w-full flex items-center justify-between px-3 py-2.5 text-sm bg-surface hover:bg-surface-sunken rounded-panel border border-line transition-colors shadow-sm"
           >
             <div className="flex items-center space-x-2">
-              <Database size={16} className="text-gray-600" />
-              <span className="font-medium text-gray-900">
+              <Database size={16} className="text-fg-muted" />
+              <span className="font-medium text-fg">
                 {currentConnection ? currentConnection.name : '选择数据库连接'}
               </span>
             </div>
-            <ChevronDown size={16} className="text-gray-500" />
+            <ChevronDown size={16} className="text-fg-muted" />
           </button>
 
           {/* 连接下拉菜单 */}
           {showConnectionMenu && (
-            <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 z-50 max-h-64 overflow-y-auto">
+            <div className="absolute top-full left-0 right-0 mt-1 bg-surface rounded-panel shadow-lg border border-line z-50 max-h-64 overflow-y-auto">
               {connections.length === 0 ? (
-                <div className="p-4 text-center text-gray-500 text-sm">
-                  <Database size={24} className="mx-auto mb-2 text-gray-300" />
+                <div className="p-4 text-center text-fg-muted text-sm">
+                  <Database size={24} className="mx-auto mb-2 text-fg-subtle" />
                   <p>暂无数据库连接</p>
                   <p className="text-xs mt-1">点击下方按钮创建新连接</p>
                 </div>
@@ -133,14 +134,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 connections.map(conn => (
                   <div
                     key={conn.id}
-                    className="group flex items-center justify-between px-3 py-2.5 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                    className="group flex items-center justify-between px-3 py-2.5 hover:bg-surface-sunken cursor-pointer border-b border-line last:border-b-0"
                     onClick={() => handleConnectionSelect(conn)}
                   >
                     <div className="flex items-center space-x-2">
-                      <Database size={14} className="text-gray-500" />
-                      <span className="text-sm text-gray-900">{conn.name}</span>
+                      <Database size={14} className="text-fg-muted" />
+                      <span className="text-sm text-fg">{conn.name}</span>
                       {conn.id === activeConnectionId && (
-                        <span className="text-xs text-green-600 font-medium">● 已连接</span>
+                        <span className="text-xs text-success font-medium">● 已连接</span>
                       )}
                     </div>
                     <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -149,7 +150,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           e.stopPropagation();
                           handleEditConnection(conn);
                         }}
-                        className="p-1 text-gray-500 hover:text-blue-600 rounded"
+                        className="p-1 text-fg-muted hover:text-accent rounded-control"
                         title="编辑连接"
                       >
                         <Edit size={14} />
@@ -159,7 +160,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           e.stopPropagation();
                           handleDeleteConnection(conn);
                         }}
-                        className="p-1 text-gray-500 hover:text-red-600 rounded"
+                        className="p-1 text-fg-muted hover:text-danger rounded-control"
                         title="删除连接"
                       >
                         <Trash2 size={14} />
@@ -173,13 +174,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   此前渲染在 connections.map() 内部，会按连接数重复出现，
                   而且被挤在窄列里换行成一个词一行 */}
               {connectionError && (
-                <div className="flex items-start gap-2 border-t border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                <div className="flex items-start gap-2 border-t border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
                   <AlertCircle size={14} className="mt-0.5 shrink-0" />
                   <span className="min-w-0 flex-1 break-words">{connectionError}</span>
                   <button
                     type="button"
                     onClick={() => setConnectionError(null)}
-                    className="shrink-0 text-red-500 hover:text-red-700"
+                    className="shrink-0 text-danger hover:text-danger"
                     title="关闭错误提示"
                   >
                     <X size={14} />
@@ -187,13 +188,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               )}
 
-              <div className="border-t border-gray-200">
+              <div className="border-t border-line">
                 <button
                   onClick={() => {
                     setShowConnectionMenu(false);
                     handleCreateConnection();
                   }}
-                  className="w-full flex items-center space-x-2 px-3 py-2.5 text-sm text-blue-600 hover:bg-blue-50 transition-colors"
+                  className="w-full flex items-center space-x-2 px-3 py-2.5 text-sm text-accent hover:bg-accent-soft transition-colors"
                 >
                   <Plus size={14} />
                   <span>新建连接</span>
@@ -214,13 +215,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
           />
         ) : (
           // 显示提示信息
-          <div className="p-6 text-center text-gray-500">
-            <Database size={48} className="mx-auto mb-4 text-gray-300" />
+          <div className="p-6 text-center text-fg-muted">
+            <Database size={48} className="mx-auto mb-4 text-fg-subtle" />
             <p className="text-sm font-medium mb-2">欢迎使用 DataOmni</p>
             <p className="text-xs">请从上方菜单选择或创建数据库连接</p>
             <p className="text-xs mt-1">支持 SQLite、MySQL、PostgreSQL 等数据库</p>
           </div>
         )}
+      </div>
+
+      {/* 底栏：应用级外观设置。放这里而不是编辑器工具栏——它管的是整个窗口。 */}
+      <div className="flex items-center justify-between border-t border-line px-3 py-2">
+        <span className="text-xs text-fg-subtle">外观</span>
+        <ThemeToggle />
       </div>
 
       {/* 连接表单弹窗 */}

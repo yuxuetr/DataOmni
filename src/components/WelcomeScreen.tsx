@@ -48,7 +48,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onConnect }) => {
           <h1 className="text-6xl font-bold mb-4 bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent">
             DataOmni
           </h1>
-          <p className="text-xl text-gray-600 max-w-2xl mx-auto leading-relaxed">
+          <p className="text-xl text-fg-muted max-w-2xl mx-auto leading-relaxed">
             现代化的数据库管理工具，让数据操作变得简单高效
           </p>
         </div>
@@ -58,17 +58,17 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onConnect }) => {
           {features.map((feature, index) => (
             <div
               key={index}
-              className="bg-white/70 backdrop-blur-sm rounded-xl p-6 border border-white/20 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
+              className="bg-surface/70 backdrop-blur-sm rounded-panel p-6 border border-white/20 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
             >
-              <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-500 rounded-lg mb-4 mx-auto">
+              <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-500 rounded-panel mb-4 mx-auto">
                 <div className="text-white">
                   {feature.icon}
                 </div>
               </div>
-              <h3 className="text-lg font-semibold text-gray-800 mb-2">
+              <h3 className="text-lg font-semibold text-fg mb-2">
                 {feature.title}
               </h3>
-              <p className="text-gray-600 text-sm leading-relaxed">
+              <p className="text-fg-muted text-sm leading-relaxed">
                 {feature.description}
               </p>
             </div>
@@ -79,13 +79,13 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onConnect }) => {
         <div className="space-y-4">
           <button
             onClick={onConnect}
-            className="inline-flex items-center space-x-3 px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300"
+            className="inline-flex items-center space-x-3 px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-panel shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300"
           >
             <Database className="w-5 h-5" />
             <span>连接到数据库</span>
           </button>
           
-          <p className="text-gray-500 text-sm">
+          <p className="text-fg-muted text-sm">
             开始您的数据探索之旅
           </p>
         </div>

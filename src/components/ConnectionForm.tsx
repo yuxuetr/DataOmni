@@ -204,16 +204,16 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-scrim flex items-center justify-center z-50">
+      <div className="bg-surface rounded-panel shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
         {/* 标题栏 */}
         <div className="flex items-center justify-between p-6 border-b">
-          <h2 className="text-xl font-semibold text-gray-900">
+          <h2 className="text-xl font-semibold text-fg">
             {mode === 'create' ? '新建数据库连接' : '编辑数据库连接'}
           </h2>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
+            className="text-fg-subtle hover:text-fg-muted transition-colors"
           >
             <X size={20} />
           </button>
@@ -223,28 +223,28 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         <div className="p-6 space-y-6">
           {/* 错误提示 */}
           {error && (
-            <div className="flex items-center space-x-2 p-3 bg-red-50 border border-red-200 rounded-md">
-              <AlertCircle className="text-red-500" size={16} />
-              <span className="text-red-700 text-sm">{error}</span>
+            <div className="flex items-center space-x-2 p-3 bg-danger-soft border border-danger-line rounded-control">
+              <AlertCircle className="text-danger" size={16} />
+              <span className="text-danger text-sm">{error}</span>
             </div>
           )}
 
           {/* 测试结果 */}
           {testResult && (
             <div className={clsx(
-              "flex items-center space-x-2 p-3 border rounded-md",
+              "flex items-center space-x-2 p-3 border rounded-control",
               testResult.includes('成功') 
-                ? "bg-green-50 border-green-200" 
-                : "bg-red-50 border-red-200"
+                ? "bg-success-soft border-success-line" 
+                : "bg-danger-soft border-danger-line"
             )}>
               {testResult.includes('成功') ? (
-                <CheckCircle className="text-green-500" size={16} />
+                <CheckCircle className="text-success" size={16} />
               ) : (
-                <AlertCircle className="text-red-500" size={16} />
+                <AlertCircle className="text-danger" size={16} />
               )}
               <span className={clsx(
                 "text-sm",
-                testResult.includes('成功') ? "text-green-700" : "text-red-700"
+                testResult.includes('成功') ? "text-success" : "text-danger"
               )}>
                 {testResult}
               </span>
@@ -253,11 +253,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
           {/* 基本信息 */}
           <div className="space-y-4">
-            <h3 className="text-lg font-medium text-gray-900">基本信息</h3>
+            <h3 className="text-lg font-medium text-fg">基本信息</h3>
             
             {/* 连接名称 */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-fg mb-1">
                 连接名称 *
               </label>
               <input
@@ -266,8 +266,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 value={formData.name || ''}
                 onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                 className={clsx(
-                  "w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500",
-                  validationErrors.name ? "border-red-300" : "border-gray-300"
+                  "w-full px-3 py-2 border rounded-control focus:outline-none focus:ring-2 focus:ring-accent",
+                  validationErrors.name ? "border-danger-line" : "border-line-strong"
                 )}
                 placeholder="输入连接名称"
                 autoCapitalize="none"
@@ -275,13 +275,13 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 spellCheck={false}
               />
               {validationErrors.name && (
-                <p className="text-red-500 text-sm mt-1">{validationErrors.name}</p>
+                <p className="text-danger text-sm mt-1">{validationErrors.name}</p>
               )}
             </div>
 
             {/* 数据库类型 */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-3">
+              <label className="block text-sm font-medium text-fg mb-3">
                 数据库类型 *
               </label>
               
@@ -289,7 +289,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
               <div className="space-y-4">
                 {/* 关系型数据库 */}
                 <div>
-                  <h4 className="text-sm font-medium text-gray-600 mb-2 flex items-center">
+                  <h4 className="text-sm font-medium text-fg-muted mb-2 flex items-center">
                     <Database className="w-4 h-4 mr-2" />
                     关系型数据库
                   </h4>
@@ -302,22 +302,22 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                           type="button"
                           onClick={() => handleDatabaseTypeChange(dbType.type)}
                           className={clsx(
-                            "flex flex-col items-center space-y-1 p-3 border rounded-lg transition-all duration-200",
+                            "flex flex-col items-center space-y-1 p-3 border rounded-panel transition-all duration-200",
                             formData.db_type === dbType.type
-                              ? "border-blue-500 bg-blue-50 text-blue-700 shadow-md"
-                              : "border-gray-300 hover:border-gray-400 hover:bg-gray-50"
+                              ? "border-accent bg-accent-soft text-accent shadow-md"
+                              : "border-line-strong hover:border-line-strong hover:bg-surface-sunken"
                           )}
                         >
                           <div className={clsx(
-                            "p-2 rounded-md",
+                            "p-2 rounded-control",
                             formData.db_type === dbType.type
-                              ? "bg-blue-100"
-                              : "bg-gray-100"
+                              ? "bg-accent-soft"
+                              : "bg-surface-hover"
                           )}>
                             {dbType.icon}
                           </div>
                           <span className="text-sm font-medium">{dbType.name}</span>
-                          <span className="text-xs text-gray-500">{dbType.description}</span>
+                          <span className="text-xs text-fg-muted">{dbType.description}</span>
                         </button>
                       ))}
                   </div>
@@ -325,7 +325,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
                 {/* 非关系型数据库 */}
                 <div>
-                  <h4 className="text-sm font-medium text-gray-600 mb-2 flex items-center">
+                  <h4 className="text-sm font-medium text-fg-muted mb-2 flex items-center">
                     <Globe className="w-4 h-4 mr-2" />
                     非关系型数据库
                   </h4>
@@ -338,22 +338,22 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                           type="button"
                           onClick={() => handleDatabaseTypeChange(dbType.type)}
                           className={clsx(
-                            "flex flex-col items-center space-y-1 p-3 border rounded-lg transition-all duration-200",
+                            "flex flex-col items-center space-y-1 p-3 border rounded-panel transition-all duration-200",
                             formData.db_type === dbType.type
-                              ? "border-blue-500 bg-blue-50 text-blue-700 shadow-md"
-                              : "border-gray-300 hover:border-gray-400 hover:bg-gray-50"
+                              ? "border-accent bg-accent-soft text-accent shadow-md"
+                              : "border-line-strong hover:border-line-strong hover:bg-surface-sunken"
                           )}
                         >
                           <div className={clsx(
-                            "p-2 rounded-md",
+                            "p-2 rounded-control",
                             formData.db_type === dbType.type
-                              ? "bg-blue-100"
-                              : "bg-gray-100"
+                              ? "bg-accent-soft"
+                              : "bg-surface-hover"
                           )}>
                             {dbType.icon}
                           </div>
                           <span className="text-sm font-medium">{dbType.name}</span>
-                          <span className="text-xs text-gray-500">{dbType.description}</span>
+                          <span className="text-xs text-fg-muted">{dbType.description}</span>
                         </button>
                       ))}
                   </div>
@@ -361,7 +361,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
                 {/* 分析平台 */}
                 <div>
-                  <h4 className="text-sm font-medium text-gray-600 mb-2 flex items-center">
+                  <h4 className="text-sm font-medium text-fg-muted mb-2 flex items-center">
                     <BarChart3 className="w-4 h-4 mr-2" />
                     分析平台
                   </h4>
@@ -374,22 +374,22 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                           type="button"
                           onClick={() => handleDatabaseTypeChange(dbType.type)}
                           className={clsx(
-                            "flex flex-col items-center space-y-1 p-3 border rounded-lg transition-all duration-200",
+                            "flex flex-col items-center space-y-1 p-3 border rounded-panel transition-all duration-200",
                             formData.db_type === dbType.type
-                              ? "border-blue-500 bg-blue-50 text-blue-700 shadow-md"
-                              : "border-gray-300 hover:border-gray-400 hover:bg-gray-50"
+                              ? "border-accent bg-accent-soft text-accent shadow-md"
+                              : "border-line-strong hover:border-line-strong hover:bg-surface-sunken"
                           )}
                         >
                           <div className={clsx(
-                            "p-2 rounded-md",
+                            "p-2 rounded-control",
                             formData.db_type === dbType.type
-                              ? "bg-blue-100"
-                              : "bg-gray-100"
+                              ? "bg-accent-soft"
+                              : "bg-surface-hover"
                           )}>
                             {dbType.icon}
                           </div>
                           <span className="text-sm font-medium">{dbType.name}</span>
-                          <span className="text-xs text-gray-500">{dbType.description}</span>
+                          <span className="text-xs text-fg-muted">{dbType.description}</span>
                         </button>
                       ))}
                   </div>
@@ -400,13 +400,13 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
           {/* 连接配置 */}
           <div className="space-y-4">
-            <h3 className="text-lg font-medium text-gray-900">连接配置</h3>
+            <h3 className="text-lg font-medium text-fg">连接配置</h3>
             
             {formData.db_type === DatabaseType.SQLite || formData.db_type === DatabaseType.DuckDB ? (
               /* SQLite/DuckDB 配置 */
               <>
                 <div className="grid grid-cols-4 gap-4 items-center">
-                  <label className="text-right text-sm font-medium text-gray-700">
+                  <label className="text-right text-sm font-medium text-fg">
                     {formData.db_type === DatabaseType.SQLite ? '数据库文件' : '数据库文件'}
                   </label>
                   <div className="col-span-3">
@@ -419,22 +419,22 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         ? "例如: mydata.db 或 /完整/路径/到/数据库.db"
                         : "例如: mydata.duckdb 或 /完整/路径/到/数据库.duckdb"
                       }
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
                       autoCapitalize="none"
                       autoCorrect="off"
                       spellCheck={false}
                     />
                     {/* 路径帮助说明 */}
-                    <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-md">
-                      <h4 className="text-sm font-medium text-blue-800 mb-2">
+                    <div className="mt-2 p-3 bg-accent-soft border border-accent-line rounded-control">
+                      <h4 className="text-sm font-medium text-accent mb-2">
                         💡 {formData.db_type === DatabaseType.SQLite ? 'SQLite' : 'DuckDB'}数据库文件路径说明
                       </h4>
-                      <div className="text-xs text-blue-700 space-y-1">
-                        <div><strong>相对路径:</strong> 输入文件名如 <code className="bg-blue-100 px-1 rounded">
+                      <div className="text-xs text-accent space-y-1">
+                        <div><strong>相对路径:</strong> 输入文件名如 <code className="bg-accent-soft px-1 rounded-control">
                           {formData.db_type === DatabaseType.SQLite ? 'mydata.db' : 'mydata.duckdb'}
                         </code></div>
-                        <div className="ml-4 text-blue-600">→ 将存储在应用数据目录: 
-                          <code className="bg-blue-100 px-1 rounded">
+                        <div className="ml-4 text-accent">→ 将存储在应用数据目录: 
+                          <code className="bg-accent-soft px-1 rounded-control">
                             {navigator.platform.toLowerCase().includes('mac') 
                               ? '~/Library/Application Support/dataomni/' 
                               : navigator.platform.toLowerCase().includes('win')
@@ -443,10 +443,10 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             }[filename]
                           </code>
                         </div>
-                        <div><strong>绝对路径:</strong> 输入完整路径如 <code className="bg-blue-100 px-1 rounded">
+                        <div><strong>绝对路径:</strong> 输入完整路径如 <code className="bg-accent-soft px-1 rounded-control">
                           /Users/用户名/Documents/{formData.db_type === DatabaseType.SQLite ? 'mydata.db' : 'mydata.duckdb'}
                         </code></div>
-                        <div><strong>内存数据库:</strong> 留空或输入 <code className="bg-blue-100 px-1 rounded">:memory:</code> (不会持久化)</div>
+                        <div><strong>内存数据库:</strong> 留空或输入 <code className="bg-accent-soft px-1 rounded-control">:memory:</code> (不会持久化)</div>
                       </div>
                     </div>
                   </div>
@@ -457,7 +457,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
               <>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-fg mb-1">
                       主机地址 *
                     </label>
                     <input
@@ -466,8 +466,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       value={formData.host || ''}
                       onChange={(e) => setFormData(prev => ({ ...prev, host: e.target.value }))}
                       className={clsx(
-                        "w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500",
-                        validationErrors.host ? "border-red-300" : "border-gray-300"
+                        "w-full px-3 py-2 border rounded-control focus:outline-none focus:ring-2 focus:ring-accent",
+                        validationErrors.host ? "border-danger-line" : "border-line-strong"
                       )}
                       placeholder="localhost"
                       autoCapitalize="none"
@@ -475,12 +475,12 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       spellCheck={false}
                     />
                     {validationErrors.host && (
-                      <p className="text-red-500 text-sm mt-1">{validationErrors.host}</p>
+                      <p className="text-danger text-sm mt-1">{validationErrors.host}</p>
                     )}
                   </div>
                   
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-fg mb-1">
                       端口 *
                     </label>
                     <input
@@ -488,13 +488,13 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       value={formData.port || ''}
                       onChange={(e) => handlePortChange(e.target.value)}
                       className={clsx(
-                        "w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500",
-                        validationErrors.port ? "border-red-300" : "border-gray-300"
+                        "w-full px-3 py-2 border rounded-control focus:outline-none focus:ring-2 focus:ring-accent",
+                        validationErrors.port ? "border-danger-line" : "border-line-strong"
                       )}
                       placeholder={getDefaultPort(formData.db_type!).toString()}
                     />
                     {validationErrors.port && (
-                      <p className="text-red-500 text-sm mt-1">{validationErrors.port}</p>
+                      <p className="text-danger text-sm mt-1">{validationErrors.port}</p>
                     )}
                   </div>
                 </div>
@@ -506,7 +506,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   formData.db_type === DatabaseType.Neo4j ||
                   formData.db_type === DatabaseType.ClickHouse) && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-fg mb-1">
                       数据库名称
                     </label>
                     <input
@@ -514,7 +514,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       name="database-name"
                       value={formData.database || ''}
                       onChange={(e) => setFormData(prev => ({ ...prev, database: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
                       placeholder={
                         formData.db_type === DatabaseType.MySQL ? "mysql" :
                         formData.db_type === DatabaseType.PostgreSQL ? "postgres" :
@@ -532,19 +532,19 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 {/* Redis 数据库编号 */}
                 {formData.db_type === DatabaseType.Redis && (
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-fg mb-1">
                       数据库编号
                     </label>
                     <input
                       type="number"
                       value={formData.database || '0'}
                       onChange={(e) => setFormData(prev => ({ ...prev, database: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
                       placeholder="0"
                       min="0"
                       max="15"
                     />
-                    <p className="text-xs text-gray-500 mt-1">Redis 数据库编号 (0-15)</p>
+                    <p className="text-xs text-fg-muted mt-1">Redis 数据库编号 (0-15)</p>
                   </div>
                 )}
 
@@ -557,7 +557,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   formData.db_type === DatabaseType.Elasticsearch) && (
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                      <label className="block text-sm font-medium text-fg mb-1">
                         用户名 {formData.db_type === DatabaseType.Elasticsearch ? '' : '*'}
                       </label>
                       <input
@@ -566,8 +566,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         value={formData.username || ''}
                         onChange={(e) => setFormData(prev => ({ ...prev, username: e.target.value }))}
                         className={clsx(
-                          "w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500",
-                          validationErrors.username ? "border-red-300" : "border-gray-300"
+                          "w-full px-3 py-2 border rounded-control focus:outline-none focus:ring-2 focus:ring-accent",
+                          validationErrors.username ? "border-danger-line" : "border-line-strong"
                         )}
                         placeholder="输入用户名"
                         autoCapitalize="none"
@@ -575,12 +575,12 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         spellCheck={false}
                       />
                       {validationErrors.username && (
-                        <p className="text-red-500 text-sm mt-1">{validationErrors.username}</p>
+                        <p className="text-danger text-sm mt-1">{validationErrors.username}</p>
                       )}
                     </div>
                     
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                      <label className="block text-sm font-medium text-fg mb-1">
                         密码
                       </label>
                       <div className="relative">
@@ -588,13 +588,13 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                           type={showPassword ? "text" : "password"}
                           value={formData.password || ''}
                           onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
-                          className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="w-full px-3 py-2 pr-10 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
                           placeholder="输入密码"
                         />
                         <button
                           type="button"
                           onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                          className="absolute right-3 top-1/2 transform -translate-y-1/2 text-fg-subtle hover:text-fg-muted"
                         >
                           {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                         </button>
@@ -609,11 +609,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                           ...previous,
                           save_password: event.target.checked
                         }))}
-                        className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        className="mt-0.5 h-4 w-4 rounded-control border-line-strong text-accent focus:ring-accent"
                       />
-                      <label htmlFor="save-password" className="ml-2 text-sm text-gray-700">
+                      <label htmlFor="save-password" className="ml-2 text-sm text-fg">
                         将密码保存到系统凭据库
-                        <span className="block text-xs text-gray-500">
+                        <span className="block text-xs text-fg-muted">
                           关闭后密码仅在本次应用会话中使用，重启后需要重新输入。
                         </span>
                       </label>
@@ -627,7 +627,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   formData.db_type === DatabaseType.Elasticsearch) && (
                   <div className="space-y-4">
                     <div>
-                      <label htmlFor="tls-mode" className="block text-sm font-medium text-gray-700 mb-1">
+                      <label htmlFor="tls-mode" className="block text-sm font-medium text-fg mb-1">
                         TLS 模式
                       </label>
                       <select
@@ -641,7 +641,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             ssl: tlsMode !== 'disabled'
                           }));
                         }}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
                       >
                         <option value="disabled">禁用</option>
                         <option value="preferred">优先使用 TLS</option>
@@ -654,9 +654,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                     {(formData.db_type === DatabaseType.MySQL
                       || formData.db_type === DatabaseType.PostgreSQL)
                       && (formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')) !== 'disabled' && (
-                      <div className="space-y-3 rounded-md border border-gray-200 bg-gray-50 p-3">
+                      <div className="space-y-3 rounded-control border border-line bg-surface-sunken p-3">
                         <div>
-                          <label htmlFor="ca-certificate" className="block text-sm font-medium text-gray-700 mb-1">
+                          <label htmlFor="ca-certificate" className="block text-sm font-medium text-fg mb-1">
                             CA 证书路径
                           </label>
                           <input
@@ -668,11 +668,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                               ca_certificate_path: event.target.value
                             }))}
                             placeholder="/path/to/ca.pem"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
                           />
                         </div>
                         <div>
-                          <label htmlFor="client-certificate" className="block text-sm font-medium text-gray-700 mb-1">
+                          <label htmlFor="client-certificate" className="block text-sm font-medium text-fg mb-1">
                             客户端证书路径
                           </label>
                           <input
@@ -684,11 +684,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                               client_certificate_path: event.target.value
                             }))}
                             placeholder="/path/to/client.crt"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
                           />
                         </div>
                         <div>
-                          <label htmlFor="client-key" className="block text-sm font-medium text-gray-700 mb-1">
+                          <label htmlFor="client-key" className="block text-sm font-medium text-fg mb-1">
                             客户端私钥路径
                           </label>
                           <input
@@ -700,7 +700,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                               client_key_path: event.target.value
                             }))}
                             placeholder="/path/to/client.key"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
                           />
                         </div>
                       </div>
@@ -713,15 +713,15 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         </div>
 
         {/* 底部按钮 */}
-        <div className="flex items-center justify-between p-6 border-t bg-gray-50">
+        <div className="flex items-center justify-between p-6 border-t bg-surface-sunken">
           <button
             onClick={handleTestConnection}
             disabled={isLoading}
             className={clsx(
-              "flex items-center space-x-2 px-4 py-2 border border-blue-600 text-blue-600 rounded-md transition-colors",
+              "flex items-center space-x-2 px-4 py-2 border border-accent text-accent rounded-control transition-colors",
               isLoading
                 ? "opacity-50 cursor-not-allowed"
-                : "hover:bg-blue-50"
+                : "hover:bg-accent-soft"
             )}
           >
             <TestTube size={16} />
@@ -731,7 +731,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
           <div className="flex space-x-3">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+              className="px-4 py-2 text-fg border border-line-strong rounded-control hover:bg-surface-sunken transition-colors"
             >
               取消
             </button>
@@ -739,10 +739,10 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
               onClick={handleSave}
               disabled={isLoading}
               className={clsx(
-                "flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-md transition-colors",
+                "flex items-center space-x-2 px-4 py-2 bg-accent text-fg-on-accent rounded-control transition-colors",
                 isLoading
                   ? "opacity-50 cursor-not-allowed"
-                  : "hover:bg-blue-700"
+                  : "hover:bg-accent-hover"
               )}
             >
               <Save size={16} />

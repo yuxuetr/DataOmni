@@ -38,7 +38,7 @@ export function WorkspaceTabBar({
   closedTabCount = 0
 }: WorkspaceTabBarProps) {
   return (
-    <div className="flex items-stretch bg-gray-50 border-b border-gray-200 overflow-x-auto">
+    <div className="flex items-stretch bg-surface-sunken border-b border-line overflow-x-auto">
       {orderWorkspaceTabs(tabs).map((tab) => {
         const Icon = TAB_ICONS[tab.kind];
         const isActive = tab.id === activeTabId;
@@ -65,20 +65,20 @@ export function WorkspaceTabBar({
                   : tab.title
             }
             className={clsx(
-              'group flex items-center gap-2 px-3 py-2 text-sm border-r border-gray-200 cursor-pointer select-none whitespace-nowrap',
+              'group flex items-center gap-2 px-3 py-2 text-sm border-r border-line cursor-pointer select-none whitespace-nowrap',
               isActive
-                ? 'bg-white text-gray-900 border-b-2 border-b-blue-500'
-                : 'text-gray-600 hover:bg-gray-100',
-              isDetached && 'italic text-gray-400'
+                ? 'bg-surface text-fg border-b-2 border-b-accent'
+                : 'text-fg-muted hover:bg-surface-hover',
+              isDetached && 'italic text-fg-subtle'
             )}
           >
             {tab.pinned
-              ? <Pin size={12} className="shrink-0 text-blue-500" />
+              ? <Pin size={12} className="shrink-0 text-accent" />
               : <Icon size={14} className="shrink-0" />}
             <span className="max-w-[160px] truncate">{tab.title}</span>
             {(tab.dirty || unsavedTabIds.has(tab.id)) && (
               <span
-                className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"
+                className="w-1.5 h-1.5 rounded-full bg-warning shrink-0"
                 title="有未保存的更改"
               />
             )}
@@ -89,7 +89,7 @@ export function WorkspaceTabBar({
                 event.stopPropagation();
                 onClose(tab.id);
               }}
-              className="p-0.5 rounded text-gray-400 opacity-0 group-hover:opacity-100 hover:bg-gray-200 hover:text-gray-700"
+              className="p-0.5 rounded-control text-fg-subtle opacity-0 group-hover:opacity-100 hover:bg-surface-active hover:text-fg"
             >
               <X size={12} />
             </button>
@@ -102,7 +102,7 @@ export function WorkspaceTabBar({
           onClick={onNewSqlTab}
           title="新建查询标签"
           aria-label="新建查询标签"
-          className="flex items-center px-3 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+          className="flex items-center px-3 text-fg-muted hover:bg-surface-hover hover:text-fg"
         >
           <Plus size={16} />
         </button>
@@ -113,7 +113,7 @@ export function WorkspaceTabBar({
           onClick={onReopenClosedTab}
           title={`重新打开最近关闭的标签（还有 ${closedTabCount} 个，⌘⇧T）`}
           aria-label="重新打开最近关闭的标签"
-          className="flex items-center gap-1 px-3 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+          className="flex items-center gap-1 px-3 text-fg-muted hover:bg-surface-hover hover:text-fg"
         >
           <History size={16} />
           <span className="text-xs">{closedTabCount}</span>

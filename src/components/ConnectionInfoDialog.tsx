@@ -12,9 +12,9 @@ interface ConnectionInfoDialogProps {
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex gap-4 py-1.5">
-      <span className="w-24 shrink-0 text-sm text-gray-500">{label}</span>
+      <span className="w-24 shrink-0 text-sm text-fg-muted">{label}</span>
       {/* 标识符用等宽字体并允许换行，方便核对与复制 */}
-      <span className="min-w-0 flex-1 font-mono text-sm text-gray-800 break-all select-text">
+      <span className="min-w-0 flex-1 font-mono text-sm text-fg break-all select-text">
         {value}
       </span>
     </div>
@@ -41,31 +41,31 @@ export function ConnectionInfoDialog({ connection, session, onClose }: Connectio
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="connection-info-title"
       onClick={onClose}
     >
       <div
-        className="w-[520px] max-w-[calc(100vw-2rem)] bg-white rounded-lg shadow-xl"
+        className="w-[520px] max-w-[calc(100vw-2rem)] bg-surface rounded-panel shadow-xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
-          <h2 id="connection-info-title" className="text-base font-medium text-gray-900">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-line">
+          <h2 id="connection-info-title" className="text-base font-medium text-fg">
             连接信息
           </h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="关闭"
-            className="p-1 rounded text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+            className="p-1 rounded-control text-fg-subtle hover:bg-surface-hover hover:text-fg"
           >
             <X size={16} />
           </button>
         </div>
 
-        <div className="px-5 py-3 divide-y divide-gray-100">
+        <div className="px-5 py-3 divide-y divide-line">
           <div className="pb-2">
             <Row label="名称" value={connection.name} />
             <Row label="类型" value={connection.db_type} />

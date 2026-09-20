@@ -21,21 +21,21 @@ export function OfflineTabView({ tab, profileName, draft }: OfflineTabViewProps)
       <div
         className={
           profileDeleted
-            ? 'flex items-start gap-3 px-6 py-4 bg-red-50 border-b border-red-200'
-            : 'flex items-start gap-3 px-6 py-4 bg-amber-50 border-b border-amber-200'
+            ? 'flex items-start gap-3 px-6 py-4 bg-danger-soft border-b border-danger-line'
+            : 'flex items-start gap-3 px-6 py-4 bg-warning-soft border-b border-warning-line'
         }
       >
         {profileDeleted
-          ? <Trash2 size={18} className="mt-0.5 shrink-0 text-red-500" />
-          : <AlertCircle size={18} className="mt-0.5 shrink-0 text-amber-500" />}
+          ? <Trash2 size={18} className="mt-0.5 shrink-0 text-danger" />
+          : <AlertCircle size={18} className="mt-0.5 shrink-0 text-warning" />}
 
         <div className="min-w-0 flex-1">
-          <p className={profileDeleted ? 'text-sm text-red-800' : 'text-sm text-amber-800'}>
+          <p className={profileDeleted ? 'text-sm text-danger' : 'text-sm text-warning'}>
             {profileDeleted
               ? `连接「${connectionLabel}」的配置已被删除，此标签无法再执行查询。`
               : `连接「${connectionLabel}」当前未激活，此标签无法执行查询。`}
           </p>
-          <p className={profileDeleted ? 'mt-1 text-xs text-red-700' : 'mt-1 text-xs text-amber-700'}>
+          <p className={profileDeleted ? 'mt-1 text-xs text-danger' : 'mt-1 text-xs text-warning'}>
             {profileDeleted
               ? '下面是保留下来的草稿，可以选中复制走。'
               : '下面是这个标签的草稿，只读。在左侧重新选择该连接即可继续执行，标签不会改到当前连接上执行。'}
@@ -49,14 +49,14 @@ export function OfflineTabView({ tab, profileName, draft }: OfflineTabViewProps)
             draft.trim().length > 0
               ? (
                 // 只读呈现：用 pre 保留原有换行与缩进，用户可以直接选中复制
-                <pre className="whitespace-pre-wrap break-words font-mono text-sm text-gray-800 bg-gray-50 border border-gray-200 rounded-md p-4 select-text">
+                <pre className="whitespace-pre-wrap break-words font-mono text-sm text-fg bg-surface-sunken border border-line rounded-control p-4 select-text">
                   {draft}
                 </pre>
               )
-              : <p className="text-sm text-gray-500">这个查询标签还没有写过内容。</p>
+              : <p className="text-sm text-fg-muted">这个查询标签还没有写过内容。</p>
           )
           : (
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-fg-muted">
               表「{tab.object.schema ? `${tab.object.schema}.${tab.object.table}` : tab.object.table}」
               的数据需要连接后才能读取。
             </p>

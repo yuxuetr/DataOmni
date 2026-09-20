@@ -1,83 +1,179 @@
 @import "tailwindcss";
 
-/* 自定义滚动条样式 */
-.scrollbar-visible {
-  scrollbar-width: auto;
-  scrollbar-color: #64748b #e2e8f0;
+/*
+ * 语义色板。
+ *
+ * 组件只使用语义名（surface / fg / line / accent…），不再直接写 gray-500 这类
+ * 调色板刻度：深色模式就是把下面这组变量换一套值，组件一行都不用改，也不需要
+ * 在每个类名后面挂一个 dark: 变体。
+ *
+ * `@theme inline` 让生成的工具类直接引用这里的变量，而不是把值拷进产物里——
+ * 这是运行期切换主题的前提。
+ */
+:root {
+  color-scheme: light;
+
+  --dm-canvas: #eef0f3;
+  --dm-surface: #ffffff;
+  --dm-surface-raised: #ffffff;
+  --dm-surface-sunken: #f6f7f9;
+  --dm-surface-hover: #f0f1f4;
+  --dm-surface-active: #e4e7ec;
+
+  --dm-fg: #16181c;
+  --dm-fg-muted: #596069;
+  --dm-fg-subtle: #878e98;
+  --dm-fg-on-accent: #ffffff;
+
+  --dm-line: #e1e4e9;
+  --dm-line-strong: #c6ccd4;
+
+  --dm-accent: #2563eb;
+  --dm-accent-hover: #1d4ed8;
+  --dm-accent-soft: #edf3ff;
+  --dm-accent-line: #bed2fb;
+
+  --dm-success: #15803d;
+  --dm-success-soft: #eaf7ee;
+  --dm-success-line: #b5e0c4;
+
+  --dm-warning: #9a6300;
+  --dm-warning-soft: #fdf4e4;
+  --dm-warning-line: #efd8a6;
+
+  --dm-danger: #c0262b;
+  --dm-danger-soft: #fdecec;
+  --dm-danger-line: #f2bcbc;
+  --dm-danger-solid: #c0262b;
+
+  --dm-success-solid: #15803d;
+  --dm-fg-on-solid: #ffffff;
+
+  --dm-scrim: rgb(15 18 22 / 0.45);
 }
 
-.scrollbar-visible::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --dm-canvas: #131518;
+  --dm-surface: #1d2025;
+  --dm-surface-raised: #262a31;
+  --dm-surface-sunken: #191c20;
+  --dm-surface-hover: #272b32;
+  --dm-surface-active: #323841;
+
+  --dm-fg: #e7e9ed;
+  --dm-fg-muted: #9ba2ad;
+  --dm-fg-subtle: #6d757f;
+  --dm-fg-on-accent: #0c1220;
+
+  --dm-line: #2d323a;
+  --dm-line-strong: #454d58;
+
+  --dm-accent: #5b9bff;
+  --dm-accent-hover: #7bb0ff;
+  --dm-accent-soft: #1a2739;
+  --dm-accent-line: #2f4a72;
+
+  --dm-success: #5cc98a;
+  --dm-success-soft: #14261c;
+  --dm-success-line: #2c5540;
+
+  --dm-warning: #e0a23c;
+  --dm-warning-soft: #2a2114;
+  --dm-warning-line: #5d4722;
+
+  --dm-danger: #f28b86;
+  --dm-danger-soft: #2c1818;
+  --dm-danger-line: #653234;
+  --dm-danger-solid: #b3383c;
+
+  --dm-success-solid: #2f7d4e;
+  --dm-fg-on-solid: #ffffff;
+
+  --dm-scrim: rgb(0 0 0 / 0.6);
 }
 
-.scrollbar-visible::-webkit-scrollbar-track {
-  background: #e2e8f0;
-  border-radius: 6px;
+@theme inline {
+  --color-canvas: var(--dm-canvas);
+  --color-surface: var(--dm-surface);
+  --color-surface-raised: var(--dm-surface-raised);
+  --color-surface-sunken: var(--dm-surface-sunken);
+  --color-surface-hover: var(--dm-surface-hover);
+  --color-surface-active: var(--dm-surface-active);
+
+  --color-fg: var(--dm-fg);
+  --color-fg-muted: var(--dm-fg-muted);
+  --color-fg-subtle: var(--dm-fg-subtle);
+  --color-fg-on-accent: var(--dm-fg-on-accent);
+
+  --color-line: var(--dm-line);
+  --color-line-strong: var(--dm-line-strong);
+
+  --color-accent: var(--dm-accent);
+  --color-accent-hover: var(--dm-accent-hover);
+  --color-accent-soft: var(--dm-accent-soft);
+  --color-accent-line: var(--dm-accent-line);
+
+  --color-success: var(--dm-success);
+  --color-success-soft: var(--dm-success-soft);
+  --color-success-line: var(--dm-success-line);
+
+  --color-warning: var(--dm-warning);
+  --color-warning-soft: var(--dm-warning-soft);
+  --color-warning-line: var(--dm-warning-line);
+
+  --color-danger: var(--dm-danger);
+  --color-danger-soft: var(--dm-danger-soft);
+  --color-danger-line: var(--dm-danger-line);
+  --color-danger-solid: var(--dm-danger-solid);
+  --color-success-solid: var(--dm-success-solid);
+  --color-fg-on-solid: var(--dm-fg-on-solid);
+
+  --color-scrim: var(--dm-scrim);
+
+  /* 圆角只留两档：控件（按钮/输入/标签）和面板（弹窗/卡片）。
+     此前散落着 rounded / -md / -lg / -xl / -b / -full 六种。 */
+  --radius-control: 0.375rem;
+  --radius-panel: 0.625rem;
 }
 
-.scrollbar-visible::-webkit-scrollbar-thumb {
-  background: #64748b;
-  border-radius: 6px;
-  border: 2px solid #e2e8f0;
+body {
+  background-color: var(--dm-canvas);
+  color: var(--dm-fg);
 }
 
-.scrollbar-visible::-webkit-scrollbar-thumb:hover {
-  background: #475569;
-}
-
-.scrollbar-visible::-webkit-scrollbar-corner {
-  background: #e2e8f0;
-}
-
-/* 查询结果表格的滚动条样式 */
+/* 滚动条跟随主题。此前写死 #64748b / #e2e8f0 / #3b82f6，深色下会是亮条。 */
+.scrollbar-visible,
 .query-result-scroll {
   scrollbar-width: thin;
-  scrollbar-color: #3b82f6 #dbeafe;
+  scrollbar-color: var(--dm-line-strong) transparent;
 }
 
+.scrollbar-visible::-webkit-scrollbar,
 .query-result-scroll::-webkit-scrollbar {
-  height: 10px;
-  width: 10px;
+  width: 11px;
+  height: 11px;
 }
 
-.query-result-scroll::-webkit-scrollbar-track {
-  background: #dbeafe;
-  border-radius: 5px;
-}
-
-.query-result-scroll::-webkit-scrollbar-thumb {
-  background: #3b82f6;
-  border-radius: 5px;
-  border: 1px solid #dbeafe;
-}
-
-.query-result-scroll::-webkit-scrollbar-thumb:hover {
-  background: #2563eb;
-}
-
+.scrollbar-visible::-webkit-scrollbar-track,
+.scrollbar-visible::-webkit-scrollbar-corner,
+.query-result-scroll::-webkit-scrollbar-track,
 .query-result-scroll::-webkit-scrollbar-corner {
-  background: #dbeafe;
+  background: transparent;
 }
 
-/* 表格水平滚动指示器 */
-.table-scroll-indicator {
-  position: relative;
+.scrollbar-visible::-webkit-scrollbar-thumb,
+.query-result-scroll::-webkit-scrollbar-thumb {
+  background: var(--dm-line-strong);
+  border-radius: 999px;
+  /* 透明边框把滑块视觉宽度收窄，留出轨道留白 */
+  border: 3px solid transparent;
+  background-clip: content-box;
 }
 
-.table-scroll-indicator::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 20px;
-  background: linear-gradient(to left, rgba(255,255,255,0.8), transparent);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.table-scroll-indicator.has-overflow::after {
-  opacity: 1;
+.scrollbar-visible::-webkit-scrollbar-thumb:hover,
+.query-result-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--dm-fg-subtle);
+  background-clip: content-box;
 }

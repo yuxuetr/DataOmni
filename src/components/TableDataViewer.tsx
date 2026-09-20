@@ -755,10 +755,10 @@ export default function TableDataViewer({
         : formatResultValue(currentValue as SerializedResultValue);
 
       return (
-        <td className="px-4 py-3 text-sm text-gray-900 border-r border-gray-200 min-w-[180px]">
+        <td className="px-4 py-3 text-sm text-fg border-r border-line min-w-[180px]">
           <div className="truncate" title={displayValue ?? 'NULL'}>
             {displayValue === null
-              ? <span className="text-gray-400 italic">NULL</span>
+              ? <span className="text-fg-subtle italic">NULL</span>
               : displayValue}
           </div>
         </td>
@@ -794,7 +794,7 @@ export default function TableDataViewer({
     const inputValue = currentValue === null ? '' : String(currentValue);
 
     return (
-      <td className="px-4 py-3 border-r border-gray-200 min-w-[180px]">
+      <td className="px-4 py-3 border-r border-line min-w-[180px]">
         {isDateTimeField ? (
           <DateTimePicker
             field={field}
@@ -809,7 +809,7 @@ export default function TableDataViewer({
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             onBlur={cancelEdit}
-            className="w-full px-2 py-1 text-sm border border-blue-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-2 py-1 text-sm border border-accent-line rounded-control focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
             placeholder={dataType.includes('int') || dataType.includes('bigint') || dataType.includes('number') || dataType.includes('float') || dataType.includes('decimal') || dataType.includes('numeric') ? '0' : '输入值'}
             autoFocus
           />
@@ -881,13 +881,13 @@ export default function TableDataViewer({
             type={dataType.includes('date') ? 'date' : dataType.includes('time') ? 'time' : 'datetime-local'}
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="flex-1 px-2 py-1 text-sm border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
             placeholder={dataType.includes('date') ? '选择日期' : dataType.includes('time') ? '选择时间' : '选择日期时间'}
           />
           <button
             type="button"
             onClick={openPicker}
-            className="px-2 py-1 text-xs text-blue-600 border border-blue-300 rounded hover:bg-blue-50"
+            className="px-2 py-1 text-xs text-accent border border-accent-line rounded-control hover:bg-accent-soft"
             title="打开日期时间选择器"
           >
             <Calendar size={12} />
@@ -895,13 +895,13 @@ export default function TableDataViewer({
         </div>
         
         {isOpen && (
-          <div className="absolute top-full left-0 mt-1 bg-white border border-gray-300 rounded-lg shadow-lg z-50 min-w-[280px]">
-            <div className="p-3 border-b border-gray-200">
+          <div className="absolute top-full left-0 mt-1 bg-surface border border-line-strong rounded-panel shadow-lg z-50 min-w-[280px]">
+            <div className="p-3 border-b border-line">
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-medium text-gray-900">日期时间选择</h4>
+                <h4 className="text-sm font-medium text-fg">日期时间选择</h4>
                 <button
                   onClick={closePicker}
-                  className="text-gray-400 hover:text-gray-600"
+                  className="text-fg-subtle hover:text-fg-muted"
                 >
                   <X size={16} />
                 </button>
@@ -912,35 +912,35 @@ export default function TableDataViewer({
                   type={dataType.includes('date') ? 'date' : dataType.includes('time') ? 'time' : 'datetime-local'}
                   value={dateTimePicker.value}
                   onChange={(e) => handleDateTimeChange(e.target.value)}
-                  className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                  className="w-full px-2 py-1 text-sm border border-line-strong rounded-control"
                 />
                 
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={setCurrentTime}
-                    className="flex-1 px-2 py-1 text-xs text-green-600 border border-green-300 rounded hover:bg-green-50"
+                    className="flex-1 px-2 py-1 text-xs text-success border border-success-line rounded-control hover:bg-success-soft"
                   >
                     <Clock size={12} className="mr-1" />
                     当前时间
                   </button>
                   <button
                     onClick={setNull}
-                    className="px-2 py-1 text-xs text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
+                    className="px-2 py-1 text-xs text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken"
                   >
                     清空
                   </button>
                 </div>
                 
-                <div className="flex items-center space-x-2 pt-2 border-t border-gray-200">
+                <div className="flex items-center space-x-2 pt-2 border-t border-line">
                   <button
                     onClick={applyDateTime}
-                    className="flex-1 px-3 py-1 text-sm text-white bg-blue-600 rounded hover:bg-blue-700"
+                    className="flex-1 px-3 py-1 text-sm text-fg-on-accent bg-accent rounded-control hover:bg-accent-hover"
                   >
                     确定
                   </button>
                   <button
                     onClick={closePicker}
-                    className="flex-1 px-3 py-1 text-sm text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
+                    className="flex-1 px-3 py-1 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken"
                   >
                     取消
                   </button>
@@ -955,25 +955,25 @@ export default function TableDataViewer({
 
   if (!database) {
     return (
-      <div className="h-full flex items-center justify-center text-gray-500">
+      <div className="h-full flex items-center justify-center text-fg-muted">
         数据库未连接
       </div>
     );
   }
 
   return (
-    <div className="h-full flex flex-col bg-white">
+    <div className="h-full flex flex-col bg-surface">
       {/* 头部 */}
-      <div className="flex flex-col bg-white">
+      <div className="flex flex-col bg-surface">
         {/* 标题栏 */}
-        <div className="flex items-center justify-between p-4 border-b bg-gray-50">
+        <div className="flex items-center justify-between p-4 border-b bg-surface-sunken">
           <div className="flex items-center space-x-3">
-            <Table className="text-blue-600" size={20} />
+            <Table className="text-accent" size={20} />
             <div>
-              <h1 className="text-lg font-semibold text-gray-900">
+              <h1 className="text-lg font-semibold text-fg">
                 {schema ? `${schema}.${tableName}` : tableName}
               </h1>
-              <p className="text-sm text-gray-600">
+              <p className="text-sm text-fg-muted">
                 {connection.name} • {connection.db_type}
               </p>
             </div>
@@ -990,7 +990,7 @@ export default function TableDataViewer({
                   loadTableData(currentPage);
                 }
               }}
-              className="flex items-center space-x-1 px-3 py-1.5 text-sm text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors"
+              className="flex items-center space-x-1 px-3 py-1.5 text-sm text-accent border border-accent-line rounded-control hover:bg-accent-soft transition-colors"
               disabled={loading}
             >
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
@@ -1000,7 +1000,7 @@ export default function TableDataViewer({
             {onClose && (
               <button
                 onClick={onClose}
-                className="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                className="px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken transition-colors"
               >
                 关闭
               </button>
@@ -1009,7 +1009,7 @@ export default function TableDataViewer({
         </div>
 
         {/* 标签页导航 */}
-        <div className="flex border-b border-gray-200 bg-white">
+        <div className="flex border-b border-line bg-surface">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -1017,8 +1017,8 @@ export default function TableDataViewer({
               className={clsx(
                 "flex items-center space-x-2 px-6 py-3 text-sm font-medium border-b-2 transition-colors",
                 activeTab === tab.id
-                  ? "border-blue-500 text-blue-600 bg-blue-50"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50"
+                  ? "border-accent text-accent bg-accent-soft"
+                  : "border-transparent text-fg-muted hover:text-fg hover:bg-surface-sunken"
               )}
               title={tab.description}
             >
@@ -1031,10 +1031,10 @@ export default function TableDataViewer({
 
       {/* 错误提示 */}
       {error && (
-        <div className="p-4 bg-red-50 border-b border-red-200">
+        <div className="p-4 bg-danger-soft border-b border-danger-line">
           <div className="flex items-center space-x-2">
-            <Info className="text-red-500" size={16} />
-            <span className="text-red-700 text-sm">{error}</span>
+            <Info className="text-danger" size={16} />
+            <span className="text-danger text-sm">{error}</span>
           </div>
         </div>
       )}
@@ -1044,71 +1044,71 @@ export default function TableDataViewer({
         {/* Schema 标签页 */}
         {activeTab === 'schema' && tableSchema && (
           <div className="h-full flex flex-col">
-            <div className="p-4 border-b bg-gray-50">
-              <h2 className="text-sm font-semibold text-gray-700">表结构信息</h2>
-              <p className="text-xs text-gray-500 mt-1">
+            <div className="p-4 border-b bg-surface-sunken">
+              <h2 className="text-sm font-semibold text-fg">表结构信息</h2>
+              <p className="text-xs text-fg-muted mt-1">
                 {tableSchema.columns.length} 个字段
               </p>
             </div>
             <div className="flex-1 overflow-y-auto">
               <table className="w-full">
-                <thead className="bg-gray-50 sticky top-0">
+                <thead className="bg-surface-sunken sticky top-0">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
                       列名
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
                       数据类型
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
                       可空
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
                       主键
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
                       默认值
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                <tbody className="bg-surface divide-y divide-line">
                   {tableSchema.columns.map((column, index) => (
-                    <tr key={index} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                    <tr key={index} className="hover:bg-surface-sunken">
+                      <td className="px-4 py-3 text-sm font-medium text-fg">
                         {column.name}
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-500">
-                        <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-blue-100 text-blue-800">
+                      <td className="px-4 py-3 text-sm text-fg-muted">
+                        <span className="inline-flex items-center px-2 py-1 rounded-control text-xs font-medium bg-accent-soft text-accent">
                           {column.data_type}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-500">
+                      <td className="px-4 py-3 text-sm text-fg-muted">
                         {column.is_nullable ? (
-                          <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-green-100 text-green-800">
+                          <span className="inline-flex items-center px-2 py-1 rounded-control text-xs font-medium bg-success-soft text-success">
                             是
                           </span>
                         ) : (
-                          <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-red-100 text-red-800">
+                          <span className="inline-flex items-center px-2 py-1 rounded-control text-xs font-medium bg-danger-soft text-danger">
                             否
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-500">
+                      <td className="px-4 py-3 text-sm text-fg-muted">
                         {column.is_primary_key ? (
-                          <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-purple-100 text-purple-800">
+                          <span className="inline-flex items-center px-2 py-1 rounded-control text-xs font-medium bg-accent-soft text-accent">
                             主键
                           </span>
                         ) : (
-                          <span className="text-gray-400">-</span>
+                          <span className="text-fg-subtle">-</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-500">
+                      <td className="px-4 py-3 text-sm text-fg-muted">
                         {column.default_value ? (
-                          <code className="text-xs bg-gray-100 px-2 py-1 rounded">
+                          <code className="text-xs bg-surface-hover px-2 py-1 rounded-control">
                             {column.default_value}
                           </code>
                         ) : (
-                          <span className="text-gray-400">-</span>
+                          <span className="text-fg-subtle">-</span>
                         )}
                       </td>
                     </tr>
@@ -1122,17 +1122,17 @@ export default function TableDataViewer({
         {/* 数据标签页 */}
         {activeTab === 'data' && (
           <div className="h-full flex flex-col">
-            <div className="p-4 border-b bg-gray-50 flex items-center justify-between">
+            <div className="p-4 border-b bg-surface-sunken flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-semibold text-gray-700">表数据</h2>
-                <p className="text-xs text-gray-500 mt-1">
+                <h2 className="text-sm font-semibold text-fg">表数据</h2>
+                <p className="text-xs text-fg-muted mt-1">
                   共 {totalRows} 行数据
                 </p>
                 {paginationOrder && (
                   <p
                     className={clsx(
                       'text-xs mt-1',
-                      paginationOrder.stableAcrossChanges ? 'text-green-600' : 'text-amber-600'
+                      paginationOrder.stableAcrossChanges ? 'text-success' : 'text-warning'
                     )}
                   >
                     {paginationOrder.strategy === 'primary-key'
@@ -1148,7 +1148,7 @@ export default function TableDataViewer({
                   <>
                     <button
                       onClick={startAddRow}
-                      className="flex items-center space-x-1 px-3 py-1.5 text-sm text-green-600 border border-green-300 rounded-md hover:bg-green-50 transition-colors"
+                      className="flex items-center space-x-1 px-3 py-1.5 text-sm text-success border border-success-line rounded-control hover:bg-success-soft transition-colors"
                     >
                       <Plus size={14} />
                       <span>添加</span>
@@ -1162,7 +1162,7 @@ export default function TableDataViewer({
                     <button
                       onClick={saveEdit}
                       disabled={editingLoading}
-                      className="flex items-center space-x-1 px-3 py-1.5 text-sm text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors disabled:opacity-50"
+                      className="flex items-center space-x-1 px-3 py-1.5 text-sm text-accent border border-accent-line rounded-control hover:bg-accent-soft transition-colors disabled:opacity-50"
                     >
                       {editingLoading ? (
                         <RefreshCw size={14} className="animate-spin" />
@@ -1175,7 +1175,7 @@ export default function TableDataViewer({
                     <button
                       onClick={cancelEdit}
                       disabled={editingLoading}
-                      className="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors disabled:opacity-50"
+                      className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken transition-colors disabled:opacity-50"
                     >
                       <X size={14} />
                       <span>取消</span>
@@ -1183,11 +1183,11 @@ export default function TableDataViewer({
                   </>
                 )}
                 
-                <span className="text-sm text-gray-600">每页显示:</span>
+                <span className="text-sm text-fg-muted">每页显示:</span>
                 <select
                   value={pageSize}
                   onChange={(e) => handlePageSizeChange(Number(e.target.value))}
-                  className="text-sm border border-gray-300 rounded px-2 py-1"
+                  className="text-sm border border-line-strong rounded-control px-2 py-1"
                 >
                   <option value={25}>25</option>
                   <option value={50}>50</option>
@@ -1199,20 +1199,20 @@ export default function TableDataViewer({
 
             {/* 编辑错误提示 */}
             {editingError && (
-              <div className="p-3 bg-red-50 border-b border-red-200">
+              <div className="p-3 bg-danger-soft border-b border-danger-line">
                 <div className="flex items-center space-x-2">
-                  <AlertCircle className="text-red-500" size={14} />
-                  <span className="text-red-700 text-sm">{editingError}</span>
+                  <AlertCircle className="text-danger" size={14} />
+                  <span className="text-danger text-sm">{editingError}</span>
                 </div>
               </div>
             )}
 
             {/* 添加新行表单 */}
             {editState.mode === 'add' && editState.editedData && tableSchema && (
-              <div className="p-4 bg-blue-50 border-b border-blue-200">
+              <div className="p-4 bg-accent-soft border-b border-accent-line">
                 <div className="flex items-center space-x-2 mb-3">
-                  <Plus className="text-blue-600" size={16} />
-                  <h3 className="text-sm font-medium text-blue-900">添加新数据</h3>
+                  <Plus className="text-accent" size={16} />
+                  <h3 className="text-sm font-medium text-fg">添加新数据</h3>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                   {tableSchema.columns.map((column) => {
@@ -1227,16 +1227,16 @@ export default function TableDataViewer({
                     
                     return (
                       <div key={column.name} className="flex flex-col">
-                        <label className="text-xs font-medium text-gray-700 mb-1">
+                        <label className="text-xs font-medium text-fg mb-1">
                           {column.name}
                           {column.is_primary_key && (
-                            <span className="ml-1 text-purple-600">(主键)</span>
+                            <span className="ml-1 text-accent">(主键)</span>
                           )}
                           {isAutoIncrement && (
-                            <span className="ml-1 text-green-600">(自增)</span>
+                            <span className="ml-1 text-success">(自增)</span>
                           )}
                           {!column.is_nullable && !isAutoIncrement && (
-                            <span className="ml-1 text-red-600">*</span>
+                            <span className="ml-1 text-danger">*</span>
                           )}
                         </label>
                         {isAutoIncrement ? (
@@ -1244,7 +1244,7 @@ export default function TableDataViewer({
                             type="text"
                             value="自动生成"
                             disabled
-                            className="px-2 py-1 text-sm border border-gray-300 rounded bg-gray-100 text-gray-500 cursor-not-allowed"
+                            className="px-2 py-1 text-sm border border-line-strong rounded-control bg-surface-hover text-fg-muted cursor-not-allowed"
                           />
                         ) : isDateTimeField ? (
                           <DateTimePicker
@@ -1273,7 +1273,7 @@ export default function TableDataViewer({
                               
                               updateEditData(column.name, newValue);
                             }}
-                            className="px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="px-2 py-1 text-sm border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
                             placeholder={column.default_value && column.default_value !== 'NULL' ? column.default_value : '输入值'}
                             required={!column.is_nullable && !isAutoIncrement}
                           />
@@ -1289,13 +1289,13 @@ export default function TableDataViewer({
             <div className="flex-1 overflow-hidden">
               {loading ? (
                 <div className="flex items-center justify-center h-full">
-                  <RefreshCw className="animate-spin text-gray-400" size={20} />
-                  <span className="ml-2 text-gray-600">加载中...</span>
+                  <RefreshCw className="animate-spin text-fg-subtle" size={20} />
+                  <span className="ml-2 text-fg-muted">加载中...</span>
                 </div>
               ) : tableData.length > 0 ? (
                 <div className="h-full flex flex-col">
                   {/* 滚动提示 */}
-                  <div className="px-4 py-2 bg-blue-50 text-xs text-blue-700 border-b">
+                  <div className="px-4 py-2 bg-accent-soft text-xs text-accent border-b">
                     <span>💡 表格包含 {tableSchema?.columns.length || 0} 列，可以水平滚动查看所有内容</span>
                   </div>
                   
@@ -1303,34 +1303,34 @@ export default function TableDataViewer({
                   <div className="flex-1 overflow-auto">
                     <div className="min-w-full">
                       <table className="w-full border-collapse">
-                        <thead className="bg-gray-50 sticky top-0">
+                        <thead className="bg-surface-sunken sticky top-0">
                           <tr>
                             {tableSchema?.columns.map((column, index) => (
-                              <th key={index} className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider border-r border-gray-200 min-w-[180px]">
+                              <th key={index} className="px-4 py-3 text-left text-xs font-medium text-fg uppercase tracking-wider border-r border-line min-w-[180px]">
                                 <div className="flex items-center space-x-1">
                                   <span>{column.name}</span>
                                   {column.is_primary_key && (
-                                    <span className="text-yellow-600" title="主键">🔑</span>
+                                    <span className="text-warning" title="主键">🔑</span>
                                   )}
                                   {!column.is_nullable && (
-                                    <span className="text-red-600" title="非空">*</span>
+                                    <span className="text-danger" title="非空">*</span>
                                   )}
                                 </div>
-                                <div className="text-xs text-gray-500 font-normal mt-1">
+                                <div className="text-xs text-fg-muted font-normal mt-1">
                                   {column.data_type}
                                 </div>
                               </th>
                             ))}
                             {/* 操作列 */}
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider min-w-[100px]">
+                            <th className="px-4 py-3 text-left text-xs font-medium text-fg uppercase tracking-wider min-w-[100px]">
                               操作
                             </th>
                           </tr>
                         </thead>
                         
-                        <tbody className="bg-white divide-y divide-gray-200">
+                        <tbody className="bg-surface divide-y divide-line">
                           {tableData.map((row, rowIndex) => (
-                            <tr key={rowIndex} className="hover:bg-gray-50">
+                            <tr key={rowIndex} className="hover:bg-surface-sunken">
                               {tableSchema?.columns.map((column, colIndex) => (
                                 <EditableCell
                                   key={colIndex}
@@ -1342,19 +1342,19 @@ export default function TableDataViewer({
                                 />
                               ))}
                               {/* 操作列 */}
-                              <td className="px-4 py-3 text-sm border-l border-gray-200">
+                              <td className="px-4 py-3 text-sm border-l border-line">
                                 {editState.mode === 'view' ? (
                                   <div className="flex items-center space-x-1">
                                     <button
                                       onClick={() => startEditRow(rowIndex)}
-                                      className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded"
+                                      className="p-1 text-accent hover:text-accent hover:bg-accent-soft rounded-control"
                                       title="编辑"
                                     >
                                       <Edit size={14} />
                                     </button>
                                     <button
                                       onClick={() => deleteRow(rowIndex)}
-                                      className="p-1 text-red-600 hover:text-red-800 hover:bg-red-50 rounded"
+                                      className="p-1 text-danger hover:text-danger hover:bg-danger-soft rounded-control"
                                       title="删除"
                                     >
                                       <Trash2 size={14} />
@@ -1365,7 +1365,7 @@ export default function TableDataViewer({
                                     <button
                                       onClick={saveEdit}
                                       disabled={editingLoading}
-                                      className="p-1 text-green-600 hover:text-green-800 hover:bg-green-50 rounded disabled:opacity-50"
+                                      className="p-1 text-success hover:text-success hover:bg-success-soft rounded-control disabled:opacity-50"
                                       title="保存"
                                     >
                                       {editingLoading ? (
@@ -1377,7 +1377,7 @@ export default function TableDataViewer({
                                     <button
                                       onClick={cancelEdit}
                                       disabled={editingLoading}
-                                      className="p-1 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded disabled:opacity-50"
+                                      className="p-1 text-fg-muted hover:text-fg hover:bg-surface-sunken rounded-control disabled:opacity-50"
                                       title="取消"
                                     >
                                       <X size={14} />
@@ -1394,9 +1394,9 @@ export default function TableDataViewer({
                   
                   {/* 分页控件 */}
                   {totalPages > 1 && (
-                    <div className="px-4 py-3 bg-gray-50 border-t flex items-center justify-between">
+                    <div className="px-4 py-3 bg-surface-sunken border-t flex items-center justify-between">
                       <div className="flex items-center space-x-2">
-                        <span className="text-sm text-gray-700">
+                        <span className="text-sm text-fg">
                           显示 {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, totalRows)} 行，共 {totalRows} 行
                         </span>
                       </div>
@@ -1405,31 +1405,31 @@ export default function TableDataViewer({
                         <button
                           onClick={() => handlePageChange(1)}
                           disabled={currentPage === 1}
-                          className="p-1 rounded hover:bg-gray-200 disabled:opacity-50"
+                          className="p-1 rounded-control hover:bg-surface-active disabled:opacity-50"
                         >
                           <ChevronsLeft size={16} />
                         </button>
                         <button
                           onClick={() => handlePageChange(currentPage - 1)}
                           disabled={currentPage === 1}
-                          className="p-1 rounded hover:bg-gray-200 disabled:opacity-50"
+                          className="p-1 rounded-control hover:bg-surface-active disabled:opacity-50"
                         >
                           <ChevronLeft size={16} />
                         </button>
-                        <span className="px-3 py-1 text-sm text-gray-700">
+                        <span className="px-3 py-1 text-sm text-fg">
                           第 {currentPage} 页，共 {totalPages} 页
                         </span>
                         <button
                           onClick={() => handlePageChange(currentPage + 1)}
                           disabled={currentPage === totalPages}
-                          className="p-1 rounded hover:bg-gray-200 disabled:opacity-50"
+                          className="p-1 rounded-control hover:bg-surface-active disabled:opacity-50"
                         >
                           <ChevronRight size={16} />
                         </button>
                         <button
                           onClick={() => handlePageChange(totalPages)}
                           disabled={currentPage === totalPages}
-                          className="p-1 rounded hover:bg-gray-200 disabled:opacity-50"
+                          className="p-1 rounded-control hover:bg-surface-active disabled:opacity-50"
                         >
                           <ChevronsRight size={16} />
                         </button>
@@ -1438,7 +1438,7 @@ export default function TableDataViewer({
                   )}
                 </div>
               ) : (
-                <div className="flex items-center justify-center h-full text-gray-500">
+                <div className="flex items-center justify-center h-full text-fg-muted">
                   暂无数据
                 </div>
               )}
@@ -1449,15 +1449,15 @@ export default function TableDataViewer({
         {/* ER 图标签页 */}
         {activeTab === 'er' && (
           <div className="h-full flex flex-col">
-            <div className="p-4 border-b bg-gray-50">
-              <h2 className="text-sm font-semibold text-gray-700">数据库关系图 (ER 图)</h2>
-              <p className="text-xs text-gray-500 mt-1">
+            <div className="p-4 border-b bg-surface-sunken">
+              <h2 className="text-sm font-semibold text-fg">数据库关系图 (ER 图)</h2>
+              <p className="text-xs text-fg-muted mt-1">
                 显示数据库中所有表的关系结构
               </p>
             </div>
-            <div className="flex-1 flex items-center justify-center bg-gray-50">
-              <div className="text-center text-gray-500">
-                <BarChart3 size={48} className="mx-auto mb-4 text-gray-300" />
+            <div className="flex-1 flex items-center justify-center bg-surface-sunken">
+              <div className="text-center text-fg-muted">
+                <BarChart3 size={48} className="mx-auto mb-4 text-fg-subtle" />
                 <p className="text-sm font-medium mb-2">ER 图功能开发中</p>
                 <p className="text-xs">该功能将展示数据库中所有表的关系结构</p>
                 <p className="text-xs mt-1">包括外键关系、表间连线等</p>

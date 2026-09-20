@@ -20,6 +20,7 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import { autocompletion, CompletionContext } from '@codemirror/autocomplete';
 import { QueryResultScrollTable } from './QueryResultScrollTable';
 import type { EditorView } from '@codemirror/view';
+import { useThemeStore } from '../stores/themeStore';
 import {
   findSqlStatementAtOffset,
   splitSqlStatements
@@ -99,7 +100,6 @@ export const SqlEditor: React.FC = () => {
   } = useQueryStore();
 
   const [autoParseEnabled, setAutoParseEnabled] = useState(true);
-  const [isDarkMode, setIsDarkMode] = useState(false);
   const [hasSelection, setHasSelection] = useState(false);
   const editorViewRef = useRef<EditorView | null>(null);
 
@@ -113,8 +113,10 @@ export const SqlEditor: React.FC = () => {
     })
   ], []);
 
-  // 主题配置
-  const theme = isDarkMode ? oneDark : undefined;
+  // 编辑器跟随应用主题。此前这里有个只管 CodeMirror 的「深色模式」勾选框，
+  // 勾上以后只有代码框变深、其余界面仍是浅色——它表达的不是用户想要的那件事。
+  const resolvedTheme = useThemeStore((state) => state.resolved);
+  const theme = resolvedTheme === 'dark' ? oneDark : undefined;
 
   // 自动解析SQL语句
   useEffect(() => {
@@ -197,26 +199,26 @@ export const SqlEditor: React.FC = () => {
   };
 
   return (
-    <div className="h-full flex flex-col bg-white">
+    <div className="h-full flex flex-col bg-surface">
       {/* SQL编辑器头部 */}
-      <div className="flex items-center justify-between p-4 border-b bg-gray-50">
+      <div className="flex items-center justify-between p-4 border-b bg-surface-sunken">
         <div className="flex items-center space-x-3">
-          <FileText className="text-gray-600" size={20} />
-          <h2 className="text-lg font-semibold text-gray-900">SQL编辑器</h2>
+          <FileText className="text-fg-muted" size={20} />
+          <h2 className="text-lg font-semibold text-fg">SQL编辑器</h2>
           {statements.length > 0 && (
-            <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-1 rounded-full">
+            <span className="bg-accent-soft text-accent text-xs font-medium px-2 py-1 rounded-full">
               {statements.length} 条语句
             </span>
           )}
         </div>
         
         <div className="flex items-center space-x-2">
-          <label className="flex items-center space-x-2 text-sm text-gray-600">
+          <label className="flex items-center space-x-2 text-sm text-fg-muted">
             <span>结果上限</span>
             <select
               value={queryResultRowLimit}
               onChange={(event) => setQueryResultRowLimit(Number(event.target.value))}
-              className="px-2 py-1.5 border border-gray-300 rounded-md bg-white text-sm"
+              className="px-2 py-1.5 border border-line-strong rounded-control bg-surface text-sm"
               aria-label="查询结果行数上限"
             >
               <option value={100}>100 行</option>
@@ -227,12 +229,12 @@ export const SqlEditor: React.FC = () => {
             </select>
           </label>
 
-          <label className="flex items-center space-x-2 text-sm text-gray-600">
+          <label className="flex items-center space-x-2 text-sm text-fg-muted">
             <span>超时</span>
             <select
               value={queryTimeoutMs}
               onChange={(event) => setQueryTimeoutMs(Number(event.target.value))}
-              className="px-2 py-1.5 border border-gray-300 rounded-md bg-white text-sm"
+              className="px-2 py-1.5 border border-line-strong rounded-control bg-surface text-sm"
               aria-label="查询超时时间"
             >
               <option value={5000}>5 秒</option>
@@ -244,24 +246,13 @@ export const SqlEditor: React.FC = () => {
             </select>
           </label>
 
-          {/* 深色模式开关 */}
-          <label className="flex items-center space-x-2 text-sm text-gray-600">
-            <input
-              type="checkbox"
-              checked={isDarkMode}
-              onChange={(e) => setIsDarkMode(e.target.checked)}
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-            />
-            <span>深色模式</span>
-          </label>
-
           {/* 自动解析开关 */}
-          <label className="flex items-center space-x-2 text-sm text-gray-600">
+          <label className="flex items-center space-x-2 text-sm text-fg-muted">
             <input
               type="checkbox"
               checked={autoParseEnabled}
               onChange={(e) => setAutoParseEnabled(e.target.checked)}
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              className="h-4 w-4 text-accent focus:ring-accent border-line-strong rounded-control"
             />
             <span>自动解析</span>
           </label>
@@ -270,7 +261,7 @@ export const SqlEditor: React.FC = () => {
           {!autoParseEnabled && (
             <button
               onClick={handleManualParse}
-              className="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+              className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken transition-colors"
             >
               <RotateCcw size={14} />
               <span>解析</span>
@@ -282,10 +273,10 @@ export const SqlEditor: React.FC = () => {
             onClick={clearResults}
             disabled={statements.length === 0}
             className={clsx(
-              "flex items-center space-x-1 px-3 py-1.5 text-sm border rounded-md transition-colors",
+              "flex items-center space-x-1 px-3 py-1.5 text-sm border rounded-control transition-colors",
               statements.length === 0
-                ? "text-gray-400 border-gray-200 cursor-not-allowed"
-                : "text-gray-600 border-gray-300 hover:bg-gray-50"
+                ? "text-fg-subtle border-line cursor-not-allowed"
+                : "text-fg-muted border-line-strong hover:bg-surface-sunken"
             )}
           >
             <Trash2 size={14} />
@@ -295,7 +286,7 @@ export const SqlEditor: React.FC = () => {
           <button
             onClick={executeSelectedSql}
             disabled={!hasSelection || isConnecting}
-            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors disabled:text-gray-400 disabled:border-gray-200 disabled:cursor-not-allowed"
+            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken transition-colors disabled:text-fg-subtle disabled:border-line disabled:cursor-not-allowed"
             title="执行选中内容"
           >
             <Play size={14} />
@@ -305,7 +296,7 @@ export const SqlEditor: React.FC = () => {
           <button
             onClick={executeCurrentStatement}
             disabled={statements.length === 0 || isConnecting}
-            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors disabled:text-gray-400 disabled:border-gray-200 disabled:cursor-not-allowed"
+            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken transition-colors disabled:text-fg-subtle disabled:border-line disabled:cursor-not-allowed"
             title="执行光标所在语句 (Cmd/Ctrl+Enter)"
           >
             <Play size={14} />
@@ -317,10 +308,10 @@ export const SqlEditor: React.FC = () => {
             onClick={executeAllStatements}
             disabled={statements.length === 0 || isConnecting}
             className={clsx(
-              "flex items-center space-x-2 px-4 py-1.5 text-sm rounded-md transition-colors",
+              "flex items-center space-x-2 px-4 py-1.5 text-sm rounded-control transition-colors",
               statements.length === 0 || isConnecting
-                ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                : "bg-blue-600 text-white hover:bg-blue-700"
+                ? "bg-surface-active text-fg-subtle cursor-not-allowed"
+                : "bg-accent text-fg-on-accent hover:bg-accent-hover"
             )}
           >
             <PlayCircle size={16} />
@@ -331,13 +322,13 @@ export const SqlEditor: React.FC = () => {
 
       {/* 错误提示 */}
       {error && (
-        <div className="p-4 bg-red-50 border-b border-red-200">
+        <div className="p-4 bg-danger-soft border-b border-danger-line">
           <div className="flex items-center space-x-2">
-            <AlertCircle className="text-red-500" size={16} />
-            <span className="text-red-700 text-sm flex-1">{error}</span>
+            <AlertCircle className="text-danger" size={16} />
+            <span className="text-danger text-sm flex-1">{error}</span>
             <button
               onClick={clearError}
-              className="text-red-500 hover:text-red-700"
+              className="text-danger hover:text-danger"
             >
               ✕
             </button>
@@ -347,7 +338,7 @@ export const SqlEditor: React.FC = () => {
 
       {/* SQL输入区域 - 使用CodeMirror */}
       <div className="p-4 border-b">
-        <div className="border border-gray-300 rounded-md overflow-hidden">
+        <div className="border border-line-strong rounded-control overflow-hidden">
           <CodeMirror
             value={sqlInput}
             onChange={(value) => setSqlInput(value)}
@@ -381,7 +372,7 @@ export const SqlEditor: React.FC = () => {
             minHeight="120px"
           />
         </div>
-        <div className="mt-2 text-xs text-gray-500">
+        <div className="mt-2 text-xs text-fg-muted">
           多语句按顺序执行，失败、超时或取消后停止
         </div>
       </div>
@@ -391,7 +382,7 @@ export const SqlEditor: React.FC = () => {
         {statements.length === 0 ? (
           /* 空状态：保持安静。编辑器占位文字已经说明了怎么写，
              结果区在有结果之前不需要占据视线 */
-          <div className="px-4 py-3 text-sm text-gray-400">
+          <div className="px-4 py-3 text-sm text-fg-subtle">
             执行后在此显示结果
           </div>
         ) : (
@@ -442,16 +433,16 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
   formatExecutionTime
 }) => {
   return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden">
+    <div className="border border-line rounded-panel overflow-hidden">
       {/* 语句头部 */}
-      <div className="flex items-center justify-between p-3 bg-gray-50 border-b">
+      <div className="flex items-center justify-between p-3 bg-surface-sunken border-b">
         <div className="flex items-center space-x-2">
-          <FileText className="text-gray-500" size={16} />
-          <span className="text-sm font-medium text-gray-700">
+          <FileText className="text-fg-muted" size={16} />
+          <span className="text-sm font-medium text-fg">
             SQL语句 #{statement.id.split('_')[2]}
           </span>
           {statement.executedAt && (
-            <div className="flex items-center space-x-1 text-xs text-gray-500">
+            <div className="flex items-center space-x-1 text-xs text-fg-muted">
               <Clock size={12} />
               <span>执行于 {statement.executedAt}</span>
             </div>
@@ -461,13 +452,13 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
         <div className="flex items-center space-x-2">
           {/* 执行状态指示器 */}
           {statement.isExecuting && (
-            <Loader className="animate-spin text-blue-500" size={16} />
+            <Loader className="animate-spin text-accent" size={16} />
           )}
           {statement.result && !statement.error && (
-            <CheckCircle className="text-green-500" size={16} />
+            <CheckCircle className="text-success" size={16} />
           )}
           {statement.error && (
-            <AlertCircle className="text-red-500" size={16} />
+            <AlertCircle className="text-danger" size={16} />
           )}
           
           {/* 操作按钮 */}
@@ -475,12 +466,12 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
             onClick={statement.isExecuting ? onCancel : onExecute}
             disabled={execution?.status === 'cancel-requested'}
             className={clsx(
-              "flex items-center space-x-1 px-3 py-1 text-sm rounded-md transition-colors",
+              "flex items-center space-x-1 px-3 py-1 text-sm rounded-control transition-colors",
               execution?.status === 'cancel-requested'
-                ? "bg-amber-100 text-amber-700 cursor-wait"
+                ? "bg-warning-soft text-warning cursor-wait"
                 : statement.isExecuting
-                  ? "bg-red-600 text-white hover:bg-red-700"
-                : "bg-green-600 text-white hover:bg-green-700"
+                  ? "bg-danger-solid text-fg-on-solid hover:opacity-90"
+                : "bg-success-solid text-fg-on-solid hover:opacity-90"
             )}
           >
             {statement.isExecuting ? <Square size={14} /> : <Play size={14} />}
@@ -497,7 +488,7 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
           
           <button
             onClick={onRemove}
-            className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+            className="p-1 text-fg-subtle hover:text-danger transition-colors"
             title="删除语句"
           >
             <Trash2 size={14} />
@@ -506,7 +497,7 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
       </div>
 
       {/* SQL代码 */}
-      <div className="p-3 bg-gray-900 text-green-400 font-mono text-sm">
+      <div className="px-3 py-2 bg-surface-sunken border-t border-line font-mono text-xs text-fg">
         <pre className="whitespace-pre-wrap">{statement.sql}</pre>
       </div>
 
@@ -514,7 +505,7 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
       {statement.result && (
         <>
           {statement.resultSql && statement.resultSql !== statement.sql && (
-            <div className="px-3 py-2 text-xs text-amber-700 bg-amber-50 border-t border-amber-200">
+            <div className="px-3 py-2 text-xs text-warning bg-warning-soft border-t border-warning-line">
               当前结果来自上一次执行，编辑后的 SQL 尚未执行。
             </div>
           )}
@@ -528,12 +519,12 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
 
       {/* 错误信息 */}
       {statement.error && (
-        <div className="p-3 bg-red-50 border-t border-red-200">
+        <div className="p-3 bg-danger-soft border-t border-danger-line">
           <div className="flex items-start space-x-2">
-            <AlertCircle className="text-red-500 mt-0.5" size={16} />
+            <AlertCircle className="text-danger mt-0.5" size={16} />
             <div>
-              <h4 className="text-sm font-medium text-red-800 mb-1">执行错误</h4>
-              <p className="text-sm text-red-700">{statement.error}</p>
+              <h4 className="text-sm font-medium text-danger mb-1">执行错误</h4>
+              <p className="text-sm text-danger">{statement.error}</p>
             </div>
           </div>
         </div>
