@@ -4,7 +4,9 @@ use tauri_plugin_cli::CliExt;
 
 // 模块导入
 mod commands;
-mod models;
+// 集成测试要按 DatabaseType 取目录查询，枚举得公开；
+// 用字符串代替会丢掉穷尽匹配，新增方言时编译器不再提醒。
+pub mod models;
 pub mod services;
 
 use commands::{connection_commands::ConnectionServiceState, *};
@@ -106,6 +108,7 @@ pub fn run() {
       cancel_query,
       release_database_session,
       validate_query,
+      get_schema_metadata_queries,
       // 文件写入
       write_text_file,
     ])

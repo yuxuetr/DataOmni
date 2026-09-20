@@ -477,3 +477,16 @@ pub fn get_table_quick_view_query(
 
   Ok(query)
 }
+
+/// 取该方言的结构目录查询。
+///
+/// 只回三段 SQL 文本，不查连接服务：调用方本来就知道自己连的是什么类型，
+/// 再查一次连接配置只是多一处可失败的地方。SQL 住在 Rust 侧是为了让
+/// `tests/database_smoke.rs` 能拿真库跑它们。
+#[tauri::command]
+pub fn get_schema_metadata_queries(
+  db_type: crate::models::DatabaseType,
+) -> Result<crate::services::SchemaMetadataQueries, String> {
+  crate::services::schema_metadata_queries(&db_type)
+    .ok_or_else(|| format!("{:?} 尚未支持结构浏览", db_type))
+}

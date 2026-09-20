@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { runReadQuery, useQueryStore } from '../stores/queryStore';
 import {
   formatResultValue,
@@ -51,6 +52,12 @@ import { toPositionalRows } from '../utils/columnWidths';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { ExportResultDialog } from './ExportResultDialog';
+import {
+  groupForeignKeyRows,
+  groupIndexRows,
+  toCheckConstraints
+} from '../utils/schemaObjects';
+import { SchemaObjectSections, type SchemaObjects } from './SchemaObjectSections';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 
 // 编辑模式类型
@@ -82,6 +89,17 @@ interface TableDataViewerProps {
 // 标签页类型
 type TabType = 'schema' | 'data' | 'er';
 
+/** `get_schema_metadata_queries` 的返回；字段名按 Rust 侧的 snake_case */
+interface SchemaMetadataQueries {
+  indexes: string;
+  foreign_keys: string;
+  check_constraints: string | null;
+}
+
+function asRows(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
+}
+
 export default function TableDataViewer({ 
   connection,
   tableName, 
@@ -99,6 +117,7 @@ export default function TableDataViewer({
   // 排序在数据库里做：只排当前页得到的是「这一页内部的次序」
   const [sort, setSort] = useState<ColumnSort | null>(null);
   const [showExport, setShowExport] = useState(false);
+  const [schemaObjects, setSchemaObjects] = useState<SchemaObjects | null>(null);
   const sortRef = useRef<ColumnSort | null>(null);
   sortRef.current = sort;
   const [totalRows, setTotalRows] = useState(0);
@@ -163,6 +182,47 @@ export default function TableDataViewer({
     }
 
     return true;
+  };
+
+  /**
+   * 索引、外键与检查约束。
+   *
+   * `checkConstraints` 为 null 表示这个方言没有检查约束目录（SQLite），
+   * 与「查过了，一条也没有」是两回事——后者会让人以为表上没写 CHECK。
+   */
+  const loadSchemaObjects = async () => {
+    setSchemaObjects(null);
+
+    try {
+      const queries = await invoke<SchemaMetadataQueries>('get_schema_metadata_queries', {
+        dbType: connection.db_type
+      });
+
+      // SQLite 的 pragma 表值函数只认一个表名参数，没有 schema 概念
+      const params = connection.db_type === 'sqlite' ? [tableName] : [tableName, schema ?? null];
+      const [indexRows, foreignKeyRows, checkRows] = await Promise.all([
+        database!.select(queries.indexes, params),
+        database!.select(queries.foreign_keys, params),
+        queries.check_constraints
+          ? database!.select(queries.check_constraints, params)
+          : Promise.resolve(null)
+      ]);
+
+      setSchemaObjects({
+        indexes: groupIndexRows(asRows(indexRows)),
+        foreignKeys: groupForeignKeyRows(asRows(foreignKeyRows)),
+        checkConstraints: checkRows === null ? null : toCheckConstraints(asRows(checkRows))
+      });
+    } catch (err) {
+      // 结构对象读失败不该把已经拿到的列信息一起打掉：列是主体，这里是补充
+      console.error('加载索引与约束失败:', err);
+      setSchemaObjects({
+        indexes: [],
+        foreignKeys: [],
+        checkConstraints: null,
+        error: describeError(err, '读取索引与约束失败')
+      });
+    }
   };
 
   // 加载表结构信息
@@ -246,6 +306,8 @@ export default function TableDataViewer({
       const loadedSchema = { columns };
       setTableSchema(loadedSchema);
       setTableSchemaKey(currentTableKey);
+      // 不 await：列已经可以画了，索引和约束到了再补上
+      void loadSchemaObjects();
       return loadedSchema;
     } catch (err) {
       console.error('加载表结构失败:', err);
@@ -1182,6 +1244,8 @@ export default function TableDataViewer({
                   ))}
                 </tbody>
               </table>
+
+              <SchemaObjectSections objects={schemaObjects} dbType={connection.db_type} />
             </div>
           </div>
         )}
@@ -1590,4 +1654,4 @@ export default function TableDataViewer({
       )}
     </div>
   );
-} 
+}

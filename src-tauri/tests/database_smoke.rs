@@ -3,7 +3,7 @@ use dataomni_lib::services::{
   QueryExecutionResult, QueryExecutionSummary, QuerySessionState, QueryTruncationReason,
   StreamingQueryOptions, QUERY_TIMEOUT_CODE,
 };
-use sqlx::{mysql::MySqlPoolOptions, postgres::PgPoolOptions, sqlite::SqlitePoolOptions};
+use sqlx::{mysql::MySqlPoolOptions, postgres::PgPoolOptions, sqlite::SqlitePoolOptions, Row};
 use std::time::Duration;
 use tauri_plugin_sql::DbPool;
 
@@ -557,5 +557,360 @@ async fn postgres_decodes_common_column_types() {
       ("col_bytea", "binary", "00ff1020"),
       ("col_date", "date", "2026-09-20"),
     ],
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 结构浏览：索引、外键、检查约束
+//
+// 这几段目录查询最容易「看起来能跑、其实是错的」。造型上刻意设了两个陷阱：
+//   1. 复合外键 (ref_a, ref_b) → (x, y)，而 ref_b 在表里声明在 ref_a 之前。
+//      按列序而不是按键序配对，会得到 ref_b→x、ref_a→y —— 错位之后结果
+//      看上去完全正常。
+//   2. 复合主键 (x, y) 与复合唯一键 (label, score)，验证列顺序不被打乱。
+// ---------------------------------------------------------------------------
+
+const META_PARENT: &str = "dataomni_meta_parent";
+const META_CHILD: &str = "dataomni_meta_child";
+
+fn meta_child_ddl(dialect: &str) -> Vec<String> {
+  let text_type = if dialect == "postgres" { "VARCHAR(32)" } else { "VARCHAR(32)" };
+  vec![
+    format!("DROP TABLE IF EXISTS {META_CHILD}"),
+    format!("DROP TABLE IF EXISTS {META_PARENT}"),
+    format!("CREATE TABLE {META_PARENT} (x INT NOT NULL, y INT NOT NULL, PRIMARY KEY (x, y))"),
+    format!(
+      "CREATE TABLE {META_CHILD} (
+         id INT NOT NULL,
+         ref_b INT NOT NULL,
+         ref_a INT NOT NULL,
+         label {text_type},
+         score INT,
+         PRIMARY KEY (id),
+         CONSTRAINT uq_meta_child UNIQUE (label, score),
+         CONSTRAINT ck_meta_child CHECK (score >= 0),
+         CONSTRAINT fk_meta_child FOREIGN KEY (ref_a, ref_b)
+           REFERENCES {META_PARENT} (x, y) ON DELETE CASCADE ON UPDATE RESTRICT
+       )"
+    ),
+    format!("CREATE INDEX ix_meta_child_label ON {META_CHILD} (label)"),
+    // 表达式索引：三种方言各有各的坑。PostgreSQL 的 indkey 在这一位是 0，
+    // join pg_attribute 会让整列消失；MySQL 的 COLUMN_NAME 为 NULL、表达式在
+    // EXPRESSION 里；SQLite 的 pragma_index_info.name 为 NULL。
+    // 不放进夹具，这三处处理就全是猜的。
+    match dialect {
+      "mysql" => format!("CREATE INDEX ix_meta_child_expr ON {META_CHILD} ((score + 1))"),
+      _ => format!("CREATE INDEX ix_meta_child_expr ON {META_CHILD} ((lower(label)))"),
+    },
+  ]
+}
+
+#[tokio::test]
+async fn postgres_reports_indexes_foreign_keys_and_checks() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+
+  for statement in meta_child_ddl("postgres") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare PostgreSQL metadata fixture");
+  }
+
+  let queries = dataomni_lib::services::schema_metadata_queries(
+    &dataomni_lib::models::DatabaseType::PostgreSQL,
+  )
+  .expect("PostgreSQL is supported");
+
+  let index_rows = sqlx::query(queries.indexes)
+    .bind(META_CHILD)
+    .bind(Option::<String>::None)
+    .fetch_all(&pool)
+    .await
+    .expect("run PostgreSQL index query");
+  let indexes: Vec<(String, String, i32, bool, bool)> = index_rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("index_name"),
+        row.get::<String, _>("column_name"),
+        row.get::<i32, _>("ordinal"),
+        row.get::<bool, _>("is_unique"),
+        row.get::<bool, _>("is_primary"),
+      )
+    })
+    .collect();
+
+  assert!(
+    indexes.contains(&(format!("{META_CHILD}_pkey"), "id".into(), 1, true, true)),
+    "主键索引应被标为 unique + primary: {indexes:?}"
+  );
+  assert_eq!(
+    indexes
+      .iter()
+      .filter(|(name, ..)| name == "uq_meta_child")
+      .map(|(_, column, ordinal, unique, _)| (column.as_str(), *ordinal, *unique))
+      .collect::<Vec<_>>(),
+    vec![("label", 1, true), ("score", 2, true)],
+    "复合唯一键的列顺序必须是建表时的顺序: {indexes:?}"
+  );
+  assert!(
+    indexes.contains(&("ix_meta_child_label".into(), "label".into(), 1, false, false)),
+    "普通索引应被标为非 unique: {indexes:?}"
+  );
+  let expression_column = indexes
+    .iter()
+    .find(|(name, ..)| name == "ix_meta_child_expr")
+    .map(|(_, column, ..)| column.clone());
+  // PostgreSQL 会把 varchar 归一成 text，所以原文是 `lower(label::text)`
+  assert!(
+    expression_column.as_deref().is_some_and(|text| text.starts_with("lower(label")),
+    "表达式索引要给出表达式原文；join pg_attribute 的写法会让这一列整个消失: {indexes:?}"
+  );
+
+  let fk_rows = sqlx::query(queries.foreign_keys)
+    .bind(META_CHILD)
+    .bind(Option::<String>::None)
+    .fetch_all(&pool)
+    .await
+    .expect("run PostgreSQL foreign key query");
+  let pairs: Vec<(i32, String, String, String)> = fk_rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<i32, _>("ordinal"),
+        row.get::<String, _>("column_name"),
+        row.get::<String, _>("referenced_table"),
+        row.get::<String, _>("referenced_column"),
+      )
+    })
+    .collect();
+  assert_eq!(
+    pairs,
+    vec![
+      (1, "ref_a".into(), META_PARENT.into(), "x".into()),
+      (2, "ref_b".into(), META_PARENT.into(), "y".into()),
+    ],
+    "复合外键必须按键序配对，不是按列在表里的声明顺序"
+  );
+  assert_eq!(fk_rows[0].get::<Option<String>, _>("on_delete").as_deref(), Some("CASCADE"));
+  assert_eq!(fk_rows[0].get::<Option<String>, _>("on_update").as_deref(), Some("RESTRICT"));
+
+  let check_sql = queries.check_constraints.expect("PostgreSQL has a check constraint catalog");
+  let check_rows = sqlx::query(check_sql)
+    .bind(META_CHILD)
+    .bind(Option::<String>::None)
+    .fetch_all(&pool)
+    .await
+    .expect("run PostgreSQL check constraint query");
+  let checks: Vec<(String, String)> = check_rows
+    .iter()
+    .map(|row| (row.get::<String, _>("constraint_name"), row.get::<String, _>("expression")))
+    .collect();
+  assert_eq!(checks.len(), 1, "只应列出建表时写的那一条 CHECK；NOT NULL 不该混进来: {checks:?}");
+  assert_eq!(checks[0].0, "ck_meta_child");
+  assert!(checks[0].1.contains("score"), "约束表达式应含列名: {:?}", checks[0].1);
+
+  sqlx::query(&format!("DROP TABLE IF EXISTS {META_CHILD}")).execute(&pool).await.ok();
+  sqlx::query(&format!("DROP TABLE IF EXISTS {META_PARENT}")).execute(&pool).await.ok();
+}
+
+#[tokio::test]
+async fn mysql_reports_indexes_foreign_keys_and_checks() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+
+  for statement in meta_child_ddl("mysql") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL metadata fixture");
+  }
+
+  let queries =
+    dataomni_lib::services::schema_metadata_queries(&dataomni_lib::models::DatabaseType::MySQL)
+      .expect("MySQL is supported");
+
+  let index_rows = sqlx::query(queries.indexes)
+    .bind(META_CHILD)
+    .bind(Option::<String>::None)
+    .fetch_all(&pool)
+    .await
+    .expect("run MySQL index query");
+  let indexes: Vec<(String, String, u32, i64, i64)> = index_rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("index_name"),
+        row.get::<String, _>("column_name"),
+        row.get::<u32, _>("ordinal"),
+        row.get::<i64, _>("is_unique"),
+        row.get::<i64, _>("is_primary"),
+      )
+    })
+    .collect();
+
+  assert!(
+    indexes.contains(&("PRIMARY".into(), "id".into(), 1, 1, 1)),
+    "MySQL 主键索引名是 PRIMARY，应同时标 unique 与 primary: {indexes:?}"
+  );
+  assert_eq!(
+    indexes
+      .iter()
+      .filter(|(name, ..)| name == "uq_meta_child")
+      .map(|(_, column, ordinal, unique, _)| (column.as_str(), *ordinal, *unique))
+      .collect::<Vec<_>>(),
+    vec![("label", 1, 1), ("score", 2, 1)],
+    "复合唯一键的列顺序必须是建表时的顺序: {indexes:?}"
+  );
+  assert!(
+    indexes.contains(&("ix_meta_child_label".into(), "label".into(), 1, 0, 0)),
+    "普通索引应被标为非 unique: {indexes:?}"
+  );
+  let expression_column = indexes
+    .iter()
+    .find(|(name, ..)| name == "ix_meta_child_expr")
+    .map(|(_, column, ..)| column.clone());
+  assert!(
+    expression_column.as_deref().is_some_and(|text| text.contains("score")),
+    "函数索引的 COLUMN_NAME 是 NULL，必须回退到 EXPRESSION，否则这一列是空的: {indexes:?}"
+  );
+
+  let fk_rows = sqlx::query(queries.foreign_keys)
+    .bind(META_CHILD)
+    .bind(Option::<String>::None)
+    .fetch_all(&pool)
+    .await
+    .expect("run MySQL foreign key query");
+  let pairs: Vec<(u32, String, String, String)> = fk_rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<u32, _>("ordinal"),
+        row.get::<String, _>("column_name"),
+        row.get::<String, _>("referenced_table"),
+        row.get::<String, _>("referenced_column"),
+      )
+    })
+    .collect();
+  assert_eq!(
+    pairs,
+    vec![
+      (1, "ref_a".into(), META_PARENT.into(), "x".into()),
+      (2, "ref_b".into(), META_PARENT.into(), "y".into()),
+    ],
+    "复合外键必须按键序配对，不是按列在表里的声明顺序"
+  );
+  assert_eq!(fk_rows[0].get::<Option<String>, _>("on_delete").as_deref(), Some("CASCADE"));
+  assert_eq!(fk_rows[0].get::<Option<String>, _>("on_update").as_deref(), Some("RESTRICT"));
+
+  let check_sql = queries.check_constraints.expect("MySQL 8 has a check constraint catalog");
+  let check_rows = sqlx::query(check_sql)
+    .bind(META_CHILD)
+    .bind(Option::<String>::None)
+    .fetch_all(&pool)
+    .await
+    .expect("run MySQL check constraint query");
+  let checks: Vec<(String, String)> = check_rows
+    .iter()
+    .map(|row| (row.get::<String, _>("constraint_name"), row.get::<String, _>("expression")))
+    .collect();
+  assert_eq!(checks.len(), 1, "只应列出这张表的那一条 CHECK: {checks:?}");
+  assert_eq!(checks[0].0, "ck_meta_child");
+  assert!(checks[0].1.contains("score"), "约束表达式应含列名: {:?}", checks[0].1);
+
+  sqlx::query(&format!("DROP TABLE IF EXISTS {META_CHILD}")).execute(&pool).await.ok();
+  sqlx::query(&format!("DROP TABLE IF EXISTS {META_PARENT}")).execute(&pool).await.ok();
+}
+
+#[tokio::test]
+async fn sqlite_reports_indexes_and_foreign_keys() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("connect to in-memory SQLite");
+
+  for statement in meta_child_ddl("sqlite") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare SQLite metadata fixture");
+  }
+
+  let queries =
+    dataomni_lib::services::schema_metadata_queries(&dataomni_lib::models::DatabaseType::SQLite)
+      .expect("SQLite is supported");
+
+  let index_rows = sqlx::query(queries.indexes)
+    .bind(META_CHILD)
+    .fetch_all(&pool)
+    .await
+    .expect("run SQLite index query");
+  let indexes: Vec<(String, String, i64, i64, i64)> = index_rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("index_name"),
+        row.get::<String, _>("column_name"),
+        row.get::<i64, _>("ordinal"),
+        row.get::<i64, _>("is_unique"),
+        row.get::<i64, _>("is_primary"),
+      )
+    })
+    .collect();
+
+  // SQLite 给约束建的索引是自动命名的，编号按约束出现的顺序：_1 是主键，
+  // _2 是 UNIQUE。`id INT`（不是 `INTEGER`）不是 rowid 别名，所以主键也有索引。
+  assert!(
+    indexes.contains(&("sqlite_autoindex_dataomni_meta_child_1".into(), "id".into(), 1, 1, 1)),
+    "主键索引应被标为 unique + primary: {indexes:?}"
+  );
+  assert_eq!(
+    indexes
+      .iter()
+      .filter(|(name, ..)| name == "sqlite_autoindex_dataomni_meta_child_2")
+      .map(|(_, column, ordinal, unique, primary)| (column.as_str(), *ordinal, *unique, *primary))
+      .collect::<Vec<_>>(),
+    vec![("label", 1, 1, 0), ("score", 2, 1, 0)],
+    "复合唯一键的列顺序必须是建表时的顺序，且不该被当成主键: {indexes:?}"
+  );
+  assert!(
+    indexes.contains(&("ix_meta_child_label".into(), "label".into(), 1, 0, 0)),
+    "普通索引应被标为非 unique: {indexes:?}"
+  );
+  // SQLite 对表达式索引不给列名，也不给表达式原文（pragma_index_info 返回
+  // NULL）。这里把这个事实钉住：前端据此把空列名显示成「(表达式)」，
+  // 而不是渲染成一个空白格。
+  assert_eq!(
+    indexes
+      .iter()
+      .find(|(name, ..)| name == "ix_meta_child_expr")
+      .map(|(_, column, ..)| column.as_str()),
+    Some(""),
+    "SQLite 表达式索引的列名应为空；若哪天变了，前端的占位显示要跟着改: {indexes:?}"
+  );
+
+  let fk_rows = sqlx::query(queries.foreign_keys)
+    .bind(META_CHILD)
+    .fetch_all(&pool)
+    .await
+    .expect("run SQLite foreign key query");
+  let pairs: Vec<(String, i64, String, String, String)> = fk_rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("constraint_name"),
+        row.get::<i64, _>("ordinal"),
+        row.get::<String, _>("column_name"),
+        row.get::<String, _>("referenced_table"),
+        row.get::<String, _>("referenced_column"),
+      )
+    })
+    .collect();
+  assert_eq!(
+    pairs,
+    vec![
+      ("fk_0".into(), 1, "ref_a".into(), META_PARENT.into(), "x".into()),
+      ("fk_0".into(), 2, "ref_b".into(), META_PARENT.into(), "y".into()),
+    ],
+    "SQLite 外键无名，用 fk_<id> 合成；复合外键必须按键序配对"
   );
 }

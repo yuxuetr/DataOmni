@@ -2,6 +2,7 @@ pub mod connection_service;
 pub mod database_service;
 pub mod query_executor;
 pub mod query_session;
+pub mod schema_metadata;
 
 pub use connection_service::ConnectionService;
 pub use database_service::DatabaseService;
@@ -12,3 +13,4 @@ pub use query_executor::{
   DEFAULT_QUERY_ROW_LIMIT, QUERY_TIMEOUT_CODE,
 };
 pub use query_session::{QuerySessionState, StreamingQueryOptions};
+pub use schema_metadata::{schema_metadata_queries, SchemaMetadataQueries};
