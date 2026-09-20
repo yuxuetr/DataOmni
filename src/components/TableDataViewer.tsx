@@ -57,6 +57,7 @@ interface TableDataViewerProps {
   connection: ConnectionProfile;
   tableName: string;
   schema?: string;
+  initialTab?: TabType;
   onClose?: () => void;
 }
 
@@ -67,6 +68,7 @@ export default function TableDataViewer({
   connection,
   tableName, 
   schema, 
+  initialTab,
   onClose 
 }: TableDataViewerProps) {
   const [tableSchema, setTableSchema] = useState<TableSchema | null>(null);
@@ -78,7 +80,7 @@ export default function TableDataViewer({
   const [pageSize, setPageSize] = useState(50);
   const [totalRows, setTotalRows] = useState(0);
   const [paginationOrder, setPaginationOrder] = useState<TablePaginationOrder | null>(null);
-  const [activeTab, setActiveTab] = useState<TabType>('data'); // 默认显示数据标签页
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab ?? 'data');
   
   // 编辑功能相关状态
   const [editState, setEditState] = useState<EditState>({ mode: 'view' });
@@ -92,7 +94,7 @@ export default function TableDataViewer({
     value: ''
   });
   
-  const { database } = useQueryStore();
+  const { database, connectionId } = useQueryStore();
   const currentTableKey = `${connection.id}:${schema ?? ''}:${tableName}`;
 
   // COUNT(*) 在大表上是全表扫描（InnoDB 与 PostgreSQL 都没有常数级行数），
@@ -125,14 +127,18 @@ export default function TableDataViewer({
 
   // 检查并确保数据库连接
   const ensureDatabaseConnection = async () => {
-    console.log('🔍 检查数据库连接状态...');
-    console.log('当前database对象:', database ? '已连接' : '未连接');
-    
     if (!database) {
       setError('数据库会话不可用，请先重新连接');
       return false;
     }
-    console.log('✅ 数据库连接正常');
+
+    // 标签永久绑定到打开它的连接。活跃会话切到别的连接时必须停下：
+    // database 是全局唯一会话，继续执行会拿本表的表名去查另一个库。
+    if (connectionId !== connection.id) {
+      setError(`此标签绑定的连接「${connection.name}」当前未激活，请在左侧重新选择该连接后再操作`);
+      return false;
+    }
+
     return true;
   };
 
@@ -309,7 +315,7 @@ export default function TableDataViewer({
     };
     
     initializeViewer();
-  }, [tableName, schema, activeTab]); // 添加activeTab依赖
+  }, [tableName, schema, activeTab, connectionId]); // connectionId：绑定的连接重新激活后自动恢复加载
 
   // 点击外部关闭日期时间选择器
   useEffect(() => {

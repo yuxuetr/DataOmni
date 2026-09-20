@@ -3,7 +3,8 @@ import {
   createSqlWorkspaceTab,
   createTableWorkspaceTab,
   markWorkspaceTabProfileDeleted,
-  updateSqlWorkspaceTabDraft
+  updateSqlWorkspaceTabDraft,
+  workspaceTabId
 } from './workspace';
 
 const now = '2026-09-17T06:30:00.000Z';
@@ -70,5 +71,33 @@ describe('WorkspaceTab', () => {
       dirty: true,
       draft: { sql: 'SELECT 1;' }
     });
+  });
+});
+
+describe('workspaceTabId', () => {
+  it('为同一个连接的同一个对象生成稳定的身份', () => {
+    const first = workspaceTabId('profile-1', 'table-data', { schema: 'public', table: 'users' });
+    const second = workspaceTabId('profile-1', 'table-data', { schema: 'public', table: 'users' });
+
+    expect(first).toBe(second);
+  });
+
+  it('区分连接、标签类型、schema 和表名', () => {
+    const base = workspaceTabId('profile-1', 'table-data', { schema: 'public', table: 'users' });
+
+    expect(workspaceTabId('profile-2', 'table-data', { schema: 'public', table: 'users' })).not.toBe(base);
+    expect(workspaceTabId('profile-1', 'table-structure', { schema: 'public', table: 'users' })).not.toBe(base);
+    expect(workspaceTabId('profile-1', 'table-data', { schema: 'other', table: 'users' })).not.toBe(base);
+    expect(workspaceTabId('profile-1', 'table-data', { schema: 'public', table: 'orders' })).not.toBe(base);
+  });
+
+  it('没有 schema 的表不会与 schema 为空串的表混淆边界', () => {
+    expect(workspaceTabId('p', 'table-data', { schema: null, table: 'users' }))
+      .toBe(workspaceTabId('p', 'table-data', { schema: '', table: 'users' }));
+  });
+
+  it('SQL 标签的身份只由连接决定', () => {
+    expect(workspaceTabId('profile-1', 'sql')).toBe('profile-1:sql');
+    expect(workspaceTabId('profile-1', 'sql')).not.toBe(workspaceTabId('profile-2', 'sql'));
   });
 });

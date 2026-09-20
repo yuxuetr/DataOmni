@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   createSqlWorkspaceTab,
-  createTableWorkspaceTab
+  createTableWorkspaceTab,
+  workspaceTabId
 } from '../contracts/workspace';
 import { useWorkspaceStore } from './workspaceStore';
 
@@ -106,6 +107,46 @@ describe('workspace store', () => {
       draft: { sql: 'SELECT 1;' }
     });
     expect(state.tabs[1]).toEqual(otherProfileTab);
+  });
+
+  it('re-opening the same table activates the existing tab instead of duplicating it', () => {
+    // 与 App.openTableTab 相同的路径：身份由 workspaceTabId 决定
+    const openTable = (profileId: string, table: string, schema: string | null) =>
+      useWorkspaceStore.getState().registerTab(
+        createTableWorkspaceTab(profileId, table, {
+          id: workspaceTabId(profileId, 'table-data', { schema, table }),
+          schema
+        })
+      );
+
+    openTable('profile-a', 'users', 'public');
+    openTable('profile-a', 'orders', 'public');
+    openTable('profile-a', 'users', 'public');
+
+    const state = useWorkspaceStore.getState();
+    expect(state.tabs.map((tab) => (tab.kind === 'sql' ? null : tab.object.table)))
+      .toEqual(['users', 'orders']);
+    expect(state.activeTabId).toBe(workspaceTabId('profile-a', 'table-data', {
+      schema: 'public',
+      table: 'users'
+    }));
+  });
+
+  it('keeps same-named tables on different connections as separate tabs', () => {
+    const openTable = (profileId: string, table: string) =>
+      useWorkspaceStore.getState().registerTab(
+        createTableWorkspaceTab(profileId, table, {
+          id: workspaceTabId(profileId, 'table-data', { schema: null, table }),
+          schema: null
+        })
+      );
+
+    openTable('profile-a', 'users');
+    openTable('profile-b', 'users');
+
+    const state = useWorkspaceStore.getState();
+    expect(state.tabs).toHaveLength(2);
+    expect(state.tabs.map((tab) => tab.binding.profileId)).toEqual(['profile-a', 'profile-b']);
   });
 
   it('moves focus when a deleted profile closes the active clean tab', () => {

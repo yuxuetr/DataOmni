@@ -4,16 +4,6 @@ import type {
   ConnectionProfile
 } from '../contracts';
 
-// 视图模式类型
-export type ViewMode = 'workbench' | 'table-viewer';
-
-// 表查看器状态
-export interface TableViewerState {
-  connection: ConnectionProfile;
-  tableName: string;
-  schema?: string;
-}
-
 // 应用状态接口
 export interface AppState {
   // 当前活跃的数据库连接
@@ -21,12 +11,6 @@ export interface AppState {
     config: ConnectionProfile;
     connectionString: string;
   } | null;
-  
-  // 当前视图模式
-  viewMode: ViewMode;
-  
-  // 表数据查看器状态
-  tableViewerState: TableViewerState | null;
   
   // 选中的表（用于SQL工作台）
   selectedTable: {
@@ -43,13 +27,6 @@ export interface AppState {
 
 // 应用操作接口
 export interface AppActions {
-  // 视图模式管理
-  setViewMode: (mode: ViewMode) => void;
-  
-  // 表数据查看器管理
-  openTableViewer: (connection: ConnectionProfile, tableName: string, schema?: string) => void;
-  closeTableViewer: () => void;
-  
   // 表选择管理
   selectTable: (tableName: string, schema?: string) => void;
   clearSelectedTable: () => void;
@@ -66,46 +43,12 @@ export interface AppActions {
 export type AppStore = AppState & AppActions;
 
 // 创建应用Store
-export const useAppStore = create<AppStore>((set, get) => ({
+export const useAppStore = create<AppStore>((set) => ({
   // 初始状态
   activeConnection: null,
-  viewMode: 'workbench',
-  tableViewerState: null,
   selectedTable: null,
   databaseMetadata: {},
   connectionReady: false,
-
-  setViewMode: (mode: ViewMode) => {
-    console.log('📋 切换视图模式:', mode);
-    set({ viewMode: mode });
-  },
-
-  openTableViewer: (connection: ConnectionProfile, tableName: string, schema?: string) => {
-    console.log('🖱️ 打开表数据查看器:', tableName, 'schema:', schema);
-    
-    const currentState = get();
-    if (
-      !currentState.activeConnection ||
-      currentState.activeConnection.config.id !== connection.id ||
-      !currentState.connectionReady
-    ) {
-      throw new Error('无法打开数据表：数据库会话未连接或尚未就绪');
-    }
-
-    set({
-      tableViewerState: { connection, tableName, schema },
-      viewMode: 'table-viewer',
-      selectedTable: null
-    });
-  },
-
-  closeTableViewer: () => {
-    console.log('❌ 关闭表数据查看器');
-    set({ 
-      viewMode: 'workbench',
-      tableViewerState: null
-    });
-  },
 
   selectTable: (tableName: string, schema?: string) => {
     console.log('📋 选择表:', tableName, 'schema:', schema);

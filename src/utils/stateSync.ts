@@ -151,8 +151,6 @@ export class SessionManager {
     useAppStore.setState({
       activeConnection: null,
       selectedTable: null,
-      tableViewerState: null,
-      viewMode: 'workbench',
       connectionReady: false
     });
     useWorkspaceStore.getState().selectSidebarProfile(null);

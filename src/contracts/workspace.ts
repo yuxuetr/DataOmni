@@ -35,6 +35,24 @@ export interface TableWorkspaceTab extends WorkspaceTabBase {
 
 export type WorkspaceTab = SqlWorkspaceTab | TableWorkspaceTab;
 
+/**
+ * 标签的身份：同一个连接下的同一个对象只应存在一个标签。
+ *
+ * 把身份编码进 id，`registerTab` 既有的按 id 去重就同时成了「再次打开已存在的
+ * 标签时激活它而不是新开一个」，不需要另一套去重逻辑。
+ */
+export function workspaceTabId(
+  profileId: string,
+  kind: WorkspaceTabKind,
+  object?: { schema: string | null; table: string }
+): string {
+  if (!object) {
+    return `${profileId}:${kind}`;
+  }
+
+  return `${profileId}:${kind}:${object.schema ?? ''}:${object.table}`;
+}
+
 interface WorkspaceTabOptions {
   id?: string;
   sessionId?: string | null;
