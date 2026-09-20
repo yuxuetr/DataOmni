@@ -16,6 +16,7 @@
     "sql:allow-select",
     "sql:allow-close",
     "dialog:allow-confirm",
-    "dialog:default"
+    "dialog:default",
+    "window-state:default"
   ]
 }

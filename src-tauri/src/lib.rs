@@ -17,6 +17,8 @@ fn greet(name: &str) -> String {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    // 记住窗口大小与位置；默认在退出时保存、启动时恢复
+    .plugin(tauri_plugin_window_state::Builder::default().build())
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_sql::Builder::new().build())
     .plugin(tauri_plugin_cli::init())
