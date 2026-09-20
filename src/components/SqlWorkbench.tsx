@@ -140,33 +140,24 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
         />
       )}
       {/* 工作台头部 */}
-      <div className="flex items-center justify-between p-4 border-b bg-gray-50">
-        <div className="flex items-center space-x-3">
-          <Database className="text-blue-600" size={20} />
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900">
-              {connection.name}
-            </h1>
-            <div className="flex items-center space-x-3 text-sm text-gray-600">
-              <span>
-                {connection.db_type} • {connection.host}:{connection.port}
-                {connection.database
-                  ? ` / ${connection.database}`
-                  : ' · 未指定数据库'}
-              </span>
-              <div className={clsx(
-                "flex items-center space-x-1 px-2 py-1 rounded-full text-xs",
-                statusDisplay.bg,
-                statusDisplay.color
-              )}>
-                {statusDisplay.icon}
-                <span>{statusDisplay.text}</span>
-              </div>
-            </div>
-          </div>
+      {/* 压成一行：连接名在标签页和侧边栏已各出现一次，这里不再用大标题重复 */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-200 bg-gray-50">
+        <div className="flex min-w-0 items-center gap-2 text-sm">
+          <Database className="shrink-0 text-gray-400" size={16} />
+          <span className="font-medium text-gray-900">{connection.name}</span>
+          <span className="truncate text-gray-500">
+            {connection.db_type} · {connection.host}:{connection.port}
+            {connection.database
+              ? ` / ${connection.database}`
+              : ' · 未指定数据库'}
+          </span>
+          <span className={clsx('flex shrink-0 items-center gap-1 text-xs', statusDisplay.color)}>
+            {statusDisplay.icon}
+            <span>{statusDisplay.text}</span>
+          </span>
         </div>
-        
-        <div className="flex items-center space-x-2">
+
+        <div className="flex shrink-0 items-center gap-2">
           {/* 连接信息按钮 */}
           <button
             onClick={() => setShowConnectionInfo(true)}
@@ -222,16 +213,6 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
       )}
 
       {/* 连接成功提示 */}
-      {connectionStatus === 'connected' && (
-        <div className="p-3 bg-green-50 border-b border-green-200">
-          <div className="flex items-center space-x-2">
-            <Wifi className="text-green-500" size={16} />
-            <span className="text-sm text-green-700">
-              数据库连接成功，可以开始执行SQL查询
-            </span>
-          </div>
-        </div>
-      )}
 
       {/* SQL编辑器主体 */}
       <div className="flex-1 flex flex-col overflow-hidden">

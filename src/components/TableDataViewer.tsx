@@ -153,10 +153,10 @@ export default function TableDataViewer({
         case 'postgresql':
           schemaQuery = `
             SELECT 
-              c.column_name,
-              c.data_type,
-              c.is_nullable,
-              c.column_default,
+              c.column_name::text AS column_name,
+              c.data_type::text AS data_type,
+              c.is_nullable::text AS is_nullable,
+              c.column_default::text AS column_default,
               CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END as is_primary_key,
               pk.primary_key_ordinal
             FROM information_schema.columns c
@@ -181,10 +181,10 @@ export default function TableDataViewer({
         case 'mysql':
           schemaQuery = `
             SELECT 
-              c.COLUMN_NAME as column_name,
-              c.DATA_TYPE as data_type,
-              c.IS_NULLABLE as is_nullable,
-              c.COLUMN_DEFAULT as column_default,
+              CAST(c.COLUMN_NAME AS CHAR) as column_name,
+              CAST(c.DATA_TYPE AS CHAR) as data_type,
+              CAST(c.IS_NULLABLE AS CHAR) as is_nullable,
+              CAST(c.COLUMN_DEFAULT AS CHAR) as column_default,
               kcu.COLUMN_NAME IS NOT NULL as is_primary_key,
               kcu.ORDINAL_POSITION as primary_key_ordinal
             FROM INFORMATION_SCHEMA.COLUMNS c

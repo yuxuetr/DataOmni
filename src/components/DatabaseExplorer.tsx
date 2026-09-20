@@ -79,9 +79,9 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
           // PostgreSQL: 获取所有schema和表
           const schemaResult = await database.select(`
             SELECT 
-              table_schema,
-              table_name,
-              table_type
+              table_schema::text AS table_schema,
+              table_name::text AS table_name,
+              table_type::text AS table_type
             FROM information_schema.tables 
             WHERE table_schema NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
             ORDER BY table_schema, table_name
@@ -109,6 +109,9 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
           break;
           
         case 'mysql':
+          // CAST 不是装饰：MySQL 8 的 information_schema 以 VARBINARY 返回标识符列，
+          // 而 tauri-plugin-sql 的解码器类型表里没有 VARBINARY，会直接报
+          // 「unsupported datatype: VARBINARY」。转成 CHAR 才落在它认识的范围内。
           // 没有库名时 `table_schema = NULL` 恒不匹配，会安静地查出 0 行，
           // 让人以为库是空的。这里直接说清楚。
           if (!connection.database) {
@@ -118,8 +121,8 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
           // MySQL: 获取当前数据库的所有表
           const tableResult = await database.select(`
             SELECT 
-              table_name AS table_name,
-              table_type AS table_type
+              CAST(table_name AS CHAR) AS table_name,
+              CAST(table_type AS CHAR) AS table_type
             FROM information_schema.tables 
             WHERE table_schema = ?
             ORDER BY table_name

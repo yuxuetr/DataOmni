@@ -381,32 +381,18 @@ export const SqlEditor: React.FC = () => {
             minHeight="120px"
           />
         </div>
-        <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
-          <span>
-            多语句按顺序执行，失败、超时或取消后停止
-          </span>
-          <span>
-            支持语法高亮、自动补全和括号匹配
-          </span>
+        <div className="mt-2 text-xs text-gray-500">
+          多语句按顺序执行，失败、超时或取消后停止
         </div>
       </div>
 
       {/* SQL语句列表和结果 */}
       <div className="flex-1 overflow-y-auto">
         {statements.length === 0 ? (
-          /* 空状态 */
-          <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-            <FileText className="text-gray-300 mb-4" size={48} />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">开始编写SQL</h3>
-            <p className="text-gray-500 max-w-sm mb-4">
-              在上方输入SQL语句，支持多语句执行，每个语句用分号分隔
-            </p>
-            <div className="text-sm text-gray-400 space-y-1">
-              <div>✨ 语法高亮支持</div>
-              <div>🚀 智能自动补全</div>
-              <div>🔧 实时语法检查</div>
-              <div>⌨️  快捷键支持</div>
-            </div>
+          /* 空状态：保持安静。编辑器占位文字已经说明了怎么写，
+             结果区在有结果之前不需要占据视线 */
+          <div className="px-4 py-3 text-sm text-gray-400">
+            执行后在此显示结果
           </div>
         ) : (
           /* 语句列表 */

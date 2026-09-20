@@ -3,7 +3,6 @@ use crate::services::{
   QueryExecutionSummary, QueryResultBatch, QuerySessionState, StreamingQueryOptions,
   DEFAULT_QUERY_BATCH_SIZE,
 };
-// use crate::models::{ColumnInfo, ConnectionConfig, DatabaseInfo, QueryResult, TableInfo};
 // use crate::services::{ConnectionService, DatabaseService};
 use serde::Deserialize;
 use std::collections::HashMap;
