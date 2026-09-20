@@ -214,6 +214,18 @@
 
 ### 2.4 表数据浏览
 
+- [ ] 元数据与表数据查询改走自建 query_executor，不再用 tauri-plugin-sql 的解码器
+  - 证据：用户实测 MySQL 8 报 `unsupported datatype: VARBINARY`（84495ab 已用 CAST 绕开元数据查询）。
+    插件解码器类型表是硬编码的：MySQL 缺 `VARBINARY` / `BINARY` / `DECIMAL` / `BIT` / `SET` /
+    `GEOMETRY`，PostgreSQL 缺 `NUMERIC` / `DECIMAL`
+    （见 `tauri-plugin-sql-2.2.1/src/decode/{mysql,postgres}.rs` 的 `_ => UnsupportedDatatype`）。
+  - 表数据查询是 `SELECT *`，列由用户的表决定，无法靠 CAST 绕开：含 DECIMAL 或二进制列的表
+    在表视图里仍会失败。而 P1 的 `query_executor.rs` 早已实现完整解码并保持 BigInt / Decimal 精度，
+    等于同一个问题解决了两次、只有一次是对的。
+  - 阻碍：`execute_query` 命令目前不接受绑定参数，改走它需要先补参数支持，否则只能拼接字面量。
+  - 判据：连一张含 `DECIMAL(10,2)` 与 `VARBINARY` 列的 MySQL 表，表视图能正常显示且小数不丢精度。
+
+
 - [ ] 支持服务端排序和筛选
 - [ ] 支持列显示/隐藏、调整宽度、冻结列和密度设置
 - [ ] 支持复制单元格、行、列和选区
