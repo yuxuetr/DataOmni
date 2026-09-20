@@ -12,6 +12,7 @@ interface WorkspaceState {
 
 interface WorkspaceActions {
   selectSidebarProfile: (profileId: string | null) => void;
+  restoreTabs: (tabs: WorkspaceTab[], activeTabId: string | null) => void;
   registerTab: (tab: WorkspaceTab) => void;
   activateTab: (tabId: string) => void;
   closeTab: (tabId: string) => void;
@@ -27,6 +28,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set) => ({
 
   selectSidebarProfile: (profileId) => {
     set({ sidebarProfileId: profileId });
+  },
+
+  restoreTabs: (tabs, activeTabId) => {
+    set({
+      tabs,
+      activeTabId: activeTabId && tabs.some((tab) => tab.id === activeTabId)
+        ? activeTabId
+        : tabs[0]?.id ?? null
+    });
   },
 
   registerTab: (tab) => {

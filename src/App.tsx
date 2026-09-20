@@ -15,6 +15,7 @@ import {
   workspaceTabId
 } from './contracts/workspace';
 import { useSessionManager } from './utils/stateSync';
+import { saveWorkspaceSnapshot } from './utils/workspacePersistence';
 
 function App() {
   const { activeConnection, selectedTable } = useAppStore();
@@ -34,6 +35,20 @@ function App() {
   const sessionManager = useSessionManager();
   const activeProfileId = activeConnection?.config.id ?? null;
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
+
+  // 标签、最后活动标签和草稿的任一变化都写回快照
+  // （恢复发生在 main.tsx 首次渲染之前，这里不会覆盖掉上次的内容）
+  useEffect(() => {
+    const drafts: Record<string, string> = {};
+    for (const tab of tabs) {
+      const draft = documents[tab.id];
+      if (tab.kind === 'sql' && draft) {
+        drafts[tab.id] = draft.sqlInput;
+      }
+    }
+
+    saveWorkspaceSnapshot({ tabs, activeTabId, drafts });
+  }, [tabs, activeTabId, documents]);
 
   // 活动标签决定当前编辑的是哪一份 SQL 文档；非 SQL 标签不改变它，
   // 这样在表标签里看数据不会影响后台仍在执行的查询写回哪个文档。

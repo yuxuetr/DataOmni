@@ -16,7 +16,6 @@ import type {
   DriverQueryResult,
   DriverQueryBatch,
   QueryResult,
-  SqlHistory,
   SqlStatement
 } from '../contracts/query';
 import type { SerializedResultValue } from '../contracts/resultSet';
@@ -30,7 +29,7 @@ import {
 import { quoteSqlIdentifier } from '../utils/sqlIdentifiers';
 import { executeSequentially } from '../utils/queryExecutionPolicy';
 
-export type { QueryResult, SqlHistory, SqlStatement } from '../contracts/query';
+export type { QueryResult, SqlStatement } from '../contracts/query';
 
 const QUERY_RESULT_BACKEND_BYTE_LIMIT = 12 * 1024 * 1024;
 const QUERY_RESULT_FRONTEND_BYTE_LIMIT = 16 * 1024 * 1024;
@@ -81,6 +80,7 @@ interface QueryActions {
   disconnect: () => Promise<void>;
   
   // SQL 文档（每个 SQL 标签一份）
+  restoreDocuments: (drafts: Record<string, string>) => void;
   openDocument: (documentId: string) => void;
   setActiveDocument: (documentId: string | null) => void;
   closeDocument: (documentId: string) => void;
@@ -103,12 +103,6 @@ interface QueryActions {
   
   // 错误处理
   setError: (error: string | null) => void;
-
-  // SQL历史缓存
-  saveSqlHistory: () => void;
-  loadSqlHistory: (connectionId: string) => void;
-  clearSqlHistory: (connectionId?: string) => void;
-  getAllSqlHistories: () => SqlHistory[];
 
   // 数据操作
   updateRowData: (statementId: string, rowIndex: number, columnName: string, newValue: any) => Promise<void>;
@@ -247,109 +241,6 @@ const getSqlDialect = (connectionString: string | null): SqlDialect => {
   return 'sqlite';
 };
 
-// localStorage键名常量
-const STORAGE_KEY_PREFIX = 'dataomni_sql_history_';
-const STORAGE_KEY_LIST = 'dataomni_sql_history_list';
-
-// 保存SQL历史到localStorage
-const saveSqlHistoryToStorage = (history: SqlHistory): void => {
-  try {
-    // 清理不必要的执行状态和结果（减少存储空间）
-    const cleanStatements = history.statements.map(stmt => ({
-      id: stmt.id,
-      sql: stmt.sql,
-      isExecuting: false, // 重置执行状态
-      // 不保存result和error，因为这些在重新连接时应该清空
-    }));
-
-    const cleanHistory: SqlHistory = {
-      ...history,
-      statements: cleanStatements,
-      lastUpdated: new Date().toISOString(),
-    };
-
-    localStorage.setItem(
-      `${STORAGE_KEY_PREFIX}${history.connectionId}`, 
-      JSON.stringify(cleanHistory)
-    );
-
-    // 更新历史列表
-    const existingList = JSON.parse(localStorage.getItem(STORAGE_KEY_LIST) || '[]');
-    const updatedList = [...existingList.filter((id: string) => id !== history.connectionId), history.connectionId];
-    localStorage.setItem(STORAGE_KEY_LIST, JSON.stringify(updatedList));
-
-    console.log('💾 SQL历史已保存:', history.connectionId);
-  } catch (error) {
-    console.error('❌ 保存SQL历史失败:', error);
-  }
-};
-
-// 从localStorage加载SQL历史
-const loadSqlHistoryFromStorage = (connectionId: string): SqlHistory | null => {
-  try {
-    const stored = localStorage.getItem(`${STORAGE_KEY_PREFIX}${connectionId}`);
-    if (!stored) return null;
-
-    const history: SqlHistory = JSON.parse(stored);
-    console.log('📂 SQL历史已加载:', connectionId);
-    return history;
-  } catch (error) {
-    console.error('❌ 加载SQL历史失败:', error);
-    return null;
-  }
-};
-
-// 清除SQL历史
-const clearSqlHistoryFromStorage = (connectionId?: string): void => {
-  try {
-    if (connectionId) {
-      // 清除特定连接的历史
-      localStorage.removeItem(`${STORAGE_KEY_PREFIX}${connectionId}`);
-      
-      // 从列表中移除
-      const existingList = JSON.parse(localStorage.getItem(STORAGE_KEY_LIST) || '[]');
-      const updatedList = existingList.filter((id: string) => id !== connectionId);
-      localStorage.setItem(STORAGE_KEY_LIST, JSON.stringify(updatedList));
-      
-      console.log('🗑️ 已清除SQL历史:', connectionId);
-    } else {
-      // 清除所有历史
-      const existingList = JSON.parse(localStorage.getItem(STORAGE_KEY_LIST) || '[]');
-      existingList.forEach((id: string) => {
-        localStorage.removeItem(`${STORAGE_KEY_PREFIX}${id}`);
-      });
-      localStorage.removeItem(STORAGE_KEY_LIST);
-      
-      console.log('🗑️ 已清除所有SQL历史');
-    }
-  } catch (error) {
-    console.error('❌ 清除SQL历史失败:', error);
-  }
-};
-
-// 获取所有SQL历史
-const getAllSqlHistoriesFromStorage = (): SqlHistory[] => {
-  try {
-    const historyList = JSON.parse(localStorage.getItem(STORAGE_KEY_LIST) || '[]');
-    const histories: SqlHistory[] = [];
-    
-    historyList.forEach((connectionId: string) => {
-      const history = loadSqlHistoryFromStorage(connectionId);
-      if (history) {
-        histories.push(history);
-      }
-    });
-    
-    // 按最后更新时间排序
-    return histories.sort((a, b) => 
-      new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime()
-    );
-  } catch (error) {
-    console.error('❌ 获取SQL历史列表失败:', error);
-    return [];
-  }
-};
-
 // 创建Zustand Store
 /** 读取文档；未知 id 返回空文档常量 */
 function readSqlDocument(
@@ -432,13 +323,6 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     }
     
     // 在连接新数据库前，保存当前的SQL历史
-    const activeDocument = selectActiveSqlDocument(currentState);
-    if (currentState.connectionId && currentState.connectionId !== connectionId && (activeDocument.sqlInput.trim() || activeDocument.statements.length > 0)) {
-      console.log('💾 保存旧连接的SQL历史:', currentState.connectionId);
-      const { saveSqlHistory } = get();
-      saveSqlHistory();
-    }
-    
     // 关闭旧连接
     if (currentState.database) {
       try {
@@ -487,10 +371,6 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         error: null 
       });
       
-      // 尝试加载该连接的SQL历史
-      const { loadSqlHistory } = get();
-      loadSqlHistory(connectionId);
-      
       console.log('✅ 数据库连接成功:', connectionId);
     } catch (error) {
       console.error('❌ 数据库连接失败:', error);
@@ -523,12 +403,6 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   disconnect: async () => {
     // 在断开连接前保存SQL历史
     const currentState = get();
-    const activeDocument = selectActiveSqlDocument(currentState);
-    if (currentState.connectionId && (activeDocument.sqlInput.trim() || activeDocument.statements.length > 0)) {
-      const { saveSqlHistory } = get();
-      saveSqlHistory();
-    }
-
     if (currentState.database) {
       try {
         if (currentState.session) {
@@ -552,6 +426,18 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       error: null
     });
     console.log('🔌 已断开数据库连接');
+  },
+
+  restoreDocuments: (drafts: Record<string, string>) => {
+    set({
+      documents: Object.fromEntries(
+        Object.entries(drafts).map(([documentId, sqlInput]) => [
+          documentId,
+          // 结果不持久化，恢复出来的文档只有草稿；语句由 parseStatements 重新解析
+          { sqlInput, statements: [], latestExecutionIdByStatement: {} }
+        ])
+      )
+    });
   },
 
   openDocument: (documentId: string) => {
@@ -959,46 +845,6 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
   setError: (error: string | null) => {
     set({ error });
-  },
-
-  // SQL历史缓存方法
-  // 注意：历史仍按 connectionId 存一份，只覆盖当前活动文档。
-  // 一个连接下多个 SQL 标签的草稿全量恢复属于 P2.1-E / P2.3 的范围。
-  saveSqlHistory: () => {
-    const { connectionId } = get();
-    if (!connectionId) return;
-
-    const { sqlInput, statements } = selectActiveSqlDocument(get());
-    const history: SqlHistory = {
-      connectionId,
-      sqlInput,
-      statements,
-      lastUpdated: new Date().toISOString(),
-    };
-
-    saveSqlHistoryToStorage(history);
-  },
-
-  loadSqlHistory: (connectionId: string) => {
-    const history = loadSqlHistoryFromStorage(connectionId);
-    if (!history) return;
-
-    const documentId = get().activeDocumentId;
-    if (!documentId) return;
-
-    set((state) => writeSqlDocument(state, documentId, () => ({
-      sqlInput: history.sqlInput,
-      statements: history.statements
-    })));
-    console.log('📂 已恢复SQL历史:', connectionId);
-  },
-
-  clearSqlHistory: (connectionId?: string) => {
-    clearSqlHistoryFromStorage(connectionId);
-  },
-
-  getAllSqlHistories: () => {
-    return getAllSqlHistoriesFromStorage();
   },
 
   // 数据操作方法

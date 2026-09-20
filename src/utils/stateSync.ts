@@ -3,7 +3,7 @@
  */
 
 import { useAppStore } from '../stores/appStore';
-import { selectActiveSqlDocument, useQueryStore } from '../stores/queryStore';
+import { useQueryStore } from '../stores/queryStore';
 import { useWorkspaceStore } from '../stores/workspaceStore';
 import { ConnectionConfig } from '../stores/connectionStore';
 import { createDatabaseSession } from '../contracts/session';
@@ -214,34 +214,28 @@ export class SessionManager {
       return;
     }
 
-    // 2. 保存当前SQL历史（如果有活跃连接）
-    const activeDocument = selectActiveSqlDocument(queryStore);
-    if (queryStore.connectionId && (activeDocument.sqlInput.trim() || activeDocument.statements.length > 0)) {
-      console.log('💾 保存当前SQL历史:', queryStore.connectionId);
-      queryStore.saveSqlHistory();
-    }
-
-    // 3. 断开旧连接
+    // 2. 断开旧连接
+    //    草稿不再在这里保存：文档按标签存活，由工作区快照整体持久化
     if (appStore.activeConnection && appStore.activeConnection.config.id !== connection.id) {
       console.log('🔌 断开旧连接:', appStore.activeConnection.config.id);
       await queryStore.disconnect();
       appStore.clearDatabaseMetadata(appStore.activeConnection.config.id);
     }
 
-    // 4. 设置连接中状态
+    // 3. 设置连接中状态
     appStore.setConnectionReady(false);
 
-    // 5. 建立新连接
+    // 4. 建立新连接
     await queryStore.connectToDatabase(
       connectionString,
       connection.id,
       createDatabaseSession(connection)
     );
 
-    // 6. 等待数据库连接对象就绪
+    // 5. 等待数据库连接对象就绪
     await this.waitForDatabaseReady();
 
-    // 7. 设置应用状态
+    // 6. 设置应用状态
     useAppStore.setState({
       activeConnection: { config: connection, connectionString },
       connectionReady: true,
