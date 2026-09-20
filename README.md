@@ -3,7 +3,7 @@
 <div align="center">
 
 ![DataOmni Logo](https://img.shields.io/badge/DataOmni-数据库管理工具-blue?style=for-the-badge&logo=database)
-![Platform](https://img.shields.io/badge/平台-Windows%20%7C%20macOS%20%7C%20Linux-green?style=for-the-badge)
+![Platform](https://img.shields.io/badge/已验证平台-macOS-green?style=for-the-badge)
 ![License](https://img.shields.io/badge/许可证-MIT-yellow?style=for-the-badge)
 
 **让数据操作变得简单高效**
@@ -27,56 +27,76 @@
 
 ## 🌟 特性
 
-### 🔗 多数据库支持
+### 🔗 数据库支持
 
-- **关系型数据库**: MySQL, PostgreSQL, SQLite
-- **非关系型数据库**: MongoDB, Redis, Neo4j
-- **分析平台**: DuckDB, ClickHouse, Elasticsearch
+- **可连接并执行查询**: MySQL, PostgreSQL, SQLite
+- **仅有连接表单，尚不能执行查询**: MongoDB, Redis, Neo4j, DuckDB, ClickHouse, Elasticsearch
 
-### ⚡ 高性能查询
+  这些类型目前只有连接串拼装和字段校验，查询执行层（`DbPool`）仅实现了
+  SQLite / MySQL / PostgreSQL 三种，选择其它类型无法真正读写数据。
 
-- 优化的SQL编辑器，支持语法高亮
-- 智能提示和自动补全
-- 查询历史记录和保存功能
-- 实时查询执行和结果展示
+### ⚡ 查询执行
 
-### 📊 数据可视化
+- SQL 编辑器，支持语法高亮
+- 方言感知的语句拆分，正确处理字符串、注释、Dollar-quoted 字符串中的分号
+- 查询超时与取消，区分「取消请求中」和「已取消」
+- 结果按行数上限截断并流式分批回传，超出内存预算时明确报错
+- 关键字补全（**表名 / 列名补全目前是硬编码示例值，尚未接入真实库表元数据**）
+- SQL 草稿按连接恢复（**尚无独立的执行历史：时间、耗时、状态、影响行数均未留存**）
 
-- 直观的表格视图，快速浏览数据
-- 支持大数据量的分页显示
-- 数据编辑和实时更新
-- 导出功能支持多种格式
+### 📊 数据浏览与编辑
 
-### 🛡️ 安全可靠
+- 表格视图浏览表数据，服务端 LIMIT / OFFSET 分页并采用稳定排序
+- BigInt、Decimal 保持精度，时间类型保留时区语义
+- 无法唯一定位记录时结果只读，不允许写入
+- 更新、删除后校验影响行数，异常时明确报错
 
-- 本地存储连接信息，保护数据安全
-- 连接加密和SSL支持
-- 查询验证和危险操作防护
+> 尚未实现：结果导出（CSV / JSON）、服务端排序与筛选、变更集与差异预览。
 
-### 🎨 现代化界面
+### 🛡️ 凭据与传输安全
 
-- 基于Tauri构建，原生性能
-- 响应式设计，适配不同屏幕
-- 深色/浅色主题支持
-- 流畅的动画和交互体验
+- 密码存入系统钥匙串（macOS Keychain / Windows Credential Manager / Linux Secret Service），
+  配置文件只保存凭据引用，不落明文
+- 支持「不保存密码」，每次连接时输入
+- 明确的 TLS 模式（禁用 / 优先 / 要求 / 校验证书 / 校验主机名），支持 CA 与客户端证书
+- 日志统一脱敏，不打印密码、Token 和完整连接串
+- 标识符由数据库方言安全引用，保留字与特殊字符表名可安全使用
+
+> 尚未实现：危险语句的可配置确认。
+
+### 🎨 界面
+
+- 基于 Tauri 构建，原生性能
+- SQL 编辑器支持深色 / 浅色主题切换（**应用级主题尚未实现**）
 
 ## 🚀 快速开始
 
+### 构建与验证状态
+
+Tauri 本身跨平台，但**本项目只在下表记录的环境上实际验证过**。未列为「已验证」的
+平台不代表不能用，而是**我们没有验证过，不作任何保证**。
+
+| 平台 | 产出安装包 | 状态 | 依据 |
+|---|---|---|---|
+| macOS (Apple Silicon / aarch64) | `DataOmni.app`、`DataOmni_0.1.0_aarch64.dmg` | ✅ 已验证 | 2026-09-20 于 macOS 27.0 / arm64 执行 `bun tauri build`，退出码 0 |
+| macOS (Intel / x86_64) | — | ⚠️ 未验证 | 无 x86_64 机器，也未做交叉编译 |
+| Linux (Ubuntu) | — | ⚠️ 仅编译检查 | CI 在 ubuntu-latest 上跑 `bun run build`、`cargo clippy`、`cargo test` 与三库冒烟测试，但**不执行 `tauri build`，从未产出过安装包** |
+| Windows | — | ❌ 未验证 | 既无 CI job，也无本地构建记录 |
+
+应用未签名 / 未公证，macOS 首次打开需在「系统设置 → 隐私与安全性」中放行。
+
 ### 系统要求
 
-- **操作系统**: Windows 10+, macOS 10.15+, Linux (Ubuntu 18.04+)
+- **操作系统**: 见上表；目前仅 macOS (aarch64) 经过验证
 - **内存**: 最低 4GB RAM，推荐 8GB+
 - **存储**: 至少 500MB 可用空间
 
 ### 安装方式
 
-#### 方式一：下载预编译版本
+> 目前尚未发布任何 [Releases](https://github.com/yuxuetr/DataOmni/releases)，
+> 没有预编译安装包可下载，只能从源码构建。
 
-1. 访问 [Releases](https://github.com/yuxuetr/DataOmni/releases) 页面
-2. 下载对应平台的安装包
-3. 运行安装程序
-
-#### 方式二：从源码构建
+#### 从源码构建
 
 ```bash
 # 克隆项目
@@ -127,8 +147,8 @@ bun tauri build
 
 1. 在表格视图中直接编辑数据
 2. 支持新增、修改、删除操作
-3. 实时保存更改
-4. 导出数据到CSV、JSON等格式
+3. 每次提交即时写入数据库（变更集与差异预览尚未实现）
+4. 数据导出（CSV / JSON）尚未实现
 
 ## 🛠️ 技术栈
 
@@ -203,13 +223,14 @@ bun install
 
 ## 📝 更新日志
 
-### v0.1.0 (2025-06-20)
+### v0.1.0（开发中，尚未发布）
 
-- ✨ 初始版本发布
-- 🎨 现代化UI界面设计
-- 🔗 支持MySQL、PostgreSQL、SQLite
-- 📊 基础数据查询和展示功能
-- 🛡️ 连接管理和安全功能
+- 🔗 MySQL、PostgreSQL、SQLite 的连接、查询与分页
+- 🛡️ 凭据存入系统钥匙串，TLS 模式可配置，日志脱敏
+- ⚡ 查询超时、取消、结果截断与流式回传
+- 📊 表数据浏览与行级增删改
+
+当前开发进度与阶段划分见 [TODOs.md](TODOs.md)。
 
 ## 📄 许可证
 
