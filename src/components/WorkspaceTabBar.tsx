@@ -1,6 +1,8 @@
 import { FileText, History, Pin, Plus, Table, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { orderWorkspaceTabs, type WorkspaceTab, type WorkspaceTabKind } from '../contracts/workspace';
+import type { ConnectionEnvironment } from '../contracts';
+import { EnvironmentBadgeTag } from './EnvironmentBadge';
 
 interface WorkspaceTabBarProps {
   tabs: WorkspaceTab[];
@@ -9,6 +11,11 @@ interface WorkspaceTabBarProps {
   activeProfileId: string | null;
   /** 有未保存草稿的标签 id，脏点据此显示 */
   unsavedTabIds: ReadonlySet<string>;
+  /**
+   * 连接 id 到环境的映射。标签自己不存环境——配置改过之后标签上的会过期，
+   * 而「这个标签连的是不是生产库」必须是当下的事实。
+   */
+  environmentByProfileId: Readonly<Record<string, ConnectionEnvironment>>;
   onActivate: (tabId: string) => void;
   onClose: (tabId: string) => void;
   onContextMenu: (tabId: string, position: { x: number; y: number }) => void;
@@ -30,6 +37,7 @@ export function WorkspaceTabBar({
   activeTabId,
   activeProfileId,
   unsavedTabIds,
+  environmentByProfileId,
   onActivate,
   onClose,
   onContextMenu,
@@ -76,6 +84,12 @@ export function WorkspaceTabBar({
               ? <Pin size={12} className="shrink-0 text-accent" />
               : <Icon size={14} className="shrink-0" />}
             <span className="max-w-[160px] truncate">{tab.title}</span>
+            {environmentByProfileId[tab.binding.profileId] && (
+              <EnvironmentBadgeTag
+                environment={environmentByProfileId[tab.binding.profileId]}
+                compact
+              />
+            )}
             {(tab.dirty || unsavedTabIds.has(tab.id)) && (
               <span
                 className="w-1.5 h-1.5 rounded-full bg-warning shrink-0"

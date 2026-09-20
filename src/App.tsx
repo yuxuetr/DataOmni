@@ -24,6 +24,7 @@ import { PanelResizeHandle } from './components/PanelResizeHandle';
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette';
 import { useProfileConnector } from './hooks/useProfileConnector';
 import { useThemeStore } from './stores/themeStore';
+import { environmentBadge } from './contracts/environment';
 
 function App() {
   const { activeConnection, selectedTable, openConnectionForm } = useAppStore();
@@ -69,6 +70,12 @@ function App() {
     axis: 'x'
   });
   const activeProfileId = activeConnection?.config.id ?? null;
+  const environmentByProfileId = useMemo(
+    () => Object.fromEntries(
+      connections.map((connection) => [connection.id, connection.environment])
+    ),
+    [connections]
+  );
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
   const pendingCloseTab = pendingCloseTabId
     ? tabs.find((tab) => tab.id === pendingCloseTabId) ?? null
@@ -307,9 +314,14 @@ function App() {
         title: connection.name,
         keywords: `${connection.db_type} ${connection.host} ${connection.database ?? ''}`,
         group: isActive ? '当前连接' : '连接',
-        detail: connection.db_type === 'sqlite'
-          ? connection.database ?? ''
-          : `${connection.host}:${connection.port}`,
+        // 环境写成文字拼进说明里：命令面板是切库的快路径，切到生产库这件事
+        // 必须在按下 Enter 之前就看得见
+        detail: [
+          environmentBadge(connection.environment)?.label,
+          connection.db_type === 'sqlite'
+            ? connection.database ?? ''
+            : `${connection.host}:${connection.port}`
+        ].filter(Boolean).join(' · '),
         run: () => {
           if (!isActive) {
             void connect(connection);
@@ -468,6 +480,7 @@ function App() {
             activeProfileId={activeProfileId}
             onActivate={activateTab}
             unsavedTabIds={unsavedTabIds}
+            environmentByProfileId={environmentByProfileId}
             onClose={closeWorkspaceTab}
             onContextMenu={(tabId, position) => setTabMenu({ tabId, position })}
             onNewSqlTab={activeConnection ? openSqlTab : undefined}

@@ -4,6 +4,7 @@ import { ConnectionConfig, useConnectionStore } from '../stores/connectionStore'
 import DatabaseExplorer from './DatabaseExplorer';
 import { ConnectionForm } from './ConnectionForm';
 import { ThemeToggle } from './ThemeToggle';
+import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useAppStore } from '../stores/appStore';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { useProfileConnector } from '../hooks/useProfileConnector';
@@ -107,6 +108,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <span className="truncate font-medium text-fg">
                 {currentConnection ? currentConnection.name : '选择数据库连接'}
               </span>
+              {currentConnection && (
+                <EnvironmentBadgeTag environment={currentConnection.environment} compact />
+              )}
             </div>
             <ChevronDown size={14} className="shrink-0 text-fg-muted" />
           </button>
@@ -126,6 +130,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <div className="flex items-center space-x-2">
                       <Database size={14} className="text-fg-muted" />
                       <span className="text-sm text-fg">{conn.name}</span>
+                      <EnvironmentBadgeTag environment={conn.environment} compact />
                       {connectingProfileId === conn.id && (
                         <span className="text-xs text-accent">连接中…</span>
                       )}

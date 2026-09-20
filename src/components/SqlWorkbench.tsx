@@ -13,6 +13,7 @@ import { selectActiveSqlDocument, useQueryStore } from '../stores/queryStore';
 import { useAppStore } from '../stores/appStore';
 import { SqlEditor } from './SqlEditor';
 import { ConnectionInfoDialog } from './ConnectionInfoDialog';
+import { EnvironmentBadgeTag } from './EnvironmentBadge';
 
 interface SqlWorkbenchProps {
   connection: ConnectionConfig;
@@ -145,6 +146,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
         <div className="flex min-w-0 items-center gap-2 text-sm">
           <Database className="shrink-0 text-fg-subtle" size={16} />
           <span className="font-medium text-fg">{connection.name}</span>
+          <EnvironmentBadgeTag environment={connection.environment} />
           <span className="truncate text-fg-muted">
             {connection.db_type} · {connection.host}:{connection.port}
             {connection.database

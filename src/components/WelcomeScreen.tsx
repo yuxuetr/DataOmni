@@ -5,6 +5,7 @@ import { DatabaseType } from '../contracts';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useProfileConnector } from '../hooks/useProfileConnector';
 import { orderProfilesByRecency } from '../utils/connectionRecency';
+import { EnvironmentBadgeTag } from './EnvironmentBadge';
 
 interface WelcomeScreenProps {
   onConnect: () => void;
@@ -87,7 +88,10 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
                       ? <Loader2 size={15} className="shrink-0 animate-spin text-accent" />
                       : <Database size={15} className="shrink-0 text-fg-subtle" />}
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm text-fg">{profile.name}</span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="truncate text-sm text-fg">{profile.name}</span>
+                        <EnvironmentBadgeTag environment={profile.environment} compact />
+                      </span>
                       <span className="block truncate font-mono text-xs text-fg-subtle">
                         {describeTarget(profile)}
                       </span>
