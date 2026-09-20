@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -11,7 +11,9 @@ import {
 import { clsx } from 'clsx';
 import type { QueryResult } from '../contracts/query';
 import { useQueryStore } from '../stores/queryStore';
-import { formatResultValue, resultValueTypeLabel } from '../utils/resultValues';
+import { formatResultValue, formatResultValueOneLine } from '../utils/resultValues';
+import { useResizableColumns } from '../hooks/useResizableColumns';
+import { ColumnResizeHandle } from './ColumnResizeHandle';
 
 interface QueryResultScrollTableProps {
   result: QueryResult;
@@ -41,9 +43,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   const [showAddForm, setShowAddForm] = useState(false);
   const [newRowData, setNewRowData] = useState<Record<string, string>>({});
   
-  // 滚动容器引用
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
   
   // 计算分页数据
   const totalRows = result.rows.length;
@@ -55,28 +55,11 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   // 判断是否可以编辑
   const canEdit = Boolean(result.table_name && result.primary_key);
   
-  // 计算表格宽度
-  const COLUMN_WIDTH = 180; // 每列宽度
-  const ACTION_COLUMN_WIDTH = 100; // 操作列宽度
-  const tableWidth = result.columns.length * COLUMN_WIDTH + (canEdit ? ACTION_COLUMN_WIDTH : 0);
-  
-  // 检测是否需要水平滚动
-  useEffect(() => {
-    const checkOverflow = () => {
-      const container = scrollContainerRef.current;
-      if (!container) return;
-      
-      const hasOverflow = container.scrollWidth > container.clientWidth;
-      setHasHorizontalOverflow(hasOverflow);
-    };
-    
-    checkOverflow();
-    
-    // 监听窗口大小变化
-    window.addEventListener('resize', checkOverflow);
-    
-    return () => window.removeEventListener('resize', checkOverflow);
-  }, [result.columns.length, tableWidth]);
+  const ACTION_COLUMN_WIDTH = 72;
+  // 列宽按当前页的内容估算，可拖动覆盖
+  const { widths, alignments, totalWidth, startResize, autoFitColumn, resizingIndex } =
+    useResizableColumns(result.columns, currentRows);
+  const tableWidth = totalWidth + (canEdit ? ACTION_COLUMN_WIDTH : 0);
   
   // 判断是否为时间字段
   const isTimeField = (columnName: string): boolean => {
@@ -219,41 +202,36 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
         )}
       </div>
       
-      {/* 滚动提示 */}
-      {hasHorizontalOverflow && (
-        <div className="px-4 py-2 bg-accent-soft text-xs text-accent">
-          <span>💡 表格包含 {result.columns.length} 列，可以水平滚动查看所有内容</span>
-        </div>
-      )}
-      
       {/* 表格滚动容器 */}
       <div className="relative">
         <div 
           ref={scrollContainerRef}
-          className={clsx(
-            "overflow-y-auto query-result-scroll",
-            hasHorizontalOverflow ? "overflow-x-auto" : "overflow-x-hidden"
-          )}
+          className="overflow-auto query-result-scroll"
           style={{
             maxHeight: '600px',
             width: '100%'
           }}
         >
         <div style={{ width: `${tableWidth}px`, minWidth: '100%' }}>
-          <table className="w-full border-collapse">
+          <table className="w-full table-fixed border-collapse">
+            <colgroup>
+              {widths.map((width, index) => (
+                <col key={index} style={{ width: `${width}px` }} />
+              ))}
+              {canEdit && <col style={{ width: `${ACTION_COLUMN_WIDTH}px` }} />}
+            </colgroup>
             <thead>
-              <tr className="bg-surface-sunken border-b">
+              <tr className="bg-surface-sunken border-b border-line">
                 {result.columns.map((column, index) => (
                   <th
                     key={index}
-                    className="px-3 py-2 text-left text-xs font-medium text-fg uppercase tracking-wider border-r border-line"
-                    style={{ width: `${COLUMN_WIDTH}px` }}
+                    className="relative border-r border-line px-2 py-1 text-left text-xs font-medium text-fg"
                   >
-                    <div className="flex items-center space-x-1">
-                      <div className="flex flex-col">
-                        <span>{column}</span>
+                    <div className="flex items-center gap-1">
+                      <div className="flex min-w-0 flex-col">
+                        <span className="truncate" title={column}>{column}</span>
                         {result.column_metadata?.[index] && (
-                          <span className="text-[10px] font-normal normal-case text-fg-subtle">
+                          <span className="truncate text-[10px] font-normal text-fg-subtle">
                             {result.column_metadata[index].database_type}
                             {' · '}
                             {result.column_metadata[index].nullable === null
@@ -265,18 +243,18 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                         )}
                       </div>
                       {result.primary_key === column && (
-                        <span className="text-warning" title="主键">🔑</span>
+                        <span className="shrink-0 text-warning" title="主键">🔑</span>
                       )}
                     </div>
+                    <ColumnResizeHandle
+                      active={resizingIndex === index}
+                      onPointerDown={(event) => startResize(index, event)}
+                      onDoubleClick={() => autoFitColumn(index)}
+                    />
                   </th>
                 ))}
                 {canEdit && (
-                  <th 
-                    className="px-3 py-2 text-left text-xs font-medium text-fg uppercase tracking-wider"
-                    style={{ width: `${ACTION_COLUMN_WIDTH}px` }}
-                  >
-                    操作
-                  </th>
+                  <th className="px-2 py-1 text-left text-xs font-medium text-fg">操作</th>
                 )}
               </tr>
             </thead>
@@ -288,8 +266,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                   {result.columns.map((column, columnIndex) => (
                     <td 
                       key={columnIndex} 
-                      className="px-3 py-2 border-r border-line"
-                      style={{ width: `${COLUMN_WIDTH}px` }}
+                      className="border-r border-line px-2 py-1"
                     >
                       {column === result.primary_key ? (
                         <span className="text-fg-subtle italic text-xs">自动生成</span>
@@ -321,8 +298,8 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                     </td>
                   ))}
                   {canEdit && (
-                    <td className="px-3 py-2" style={{ width: `${ACTION_COLUMN_WIDTH}px` }}>
-                      <div className="flex items-center space-x-1">
+                    <td className="px-2 py-1">
+                      <div className="flex items-center gap-1">
                         <button
                           onClick={saveNewRow}
                           className="p-1 text-success hover:bg-success-soft rounded-control"
@@ -346,16 +323,15 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                 <tr key={startIndex + rowIndex} className="hover:bg-surface-hover">
                   {row.map((cell, cellIndex) => {
                     const isEditing = editingCell?.rowIndex === rowIndex && editingCell?.columnIndex === cellIndex;
-                    const formattedValue = formatResultValue(cell);
-                    const valueType = resultValueTypeLabel(cell);
+                    const displayValue = formatResultValueOneLine(cell);
                     return (
                       <td
                         key={cellIndex}
                         className={clsx(
-                          "px-3 py-2 text-sm border-r border-line",
-                          canEdit && !isEditing ? "cursor-pointer hover:bg-accent-soft" : ""
+                          'border-r border-line px-2 py-1 font-mono text-[13px]',
+                          alignments[cellIndex] === 'right' && 'text-right',
+                          canEdit && !isEditing && 'cursor-pointer hover:bg-accent-soft'
                         )}
-                        style={{ width: `${COLUMN_WIDTH}px` }}
                         onClick={() => canEdit && !isEditing && startEditing(rowIndex, cellIndex, cell)}
                       >
                         {isEditing ? (
@@ -365,26 +341,23 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                             onChange={(e) => setEditValue(e.target.value)}
                             onKeyDown={handleKeyDown}
                             onBlur={cancelEditing}
-                            className="w-full px-2 py-1 text-sm border border-accent-line rounded-control"
+                            className="w-full rounded-control border border-accent-line px-1 py-0.5 text-sm"
                             autoFocus
                           />
+                        ) : cell === null ? (
+                          <span className="italic text-fg-subtle">NULL</span>
                         ) : (
-                          <div className="flex items-center gap-1 truncate" title={formattedValue}>
-                            {cell === null
-                              ? <span className="text-fg-subtle italic">NULL</span>
-                              : <span className="truncate whitespace-pre">{formattedValue}</span>}
-                            {valueType && (
-                              <span className="shrink-0 text-[10px] text-fg-subtle">
-                                {valueType}
-                              </span>
-                            )}
-                          </div>
+                          // 每格再挂一个类型标签是重复——表头已经写了 BIGINT · NOT NULL，
+                          // 而且标签会占掉列宽，让本来放得下的值反而被截断
+                          <span className="block truncate" title={formatResultValue(cell)}>
+                            {displayValue}
+                          </span>
                         )}
                       </td>
                     );
                   })}
                   {canEdit && (
-                    <td className="px-3 py-2" style={{ width: `${ACTION_COLUMN_WIDTH}px` }}>
+                    <td className="px-2 py-1">
                       <button
                         onClick={() => deleteRow(rowIndex)}
                         className="p-1 text-danger hover:bg-danger-soft rounded-control"
@@ -400,12 +373,6 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
         </div>
       </div>
       
-      {/* 底部滚动提示 */}
-      {hasHorizontalOverflow && (
-        <div className="h-6 bg-gradient-to-t from-surface-sunken to-transparent flex items-center justify-center text-xs text-fg-muted">
-          <span className="animate-pulse">⟵ 水平滚动查看更多内容 ⟶</span>
-        </div>
-      )}
     </div>
       
 

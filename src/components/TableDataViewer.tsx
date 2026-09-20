@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { runReadQuery, useQueryStore } from '../stores/queryStore';
-import { formatResultValue, isTaggedResultValue, unwrapResultValue } from '../utils/resultValues';
+import {
+  formatResultValue,
+  formatResultValueOneLine,
+  isTaggedResultValue,
+  unwrapResultValue
+} from '../utils/resultValues';
 import type { SerializedResultValue } from '../contracts/resultSet';
 import {
   X,
@@ -36,6 +41,9 @@ import {
   createTablePaginationOrder,
   type TablePaginationOrder
 } from '../utils/tablePagination';
+import { toPositionalRows } from '../utils/columnWidths';
+import { useResizableColumns } from '../hooks/useResizableColumns';
+import { ColumnResizeHandle } from './ColumnResizeHandle';
 
 // 编辑模式类型
 type EditMode = 'view' | 'edit' | 'add';
@@ -347,6 +355,27 @@ export default function TableDataViewer({
 
   // 计算总页数
   const totalPages = Math.ceil(totalRows / pageSize);
+
+  // 列宽按当前页内容估算，可拖动覆盖。表结构还没加载出来时列表为空，
+  // 估算返回空数组，那时表格本来也还没渲染。
+  const ACTION_COLUMN_WIDTH = 72;
+  const columnNames = React.useMemo(
+    () => tableSchema?.columns.map((column) => column.name) ?? [],
+    [tableSchema]
+  );
+  const positionalRows = React.useMemo(
+    () => toPositionalRows(columnNames, tableData),
+    [columnNames, tableData]
+  );
+  const {
+    widths: columnWidths,
+    alignments,
+    totalWidth,
+    startResize,
+    autoFitColumn,
+    resizingIndex
+  } = useResizableColumns(columnNames, positionalRows);
+  const gridWidth = totalWidth + ACTION_COLUMN_WIDTH;
 
   // 处理标签页切换
   const handleTabChange = (tabId: TabType) => {
@@ -725,18 +754,20 @@ export default function TableDataViewer({
   };
 
   // 可编辑单元格组件
-  const EditableCell = ({ 
-    value, 
-    field, 
-    isEditing, 
+  const EditableCell = ({
+    value,
+    field,
+    isEditing,
     isPrimaryKey = false,
-    dataType = 'text'
+    dataType = 'text',
+    align = 'left'
   }: {
     value: any;
     field: string;
     isEditing: boolean;
     isPrimaryKey?: boolean;
     dataType?: string;
+    align?: 'left' | 'right';
   }) => {
     // 获取当前编辑的值
     const currentValue = isEditing && editState.editedData ? editState.editedData[field] : value;
@@ -750,17 +781,26 @@ export default function TableDataViewer({
       // 非编辑状态或主键列，显示只读
       // 自建执行器把 BigInt / Decimal / 二进制等包成 tagged value 以保住精度，
       // 显示时统一交给 formatResultValue 还原成人能读的形式
-      const displayValue = currentValue === null || currentValue === undefined
-        ? null
-        : formatResultValue(currentValue as SerializedResultValue);
+      const isNull = currentValue === null || currentValue === undefined;
 
       return (
-        <td className="px-4 py-3 text-sm text-fg border-r border-line min-w-[180px]">
-          <div className="truncate" title={displayValue ?? 'NULL'}>
-            {displayValue === null
-              ? <span className="text-fg-subtle italic">NULL</span>
-              : displayValue}
-          </div>
+        <td
+          className={clsx(
+            'border-r border-line px-2 py-1 font-mono text-[13px] text-fg',
+            align === 'right' && 'text-right'
+          )}
+        >
+          {isNull
+            ? <span className="italic text-fg-subtle">NULL</span>
+            : (
+              // 单行形态：JSON 展开成多行会把这一行撑高，整张表行高参差不齐
+              <span
+                className="block truncate"
+                title={formatResultValue(currentValue as SerializedResultValue)}
+              >
+                {formatResultValueOneLine(currentValue as SerializedResultValue)}
+              </span>
+            )}
         </td>
       );
     }
@@ -794,7 +834,7 @@ export default function TableDataViewer({
     const inputValue = currentValue === null ? '' : String(currentValue);
 
     return (
-      <td className="px-4 py-3 border-r border-line min-w-[180px]">
+      <td className="border-r border-line px-2 py-1">
         {isDateTimeField ? (
           <DateTimePicker
             field={field}
@@ -1294,37 +1334,43 @@ export default function TableDataViewer({
                 </div>
               ) : tableData.length > 0 ? (
                 <div className="h-full flex flex-col">
-                  {/* 滚动提示 */}
-                  <div className="px-4 py-2 bg-accent-soft text-xs text-accent border-b">
-                    <span>💡 表格包含 {tableSchema?.columns.length || 0} 列，可以水平滚动查看所有内容</span>
-                  </div>
-                  
-                  {/* 表格滚动容器 */}
+                  {/* 列宽跟着内容走之后横向滚动是常态，不再用提示条解释它 */}
                   <div className="flex-1 overflow-auto">
-                    <div className="min-w-full">
-                      <table className="w-full border-collapse">
-                        <thead className="bg-surface-sunken sticky top-0">
+                    <div style={{ width: `${gridWidth}px`, minWidth: '100%' }}>
+                      <table className="w-full table-fixed border-collapse">
+                        <colgroup>
+                          {columnWidths.map((width, index) => (
+                            <col key={index} style={{ width: `${width}px` }} />
+                          ))}
+                          <col style={{ width: `${ACTION_COLUMN_WIDTH}px` }} />
+                        </colgroup>
+                        <thead className="bg-surface-sunken sticky top-0 z-20">
                           <tr>
                             {tableSchema?.columns.map((column, index) => (
-                              <th key={index} className="px-4 py-3 text-left text-xs font-medium text-fg uppercase tracking-wider border-r border-line min-w-[180px]">
-                                <div className="flex items-center space-x-1">
-                                  <span>{column.name}</span>
+                              <th
+                                key={index}
+                                className="relative border-r border-line px-2 py-1 text-left text-xs font-medium text-fg"
+                              >
+                                <div className="flex items-center gap-1">
+                                  <span className="truncate" title={column.name}>{column.name}</span>
                                   {column.is_primary_key && (
-                                    <span className="text-warning" title="主键">🔑</span>
+                                    <span className="shrink-0 text-warning" title="主键">🔑</span>
                                   )}
                                   {!column.is_nullable && (
-                                    <span className="text-danger" title="非空">*</span>
+                                    <span className="shrink-0 text-danger" title="非空">*</span>
                                   )}
                                 </div>
-                                <div className="text-xs text-fg-muted font-normal mt-1">
+                                <div className="truncate text-[10px] font-normal text-fg-subtle">
                                   {column.data_type}
                                 </div>
+                                <ColumnResizeHandle
+                                  active={resizingIndex === index}
+                                  onPointerDown={(event) => startResize(index, event)}
+                                  onDoubleClick={() => autoFitColumn(index)}
+                                />
                               </th>
                             ))}
-                            {/* 操作列 */}
-                            <th className="px-4 py-3 text-left text-xs font-medium text-fg uppercase tracking-wider min-w-[100px]">
-                              操作
-                            </th>
+                            <th className="px-2 py-1 text-left text-xs font-medium text-fg">操作</th>
                           </tr>
                         </thead>
                         
@@ -1339,10 +1385,11 @@ export default function TableDataViewer({
                                   isEditing={editState.mode === 'edit' && editState.rowIndex === rowIndex}
                                   isPrimaryKey={column.is_primary_key}
                                   dataType={column.data_type}
+                                  align={alignments[colIndex]}
                                 />
                               ))}
                               {/* 操作列 */}
-                              <td className="px-4 py-3 text-sm border-l border-line">
+                              <td className="border-l border-line px-2 py-1 text-sm">
                                 {editState.mode === 'view' ? (
                                   <div className="flex items-center space-x-1">
                                     <button
