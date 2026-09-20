@@ -6,6 +6,7 @@ import { useConnectionStore } from '../stores/connectionStore';
 import { useProfileConnector } from '../hooks/useProfileConnector';
 import { orderProfilesByRecency } from '../utils/connectionRecency';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
+import { useLanguageStore } from '../stores/languageStore';
 
 interface WelcomeScreenProps {
   onConnect: () => void;
@@ -34,6 +35,7 @@ function describeTarget(profile: {
  * 连接一个也点不到。现在它做一件事：让人尽快进到某个库里。
  */
 export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
+  const t = useLanguageStore((state) => state.t);
   const connections = useConnectionStore((state) => state.connections);
   const loadConnections = useConnectionStore((state) => state.loadConnections);
   const { connect, openSqliteFile, connectingProfileId, error, clearError } = useProfileConnector();
@@ -51,7 +53,7 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
     <div className="flex-1 overflow-auto">
       <div className="mx-auto w-full max-w-lg px-6 pb-10 pt-16">
         <h1 className="text-lg font-semibold text-fg">DataOmni</h1>
-        <p className="mt-1 text-xs text-fg-subtle">选择一个连接，或新建一个。</p>
+        <p className="mt-1 text-xs text-fg-subtle">{t('welcome.hint')}</p>
 
         {error && (
           <div className="mt-4 flex items-start gap-2 rounded-control border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
@@ -60,7 +62,7 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
             <button
               type="button"
               onClick={clearError}
-              aria-label="关闭错误提示"
+              aria-label={t('connection.dismissError')}
               className="shrink-0 hover:opacity-70"
             >
               <X size={14} />
@@ -113,7 +115,7 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
             className="flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:bg-accent-hover"
           >
             <Plus size={14} />
-            <span>新建连接</span>
+            <span>{t('welcome.newConnection')}</span>
           </button>
           <button
             type="button"
@@ -121,7 +123,7 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
             className="flex items-center gap-1.5 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg-muted hover:bg-surface-hover"
           >
             <FileUp size={14} />
-            <span>打开 SQLite 文件…</span>
+            <span>{t('welcome.openSqliteEllipsis')}</span>
           </button>
         </div>
       </div>

@@ -5,6 +5,7 @@ import type { ConnectionEnvironment } from '../contracts';
 import { environmentBadge } from '../contracts/environment';
 import { describeStatementRisk, type StatementRisk } from '../utils/statementRisk';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
+import { useLanguageStore } from '../stores/languageStore';
 
 interface DestructiveStatementPromptProps {
   sql: string;
@@ -35,6 +36,8 @@ export function DestructiveStatementPrompt({
   onConfirm,
   onCancel
 }: DestructiveStatementPromptProps) {
+  const t = useLanguageStore((state) => state.t);
+  const badge = environmentBadge(environment);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const isProduction = environment === 'production';
 
@@ -92,10 +95,8 @@ export function DestructiveStatementPrompt({
               {sql}
             </pre>
 
-            {environmentBadge(environment) && (
-              <p className="mt-2 text-xs text-fg-subtle">
-                {environmentBadge(environment)?.description}
-              </p>
+            {badge && (
+              <p className="mt-2 text-xs text-fg-subtle">{t(badge.descriptionKey)}</p>
             )}
           </div>
         </div>

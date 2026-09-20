@@ -3,6 +3,8 @@ import { clsx } from 'clsx';
 import { orderWorkspaceTabs, type WorkspaceTab, type WorkspaceTabKind } from '../contracts/workspace';
 import type { ConnectionEnvironment } from '../contracts';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
+import { useLanguageStore } from '../stores/languageStore';
+import { tabTitle } from '../utils/tabTitle';
 
 interface WorkspaceTabBarProps {
   tabs: WorkspaceTab[];
@@ -45,6 +47,8 @@ export function WorkspaceTabBar({
   onReopenClosedTab,
   closedTabCount = 0
 }: WorkspaceTabBarProps) {
+  const t = useLanguageStore((state) => state.t);
+
   return (
     <div className="flex items-stretch bg-surface-sunken border-b border-line overflow-x-auto">
       {orderWorkspaceTabs(tabs).map((tab) => {
@@ -67,10 +71,10 @@ export function WorkspaceTabBar({
             }}
             title={
               tab.availability === 'profile-deleted'
-                ? `${tab.title}（连接已删除，仅可查看草稿）`
+                ? t('tab.connectionDeleted', { title: tabTitle(tab, t) })
                 : isDetached
-                  ? `${tab.title}（绑定的连接未激活）`
-                  : tab.title
+                  ? t('tab.connectionInactive', { title: tabTitle(tab, t) })
+                  : tabTitle(tab, t)
             }
             className={clsx(
               'group flex items-center gap-2 px-3 py-2 text-sm border-r border-line cursor-pointer select-none whitespace-nowrap',
@@ -83,7 +87,7 @@ export function WorkspaceTabBar({
             {tab.pinned
               ? <Pin size={12} className="shrink-0 text-accent" />
               : <Icon size={14} className="shrink-0" />}
-            <span className="max-w-[160px] truncate">{tab.title}</span>
+            <span className="max-w-[160px] truncate">{tabTitle(tab, t)}</span>
             {environmentByProfileId[tab.binding.profileId] && (
               <EnvironmentBadgeTag
                 environment={environmentByProfileId[tab.binding.profileId]}
@@ -98,7 +102,7 @@ export function WorkspaceTabBar({
             )}
             <button
               type="button"
-              aria-label={`关闭 ${tab.title}`}
+              aria-label={t('tab.close', { title: tabTitle(tab, t) })}
               onClick={(event) => {
                 event.stopPropagation();
                 onClose(tab.id);

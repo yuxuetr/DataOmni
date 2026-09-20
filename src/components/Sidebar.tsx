@@ -4,11 +4,13 @@ import { ConnectionConfig, useConnectionStore } from '../stores/connectionStore'
 import DatabaseExplorer from './DatabaseExplorer';
 import { ConnectionForm } from './ConnectionForm';
 import { ThemeToggle } from './ThemeToggle';
+import { LanguageToggle } from './LanguageToggle';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useAppStore } from '../stores/appStore';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { useProfileConnector } from '../hooks/useProfileConnector';
 import { describeError } from '../utils/describeError';
+import { useLanguageStore } from '../stores/languageStore';
 
 interface SidebarProps {
   activeConnectionId?: string | null;
@@ -21,6 +23,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onConnectionDeleted,
   onTableSelect
 }) => {
+  const t = useLanguageStore((state) => state.t);
   const { connections, loadConnections, deleteConnection } = useConnectionStore();
   const { connectionForm, openConnectionForm, closeConnectionForm } = useAppStore();
   const [showConnectionMenu, setShowConnectionMenu] = useState(false);
@@ -38,7 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     loadConnections().catch(err => {
       console.error('加载连接列表失败:', err);
-      setConnectionError(describeError(err, '加载连接列表失败'));
+      setConnectionError(describeError(err, t('connection.loadListFailed')));
     });
   }, []);
 
@@ -77,8 +80,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // 处理删除连接
   const handleDeleteConnection = async (connection: ConnectionConfig) => {
     const userConfirmed = await confirm(
-      `确定要删除连接 "${connection.name}" 吗？`,
-      { title: '确认删除', kind: 'warning' }
+      t('connection.deleteConfirm', { name: connection.name }),
+      { title: t('connection.deleteConfirmTitle'), kind: 'warning' }
     );
     
     if (userConfirmed) {
@@ -89,7 +92,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }
       } catch (error) {
         console.error('删除连接失败:', error);
-        setConnectionError(describeError(error, '删除连接失败'));
+        setConnectionError(describeError(error, t('connection.deleteFailed')));
       }
     }
     setShowConnectionMenu(false);
@@ -107,7 +110,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="flex min-w-0 items-center gap-2">
               <Database size={14} className="shrink-0 text-fg-muted" />
               <span className="truncate font-medium text-fg">
-                {currentConnection ? currentConnection.name : '选择数据库连接'}
+                {currentConnection ? currentConnection.name : t('connection.select')}
               </span>
               {currentConnection && (
                 <EnvironmentBadgeTag environment={currentConnection.environment} compact />
@@ -120,7 +123,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {showConnectionMenu && (
             <div className="absolute top-full left-0 right-0 mt-1 bg-surface rounded-panel shadow-lg border border-line z-50 max-h-64 overflow-y-auto">
               {connections.length === 0 ? (
-                <p className="px-3 py-2 text-xs text-fg-subtle">暂无连接</p>
+                <p className="px-3 py-2 text-xs text-fg-subtle">{t('connection.none')}</p>
               ) : (
                 connections.map(conn => (
                   <div
@@ -133,10 +136,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <span className="text-sm text-fg">{conn.name}</span>
                       <EnvironmentBadgeTag environment={conn.environment} compact />
                       {connectingProfileId === conn.id && (
-                        <span className="text-xs text-accent">连接中…</span>
+                        <span className="text-xs text-accent">{t('connection.connecting')}</span>
                       )}
                       {conn.id === activeConnectionId && (
-                        <span className="text-xs text-success font-medium">● 已连接</span>
+                        <span className="text-xs text-success font-medium">{t('connection.connected')}</span>
                       )}
                     </div>
                     <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -146,7 +149,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           handleEditConnection(conn);
                         }}
                         className="p-1 text-fg-muted hover:text-accent rounded-control"
-                        title="编辑连接"
+                        title={t('connection.edit')}
                       >
                         <Edit size={14} />
                       </button>
@@ -156,7 +159,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                           handleDeleteConnection(conn);
                         }}
                         className="p-1 text-fg-muted hover:text-danger rounded-control"
-                        title="删除连接"
+                        title={t('connection.delete')}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -179,7 +182,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       clearConnectError();
                     }}
                     className="shrink-0 text-danger hover:text-danger"
-                    title="关闭错误提示"
+                    title={t('connection.dismissError')}
                   >
                     <X size={14} />
                   </button>
@@ -195,7 +198,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   className="w-full flex items-center space-x-2 px-3 py-2.5 text-sm text-accent hover:bg-accent-soft transition-colors"
                 >
                   <Plus size={14} />
-                  <span>新建连接</span>
+                  <span>{t('connection.new')}</span>
                 </button>
               </div>
             </div>
@@ -214,14 +217,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ) : (
           // 右侧启动面板已经在说「选一个连接」，这里不再用 48px 图标加三行
           // 文案重复一遍
-          <p className="px-3 py-2 text-xs text-fg-subtle">尚未连接</p>
+          <p className="px-3 py-2 text-xs text-fg-subtle">{t('connection.notConnected')}</p>
         )}
       </div>
 
       {/* 底栏：应用级外观设置。放这里而不是编辑器工具栏——它管的是整个窗口。 */}
-      <div className="flex items-center justify-between border-t border-line px-3 py-2">
-        <span className="text-xs text-fg-subtle">外观</span>
-        <ThemeToggle />
+      <div className="space-y-1.5 border-t border-line px-3 py-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-fg-subtle">{t('app.appearance')}</span>
+          <ThemeToggle />
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-fg-subtle">{t('app.language')}</span>
+          <LanguageToggle />
+        </div>
       </div>
 
       {/* 连接表单弹窗 */}
@@ -234,7 +243,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             // 重新加载连接列表
             loadConnections().catch(err => {
               console.error('加载连接列表失败:', err);
-              setConnectionError(describeError(err, '加载连接列表失败'));
+              setConnectionError(describeError(err, t('connection.loadListFailed')));
             });
           }}
         />

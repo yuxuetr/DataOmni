@@ -11,6 +11,15 @@ interface WorkspaceTabBase {
   id: string;
   kind: WorkspaceTabKind;
   title: string;
+  /**
+   * 标题的文案键。有它时按当前语言翻译，`title` 只作为回落。
+   *
+   * 表名、视图名这类标题是数据库里的真实标识符，不该翻译，所以是可选的——
+   * 只有「新建查询」这种我们自己生成的标题才带键。切换语言时已经打开的
+   * 标签必须跟着变，否则界面一半中文一半英文。
+   */
+  titleKey?: string;
+  titleParams?: Record<string, string | number>;
   binding: WorkspaceTabBinding;
   availability: WorkspaceTabAvailability;
   /** 固定的标签排在标签栏前面，不随新开标签往右漂 */
@@ -71,6 +80,8 @@ interface WorkspaceTabOptions {
 
 interface CreateSqlWorkspaceTabOptions extends WorkspaceTabOptions {
   title?: string;
+  titleKey?: string;
+  titleParams?: Record<string, string | number>;
   sql?: string;
 }
 
@@ -78,13 +89,15 @@ interface CreateTableWorkspaceTabOptions extends WorkspaceTabOptions {
   kind?: TableWorkspaceTab['kind'];
   schema?: string | null;
   title?: string;
+  titleKey?: string;
+  titleParams?: Record<string, string | number>;
 }
 
 function createTabBase(
   kind: WorkspaceTabKind,
   profileId: string,
   title: string,
-  options: WorkspaceTabOptions
+  options: WorkspaceTabOptions & { titleKey?: string; titleParams?: Record<string, string | number> }
 ): WorkspaceTabBase {
   const now = options.now ?? new Date().toISOString();
 
@@ -92,6 +105,8 @@ function createTabBase(
     id: options.id ?? crypto.randomUUID(),
     kind,
     title,
+    titleKey: options.titleKey,
+    titleParams: options.titleParams,
     binding: {
       profileId,
       sessionId: options.sessionId ?? null
@@ -111,7 +126,11 @@ export function createSqlWorkspaceTab(
   const sql = options.sql ?? '';
 
   return {
-    ...createTabBase('sql', profileId, options.title ?? '新建查询', options),
+    // 没给标题时带上文案键，让「新建查询」也跟着语言走
+    ...createTabBase('sql', profileId, options.title ?? '新建查询', {
+      ...options,
+      titleKey: options.titleKey ?? (options.title ? undefined : 'tab.newQuery')
+    }),
     kind: 'sql',
     dirty: sql.length > 0,
     draft: { sql }

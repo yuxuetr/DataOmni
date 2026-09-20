@@ -3,7 +3,8 @@ import { Check, Copy, Loader2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useQueryStore } from '../stores/queryStore';
 import { describeError } from '../utils/describeError';
-import { KIND_LABELS, type DatabaseObject } from '../utils/databaseObjects';
+import { KIND_LABEL_KEYS, type DatabaseObject } from '../utils/databaseObjects';
+import { useLanguageStore } from '../stores/languageStore';
 import type { ConnectionProfile } from '../contracts';
 import type { ObjectCatalogQueries } from './DatabaseExplorer';
 
@@ -28,6 +29,7 @@ export function ObjectDefinitionDialog({
   onClose
 }: ObjectDefinitionDialogProps) {
   const { database } = useQueryStore();
+  const t = useLanguageStore((state) => state.t);
   const [definition, setDefinition] = useState<string | null>(null);
   const [properties, setProperties] = useState<Array<[string, string]> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +62,7 @@ export function ObjectDefinitionDialog({
 
         if (object.kind === 'sequence') {
           if (!queries.sequence_properties) {
-            throw new Error('当前数据库类型没有序列对象');
+            throw new Error(t('objectDefinition.noSequences'));
           }
           const rows = await database!.select(queries.sequence_properties, [object.id]);
           const row = Array.isArray(rows) ? rows[0] : undefined;
@@ -82,7 +84,7 @@ export function ObjectDefinitionDialog({
         }
       } catch (cause) {
         if (!cancelled) {
-          setError(describeError(cause, '读取对象定义失败'));
+          setError(describeError(cause, t('objectDefinition.readFailed')));
         }
       }
     };
@@ -91,7 +93,7 @@ export function ObjectDefinitionDialog({
     return () => {
       cancelled = true;
     };
-  }, [object, connection, database]);
+  }, [object, connection, database, t]);
 
   const copyText = definition
     ?? properties?.map(([key, value]) => `${key}: ${value}`).join('\n')
@@ -104,7 +106,7 @@ export function ObjectDefinitionDialog({
       window.setTimeout(() => setCopied(false), 1500);
     } catch (cause) {
       // 剪贴板可能被权限或非安全上下文拒绝；静默失败会让人以为复制成功了
-      setError(describeError(cause, '复制到剪贴板失败'));
+      setError(describeError(cause, t('common.copyFailed')));
     }
   };
 
@@ -127,7 +129,7 @@ export function ObjectDefinitionDialog({
             {object.schema ? `${object.schema}.` : ''}{object.name}
           </h2>
           <span className="shrink-0 rounded-control bg-accent-soft px-1.5 py-0.5 text-xs text-accent">
-            {KIND_LABELS[object.kind]}
+            {t(KIND_LABEL_KEYS[object.kind])}
           </span>
           {copyText && (
             <button
@@ -136,7 +138,7 @@ export function ObjectDefinitionDialog({
               className="ml-auto flex shrink-0 items-center gap-1 rounded-control border border-line-strong px-2 py-0.5 text-xs text-fg hover:bg-surface-hover"
             >
               {copied ? <Check size={12} className="text-success" /> : <Copy size={12} />}
-              {copied ? '已复制' : '复制'}
+              {copied ? t('common.copied') : t('common.copy')}
             </button>
           )}
         </div>
@@ -145,7 +147,7 @@ export function ObjectDefinitionDialog({
           {loading && (
             <p className="flex items-center gap-2 text-xs text-fg-subtle">
               <Loader2 size={14} className="animate-spin" />
-              正在读取定义…
+              {t('objectDefinition.loading')}
             </p>
           )}
 
@@ -169,7 +171,7 @@ export function ObjectDefinitionDialog({
                   {definition}
                 </pre>
               )
-              : <p className="text-xs text-fg-subtle">数据库没有返回定义。</p>
+              : <p className="text-xs text-fg-subtle">{t('objectDefinition.empty')}</p>
           )}
         </div>
 
@@ -180,7 +182,7 @@ export function ObjectDefinitionDialog({
             onClick={onClose}
             className="rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover"
           >
-            关闭
+            {t('objectDefinition.close')}
           </button>
         </div>
       </div>

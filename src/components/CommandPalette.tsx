@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { Search } from 'lucide-react';
 import { rankFuzzy } from '../utils/fuzzyMatch';
+import { useLanguageStore } from '../stores/languageStore';
 
 export interface PaletteCommand {
   id: string;
@@ -41,6 +42,7 @@ function HighlightedTitle({ title, indices }: { title: string; indices: number[]
 const MAX_VISIBLE = 50;
 
 export function CommandPalette({ commands, onDismiss }: CommandPaletteProps) {
+  const t = useLanguageStore((state) => state.t);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
@@ -93,7 +95,7 @@ export function CommandPalette({ commands, onDismiss }: CommandPaletteProps) {
       className="fixed inset-0 z-50 flex items-start justify-center bg-scrim pt-[12vh]"
       role="dialog"
       aria-modal="true"
-      aria-label="命令面板"
+      aria-label={t('palette.label')}
       onClick={onDismiss}
     >
       <div
@@ -107,8 +109,8 @@ export function CommandPalette({ commands, onDismiss }: CommandPaletteProps) {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="搜索表、连接或命令"
-            aria-label="搜索表、连接或命令"
+            placeholder={t('palette.search')}
+            aria-label={t('palette.search')}
             className="min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-fg-subtle"
             autoCapitalize="none"
             autoCorrect="off"
@@ -117,7 +119,7 @@ export function CommandPalette({ commands, onDismiss }: CommandPaletteProps) {
         </div>
 
         {results.length === 0 ? (
-          <p className="px-3 py-6 text-center text-sm text-fg-subtle">没有匹配的结果</p>
+          <p className="px-3 py-6 text-center text-sm text-fg-subtle">{t('palette.noResults')}</p>
         ) : (
           <ul ref={listRef} className="min-h-0 flex-1 overflow-y-auto py-1" role="listbox">
             {results.map((result, index) => (

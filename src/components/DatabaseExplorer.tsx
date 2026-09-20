@@ -14,8 +14,10 @@ import {
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { describeError } from '../utils/describeError';
+import { useLanguageStore } from '../stores/languageStore';
 import {
   buildObjectTree,
+  KIND_LABEL_KEYS,
   isBrowsableKind,
   normalizeObjectRows,
   showsSchemaLevel,
@@ -57,6 +59,9 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [inspecting, setInspecting] = useState<DatabaseObject | null>(null);
 
+  const t = useLanguageStore((state) => state.t);
+  const kindLabel = (kind: DatabaseObjectKind) => t(KIND_LABEL_KEYS[kind]);
+
   const connection = connections.find(c => c.id === connectionId);
 
   // 检查是否有缓存的元数据
@@ -80,7 +85,8 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
       console.log('📋 使用缓存的数据库元数据:', connectionId);
       const cachedTree = buildObjectTree(
         cachedMetadata.objects,
-        showsSchemaLevel(connection.db_type)
+        showsSchemaLevel(connection.db_type),
+        kindLabel
       );
       if (cachedTree.length > 0) {
         setExpandedNodes(new Set(defaultExpandedKeys(cachedTree)));
@@ -99,7 +105,7 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
       // 没有库名时 `table_schema = NULL` 恒不匹配，会安静地查出 0 行，
       // 让人以为库是空的。这里直接说清楚。
       if (queries.object_parameter_count > 0 && !connection.database) {
-        throw new Error('该连接没有指定数据库名，无法列出对象。请在连接配置中填写数据库。');
+        throw new Error(t('explorer.noDatabaseName'));
       }
       // MySQL 的 UNION 两边各要绑一次库名，个数由后端声明，不在这里猜
       const params = Array.from(
@@ -112,7 +118,7 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
 
       setDatabaseMetadata(connectionId, { objects, lastUpdated: Date.now() });
 
-      const tree = buildObjectTree(objects, showsSchemaLevel(connection.db_type));
+      const tree = buildObjectTree(objects, showsSchemaLevel(connection.db_type), kindLabel);
       setExpandedNodes(new Set(defaultExpandedKeys(tree)));
     } catch (err) {
       console.error('加载数据库元数据失败:', err);
@@ -158,13 +164,13 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
   if (!connection) {
     return (
       <div className="h-full flex items-center justify-center text-fg-muted">
-        连接不存在
+        {t('explorer.connectionMissing')}
       </div>
     );
   }
 
   const objects = cachedMetadata && !isMetadataStale ? cachedMetadata.objects : [];
-  const tree = buildObjectTree(objects, showsSchemaLevel(connection.db_type));
+  const tree = buildObjectTree(objects, showsSchemaLevel(connection.db_type), kindLabel);
 
   const toggleNode = (key: string) => {
     setExpandedNodes(current => {
@@ -196,19 +202,19 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
       <div className="flex items-center justify-between p-3 border-b bg-surface-sunken">
         <div className="flex items-center space-x-2">
           <Database className="text-accent" size={16} />
-          <h2 className="text-sm font-semibold text-fg">数据库浏览器</h2>
+          <h2 className="text-sm font-semibold text-fg">{t('explorer.title')}</h2>
           {connectionReady ? (
             <span className="text-xs text-success bg-success-soft px-2 py-0.5 rounded-control">
-              已连接
+              {t('explorer.connected')}
             </span>
           ) : (
             <span className="text-xs text-warning bg-warning-soft px-2 py-0.5 rounded-control">
-              连接中...
+              {t('explorer.connecting')}
             </span>
           )}
           {cachedMetadata && !isMetadataStale && (
             <span className="text-xs text-accent bg-accent-soft px-2 py-0.5 rounded-control">
-              已缓存
+              {t('explorer.cached')}
             </span>
           )}
         </div>
@@ -217,7 +223,7 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
           onClick={() => loadDatabaseMetadata(true)}
           disabled={loading}
           className="p-1 text-fg-muted hover:text-accent transition-colors"
-          title="刷新"
+          title={t('explorer.refresh')}
         >
           <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
         </button>
@@ -238,24 +244,24 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <Loader className="animate-spin text-fg-subtle" size={16} />
-            <span className="ml-2 text-fg-muted text-sm">加载中...</span>
+            <span className="ml-2 text-fg-muted text-sm">{t('explorer.loading')}</span>
           </div>
         ) : error ? (
           // 出错时不再同时显示「暂无数据库对象」：那会让人以为库是空的，
           // 而真实情况是我们根本没读到
           <div className="p-4 text-center text-fg-muted text-sm">
-            <p>未能读取数据库对象。</p>
+            <p>{t('explorer.loadFailed')}</p>
             <button
               onClick={() => loadDatabaseMetadata(true)}
               className="mt-2 text-accent hover:underline"
             >
-              重试
+              {t('explorer.retry')}
             </button>
           </div>
         ) : tree.length === 0 ? (
           <div className="p-4 text-center text-fg-muted text-sm">
             <Info className="mx-auto mb-2" size={16} />
-            <p>暂无数据库对象</p>
+            <p>{t('explorer.empty')}</p>
           </div>
         ) : (
           <div className="p-2">

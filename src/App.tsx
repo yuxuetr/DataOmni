@@ -8,7 +8,9 @@ import { CloseTabPrompt, type CloseTabChoice } from './components/CloseTabPrompt
 import { OfflineTabView } from './components/OfflineTabView';
 import { WorkspaceTabMenu } from './components/WorkspaceTabMenu';
 import { WorkspaceTabBar } from './components/WorkspaceTabBar';
-import { isBrowsableKind, KIND_LABELS } from './utils/databaseObjects';
+import { isBrowsableKind, KIND_LABEL_KEYS } from './utils/databaseObjects';
+import { useLanguageStore, translateNow } from './stores/languageStore';
+import { tabTitle } from './utils/tabTitle';
 import { useAppStore } from './stores/appStore';
 import { useConnectionStore } from './stores/connectionStore';
 import { selectSqlDocumentHasUnsavedContent, useQueryStore } from './stores/queryStore';
@@ -49,6 +51,8 @@ function App() {
   const documents = useQueryStore((state) => state.documents);
   const connections = useConnectionStore((state) => state.connections);
   const databaseMetadata = useAppStore((state) => state.databaseMetadata);
+  const t = useLanguageStore((state) => state.t);
+  const setLanguagePreference = useLanguageStore((state) => state.setPreference);
   const setThemePreference = useThemeStore((state) => state.setPreference);
   const { connect, openSqliteFile } = useProfileConnector();
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -115,7 +119,8 @@ function App() {
     registerTab(
       createSqlWorkspaceTab(profileId, {
         id: workspaceTabId(profileId, 'sql'),
-        title: `查询 · ${activeConnection.config.name}`
+        titleKey: 'tab.queryTitle',
+        titleParams: { connection: activeConnection.config.name }
       })
     );
   }, [activeConnection, registerTab]);
@@ -176,7 +181,8 @@ function App() {
 
   useEffect(() => {
     const handleOffline = () => {
-      sessionManager.reportConnectionLost('network', '设备网络连接已断开');
+      // 事件可能在很久以后才触发，读的必须是那一刻的语言，不是挂监听时的
+      sessionManager.reportConnectionLost('network', translateNow('session.networkLost'));
     };
     const handleOnline = () => {
       void sessionManager.handleNetworkRestored().catch((error) => {
@@ -244,7 +250,7 @@ function App() {
     // 新 id 由 createSqlWorkspaceTab 生成，不走 workspaceTabId 的确定性身份：
     // 那是用来去重的，复制出来的标签本就要和原标签共存。
     const duplicate = createSqlWorkspaceTab(tab.binding.profileId, {
-      title: `${tab.title} 副本`
+      title: t('tab.duplicate', { title: tabTitle(tab, t) })
     });
 
     registerTab(duplicate);
@@ -277,7 +283,8 @@ function App() {
 
     registerTab(
       createSqlWorkspaceTab(profileId, {
-        title: `查询 ${sqlTabCount + 1} · ${activeConnection.config.name}`
+        titleKey: 'tab.queryNumbered',
+        titleParams: { index: sqlTabCount + 1, connection: activeConnection.config.name }
       })
     );
   };
@@ -314,11 +321,14 @@ function App() {
         id: `connect:${connection.id}`,
         title: connection.name,
         keywords: `${connection.db_type} ${connection.host} ${connection.database ?? ''}`,
-        group: isActive ? '当前连接' : '连接',
+        group: isActive ? t('palette.group.currentConnection') : t('palette.group.connection'),
         // 环境写成文字拼进说明里：命令面板是切库的快路径，切到生产库这件事
         // 必须在按下 Enter 之前就看得见
         detail: [
-          environmentBadge(connection.environment)?.label,
+          (() => {
+            const badge = environmentBadge(connection.environment);
+            return badge ? t(badge.labelKey) : '';
+          })(),
           connection.db_type === 'sqlite'
             ? connection.database ?? ''
             : `${connection.host}:${connection.port}`
@@ -341,7 +351,7 @@ function App() {
         id: `object:${object.kind}:${object.schema ?? ''}:${object.name}`,
         title: object.name,
         keywords: object.schema ?? '',
-        group: KIND_LABELS[object.kind],
+        group: t(KIND_LABEL_KEYS[object.kind]),
         detail: object.schema ?? '',
         run: () => openTableTab(object.name, object.schema ?? undefined)
       });
@@ -350,45 +360,63 @@ function App() {
     items.push(
       {
         id: 'action:new-sql',
-        title: '新建查询标签',
-        group: '操作',
+        title: t('palette.action.newSql'),
+        group: t('palette.group.action'),
         run: () => openSqlTab()
       },
       {
         id: 'action:new-connection',
-        title: '新建连接',
-        group: '操作',
+        title: t('palette.action.newConnection'),
+        group: t('palette.group.action'),
         run: () => openConnectionForm()
       },
       {
         id: 'action:open-sqlite',
-        title: '打开 SQLite 文件',
-        group: '操作',
+        title: t('palette.action.openSqlite'),
+        group: t('palette.group.action'),
         run: () => void openSqliteFile()
       },
       {
         id: 'action:reopen-tab',
-        title: '重新打开最近关闭的标签',
-        group: '操作',
+        title: t('palette.action.reopenTab'),
+        group: t('palette.group.action'),
         run: () => reopenClosedTab()
       },
       {
         id: 'action:theme-light',
-        title: '外观：浅色',
-        group: '操作',
+        title: t('palette.action.themeLight'),
+        group: t('palette.group.action'),
         run: () => setThemePreference('light')
       },
       {
         id: 'action:theme-dark',
-        title: '外观：深色',
-        group: '操作',
+        title: t('palette.action.themeDark'),
+        group: t('palette.group.action'),
         run: () => setThemePreference('dark')
       },
       {
         id: 'action:theme-system',
-        title: '外观：跟随系统',
-        group: '操作',
+        title: t('palette.action.themeSystem'),
+        group: t('palette.group.action'),
         run: () => setThemePreference('system')
+      },
+      {
+        id: 'action:language-zh',
+        title: t('palette.action.languageZh'),
+        group: t('palette.group.action'),
+        run: () => setLanguagePreference('zh')
+      },
+      {
+        id: 'action:language-en',
+        title: t('palette.action.languageEn'),
+        group: t('palette.group.action'),
+        run: () => setLanguagePreference('en')
+      },
+      {
+        id: 'action:language-system',
+        title: t('palette.action.languageSystem'),
+        group: t('palette.group.action'),
+        run: () => setLanguagePreference('system')
       }
     );
 
@@ -471,7 +499,7 @@ function App() {
         active={sidebar.isResizing}
         onPointerDown={sidebar.startResize}
         onDoubleClick={sidebar.resetSize}
-        label="调整侧边栏宽度"
+        label={t('tab.resizeSidebar')}
       />
 
       {/* 右侧主内容区域 */}
@@ -526,7 +554,7 @@ function App() {
       )}
 
       {pendingCloseTab && (
-        <CloseTabPrompt tabTitle={pendingCloseTab.title} onChoose={handleCloseChoice} />
+        <CloseTabPrompt tabTitle={tabTitle(pendingCloseTab, t)} onChoose={handleCloseChoice} />
       )}
     </div>
   );

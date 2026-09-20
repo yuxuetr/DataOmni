@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DatabaseType } from '../contracts/connection';
 import {
-  KIND_LABELS,
+  KIND_LABEL_KEYS,
   buildObjectTree,
   isBrowsableKind,
   normalizeObjectRows,
@@ -57,6 +57,17 @@ describe('showsSchemaLevel', () => {
   });
 });
 
+/** 分组标签由调用方翻译；这里用固定中文，测的是分组与排序本身 */
+const LABELS: Record<string, string> = {
+  table: '表',
+  view: '视图',
+  'materialized-view': '物化视图',
+  function: '函数',
+  procedure: '存储过程',
+  sequence: '序列'
+};
+const stubLabel = (kind: string) => LABELS[kind];
+
 describe('buildObjectTree', () => {
   const objects = [
     { schema: 'public', name: 'orders', kind: 'table' as const, id: '1' },
@@ -66,20 +77,20 @@ describe('buildObjectTree', () => {
   ];
 
   it('不带 schema 层时只按类型分组', () => {
-    const tree = buildObjectTree(objects, false);
+    const tree = buildObjectTree(objects, false, stubLabel);
     expect(tree.map(group => [group.label, group.objects.length]))
       .toEqual([['表', 3], ['视图', 1]]);
   });
 
   it('带 schema 层时先按 schema 再按类型', () => {
-    const tree = buildObjectTree(objects, true);
+    const tree = buildObjectTree(objects, true, stubLabel);
     expect(tree.map(group => group.label)).toEqual(['billing', 'public']);
     expect(tree[1].children?.map(child => [child.label, child.objects.length]))
       .toEqual([['表', 2], ['视图', 1]]);
   });
 
   it('空的类型分组不出现', () => {
-    const tree = buildObjectTree([{ schema: null, name: 't', kind: 'table' as const, id: 't' }], false);
+    const tree = buildObjectTree([{ schema: null, name: 't', kind: 'table' as const, id: 't' }], false, stubLabel);
     expect(tree.map(group => group.label)).toEqual(['表']);
   });
 
@@ -92,12 +103,12 @@ describe('buildObjectTree', () => {
       { schema: null, name: 'm', kind: 'materialized-view' as const, id: 'm' },
       { schema: null, name: 'v', kind: 'view' as const, id: 'v' }
     ];
-    expect(buildObjectTree(mixed, false).map(group => group.label))
+    expect(buildObjectTree(mixed, false, stubLabel).map(group => group.label))
       .toEqual(['表', '视图', '物化视图', '函数', '存储过程', '序列']);
   });
 
   it('组内按名字排序', () => {
-    const tree = buildObjectTree(objects, false);
+    const tree = buildObjectTree(objects, false, stubLabel);
     expect(tree[0].objects.map(object => object.name))
       .toEqual(['customers', 'invoices', 'orders']);
   });
@@ -117,10 +128,10 @@ describe('isBrowsableKind', () => {
   });
 });
 
-describe('KIND_LABELS', () => {
-  it('每种类型都有中文标签', () => {
+describe('KIND_LABEL_KEYS', () => {
+  it('每种类型都有对应的文案键', () => {
     for (const kind of ['table', 'view', 'materialized-view', 'function', 'procedure', 'sequence'] as const) {
-      expect(KIND_LABELS[kind]).toBeTruthy();
+      expect(KIND_LABEL_KEYS[kind]).toBe(`objectKind.${kind}`);
     }
   });
 });

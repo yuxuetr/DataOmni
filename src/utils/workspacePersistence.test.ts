@@ -32,6 +32,26 @@ describe('工作区快照', () => {
     storage = installMemoryStorage();
   });
 
+  it('标题的文案键与参数能往返——否则重启后标签标题卡在上一次的语言', () => {
+    const tab = createSqlWorkspaceTab('profile-a', {
+      id: 'sql-1',
+      titleKey: 'tab.queryTitle',
+      titleParams: { connection: 'T1' }
+    });
+
+    saveWorkspaceSnapshot({ tabs: [tab], activeTabId: 'sql-1', drafts: {}, closedTabs: [] });
+    const restored = loadWorkspaceSnapshot()?.tabs[0];
+
+    expect(restored?.titleKey).toBe('tab.queryTitle');
+    expect(restored?.titleParams).toEqual({ connection: 'T1' });
+  });
+
+  it('表标签不带文案键——表名是数据库里的标识符，不该被翻译', () => {
+    const tab = createTableWorkspaceTab('profile-a', 'users', { id: 'table-1' });
+    expect(tab.titleKey).toBeUndefined();
+    expect(tab.title).toBe('users');
+  });
+
   it('往返保存与读取标签、活动标签和草稿', () => {
     const sqlTab = createSqlWorkspaceTab('profile-a', { id: 'sql-1' });
     const tableTab = createTableWorkspaceTab('profile-a', 'users', {

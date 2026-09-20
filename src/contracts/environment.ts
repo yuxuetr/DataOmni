@@ -1,11 +1,15 @@
 import type { ConnectionEnvironment } from './connection';
+import type { TranslationKey } from '../i18n/translate';
 
 export interface EnvironmentBadge {
-  /** 常驻显示的文字。不能只用颜色区分——色觉障碍和灰度截图下颜色都会失效 */
-  label: string;
+  /**
+   * 常驻显示文字的文案键，不是文字本身：这是模块级常量，用不了 hook，
+   * 而文案要跟着语言走。不能只用颜色区分——色觉障碍和灰度截图下颜色都会失效。
+   */
+  labelKey: TranslationKey;
   tone: 'danger' | 'warning';
-  /** 完整说明，挂在 title 上 */
-  description: string;
+  /** 完整说明的文案键，挂在 title 上 */
+  descriptionKey: TranslationKey;
 }
 
 /**
@@ -17,8 +21,16 @@ export interface EnvironmentBadge {
  * 类型写成完整的 Record，新增环境时这里编译不过——不会悄悄漏掉一种。
  */
 const BADGES: Record<ConnectionEnvironment, EnvironmentBadge | null> = {
-  production: { label: '生产', tone: 'danger', description: '生产环境连接，改动会影响线上数据' },
-  staging: { label: '预发', tone: 'warning', description: '预发环境连接，改动可能影响发布验证' },
+  production: {
+    labelKey: 'environment.production',
+    tone: 'danger',
+    descriptionKey: 'environment.production.description'
+  },
+  staging: {
+    labelKey: 'environment.staging',
+    tone: 'warning',
+    descriptionKey: 'environment.staging.description'
+  },
   testing: null,
   development: null
 };

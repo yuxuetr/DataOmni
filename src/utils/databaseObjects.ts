@@ -1,15 +1,20 @@
 import { DatabaseType } from '../contracts/connection';
 import type { DatabaseObject, DatabaseObjectKind } from '../contracts/databaseMetadata';
+import type { TranslationKey } from '../i18n/translate';
 
 export type { DatabaseObject, DatabaseObjectKind };
 
-export const KIND_LABELS: Record<DatabaseObjectKind, string> = {
-  table: '表',
-  view: '视图',
-  'materialized-view': '物化视图',
-  function: '函数',
-  procedure: '存储过程',
-  sequence: '序列'
+/**
+ * 类型到文案键的映射，不是到文案本身：这是个模块级常量，用不了 hook，
+ * 而文案要跟着语言走。调用方拿到键再翻译。
+ */
+export const KIND_LABEL_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
+  table: 'objectKind.table',
+  view: 'objectKind.view',
+  'materialized-view': 'objectKind.materialized-view',
+  function: 'objectKind.function',
+  procedure: 'objectKind.procedure',
+  sequence: 'objectKind.sequence'
 };
 
 /** 分组次序。按「最常点开的在最上面」排，不按字母。 */
@@ -68,12 +73,17 @@ export function normalizeObjectRows(
   });
 }
 
+/**
+ * `kindLabel` 由调用方传入而不是在这里查表：这个函数是纯的、可单测的，
+ * 把翻译塞进来会让它依赖当前语言，测试也要跟着起一个 store。
+ */
 export function buildObjectTree(
   objects: readonly DatabaseObject[],
-  withSchemaLevel: boolean
+  withSchemaLevel: boolean,
+  kindLabel: (kind: DatabaseObjectKind) => string
 ): ObjectTreeNode[] {
   if (!withSchemaLevel) {
-    return groupByKind(objects, '');
+    return groupByKind(objects, '', kindLabel);
   }
 
   const bySchema = new Map<string, DatabaseObject[]>();
@@ -90,11 +100,15 @@ export function buildObjectTree(
       key: `schema:${schema}`,
       label: schema,
       objects: schemaObjects,
-      children: groupByKind(schemaObjects, `${schema}:`)
+      children: groupByKind(schemaObjects, `${schema}:`, kindLabel)
     }));
 }
 
-function groupByKind(objects: readonly DatabaseObject[], keyPrefix: string): ObjectTreeNode[] {
+function groupByKind(
+  objects: readonly DatabaseObject[],
+  keyPrefix: string,
+  kindLabel: (kind: DatabaseObjectKind) => string
+): ObjectTreeNode[] {
   return KIND_ORDER.flatMap(kind => {
     const matching = objects
       .filter(object => object.kind === kind)
@@ -103,7 +117,7 @@ function groupByKind(objects: readonly DatabaseObject[], keyPrefix: string): Obj
     // 查不到的类型不出现空分组：一行「函数 0」既占地方又不提供信息
     return matching.length === 0
       ? []
-      : [{ key: `${keyPrefix}kind:${kind}`, label: KIND_LABELS[kind], objects: matching }];
+      : [{ key: `${keyPrefix}kind:${kind}`, label: kindLabel(kind), objects: matching }];
   });
 }
 

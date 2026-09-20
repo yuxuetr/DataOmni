@@ -1,6 +1,7 @@
 import { clsx } from 'clsx';
 import type { ConnectionEnvironment } from '../contracts';
 import { environmentBadge } from '../contracts/environment';
+import { useLanguageStore } from '../stores/languageStore';
 
 interface EnvironmentBadgeProps {
   environment: ConnectionEnvironment;
@@ -9,6 +10,7 @@ interface EnvironmentBadgeProps {
 }
 
 export function EnvironmentBadgeTag({ environment, compact = false }: EnvironmentBadgeProps) {
+  const t = useLanguageStore((state) => state.t);
   const badge = environmentBadge(environment);
   if (!badge) {
     return null;
@@ -16,7 +18,7 @@ export function EnvironmentBadgeTag({ environment, compact = false }: Environmen
 
   return (
     <span
-      title={badge.description}
+      title={t(badge.descriptionKey)}
       className={clsx(
         'shrink-0 rounded-control border font-medium',
         compact ? 'px-1 text-[10px] leading-tight' : 'px-1.5 py-0.5 text-[11px]',
@@ -25,7 +27,7 @@ export function EnvironmentBadgeTag({ environment, compact = false }: Environmen
           : 'border-warning-line bg-warning-soft text-warning'
       )}
     >
-      {badge.label}
+      {t(badge.labelKey)}
     </span>
   );
 }
