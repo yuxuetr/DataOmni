@@ -289,6 +289,83 @@ export const selectActiveSqlDocument = (state: QueryState): SqlDocument =>
  * 判据取草稿文本而不是执行结果：结果是可以重新跑出来的，用户手写的
  * SQL 关掉就没了（当前还没有任何持久化去处）。
  */
+/**
+ * 走本项目自建执行器的只读查询。
+ *
+ * 为什么不用 `database.select()`：tauri-plugin-sql 的解码器类型表是硬编码的，
+ * 遇到 MySQL 的 BINARY / DECIMAL 或 PostgreSQL 的 NUMERIC 就直接报
+ * 「unsupported datatype」，而表数据是 `SELECT *`，列由用户的表决定，没法靠
+ * CAST 绕开。自建执行器覆盖完整且用 tagged value 保住 BigInt / Decimal 精度。
+ *
+ * 不接受绑定参数：`execute_query` 命令本身还没有参数支持，调用方需自行用
+ * `quoteSqlIdentifier` 等方式构造安全的 SQL。
+ */
+export async function runReadQuery(
+  sql: string
+): Promise<Record<string, SerializedResultValue>[]> {
+  const { connectionId, session, queryTimeoutMs, queryResultRowLimit } = useQueryStore.getState();
+  if (!connectionId || !session) {
+    throw new Error('数据库会话不可用，请先重新连接');
+  }
+
+  const rows: Record<string, SerializedResultValue>[] = [];
+  let expectedBatchCount = 0;
+  let batchError: Error | null = null;
+  let receivedBytes = 0;
+  let resolveBatches: (() => void) | null = null;
+  const batchesComplete = new Promise<void>((resolve) => {
+    resolveBatches = resolve;
+  });
+
+  const onBatch = new Channel<DriverQueryBatch>((batch) => {
+    if (batchError) {
+      return;
+    }
+    if (batch.offset !== rows.length) {
+      batchError = new Error(`查询结果批次顺序错误: 预期偏移 ${rows.length}，实际 ${batch.offset}`);
+      resolveBatches?.();
+      return;
+    }
+    receivedBytes += new TextEncoder().encode(JSON.stringify(batch.rows)).byteLength;
+    if (receivedBytes > QUERY_RESULT_FRONTEND_BYTE_LIMIT) {
+      batchError = new Error('查询结果超过前端 16 MiB 内存预算');
+      resolveBatches?.();
+      return;
+    }
+    rows.push(...batch.rows);
+    if (expectedBatchCount > 0 && batch.index + 1 === expectedBatchCount) {
+      resolveBatches?.();
+    }
+  });
+
+  const driverResult = await invoke<DriverQueryResult>('execute_query', {
+    onBatch,
+    request: {
+      connectionId,
+      sessionId: session.id,
+      executionId: crypto.randomUUID(),
+      sql,
+      timeoutMs: queryTimeoutMs,
+      rowLimit: queryResultRowLimit,
+      byteLimit: QUERY_RESULT_BACKEND_BYTE_LIMIT
+    }
+  });
+
+  if (driverResult.kind !== 'rows') {
+    return [];
+  }
+
+  expectedBatchCount = driverResult.batch_count;
+  if (rows.length < driverResult.row_count && !batchError) {
+    await batchesComplete;
+  }
+  if (batchError) {
+    throw batchError;
+  }
+
+  return rows;
+}
+
 export const selectSqlDocumentHasUnsavedContent = (
   state: Pick<QueryState, 'documents'>,
   documentId: string

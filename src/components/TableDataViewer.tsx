@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useQueryStore } from '../stores/queryStore';
+import { runReadQuery, useQueryStore } from '../stores/queryStore';
+import { formatResultValue, isTaggedResultValue, unwrapResultValue } from '../utils/resultValues';
+import type { SerializedResultValue } from '../contracts/resultSet';
 import {
   X,
   // Database as DatabaseIcon,
@@ -260,10 +262,12 @@ export default function TableDataViewer({
         total = cachedRowCount.total;
       } else {
         const countQuery = `SELECT COUNT(*) as total FROM ${tableReference}`;
-        const countResult = await database!.select(countQuery);
-        total = Array.isArray(countResult) && countResult.length > 0
-          ? countResult[0].total || 0
-          : 0;
+        const countResult = await runReadQuery(countQuery);
+        // COUNT(*) 由自建执行器返回为 tagged bigint，取出字面值再转数
+        const rawTotal = countResult[0]?.total ?? 0;
+        total = Number(
+          isTaggedResultValue(rawTotal) ? rawTotal.value : rawTotal
+        ) || 0;
         rowCountCacheRef.current = { key: currentTableKey, total };
       }
 
@@ -280,9 +284,9 @@ export default function TableDataViewer({
       const dataQuery =
         `SELECT * FROM ${tableReference} ${order.clause} LIMIT ${limitValue} OFFSET ${offsetValue}`;
 
-      const dataResult = await database!.select(dataQuery);
+      const dataResult = await runReadQuery(dataQuery);
 
-      setTableData(Array.isArray(dataResult) ? dataResult : []);
+      setTableData(dataResult);
     } catch (err) {
       console.error('加载表数据失败:', err);
       // 原始错误必须可见，否则无从判断是类型解码、权限还是语法问题
@@ -360,7 +364,14 @@ export default function TableDataViewer({
   
   // 开始编辑行
   const startEditRow = (rowIndex: number) => {
-    const rowData = tableData[rowIndex];
+    // 编辑态一律用拆包后的原始值：主键原值要回到 WHERE 里，
+    // 「是否被改过」的比较也要对着字面量做，tagged 对象两者都会破坏
+    const rowData = Object.fromEntries(
+      Object.entries(tableData[rowIndex] ?? {}).map(([column, value]) => [
+        column,
+        unwrapResultValue(value as SerializedResultValue)
+      ])
+    );
     setEditState({
       mode: 'edit',
       rowIndex,
@@ -676,7 +687,8 @@ export default function TableDataViewer({
       throw new Error('无法找到主键列，无法删除数据');
     }
     
-    const pkValue = rowData[primaryKeyColumn.name];
+    // 同 startEditRow：主键原值要进 WHERE，必须先从 tagged 包装里拆出来
+    const pkValue = unwrapResultValue(rowData[primaryKeyColumn.name] as SerializedResultValue);
     const pkColumn = primaryKeyColumn.name;
     
     const dialect = connection.db_type === 'mysql' ? 'mysql' : connection.db_type === 'postgresql' ? 'postgresql' : 'sqlite';
@@ -736,16 +748,18 @@ export default function TableDataViewer({
     
     if (!isEditing || isPrimaryKey) {
       // 非编辑状态或主键列，显示只读
+      // 自建执行器把 BigInt / Decimal / 二进制等包成 tagged value 以保住精度，
+      // 显示时统一交给 formatResultValue 还原成人能读的形式
+      const displayValue = currentValue === null || currentValue === undefined
+        ? null
+        : formatResultValue(currentValue as SerializedResultValue);
+
       return (
         <td className="px-4 py-3 text-sm text-gray-900 border-r border-gray-200 min-w-[180px]">
-          <div className="truncate" title={currentValue === null || currentValue === undefined ? 'NULL' : String(currentValue)}>
-            {currentValue === null || currentValue === undefined ? (
-              <span className="text-gray-400 italic">NULL</span>
-            ) : typeof currentValue === 'object' ? (
-              <span className="text-gray-500">{JSON.stringify(currentValue)}</span>
-            ) : (
-              String(currentValue)
-            )}
+          <div className="truncate" title={displayValue ?? 'NULL'}>
+            {displayValue === null
+              ? <span className="text-gray-400 italic">NULL</span>
+              : displayValue}
           </div>
         </td>
       );
