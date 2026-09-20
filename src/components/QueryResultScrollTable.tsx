@@ -14,6 +14,7 @@ import { useQueryStore } from '../stores/queryStore';
 import { formatResultValue, formatResultValueOneLine } from '../utils/resultValues';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
+import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 
 interface QueryResultScrollTableProps {
   result: QueryResult;
@@ -392,10 +393,9 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
               }}
               className="text-sm border border-line-strong rounded-control px-2 py-1"
             >
-              <option value={10}>10条/页</option>
-              <option value={25}>25条/页</option>
-              <option value={50}>50条/页</option>
-              <option value={100}>100条/页</option>
+              {GRID_PAGE_SIZE_OPTIONS.map((option) => (
+                <option key={option} value={option}>{option} 条/页</option>
+              ))}
             </select>
           </div>
           

@@ -44,6 +44,7 @@ import {
 import { toPositionalRows } from '../utils/columnWidths';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
+import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 
 // 编辑模式类型
 type EditMode = 'view' | 'edit' | 'add';
@@ -1229,10 +1230,9 @@ export default function TableDataViewer({
                   onChange={(e) => handlePageSizeChange(Number(e.target.value))}
                   className="text-sm border border-line-strong rounded-control px-2 py-1"
                 >
-                  <option value={25}>25</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                  <option value={200}>200</option>
+                  {GRID_PAGE_SIZE_OPTIONS.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
                 </select>
               </div>
             </div>
