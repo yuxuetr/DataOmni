@@ -149,8 +149,12 @@
 - [x] 支持 SQL、表数据、表结构等标签类型
   - 标签栏落地于 5e7c65f，`WorkspaceTabBar` 按 `workspaceStore.tabs` 渲染；
     退休了 `appStore.viewMode` / `tableViewerState` 单视图模型。
-  - 当前 SQL 标签每个连接一个（多个 SQL 标签属增量 B，需把 `queryStore` 的
-    `sqlInput` / `statements` / `executions` 按 tabId 分片）。
+  - 多个 SQL 标签完成于 0532e1e：`queryStore` 改为 `documents: Record<tabId, SqlDocument>`
+    + `activeDocumentId`，异步操作在开始时捕获 documentId，保证执行期间切换标签时
+    结果仍回到发起它的文档。`QueryExecution.tabId` 此前恒为 `workbench:${connectionId}`，
+    现在填真正的文档 id。
+  - 遗留：SQL 历史仍按 connectionId 存一份、只覆盖当前活动文档；一个连接下多个标签的
+    草稿全量恢复归入下面的「恢复窗口、标签、布局、草稿和最后活动位置」。
 - [x] 每个标签永久绑定 Session，不随侧边栏选择变化
   - 同时修掉一个已复现的缺陷：切换侧边栏连接后，已打开的表视图会拿旧表名查新库
     （`performConnectionSwitch` 不清 `tableViewerState`，`ensureDatabaseConnection`
