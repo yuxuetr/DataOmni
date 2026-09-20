@@ -21,6 +21,8 @@ import { autocompletion, CompletionContext } from '@codemirror/autocomplete';
 import { QueryResultScrollTable } from './QueryResultScrollTable';
 import type { EditorView } from '@codemirror/view';
 import { useThemeStore } from '../stores/themeStore';
+import { useResizablePanel } from '../hooks/useResizablePanel';
+import { PanelResizeHandle } from './PanelResizeHandle';
 import {
   findSqlStatementAtOffset,
   splitSqlStatements
@@ -100,6 +102,14 @@ export const SqlEditor: React.FC = () => {
   } = useQueryStore();
 
   const [autoParseEnabled, setAutoParseEnabled] = useState(true);
+  // 编辑器高度此前写死 200px，结果区再长也抢不到空间
+  const editorPanel = useResizablePanel({
+    storageKey: 'sql-editor-height',
+    defaultSize: 200,
+    minSize: 96,
+    maxSize: 640,
+    axis: 'y'
+  });
   const [hasSelection, setHasSelection] = useState(false);
   const editorViewRef = useRef<EditorView | null>(null);
 
@@ -304,9 +314,12 @@ export const SqlEditor: React.FC = () => {
           </button>
 
           {/* 执行所有语句 */}
+          {/* 多语句的执行规则原本是编辑器下方一行常驻说明；挪进按钮提示里——
+              这件事只在要按它的时候才需要知道 */}
           <button
             onClick={executeAllStatements}
             disabled={statements.length === 0 || isConnecting}
+            title="按顺序执行所有语句，遇到失败、超时或取消即停止（⌘⇧⏎）"
             className={clsx(
               "flex items-center space-x-2 px-4 py-1.5 text-sm rounded-control transition-colors",
               statements.length === 0 || isConnecting
@@ -337,8 +350,8 @@ export const SqlEditor: React.FC = () => {
       )}
 
       {/* SQL输入区域 - 使用CodeMirror */}
-      <div className="p-4 border-b">
-        <div className="border border-line-strong rounded-control overflow-hidden">
+      <div className="shrink-0 px-3 pb-2 pt-3">
+        <div className="overflow-hidden rounded-control border border-line-strong">
           <CodeMirror
             value={sqlInput}
             onChange={(value) => setSqlInput(value)}
@@ -368,14 +381,18 @@ export const SqlEditor: React.FC = () => {
             }}
             className="text-sm"
             style={{ fontSize: '14px' }}
-            height="200px"
-            minHeight="120px"
+            height={`${editorPanel.size}px`}
           />
         </div>
-        <div className="mt-2 text-xs text-fg-muted">
-          多语句按顺序执行，失败、超时或取消后停止
-        </div>
       </div>
+
+      <PanelResizeHandle
+        axis="y"
+        active={editorPanel.isResizing}
+        onPointerDown={editorPanel.startResize}
+        onDoubleClick={editorPanel.resetSize}
+        label="调整编辑器高度"
+      />
 
       {/* SQL语句列表和结果 */}
       <div className="flex-1 overflow-y-auto">

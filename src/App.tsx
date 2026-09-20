@@ -19,6 +19,8 @@ import {
 } from './contracts/workspace';
 import { useSessionManager } from './utils/stateSync';
 import { saveWorkspaceSnapshot } from './utils/workspacePersistence';
+import { useResizablePanel } from './hooks/useResizablePanel';
+import { PanelResizeHandle } from './components/PanelResizeHandle';
 
 function App() {
   const { activeConnection, selectedTable, openConnectionForm } = useAppStore();
@@ -52,6 +54,13 @@ function App() {
   );
 
   const sessionManager = useSessionManager();
+  const sidebar = useResizablePanel({
+    storageKey: 'sidebar',
+    defaultSize: 320,
+    minSize: 200,
+    maxSize: 560,
+    axis: 'x'
+  });
   const activeProfileId = activeConnection?.config.id ?? null;
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
   const pendingCloseTab = pendingCloseTabId
@@ -329,13 +338,24 @@ function App() {
   return (
     <div className="h-screen flex bg-canvas text-fg">
       {/* 左侧侧边栏 - 包含连接选择和数据库浏览器 */}
-      <div className="w-80 bg-surface border-r border-line flex flex-col">
+      <div
+        className="flex shrink-0 flex-col bg-surface"
+        style={{ width: `${sidebar.size}px` }}
+      >
         <Sidebar
           activeConnectionId={activeConnection?.config.id}
           onConnectionDeleted={(connectionId) => sessionManager.handleConnectionDeleted(connectionId)}
           onTableSelect={openTableTab}
         />
       </div>
+
+      <PanelResizeHandle
+        axis="x"
+        active={sidebar.isResizing}
+        onPointerDown={sidebar.startResize}
+        onDoubleClick={sidebar.resetSize}
+        label="调整侧边栏宽度"
+      />
 
       {/* 右侧主内容区域 */}
       <div className="flex-1 flex flex-col overflow-hidden">
