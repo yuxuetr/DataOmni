@@ -1031,3 +1031,229 @@ async fn sqlite_returns_create_table_together_with_its_indexes() {
     "自动索引不该出现: {statements:?}"
   );
 }
+
+// ---------------------------------------------------------------------------
+// 视图定义与触发器
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn postgres_returns_the_view_definition_but_not_a_create_table() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+
+  let fixture = MetaFixture::new("pgview");
+  let view = format!("{}_v", fixture.child);
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  for statement in fixture.ddl("postgres") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare PostgreSQL fixture");
+  }
+  sqlx::query(&format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child))
+    .execute(&pool)
+    .await
+    .expect("create view");
+
+  let queries = dataomni_lib::services::schema_metadata_queries(
+    &dataomni_lib::models::DatabaseType::PostgreSQL,
+  )
+  .expect("supported");
+  let Some(dataomni_lib::services::DdlQuery::Bound { sql }) = queries.ddl else {
+    panic!("PostgreSQL 走绑定参数");
+  };
+
+  let view_rows = sqlx::query(sql)
+    .bind(&view)
+    .bind(Option::<String>::None)
+    .fetch_all(&pool)
+    .await
+    .expect("run view definition query");
+  assert_eq!(view_rows.len(), 1, "视图应给出定义");
+  let definition: String = view_rows[0].get("sql");
+  assert!(definition.starts_with("CREATE OR REPLACE VIEW"), "应是可执行的定义: {definition}");
+  assert!(definition.contains("SELECT"), "应含视图的 SELECT: {definition}");
+
+  // 同一段 SQL 查一张普通表时必须什么也不给——否则前端会把空结果当成定义显示
+  let table_rows = sqlx::query(sql)
+    .bind(&fixture.child)
+    .bind(Option::<String>::None)
+    .fetch_all(&pool)
+    .await
+    .expect("run view definition query against a table");
+  assert!(table_rows.is_empty(), "查表时不该返回任何东西：PostgreSQL 没有权威建表语句");
+
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  for table in [&fixture.child, &fixture.parent] {
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  }
+}
+
+#[tokio::test]
+async fn postgres_lists_user_triggers_without_the_foreign_key_internals() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+
+  let fixture = MetaFixture::new("pgtrig");
+  let function = format!("{}_fn", fixture.child);
+  let trigger = format!("{}_trg", fixture.child);
+  for statement in fixture.ddl("postgres") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare PostgreSQL fixture");
+  }
+  sqlx::query(&format!(
+    "CREATE OR REPLACE FUNCTION {function}() RETURNS trigger AS $$ BEGIN RETURN NEW; END; $$ LANGUAGE plpgsql"
+  ))
+  .execute(&pool)
+  .await
+  .expect("create trigger function");
+  sqlx::query(&format!(
+    "CREATE TRIGGER {trigger} BEFORE INSERT ON {} FOR EACH ROW EXECUTE FUNCTION {function}()",
+    fixture.child
+  ))
+  .execute(&pool)
+  .await
+  .expect("create trigger");
+
+  let queries = dataomni_lib::services::schema_metadata_queries(
+    &dataomni_lib::models::DatabaseType::PostgreSQL,
+  )
+  .expect("supported");
+  let rows = sqlx::query(queries.triggers)
+    .bind(&fixture.child)
+    .bind(Option::<String>::None)
+    .fetch_all(&pool)
+    .await
+    .expect("run trigger query");
+
+  let names: Vec<String> = rows.iter().map(|row| row.get::<String, _>("trigger_name")).collect();
+  // 这张表带外键，PostgreSQL 会为它建内部触发器；tgisinternal 没排掉的话
+  // 这里会多出几条用户看不懂的条目
+  assert_eq!(names, vec![trigger.clone()], "只应列出用户写的触发器: {names:?}");
+  let definition: String = rows[0].get("definition");
+  assert!(definition.starts_with("CREATE TRIGGER"), "应是完整定义原文: {definition}");
+
+  sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger} ON {}", fixture.child))
+    .execute(&pool)
+    .await
+    .ok();
+  for table in [&fixture.child, &fixture.parent] {
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  }
+  sqlx::query(&format!("DROP FUNCTION IF EXISTS {function}()")).execute(&pool).await.ok();
+}
+
+#[tokio::test]
+async fn mysql_returns_trigger_components_and_the_create_view_statement() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+
+  let fixture = MetaFixture::new("mytrig");
+  let view = format!("{}_v", fixture.child);
+  let trigger = format!("{}_trg", fixture.child);
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  for statement in fixture.ddl("mysql") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
+  }
+  sqlx::query(&format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child))
+    .execute(&pool)
+    .await
+    .expect("create view");
+  // MySQL 的 CREATE TRIGGER 不支持预处理协议（错误 1295），只能走文本协议
+  sqlx::raw_sql(&format!(
+    "CREATE TRIGGER {trigger} BEFORE INSERT ON {} FOR EACH ROW SET NEW.score = 1",
+    fixture.child
+  ))
+  .execute(&pool)
+  .await
+  .expect("create trigger");
+
+  let queries =
+    dataomni_lib::services::schema_metadata_queries(&dataomni_lib::models::DatabaseType::MySQL)
+      .expect("supported");
+
+  // SHOW CREATE TABLE 对视图返回的列叫 `Create View`，不是 `Create Table`
+  let Some(dataomni_lib::services::DdlQuery::Interpolated { sql }) = queries.ddl else {
+    panic!("MySQL 走插值");
+  };
+  let row = sqlx::query(&sql.replace("{table}", &format!("`{view}`")))
+    .fetch_one(&pool)
+    .await
+    .expect("run SHOW CREATE TABLE on a view");
+  assert_eq!(
+    row.columns().iter().map(|column| column.name()).collect::<Vec<_>>(),
+    vec!["View", "Create View", "character_set_client", "collation_connection"]
+  );
+  let view_ddl: String = row.get(1);
+  assert!(view_ddl.contains("CREATE"), "应是视图定义原文: {view_ddl}");
+
+  let rows = sqlx::query(queries.triggers)
+    .bind(&fixture.child)
+    .bind(Option::<String>::None)
+    .fetch_all(&pool)
+    .await
+    .expect("run trigger query");
+  assert_eq!(rows.len(), 1);
+  assert_eq!(rows[0].get::<String, _>("trigger_name"), trigger);
+  // MySQL 只给拆开的组件，没有完整的 CREATE TRIGGER
+  assert_eq!(rows[0].get::<String, _>("timing"), "BEFORE");
+  assert_eq!(rows[0].get::<String, _>("event"), "INSERT");
+  assert!(rows[0].get::<String, _>("definition").contains("NEW.score"));
+
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  for table in [&fixture.child, &fixture.parent] {
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  }
+}
+
+#[tokio::test]
+async fn sqlite_returns_view_and_trigger_definitions() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("connect to in-memory SQLite");
+
+  let fixture = MetaFixture::new("liteview");
+  let view = format!("{}_v", fixture.child);
+  let trigger = format!("{}_trg", fixture.child);
+  for statement in fixture.ddl("sqlite") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare SQLite fixture");
+  }
+  sqlx::query(&format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child))
+    .execute(&pool)
+    .await
+    .expect("create view");
+  sqlx::query(&format!(
+    "CREATE TRIGGER {trigger} AFTER INSERT ON {} BEGIN SELECT 1; END",
+    fixture.child
+  ))
+  .execute(&pool)
+  .await
+  .expect("create trigger");
+
+  let queries =
+    dataomni_lib::services::schema_metadata_queries(&dataomni_lib::models::DatabaseType::SQLite)
+      .expect("supported");
+
+  let Some(dataomni_lib::services::DdlQuery::Bound { sql }) = queries.ddl else {
+    panic!("SQLite 走绑定参数");
+  };
+  let view_rows = sqlx::query(sql).bind(&view).fetch_all(&pool).await.expect("run sqlite_master");
+  let view_ddl: String = view_rows[0].get("sql");
+  assert!(view_ddl.starts_with("CREATE VIEW"), "视图定义原文: {view_ddl}");
+
+  let rows = sqlx::query(queries.triggers)
+    .bind(&fixture.child)
+    .fetch_all(&pool)
+    .await
+    .expect("run trigger query");
+  assert_eq!(rows.len(), 1);
+  assert_eq!(rows[0].get::<String, _>("trigger_name"), trigger);
+  assert!(rows[0].get::<String, _>("definition").starts_with("CREATE TRIGGER"));
+}

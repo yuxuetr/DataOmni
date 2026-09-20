@@ -22,6 +22,7 @@ pub struct SchemaMetadataQueries {
   pub foreign_keys: &'static str,
   pub check_constraints: Option<&'static str>,
   pub ddl: Option<DdlQuery>,
+  pub triggers: &'static str,
 }
 
 /// 取建表语句的方式。两种形态不是为了对称——它们真的不一样：
@@ -47,21 +48,24 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       indexes: POSTGRES_INDEXES,
       foreign_keys: POSTGRES_FOREIGN_KEYS,
       check_constraints: Some(POSTGRES_CHECK_CONSTRAINTS),
-      // PostgreSQL 没有 SHOW CREATE TABLE。见文件末尾 `postgres_has_no_ddl_query`
-      // 上的说明：从目录重建 DDL 做不到高保真，做一半比不做更糟。
-      ddl: None,
+      // 对**视图**有权威定义（pg_get_viewdef），对**表**没有：查表时返回 0 行。
+      // 见 `postgres_has_no_create_table_statement` 上的说明。
+      ddl: Some(DdlQuery::Bound { sql: POSTGRES_VIEW_DEFINITION }),
+      triggers: POSTGRES_TRIGGERS,
     }),
     DatabaseType::MySQL => Some(SchemaMetadataQueries {
       indexes: MYSQL_INDEXES,
       foreign_keys: MYSQL_FOREIGN_KEYS,
       check_constraints: Some(MYSQL_CHECK_CONSTRAINTS),
       ddl: Some(DdlQuery::Interpolated { sql: MYSQL_DDL }),
+      triggers: MYSQL_TRIGGERS,
     }),
     DatabaseType::SQLite => Some(SchemaMetadataQueries {
       indexes: SQLITE_INDEXES,
       foreign_keys: SQLITE_FOREIGN_KEYS,
       check_constraints: None,
       ddl: Some(DdlQuery::Bound { sql: SQLITE_DDL }),
+      triggers: SQLITE_TRIGGERS,
     }),
     _ => None,
   }
@@ -235,6 +239,67 @@ WHERE tbl_name = ?1
 ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END, name
 "#;
 
+/// PostgreSQL 唯一权威的「对象定义原文」来源：视图。
+///
+/// `pg_get_viewdef` 给的是服务器自己反解出来的 SELECT，和 `SHOW CREATE VIEW`
+/// 同一性质。查一张普通表时 `relkind` 不匹配，返回 0 行——调用方据此显示
+/// 「PostgreSQL 不提供建表语句」，而不是一段我们拼出来的东西。
+const POSTGRES_VIEW_DEFINITION: &str = r#"
+SELECT
+  CASE c.relkind WHEN 'm' THEN 'CREATE MATERIALIZED VIEW ' ELSE 'CREATE OR REPLACE VIEW ' END
+  || quote_ident(n.nspname) || '.' || quote_ident(c.relname) || ' AS' || chr(10)
+  || pg_get_viewdef(c.oid, true) AS sql
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = $1
+  AND n.nspname = COALESCE($2, current_schema())
+  AND c.relkind IN ('v', 'm')
+"#;
+
+/// `tgisinternal` 的是外键与约束自己建的触发器，不是用户写的。
+/// 不排掉的话，每张带外键的表都会凭空多出几条看不懂的「触发器」。
+const POSTGRES_TRIGGERS: &str = r#"
+SELECT
+  tg.tgname::text AS trigger_name,
+  NULL AS timing,
+  NULL AS event,
+  pg_get_triggerdef(tg.oid, true)::text AS definition
+FROM pg_trigger tg
+JOIN pg_class t ON t.oid = tg.tgrelid
+JOIN pg_namespace n ON n.oid = t.relnamespace
+WHERE NOT tg.tgisinternal
+  AND t.relname = $1
+  AND n.nspname = COALESCE($2, current_schema())
+ORDER BY tg.tgname
+"#;
+
+/// MySQL 给的是拆开的组件（时机、事件、语句体），不是一段完整的 CREATE TRIGGER。
+/// 这里如实返回组件，由前端分别标出——把它们拼成一条 CREATE TRIGGER 是在
+/// 伪造原文，而拼出来的东西未必能照着执行。
+const MYSQL_TRIGGERS: &str = r#"
+SELECT
+  CAST(t.TRIGGER_NAME AS CHAR) AS trigger_name,
+  CAST(t.ACTION_TIMING AS CHAR) AS timing,
+  CAST(t.EVENT_MANIPULATION AS CHAR) AS event,
+  CAST(t.ACTION_STATEMENT AS CHAR) AS definition
+FROM INFORMATION_SCHEMA.TRIGGERS t
+WHERE t.EVENT_OBJECT_TABLE = ?
+  AND t.EVENT_OBJECT_SCHEMA = COALESCE(?, DATABASE())
+ORDER BY t.TRIGGER_NAME
+"#;
+
+const SQLITE_TRIGGERS: &str = r#"
+SELECT
+  name AS trigger_name,
+  NULL AS timing,
+  NULL AS event,
+  sql AS definition
+FROM sqlite_master
+WHERE type = 'trigger'
+  AND tbl_name = ?1
+ORDER BY name
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -248,19 +313,29 @@ mod tests {
     );
   }
 
-  /// PostgreSQL 的建表语句：**当前版本不做**。
+  /// PostgreSQL 的**建表**语句：当前版本不做。
   ///
   /// 它没有 `SHOW CREATE TABLE`，要从目录重建就得覆盖类型、默认值、identity、
   /// 排序规则、存储参数、分区、继承、注释、触发器、RLS。少任何一项，产出的
   /// 就是**看起来权威、照着重建却不等价**的 DDL——那比没有更糟，因为没人会
   /// 去核对它。
   ///
-  /// 重估条件（可执行）：这条断言。哪天真的实现了 PostgreSQL DDL，
-  /// 它会红，逼着回来把这段理由改掉或删掉，而不是让一个过期的判断留在代码里。
+  /// **视图**不同：`pg_get_viewdef` 是服务器自己反解的原文，和其它方言的
+  /// `SHOW CREATE VIEW` 同一性质，所以视图有。
+  ///
+  /// 重估条件（可执行）：这条断言。哪天真的生成了建表语句，它会红，
+  /// 逼着回来把这段理由改掉，而不是让一个过期的判断留在代码里。
   #[test]
-  fn postgres_has_no_ddl_query() {
+  fn postgres_has_no_create_table_statement() {
     let queries = schema_metadata_queries(&DatabaseType::PostgreSQL).expect("supported");
-    assert!(queries.ddl.is_none(), "PostgreSQL 没有权威的建表语句来源");
+    let Some(DdlQuery::Bound { sql }) = queries.ddl else {
+      panic!("PostgreSQL 的对象定义走绑定参数");
+    };
+    assert!(
+      sql.contains("relkind IN ('v', 'm')"),
+      "只对视图与物化视图返回定义；查表时应返回 0 行: {sql}"
+    );
+    assert!(!sql.contains("CREATE TABLE"), "不生成建表语句——从目录重建做不到与原表等价: {sql}");
   }
 
   #[test]
@@ -296,9 +371,14 @@ mod tests {
   fn supported_databases_bind_parameters_instead_of_interpolating() {
     for db_type in [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite] {
       let queries = schema_metadata_queries(&db_type).expect("supported");
-      for sql in [Some(queries.indexes), Some(queries.foreign_keys), queries.check_constraints]
-        .into_iter()
-        .flatten()
+      for sql in [
+        Some(queries.indexes),
+        Some(queries.foreign_keys),
+        Some(queries.triggers),
+        queries.check_constraints,
+      ]
+      .into_iter()
+      .flatten()
       {
         assert!(
           sql.contains('?') || sql.contains('$'),

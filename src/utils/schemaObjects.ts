@@ -163,3 +163,26 @@ export function joinDdlStatements(statements: readonly string[]): string {
     .map(statement => (statement.endsWith(';') ? statement : `${statement};`))
     .join('\n\n');
 }
+
+export interface TriggerInfo {
+  name: string;
+  /** BEFORE / AFTER；只有 MySQL 拆开给，其它方言在 definition 原文里 */
+  timing: string | null;
+  /** INSERT / UPDATE / DELETE；同上 */
+  event: string | null;
+  definition: string;
+}
+
+/**
+ * MySQL 只给拆开的组件（时机、事件、语句体），PostgreSQL 与 SQLite 给完整的
+ * CREATE TRIGGER 原文。这里如实保留两种形态，**不把组件拼成一条 CREATE
+ * TRIGGER**——拼出来的东西未必能照着执行，那是伪造原文。
+ */
+export function toTriggers(rows: readonly MetadataRow[]): TriggerInfo[] {
+  return rows.map(row => ({
+    name: text(row.trigger_name),
+    timing: text(row.timing) || null,
+    event: text(row.event) || null,
+    definition: text(row.definition)
+  }));
+}

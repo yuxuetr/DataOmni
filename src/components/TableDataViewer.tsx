@@ -57,7 +57,8 @@ import {
   groupForeignKeyRows,
   groupIndexRows,
   joinDdlStatements,
-  toCheckConstraints
+  toCheckConstraints,
+  toTriggers
 } from '../utils/schemaObjects';
 import { SchemaObjectSections, type SchemaObjects } from './SchemaObjectSections';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
@@ -96,8 +97,9 @@ interface SchemaMetadataQueries {
   indexes: string;
   foreign_keys: string;
   check_constraints: string | null;
-  /** null = 该方言没有权威的建表语句来源（PostgreSQL） */
+  /** 对象定义原文；PostgreSQL 只对视图有 */
   ddl: DdlQuery | null;
+  triggers: string;
 }
 
 /** `bound` 走绑定参数，`interpolated` 要把 `{table}` 换成引用过的标识符 */
@@ -227,20 +229,23 @@ export default function TableDataViewer({
 
       // SQLite 的 pragma 表值函数只认一个表名参数，没有 schema 概念
       const params = connection.db_type === 'sqlite' ? [tableName] : [tableName, schema ?? null];
-      const [indexRows, foreignKeyRows, checkRows, ddlRows] = await Promise.all([
+      const [indexRows, foreignKeyRows, checkRows, ddlRows, triggerRows] = await Promise.all([
         database!.select(queries.indexes, params),
         database!.select(queries.foreign_keys, params),
         queries.check_constraints
           ? database!.select(queries.check_constraints, params)
           : Promise.resolve(null),
-        runDdlQuery(queries.ddl)
+        runDdlQuery(queries.ddl),
+        // SQLite 的 pragma 之外的目录查询同样只认一个表名参数
+        database!.select(queries.triggers, params)
       ]);
 
       setSchemaObjects({
         indexes: groupIndexRows(asRows(indexRows)),
         foreignKeys: groupForeignKeyRows(asRows(foreignKeyRows)),
         checkConstraints: checkRows === null ? null : toCheckConstraints(asRows(checkRows)),
-        ddl: ddlRows === null ? null : joinDdlStatements(extractDdlStatements(asRows(ddlRows)))
+        ddl: ddlRows === null ? null : joinDdlStatements(extractDdlStatements(asRows(ddlRows))),
+        triggers: toTriggers(asRows(triggerRows))
       });
     } catch (err) {
       // 结构对象读失败不该把已经拿到的列信息一起打掉：列是主体，这里是补充
@@ -250,6 +255,7 @@ export default function TableDataViewer({
         foreignKeys: [],
         checkConstraints: null,
         ddl: null,
+        triggers: [],
         error: describeError(err, '读取索引与约束失败')
       });
     }

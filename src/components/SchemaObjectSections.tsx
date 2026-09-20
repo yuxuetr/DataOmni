@@ -7,7 +7,8 @@ import type { ConnectionProfile } from '../contracts';
 import type {
   CheckConstraintInfo,
   ForeignKeyInfo,
-  IndexInfo
+  IndexInfo,
+  TriggerInfo
 } from '../utils/schemaObjects';
 
 export interface SchemaObjects {
@@ -15,8 +16,9 @@ export interface SchemaObjects {
   foreignKeys: ForeignKeyInfo[];
   /** null = 该方言没有检查约束目录，不是「没有检查约束」 */
   checkConstraints: CheckConstraintInfo[] | null;
-  /** 建表语句原文；null = 该方言没有权威来源（PostgreSQL） */
+  /** 对象定义原文；空 = 数据库不提供（PostgreSQL 的表） */
   ddl: string | null;
+  triggers: TriggerInfo[];
   error?: string;
 }
 
@@ -114,18 +116,35 @@ export function SchemaObjectSections({
         </SchemaSection>
       )}
 
+      <SchemaSection title="触发器" count={objects.triggers.length} emptyText="没有触发器">
+        {objects.triggers.map(trigger => (
+          <li key={trigger.name} className="px-4 py-2">
+            <div className="flex flex-wrap items-baseline gap-x-2">
+              <span className="font-mono text-xs text-fg">{trigger.name}</span>
+              {/* MySQL 把时机与事件拆开给，其它方言含在下面的定义原文里 */}
+              {trigger.timing && trigger.event && (
+                <Pill tone="accent">{trigger.timing} {trigger.event}</Pill>
+              )}
+            </div>
+            <pre className="mt-1 overflow-x-auto font-mono text-xs text-fg-muted select-text whitespace-pre">
+              {trigger.definition}
+            </pre>
+          </li>
+        ))}
+      </SchemaSection>
+
       <DdlSection ddl={objects.ddl} dbType={dbType} />
     </div>
   );
 }
 
 /**
- * 建表语句。给的是**数据库自己吐出来的原文**，不是我们从目录重建的。
+ * 对象定义原文。给的是**数据库自己吐出来的**，不是我们从目录重建的。
  *
- * 所以 PostgreSQL 这里是空的：它没有 `SHOW CREATE TABLE`，而从目录重建要覆盖
- * 类型、默认值、identity、排序规则、存储参数、分区、继承、注释、触发器、RLS。
- * 少任何一项，产出的就是看起来权威、照着重建却不等价的 DDL——比没有更糟，
- * 因为没人会去核对它。上面的列 / 索引 / 外键 / 检查约束已经是权威的。
+ * PostgreSQL 对**视图**有（`pg_get_viewdef`），对**表**没有：它没有
+ * `SHOW CREATE TABLE`，而从目录重建要覆盖类型、默认值、identity、排序规则、
+ * 存储参数、分区、继承、注释、触发器、RLS。少任何一项，产出的就是看起来权威、
+ * 照着重建却不等价的 DDL——比没有更糟，因为没人会去核对它。
  */
 function DdlSection({ ddl, dbType }: { ddl: string | null; dbType: ConnectionProfile['db_type'] }) {
   const [copied, setCopied] = useState(false);
@@ -149,7 +168,7 @@ function DdlSection({ ddl, dbType }: { ddl: string | null; dbType: ConnectionPro
   return (
     <section>
       <h3 className="flex items-center gap-2 bg-surface-sunken px-4 py-2 text-xs font-medium text-fg-muted">
-        建表语句
+        定义
         {ddl && (
           <button
             type="button"
@@ -171,9 +190,9 @@ function DdlSection({ ddl, dbType }: { ddl: string | null; dbType: ConnectionPro
       ) : (
         <p className="px-4 py-2 text-xs text-fg-subtle">
           {dbType === DatabaseType.PostgreSQL
-            ? 'PostgreSQL 没有 SHOW CREATE TABLE，也不提供权威的建表语句。'
-              + '从目录重建的 DDL 无法保证与原表等价，这里不生成——上面的列、索引、外键与检查约束是权威的。'
-            : '数据库没有返回建表语句。'}
+            ? 'PostgreSQL 不提供表的建表语句（视图则有）。从目录重建的 DDL 无法保证与原表等价，'
+              + '这里不生成——上面的列、索引、外键、检查约束与触发器都是权威的。'
+            : '数据库没有返回定义。'}
         </p>
       )}
     </section>

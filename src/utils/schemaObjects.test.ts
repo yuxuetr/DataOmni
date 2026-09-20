@@ -5,7 +5,8 @@ import {
   groupIndexRows,
   extractDdlStatements,
   joinDdlStatements,
-  toCheckConstraints
+  toCheckConstraints,
+  toTriggers
 } from './schemaObjects';
 
 describe('groupIndexRows', () => {
@@ -191,5 +192,51 @@ describe('joinDdlStatements', () => {
 
   it('没有语句时是空串', () => {
     expect(joinDdlStatements([])).toBe('');
+  });
+});
+
+describe('toTriggers', () => {
+  it('PostgreSQL / SQLite 给完整定义原文，时机与事件为空', () => {
+    expect(
+      toTriggers([
+        {
+          trigger_name: 'trg_audit',
+          timing: null,
+          event: null,
+          definition: 'CREATE TRIGGER trg_audit BEFORE INSERT ON t ...'
+        }
+      ])
+    ).toEqual([
+      {
+        name: 'trg_audit',
+        timing: null,
+        event: null,
+        definition: 'CREATE TRIGGER trg_audit BEFORE INSERT ON t ...'
+      }
+    ]);
+  });
+
+  it('MySQL 给拆开的组件，原样保留不拼成 CREATE TRIGGER', () => {
+    // 拼出来的 CREATE TRIGGER 未必能照着执行——那是伪造原文
+    const [trigger] = toTriggers([
+      {
+        trigger_name: 'trg_score',
+        timing: 'BEFORE',
+        event: 'INSERT',
+        definition: 'SET NEW.score = 1'
+      }
+    ]);
+    expect(trigger.timing).toBe('BEFORE');
+    expect(trigger.event).toBe('INSERT');
+    expect(trigger.definition).toBe('SET NEW.score = 1');
+    expect(trigger.definition).not.toContain('CREATE TRIGGER');
+  });
+
+  it('空定义不会变成 undefined', () => {
+    expect(toTriggers([{ trigger_name: 'trg', definition: null }])[0].definition).toBe('');
+  });
+
+  it('空输入得到空数组', () => {
+    expect(toTriggers([])).toEqual([]);
   });
 });
