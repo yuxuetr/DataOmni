@@ -1,102 +1,124 @@
-import React from 'react';
-import { Database, Zap, BarChart3, Globe, Shield, Users } from 'lucide-react';
+import { useEffect, useMemo } from 'react';
+import { AlertCircle, Database, FileUp, Loader2, Plus, X } from 'lucide-react';
+import { clsx } from 'clsx';
+import { DatabaseType } from '../contracts';
+import { useConnectionStore } from '../stores/connectionStore';
+import { useProfileConnector } from '../hooks/useProfileConnector';
+import { orderProfilesByRecency } from '../utils/connectionRecency';
 
 interface WelcomeScreenProps {
   onConnect: () => void;
 }
 
-export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onConnect }) => {
-  const features = [
-    {
-      icon: <Database className="w-6 h-6" />,
-      title: '多数据库支持',
-      description: '支持关系型和非关系型数据库，统一管理您的数据源'
-    },
-    {
-      icon: <Zap className="w-6 h-6" />,
-      title: '高性能查询',
-      description: '优化的SQL编辑器，支持语法高亮和智能提示'
-    },
-    {
-      icon: <BarChart3 className="w-6 h-6" />,
-      title: '数据可视化',
-      description: '直观的表格视图，快速浏览和分析数据'
-    },
-    {
-      icon: <Globe className="w-6 h-6" />,
-      title: '跨平台',
-      description: '基于Tauri构建，支持Windows、macOS和Linux'
-    },
-    {
-      icon: <Shield className="w-6 h-6" />,
-      title: '安全可靠',
-      description: '本地存储连接信息，保护您的数据安全'
-    },
-    {
-      icon: <Users className="w-6 h-6" />,
-      title: '开发者友好',
-      description: '专为数据工程师和开发者设计的现代化界面'
-    }
-  ];
+/** 连接行上显示的目标，SQLite 显示文件名，其余显示 host:port/database */
+function describeTarget(profile: {
+  db_type: DatabaseType;
+  host: string;
+  port: number;
+  database?: string;
+}): string {
+  if (profile.db_type === DatabaseType.SQLite) {
+    return profile.database || ':memory:';
+  }
+
+  const target = `${profile.host}:${profile.port}`;
+  return profile.database ? `${target}/${profile.database}` : target;
+}
+
+/**
+ * 启动面板。
+ *
+ * 此前这里是六张功能宣传卡、渐变大标题和三团高斯模糊光斑——对一个每天要开
+ * 十几次的窗口来说，那是纯粹的噪音，而且唯一的按钮只会打开新建表单，已有的
+ * 连接一个也点不到。现在它做一件事：让人尽快进到某个库里。
+ */
+export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
+  const connections = useConnectionStore((state) => state.connections);
+  const loadConnections = useConnectionStore((state) => state.loadConnections);
+  const { connect, openSqliteFile, connectingProfileId, error, clearError } = useProfileConnector();
+
+  useEffect(() => {
+    loadConnections().catch((cause) => {
+      console.error('加载连接列表失败:', cause);
+    });
+  }, [loadConnections]);
+
+  // 最近用过的排前面；排序只在列表变化时算一次
+  const ordered = useMemo(() => orderProfilesByRecency(connections), [connections]);
 
   return (
-    <div className="h-full flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
-      {/* 主要内容区域 */}
-      <div className="text-center max-w-4xl mx-auto px-8">
-        {/* 软件名称 */}
-        <div className="mb-8">
-          <h1 className="text-6xl font-bold mb-4 bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent">
-            DataOmni
-          </h1>
-          <p className="text-xl text-fg-muted max-w-2xl mx-auto leading-relaxed">
-            现代化的数据库管理工具，让数据操作变得简单高效
-          </p>
-        </div>
+    <div className="flex-1 overflow-auto">
+      <div className="mx-auto flex min-h-full w-full max-w-lg flex-col justify-center px-6 py-10">
+        <h1 className="text-lg font-semibold text-fg">DataOmni</h1>
+        <p className="mt-1 text-xs text-fg-subtle">选择一个连接，或新建一个。</p>
 
-        {/* 功能特性网格 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
-          {features.map((feature, index) => (
-            <div
-              key={index}
-              className="bg-surface/70 backdrop-blur-sm rounded-panel p-6 border border-white/20 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105"
+        {error && (
+          <div className="mt-4 flex items-start gap-2 rounded-control border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+            <span className="min-w-0 flex-1 break-words">{error}</span>
+            <button
+              type="button"
+              onClick={clearError}
+              aria-label="关闭错误提示"
+              className="shrink-0 hover:opacity-70"
             >
-              <div className="flex items-center justify-center w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-500 rounded-panel mb-4 mx-auto">
-                <div className="text-white">
-                  {feature.icon}
-                </div>
-              </div>
-              <h3 className="text-lg font-semibold text-fg mb-2">
-                {feature.title}
-              </h3>
-              <p className="text-fg-muted text-sm leading-relaxed">
-                {feature.description}
-              </p>
-            </div>
-          ))}
-        </div>
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
-        {/* 连接按钮 */}
-        <div className="space-y-4">
+        {ordered.length > 0 && (
+          <ul className="mt-5 overflow-hidden rounded-panel border border-line bg-surface">
+            {ordered.map((profile) => {
+              const isConnecting = connectingProfileId === profile.id;
+
+              return (
+                <li key={profile.id} className="border-b border-line last:border-b-0">
+                  <button
+                    type="button"
+                    onClick={() => void connect(profile)}
+                    disabled={connectingProfileId !== null}
+                    className={clsx(
+                      'flex w-full items-center gap-3 px-3 py-2 text-left transition-colors',
+                      'hover:bg-surface-hover disabled:cursor-wait disabled:opacity-60'
+                    )}
+                  >
+                    {isConnecting
+                      ? <Loader2 size={15} className="shrink-0 animate-spin text-accent" />
+                      : <Database size={15} className="shrink-0 text-fg-subtle" />}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm text-fg">{profile.name}</span>
+                      <span className="block truncate font-mono text-xs text-fg-subtle">
+                        {describeTarget(profile)}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-xs text-fg-subtle">{profile.db_type}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        <div className="mt-4 flex gap-2">
           <button
+            type="button"
             onClick={onConnect}
-            className="inline-flex items-center space-x-3 px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-panel shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300"
+            className="flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:bg-accent-hover"
           >
-            <Database className="w-5 h-5" />
-            <span>连接到数据库</span>
+            <Plus size={14} />
+            <span>新建连接</span>
           </button>
-          
-          <p className="text-fg-muted text-sm">
-            开始您的数据探索之旅
-          </p>
+          <button
+            type="button"
+            onClick={() => void openSqliteFile()}
+            className="flex items-center gap-1.5 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg-muted hover:bg-surface-hover"
+          >
+            <FileUp size={14} />
+            <span>打开 SQLite 文件…</span>
+          </button>
         </div>
-      </div>
-
-      {/* 装饰性背景元素 */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-blue-400/20 to-purple-400/20 rounded-full blur-3xl"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-tr from-indigo-400/20 to-pink-400/20 rounded-full blur-3xl"></div>
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-gradient-to-r from-purple-400/10 to-blue-400/10 rounded-full blur-3xl"></div>
       </div>
     </div>
   );
-}; 
+}

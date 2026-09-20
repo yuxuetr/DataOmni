@@ -331,14 +331,6 @@ function App() {
       {/* 左侧侧边栏 - 包含连接选择和数据库浏览器 */}
       <div className="w-80 bg-surface border-r border-line flex flex-col">
         <Sidebar
-          onConnect={async (connection, connectionString) => {
-            try {
-              await sessionManager.switchConnection(connection, connectionString);
-            } catch (error) {
-              console.error('连接失败:', error);
-              throw error;
-            }
-          }}
           activeConnectionId={activeConnection?.config.id}
           onConnectionDeleted={(connectionId) => sessionManager.handleConnectionDeleted(connectionId)}
           onTableSelect={openTableTab}

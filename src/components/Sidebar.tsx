@@ -1,22 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Database, ChevronDown, Edit, Trash2, AlertCircle, X } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
 import { ConnectionConfig, useConnectionStore } from '../stores/connectionStore';
 import DatabaseExplorer from './DatabaseExplorer';
 import { ConnectionForm } from './ConnectionForm';
 import { ThemeToggle } from './ThemeToggle';
 import { useAppStore } from '../stores/appStore';
 import { confirm } from '@tauri-apps/plugin-dialog';
+import { useProfileConnector } from '../hooks/useProfileConnector';
 
 interface SidebarProps {
-  onConnect: (connection: ConnectionConfig, connectionString: string) => Promise<void>;
   activeConnectionId?: string | null;
   onConnectionDeleted?: (deletedConnectionId: string) => Promise<void>;
   onTableSelect?: (tableName: string, schema?: string) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
-  onConnect,
   activeConnectionId,
   onConnectionDeleted,
   onTableSelect
@@ -24,7 +22,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { connections, loadConnections, deleteConnection } = useConnectionStore();
   const { connectionForm, openConnectionForm, closeConnectionForm } = useAppStore();
   const [showConnectionMenu, setShowConnectionMenu] = useState(false);
+  // 只装本组件自己产生的错误（加载列表、删除连接）；连接过程的错误由 connector 持有
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const {
+    connect,
+    connectingProfileId,
+    error: connectError,
+    clearError: clearConnectError
+  } = useProfileConnector();
+  const visibleError = connectError ?? connectionError;
 
   // 初始化时加载连接列表
   useEffect(() => {
@@ -50,29 +56,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // 获取当前连接
   const currentConnection = connections.find(c => c.id === activeConnectionId);
 
-  // 处理连接选择
+  // 连接流程（含未保存密码时转去输入）由 useProfileConnector 统一持有，
+  // 欢迎页的启动面板用的是同一份，不存在两套行为不一致的实现
   const handleConnectionSelect = async (connection: ConnectionConfig) => {
     setConnectionError(null);
-    try {
-      // 使用后端的test_connection来获取正确的连接字符串(包含SSL参数)
-      console.log('🔗 获取连接字符串:', connection.name);
-      const connectionString = await invoke<string>('test_connection', { config: connection });
-      console.log('✅ 获取到带SSL参数的连接字符串:', connectionString.replace(/:([^:@]+)@/, ':***@'));
-      
-      await onConnect(connection, connectionString);
+    // 失败时保留菜单：错误提示就画在菜单里，一起收起来等于没提示
+    if (await connect(connection) !== 'failed') {
       setShowConnectionMenu(false);
-    } catch (error) {
-      console.error('连接失败:', error);
-      const message = error instanceof Error ? error.message : String(error);
-      setConnectionError(
-        message.includes('SESSION_PASSWORD_REQUIRED')
-          ? '该连接未保存密码，请输入本次会话密码。'
-          : message || '数据库连接失败'
-      );
-      if (message.includes('SESSION_PASSWORD_REQUIRED')) {
-        openConnectionForm(connection);
-        setShowConnectionMenu(false);
-      }
     }
   };
 
@@ -140,6 +130,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <div className="flex items-center space-x-2">
                       <Database size={14} className="text-fg-muted" />
                       <span className="text-sm text-fg">{conn.name}</span>
+                      {connectingProfileId === conn.id && (
+                        <span className="text-xs text-accent">连接中…</span>
+                      )}
                       {conn.id === activeConnectionId && (
                         <span className="text-xs text-success font-medium">● 已连接</span>
                       )}
@@ -173,13 +166,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {/* 错误只属于整个面板，不属于某一行连接；
                   此前渲染在 connections.map() 内部，会按连接数重复出现，
                   而且被挤在窄列里换行成一个词一行 */}
-              {connectionError && (
+              {visibleError && (
                 <div className="flex items-start gap-2 border-t border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
                   <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                  <span className="min-w-0 flex-1 break-words">{connectionError}</span>
+                  <span className="min-w-0 flex-1 break-words">{visibleError}</span>
                   <button
                     type="button"
-                    onClick={() => setConnectionError(null)}
+                    onClick={() => {
+                      setConnectionError(null);
+                      clearConnectError();
+                    }}
                     className="shrink-0 text-danger hover:text-danger"
                     title="关闭错误提示"
                   >

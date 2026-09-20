@@ -44,7 +44,11 @@ interface ConnectionActions {
 type ConnectionStore = ConnectionState & ConnectionActions;
 
 // 创建默认连接配置
-export const createDefaultConfig = (type: DatabaseType = DatabaseType.SQLite): Partial<ConnectionConfig> => {
+// 返回类型收紧为「除 id / 时间戳外样样齐全」：它本来就填满了所有必填字段，
+// 声明成 Partial 只是让调用方无法直接拿去建连接，得在外面补一次或者 as 掉。
+export const createDefaultConfig = (
+  type: DatabaseType = DatabaseType.SQLite
+): Omit<ConnectionConfig, 'id' | 'created_at' | 'updated_at'> => {
   const baseConfig = {
     name: '',
     db_type: type,
