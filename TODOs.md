@@ -341,7 +341,7 @@
     PostgreSQL 16 断言复合键的列顺序与配对。已反向验证：外键改成分两次
     unnest、MySQL 去掉 EXPRESSION 回退、PG 列名改回 join pg_attribute，
     三次都精确变红。
-- [-] 查看视图定义、函数、触发器和序列
+- [x] 查看视图定义、函数、触发器和序列
   - 视图定义与触发器已完成（`b414e45`）。
   - **视图**：三方言都有权威原文。PostgreSQL 在这一点上和建表语句正好相反——
     没有 `SHOW CREATE TABLE`，但 `pg_get_viewdef` 是服务器自己反解的 SELECT。
@@ -352,9 +352,11 @@
     原文；MySQL 只给拆开的组件，界面把时机与事件标成 `BEFORE INSERT`、语句体
     单独显示。不把组件拼成 CREATE TRIGGER——拼出来的未必能执行，那是伪造原文。
     PG 必须排掉 `tgisinternal`，否则每张带外键的表都凭空多出几条触发器。
-  - **函数与序列未做**：它们是库级对象，不属于某张表，需要先给对象树加上
-    非表对象的节点类型。序列还只有 PostgreSQL 有（MySQL 是 AUTO_INCREMENT，
-    SQLite 只有 `sqlite_sequence`），要连能力声明一起做。
+  - 函数、存储过程、序列已完成（`0895bf2`）：对象树按类型分组后列出，点击
+    弹出定义。函数可以重载，标识用 PostgreSQL 的 oid 而不是名字，否则点开
+    两个重载会看到同一份定义；显示名带参数签名，否则它们在树里长得一样。
+    序列没有 `CREATE SEQUENCE` 的反解函数，改为如实列出 pg_sequences 给的
+    全部属性，不拼一条可能不等价的语句。
   - 判据：`postgres_returns_the_view_definition_but_not_a_create_table`、
     `postgres_lists_user_triggers_without_the_foreign_key_internals`、
     `mysql_returns_trigger_components_and_the_create_view_statement`、
@@ -560,6 +562,9 @@
 ### 5.4 性能与体验验收
 
 - [ ] 大对象树采用按需加载和虚拟化
+  - 现状（`0895bf2`）：一次查完全部对象，按类型分组后渲染。类型分组本身就是
+    一层折叠，默认只展开第一组，DOM 规模比此前平铺所有表时更小。
+    等遇到「一个库几千个对象」再测数再定。
 - [x] 大表格采用行列虚拟化，但不替代服务端数据限制
   - 结论：**当前版本不做**（`8364ffe`）。动手前先测了一个数：最坏情况
     100 行 × 20 列共 2000 个单元格，整次重渲染中位数 25ms，且这个数还包含
