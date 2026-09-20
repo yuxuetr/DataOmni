@@ -18,6 +18,12 @@ export interface AppState {
     schema?: string;
   } | null;
   
+  // 连接表单弹窗。放在应用级状态里，好让欢迎页等非侧边栏入口也能打开它
+  connectionForm:
+    | { mode: 'create' }
+    | { mode: 'edit'; connection: ConnectionProfile }
+    | null;
+  
   // 数据库元数据缓存
   databaseMetadata: Record<string, CachedDatabaseMetadata>;
   
@@ -27,6 +33,10 @@ export interface AppState {
 
 // 应用操作接口
 export interface AppActions {
+  // 连接表单管理
+  openConnectionForm: (connection?: ConnectionProfile) => void;
+  closeConnectionForm: () => void;
+  
   // 表选择管理
   selectTable: (tableName: string, schema?: string) => void;
   clearSelectedTable: () => void;
@@ -47,8 +57,21 @@ export const useAppStore = create<AppStore>((set) => ({
   // 初始状态
   activeConnection: null,
   selectedTable: null,
+  connectionForm: null,
   databaseMetadata: {},
   connectionReady: false,
+
+  openConnectionForm: (connection?: ConnectionProfile) => {
+    set({
+      connectionForm: connection
+        ? { mode: 'edit', connection }
+        : { mode: 'create' }
+    });
+  },
+
+  closeConnectionForm: () => {
+    set({ connectionForm: null });
+  },
 
   selectTable: (tableName: string, schema?: string) => {
     console.log('📋 选择表:', tableName, 'schema:', schema);

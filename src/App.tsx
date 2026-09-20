@@ -21,7 +21,7 @@ import { useSessionManager } from './utils/stateSync';
 import { saveWorkspaceSnapshot } from './utils/workspacePersistence';
 
 function App() {
-  const { activeConnection, selectedTable } = useAppStore();
+  const { activeConnection, selectedTable, openConnectionForm } = useAppStore();
   const {
     tabs,
     activeTabId,
@@ -272,10 +272,7 @@ function App() {
   const renderActiveTab = () => {
     if (!activeTab) {
       return (
-        <WelcomeScreen onConnect={() => {
-          // 这里可以触发显示连接表单的逻辑
-          console.log('用户点击了连接按钮');
-        }} />
+        <WelcomeScreen onConnect={openConnectionForm} />
       );
     }
 

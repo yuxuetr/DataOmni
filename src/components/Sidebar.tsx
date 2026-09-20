@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { ConnectionConfig, useConnectionStore } from '../stores/connectionStore';
 import DatabaseExplorer from './DatabaseExplorer';
 import { ConnectionForm } from './ConnectionForm';
+import { useAppStore } from '../stores/appStore';
 import { confirm } from '@tauri-apps/plugin-dialog';
 
 interface SidebarProps {
@@ -20,8 +21,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onTableSelect
 }) => {
   const { connections, loadConnections, deleteConnection } = useConnectionStore();
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [editingConnection, setEditingConnection] = useState<ConnectionConfig | null>(null);
+  const { connectionForm, openConnectionForm, closeConnectionForm } = useAppStore();
   const [showConnectionMenu, setShowConnectionMenu] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
@@ -36,8 +36,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   // 处理新建连接
   const handleCreateConnection = () => {
     setConnectionError(null);
-    setEditingConnection(null);
-    setIsFormOpen(true);
+    openConnectionForm();
   };
 
   // 处理表格选择
@@ -70,8 +69,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           : message || '数据库连接失败'
       );
       if (message.includes('SESSION_PASSWORD_REQUIRED')) {
-        setEditingConnection(connection);
-        setIsFormOpen(true);
+        openConnectionForm(connection);
         setShowConnectionMenu(false);
       }
     }
@@ -79,8 +77,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // 处理编辑连接
   const handleEditConnection = (connection: ConnectionConfig) => {
-    setEditingConnection(connection);
-    setIsFormOpen(true);
+    openConnectionForm(connection);
     setShowConnectionMenu(false);
   };
 
@@ -223,13 +220,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* 连接表单弹窗 */}
-      {isFormOpen && (
+      {connectionForm && (
         <ConnectionForm
-          connection={editingConnection || undefined}
-          mode={editingConnection ? 'edit' : 'create'}
+          connection={connectionForm.mode === 'edit' ? connectionForm.connection : undefined}
+          mode={connectionForm.mode}
           onClose={() => {
-            setIsFormOpen(false);
-            setEditingConnection(null);
+            closeConnectionForm();
             // 重新加载连接列表
             loadConnections().catch(err => {
               console.error('加载连接列表失败:', err);

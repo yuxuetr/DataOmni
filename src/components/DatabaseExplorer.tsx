@@ -291,6 +291,18 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
             <Loader className="animate-spin text-gray-400" size={16} />
             <span className="ml-2 text-gray-600 text-sm">加载中...</span>
           </div>
+        ) : error ? (
+          // 出错时不再同时显示「暂无数据库对象」：那会让人以为库是空的，
+          // 而真实情况是我们根本没读到
+          <div className="p-4 text-center text-gray-500 text-sm">
+            <p>未能读取数据库对象。</p>
+            <button
+              onClick={() => loadDatabaseMetadata(true)}
+              className="mt-2 text-blue-600 hover:underline"
+            >
+              重试
+            </button>
+          </div>
         ) : metadata.schemas.length === 0 ? (
           <div className="p-4 text-center text-gray-500 text-sm">
             <Info className="mx-auto mb-2" size={16} />

@@ -12,6 +12,7 @@ import { ConnectionConfig } from '../stores/connectionStore';
 import { selectActiveSqlDocument, useQueryStore } from '../stores/queryStore';
 import { useAppStore } from '../stores/appStore';
 import { SqlEditor } from './SqlEditor';
+import { ConnectionInfoDialog } from './ConnectionInfoDialog';
 
 interface SqlWorkbenchProps {
   connection: ConnectionConfig;
@@ -28,7 +29,6 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
 }) => {
   const {
     database,
-    connectionId,
     session,
     isConnecting,
     error,
@@ -128,9 +128,17 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
   };
 
   const statusDisplay = getConnectionStatusDisplay();
+  const [showConnectionInfo, setShowConnectionInfo] = useState(false);
 
   return (
     <div className="h-full flex flex-col bg-white">
+      {showConnectionInfo && (
+        <ConnectionInfoDialog
+          connection={connection}
+          session={session}
+          onClose={() => setShowConnectionInfo(false)}
+        />
+      )}
       {/* 工作台头部 */}
       <div className="flex items-center justify-between p-4 border-b bg-gray-50">
         <div className="flex items-center space-x-3">
@@ -154,11 +162,6 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
                 {statusDisplay.icon}
                 <span>{statusDisplay.text}</span>
               </div>
-              {connectionId && session && (
-                <div className="text-xs text-gray-500">
-                  配置: {connectionId} · Session: {session.id.slice(0, 8)}
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -166,6 +169,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
         <div className="flex items-center space-x-2">
           {/* 连接信息按钮 */}
           <button
+            onClick={() => setShowConnectionInfo(true)}
             className="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
             title="连接信息"
           >
@@ -188,10 +192,10 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
           <button
             onClick={handleClose}
             className="flex items-center space-x-1 px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-            title="关闭SQL工作台"
+            title="断开与该数据库的连接"
           >
             <X size={14} />
-            <span>关闭工作台</span>
+            <span>断开连接</span>
           </button>
         </div>
       </div>
