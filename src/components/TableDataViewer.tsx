@@ -6,6 +6,7 @@ import {
   isTaggedResultValue,
   unwrapResultValue
 } from '../utils/resultValues';
+import { describeError } from '../utils/describeError';
 import type { SerializedResultValue } from '../contracts/resultSet';
 import {
   X,
@@ -245,7 +246,7 @@ export default function TableDataViewer({
       return loadedSchema;
     } catch (err) {
       console.error('加载表结构失败:', err);
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeError(err));
       return null;
     }
   };
@@ -310,7 +311,7 @@ export default function TableDataViewer({
     } catch (err) {
       console.error('加载表数据失败:', err);
       // 原始错误必须可见，否则无从判断是类型解码、权限还是语法问题
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeError(err));
     } finally {
       setLoading(false);
     }
@@ -491,7 +492,7 @@ export default function TableDataViewer({
       await loadTableData(currentPage);
     } catch (error) {
       console.error('保存失败:', error);
-      setEditingError(error instanceof Error ? error.message : '保存失败');
+      setEditingError(describeError(error, '保存失败'));
     } finally {
       setEditingLoading(false);
     }
@@ -513,7 +514,7 @@ export default function TableDataViewer({
       await loadTableData(currentPage);
     } catch (error) {
       console.error('删除失败:', error);
-      setEditingError(error instanceof Error ? error.message : '删除失败');
+      setEditingError(describeError(error, '删除失败'));
     } finally {
       setEditingLoading(false);
     }

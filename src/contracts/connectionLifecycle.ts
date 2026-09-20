@@ -1,3 +1,4 @@
+import { describeError } from '../utils/describeError';
 export type ConnectionLifecycleStatus =
   | 'disconnected'
   | 'connecting'
@@ -117,7 +118,7 @@ export function transitionConnectionLifecycle(
 }
 
 export function classifyConnectionFailure(error: unknown): ConnectionFailureKind {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = describeError(error);
 
   if (/(auth|authentication|password|credential|permission denied|access denied|28P01)/i.test(message)) {
     return 'authentication';

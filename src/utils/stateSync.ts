@@ -14,6 +14,7 @@ import {
   type ConnectionFailureKind,
   type ConnectionLifecycleState
 } from '../contracts/connectionLifecycle';
+import { describeError } from './describeError';
 
 /**
  * 数据库会话管理器
@@ -125,7 +126,7 @@ export class SessionManager {
         type: 'connection-failed',
         profileId: connectionId,
         kind: classifyConnectionFailure(error),
-        error: error instanceof Error ? error.message : String(error)
+        error: describeError(error)
       });
       console.error('❌ 连接切换失败:', connectionId, error);
       throw error;

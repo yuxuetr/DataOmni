@@ -10,6 +10,7 @@ import {
   AlertCircle,
   Info
 } from 'lucide-react';
+import { describeError } from '../utils/describeError';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useQueryStore } from '../stores/queryStore';
 import { useAppStore } from '../stores/appStore';
@@ -172,7 +173,7 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
     } catch (err) {
       console.error('加载数据库元数据失败:', err);
       // 原始错误必须可见：只说「失败」等于没说，用户和我们都无从下手
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeError(err));
     } finally {
       setLoading(false);
     }

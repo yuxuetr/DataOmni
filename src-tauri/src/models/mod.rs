@@ -4,6 +4,9 @@ use urlencoding::encode;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionProfile {
+  /// 保存后由后端生成。新建连接表单在保存之前要先「测试连接」，那时还没有 id，
+  /// 所以这三个字段必须有默认值——否则草稿配置根本反序列化不了。
+  #[serde(default)]
   pub id: String,
   pub name: String,
   pub db_type: DatabaseType,
@@ -30,7 +33,9 @@ pub struct ConnectionProfile {
   pub environment: ConnectionEnvironment,
   #[serde(default)]
   pub credential_ref: Option<String>,
+  #[serde(default)]
   pub created_at: String,
+  #[serde(default)]
   pub updated_at: String,
 }
 
@@ -303,6 +308,41 @@ impl Default for ConnectionProfile {
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn draft_connection_without_id_deserializes() {
+    // 新建连接表单送来的草稿：还没保存，所以没有 id / created_at / updated_at。
+    // 这三个字段当初没有 serde 默认值，于是「测试连接」在保存之前必然失败，
+    // 而失败原因在前端又被换成了一句没有信息量的话。
+    let draft = r#"{
+      "name": "T1",
+      "db_type": "mysql",
+      "host": "154.44.16.42",
+      "port": 3306,
+      "database": "mysql",
+      "username": "root",
+      "password": "secret",
+      "ssl": false,
+      "tls_mode": "disabled",
+      "ca_certificate_path": "",
+      "client_certificate_path": "",
+      "client_key_path": "",
+      "save_password": true,
+      "options": {},
+      "tags": [],
+      "environment": "development"
+    }"#;
+
+    let parsed = serde_json::from_str::<super::ConnectionProfile>(draft);
+    assert!(parsed.is_ok(), "草稿配置反序列化失败: {:?}", parsed.err());
+
+    let profile = match parsed {
+      Ok(profile) => profile,
+      Err(error) => unreachable!("上面已断言成功: {error}"),
+    };
+    assert_eq!(profile.id, "");
+    assert_eq!(profile.created_at, "");
+  }
+
   use super::*;
 
   fn mysql_config(tls_mode: Option<TlsMode>, ssl: bool) -> ConnectionProfile {

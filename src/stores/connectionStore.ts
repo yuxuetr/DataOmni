@@ -6,6 +6,7 @@ import {
   type ConnectionEnvironment,
   type TlsMode
 } from '../contracts/connection';
+import { describeError } from '../utils/describeError';
 
 export {
   DatabaseType,
@@ -180,7 +181,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     } catch (error) {
       console.error('加载连接配置失败:', error);
       set({ 
-        error: error instanceof Error ? error.message : '加载连接配置失败', 
+        error: describeError(error, '加载连接配置失败'), 
         isLoading: false 
       });
     }
@@ -205,7 +206,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     } catch (error) {
       console.error('创建连接失败:', error);
       set({ 
-        error: error instanceof Error ? error.message : '创建连接失败', 
+        error: describeError(error, '创建连接失败'), 
         isLoading: false 
       });
       throw error;
@@ -223,7 +224,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     } catch (error) {
       console.error('更新连接失败:', error);
       set({ 
-        error: error instanceof Error ? error.message : '更新连接失败', 
+        error: describeError(error, '更新连接失败'), 
         isLoading: false 
       });
       throw error;
@@ -248,7 +249,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     } catch (error) {
       console.error('删除连接失败:', error);
       set({ 
-        error: error instanceof Error ? error.message : '删除连接失败', 
+        error: describeError(error, '删除连接失败'), 
         isLoading: false 
       });
       throw error;
@@ -296,7 +297,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         return connectionString;
       } catch (dbError) {
         console.error('数据库连接失败:', dbError);
-        const dbErrorMessage = dbError instanceof Error ? dbError.message : '数据库连接失败';
+        const dbErrorMessage = describeError(dbError, '数据库连接失败');
         
         // 特殊处理端口错误
         let finalErrorMessage = dbErrorMessage;
@@ -317,7 +318,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       }
     } catch (error) {
       console.error('连接配置验证失败:', error);
-      const errorMessage = error instanceof Error ? error.message : '连接配置验证失败';
+      const errorMessage = describeError(error, '连接配置验证失败');
       set({ 
         error: errorMessage,
         testResult: `连接测试失败: ${errorMessage}`,

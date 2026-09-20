@@ -11,6 +11,7 @@ import {
   type QueryExecution,
   type SqlDialect
 } from '../contracts/queryExecution';
+import { describeError } from '../utils/describeError';
 import { DatabaseSession } from '../contracts/session';
 import type {
   DriverQueryResult,
@@ -453,7 +454,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       console.error('❌ 数据库连接失败:', error);
       
       // 处理端口错误的特殊情况
-      let errorMessage = error instanceof Error ? error.message : '数据库连接失败';
+      let errorMessage = describeError(error, '数据库连接失败');
       if (errorMessage.includes('invalid port number')) {
         // 尝试从连接字符串中提取端口号
         const portMatch = connectionString.match(/:(\d+)\//);
@@ -489,7 +490,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         }
         await currentState.database.close();
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : '关闭数据库连接失败';
+        const errorMessage = describeError(error, '关闭数据库连接失败');
         set({ error: errorMessage });
         throw new Error(errorMessage);
       }
@@ -797,7 +798,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       return true;
     } catch (error) {
       console.error('❌ SQL执行失败:', error);
-      const rawErrorMessage = error instanceof Error ? error.message : String(error);
+      const rawErrorMessage = describeError(error);
       const timedOut = rawErrorMessage.startsWith('QUERY_TIMEOUT:');
       const cancelled = rawErrorMessage.startsWith('QUERY_CANCELLED:');
       const errorMessage = cancelled
@@ -871,7 +872,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       }
     } catch (error) {
       set((state) => ({
-        error: error instanceof Error ? error.message : String(error),
+        error: describeError(error),
         executions: state.executions.map((execution) =>
           execution.id === executionId && execution.status === 'cancel-requested'
             ? {
@@ -1003,7 +1004,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       console.log('✅ 数据更新成功');
     } catch (error) {
       console.error('❌ 数据更新失败:', error);
-      const errorMessage = error instanceof Error ? error.message : '数据更新失败';
+      const errorMessage = describeError(error, '数据更新失败');
       set({ error: errorMessage });
     }
   },
@@ -1081,7 +1082,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       console.log('✅ 数据删除成功');
     } catch (error) {
       console.error('❌ 数据删除失败:', error);
-      const errorMessage = error instanceof Error ? error.message : '数据删除失败';
+      const errorMessage = describeError(error, '数据删除失败');
       set({ error: errorMessage });
     }
   },
@@ -1263,7 +1264,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       console.log('✅ 数据新增成功');
     } catch (error) {
       console.error('❌ 数据新增失败:', error);
-      const errorMessage = error instanceof Error ? error.message : '数据新增失败';
+      const errorMessage = describeError(error, '数据新增失败');
       set({ error: errorMessage });
     }
   },

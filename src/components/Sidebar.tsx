@@ -8,6 +8,7 @@ import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useAppStore } from '../stores/appStore';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { useProfileConnector } from '../hooks/useProfileConnector';
+import { describeError } from '../utils/describeError';
 
 interface SidebarProps {
   activeConnectionId?: string | null;
@@ -37,7 +38,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     loadConnections().catch(err => {
       console.error('加载连接列表失败:', err);
-      setConnectionError(err instanceof Error ? err.message : '加载连接列表失败');
+      setConnectionError(describeError(err, '加载连接列表失败'));
     });
   }, []);
 
@@ -88,7 +89,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }
       } catch (error) {
         console.error('删除连接失败:', error);
-        setConnectionError(error instanceof Error ? error.message : '删除连接失败');
+        setConnectionError(describeError(error, '删除连接失败'));
       }
     }
     setShowConnectionMenu(false);
@@ -233,7 +234,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             // 重新加载连接列表
             loadConnections().catch(err => {
               console.error('加载连接列表失败:', err);
-              setConnectionError(err instanceof Error ? err.message : '加载连接列表失败');
+              setConnectionError(describeError(err, '加载连接列表失败'));
             });
           }}
         />

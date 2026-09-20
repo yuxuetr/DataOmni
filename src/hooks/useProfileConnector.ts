@@ -8,6 +8,7 @@ import { useAppStore } from '../stores/appStore';
 import { useSessionManager } from '../utils/stateSync';
 import { recordConnectionUse } from '../utils/connectionRecency';
 import { withTimeout } from '../utils/withTimeout';
+import { describeError } from '../utils/describeError';
 
 /**
  * 连接的等待上限。
@@ -69,7 +70,7 @@ export function useProfileConnector(): ProfileConnector {
       recordConnectionUse(profile.id);
       return 'connected';
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
+      const message = describeError(cause);
 
       if (message.includes('SESSION_PASSWORD_REQUIRED')) {
         setError('该连接未保存密码，请输入本次会话密码。');
@@ -129,7 +130,7 @@ export function useProfileConnector(): ProfileConnector {
 
       await connect(created);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(describeError(cause));
     }
   }, [connect]);
 
