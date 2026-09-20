@@ -5,7 +5,6 @@ import {
   PlayCircle,
   Trash2,
   RotateCcw,
-  FileText,
   Clock,
   AlertCircle,
   CheckCircle,
@@ -211,15 +210,12 @@ export const SqlEditor: React.FC = () => {
   return (
     <div className="h-full flex flex-col bg-surface">
       {/* SQL编辑器头部 */}
-      <div className="flex items-center justify-between p-4 border-b bg-surface-sunken">
-        <div className="flex items-center space-x-3">
-          <FileText className="text-fg-muted" size={20} />
-          <h2 className="text-lg font-semibold text-fg">SQL编辑器</h2>
-          {statements.length > 0 && (
-            <span className="bg-accent-soft text-accent text-xs font-medium px-2 py-1 rounded-full">
-              {statements.length} 条语句
-            </span>
-          )}
+      <div className="flex items-center justify-between gap-3 border-b border-line bg-surface-sunken px-3 py-1.5">
+        <div className="flex shrink-0 items-center">
+          {/* 不再用「SQL编辑器」大标题：标签栏已经标明这是查询标签 */}
+          <span className="text-xs text-fg-subtle">
+            {statements.length > 0 ? `${statements.length} 条语句` : '未解析出语句'}
+          </span>
         </div>
         
         <div className="flex items-center space-x-2">
@@ -404,8 +400,8 @@ export const SqlEditor: React.FC = () => {
           </div>
         ) : (
           /* 语句列表 */
-          <div className="p-4 space-y-4">
-            {statements.map((statement) => {
+          <div className="space-y-2 p-3">
+            {statements.map((statement, index) => {
               const executionId = latestExecutionIdByStatement[statement.id];
               const execution = executions.find(
                 (candidate) => candidate.id === executionId
@@ -413,6 +409,7 @@ export const SqlEditor: React.FC = () => {
               return (
                 <SqlStatementCard
                   key={statement.id}
+                  ordinal={index + 1}
                   statement={statement}
                   execution={execution}
                   onExecute={() => executeStatement(statement.id)}
@@ -431,6 +428,8 @@ export const SqlEditor: React.FC = () => {
 
 // SQL语句卡片组件
 interface SqlStatementCardProps {
+  /** 从 1 开始的序号。此前是从 id 字符串里切出来的，既脆弱又从 0 开始 */
+  ordinal: number;
   statement: SqlStatement;
   execution?: QueryExecution;
   onExecute: () => void;
@@ -442,6 +441,7 @@ interface SqlStatementCardProps {
 // 查询结果表格组件已移至单独的文件 QueryResultScrollTable.tsx
 
 const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
+  ordinal,
   statement,
   execution,
   onExecute,
@@ -452,17 +452,19 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
   return (
     <div className="border border-line rounded-panel overflow-hidden">
       {/* 语句头部 */}
-      <div className="flex items-center justify-between p-3 bg-surface-sunken border-b">
-        <div className="flex items-center space-x-2">
-          <FileText className="text-fg-muted" size={16} />
-          <span className="text-sm font-medium text-fg">
-            SQL语句 #{statement.id.split('_')[2]}
+      <div className="flex items-center justify-between gap-2 border-b border-line bg-surface-sunken px-2.5 py-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 text-xs font-medium text-fg-muted">#{ordinal}</span>
+          {/* 语句原文折成一行：完整内容就在上面的编辑器里，这里只是用来认
+              「这份结果是哪条语句的」 */}
+          <span className="min-w-0 truncate font-mono text-xs text-fg" title={statement.sql}>
+            {statement.sql.replace(/\s+/g, ' ').trim()}
           </span>
           {statement.executedAt && (
-            <div className="flex items-center space-x-1 text-xs text-fg-muted">
-              <Clock size={12} />
-              <span>执行于 {statement.executedAt}</span>
-            </div>
+            <span className="flex shrink-0 items-center gap-1 text-xs text-fg-subtle">
+              <Clock size={11} />
+              {statement.executedAt}
+            </span>
           )}
         </div>
         
@@ -483,12 +485,14 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
             onClick={statement.isExecuting ? onCancel : onExecute}
             disabled={execution?.status === 'cancel-requested'}
             className={clsx(
-              "flex items-center space-x-1 px-3 py-1 text-sm rounded-control transition-colors",
+              'flex items-center gap-1 rounded-control px-2 py-0.5 text-xs transition-colors',
               execution?.status === 'cancel-requested'
-                ? "bg-warning-soft text-warning cursor-wait"
+                ? 'cursor-wait bg-warning-soft text-warning'
                 : statement.isExecuting
-                  ? "bg-danger-solid text-fg-on-solid hover:opacity-90"
-                : "bg-success-solid text-fg-on-solid hover:opacity-90"
+                  // 停止是紧急动作，保持实心；单条执行是次要动作，用描边——
+                  // 主操作是头部那个「执行全部」，这里不该跟它抢视觉重量
+                  ? 'bg-danger-solid text-fg-on-solid hover:opacity-90'
+                  : 'border border-line-strong text-fg-muted hover:bg-surface-hover'
             )}
           >
             {statement.isExecuting ? <Square size={14} /> : <Play size={14} />}
@@ -511,11 +515,6 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
             <Trash2 size={14} />
           </button>
         </div>
-      </div>
-
-      {/* SQL代码 */}
-      <div className="px-3 py-2 bg-surface-sunken border-t border-line font-mono text-xs text-fg">
-        <pre className="whitespace-pre-wrap">{statement.sql}</pre>
       </div>
 
       {/* 执行结果 */}
