@@ -140,3 +140,26 @@ function boolean(value: unknown): boolean {
   }
   return value === '1' || value === 'true';
 }
+
+/**
+ * 不同方言把建表语句放在不同列里，名字还带空格。
+ * 认不出来的行直接跳过——把整行 `String(row)` 塞进去会得到 `[object Object]`，
+ * 那是一段看上去有内容、复制出去却毫无用处的文本。
+ */
+const DDL_COLUMN_CANDIDATES = ['Create Table', 'Create View', 'sql'];
+
+export function extractDdlStatements(rows: readonly MetadataRow[]): string[] {
+  return rows.flatMap(row => {
+    const column = DDL_COLUMN_CANDIDATES.find(
+      candidate => typeof row[candidate] === 'string' && (row[candidate] as string).trim()
+    );
+    return column ? [(row[column] as string).trim()] : [];
+  });
+}
+
+/** 拼成可直接粘回客户端执行的脚本：每条以分号结尾，条与条之间空一行。 */
+export function joinDdlStatements(statements: readonly string[]): string {
+  return statements
+    .map(statement => (statement.endsWith(';') ? statement : `${statement};`))
+    .join('\n\n');
+}

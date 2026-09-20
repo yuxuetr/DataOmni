@@ -21,6 +21,20 @@ pub struct SchemaMetadataQueries {
   pub indexes: &'static str,
   pub foreign_keys: &'static str,
   pub check_constraints: Option<&'static str>,
+  pub ddl: Option<DdlQuery>,
+}
+
+/// 取建表语句的方式。两种形态不是为了对称——它们真的不一样：
+/// `SHOW CREATE TABLE` 不接受占位符，表名必须作为**引用过的标识符**插进语句；
+/// 而 `sqlite_master` 里表名是一个**字符串字面量**，走绑定参数。
+/// 两种引用规则不同，混用会在含特殊字符的表名上出错。
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DdlQuery {
+  /// 表名走绑定参数
+  Bound { sql: &'static str },
+  /// 表名要替换 `sql` 里的 `{table}`，调用方负责按方言引用标识符
+  Interpolated { sql: &'static str },
 }
 
 /// 该方言是否支持目录级的结构浏览。
@@ -33,16 +47,21 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       indexes: POSTGRES_INDEXES,
       foreign_keys: POSTGRES_FOREIGN_KEYS,
       check_constraints: Some(POSTGRES_CHECK_CONSTRAINTS),
+      // PostgreSQL 没有 SHOW CREATE TABLE。见文件末尾 `postgres_has_no_ddl_query`
+      // 上的说明：从目录重建 DDL 做不到高保真，做一半比不做更糟。
+      ddl: None,
     }),
     DatabaseType::MySQL => Some(SchemaMetadataQueries {
       indexes: MYSQL_INDEXES,
       foreign_keys: MYSQL_FOREIGN_KEYS,
       check_constraints: Some(MYSQL_CHECK_CONSTRAINTS),
+      ddl: Some(DdlQuery::Interpolated { sql: MYSQL_DDL }),
     }),
     DatabaseType::SQLite => Some(SchemaMetadataQueries {
       indexes: SQLITE_INDEXES,
       foreign_keys: SQLITE_FOREIGN_KEYS,
       check_constraints: None,
+      ddl: Some(DdlQuery::Bound { sql: SQLITE_DDL }),
     }),
     _ => None,
   }
@@ -202,6 +221,20 @@ FROM pragma_foreign_key_list(?1) fk
 ORDER BY fk.id, fk.seq
 "#;
 
+/// 对视图返回的列叫 `Create View`，不是 `Create Table`——调用方按候选列名找。
+const MYSQL_DDL: &str = "SHOW CREATE TABLE {table}";
+
+/// 一并取出这张表的索引与触发器：它们也是建表脚本的一部分，
+/// 只给 CREATE TABLE 的话，照着重建出来的表会少掉所有显式索引。
+/// `sql IS NULL` 的是 SQLite 自动建的约束索引，已经含在 CREATE TABLE 里。
+const SQLITE_DDL: &str = r#"
+SELECT sql
+FROM sqlite_master
+WHERE tbl_name = ?1
+  AND sql IS NOT NULL
+ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END, name
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -213,6 +246,42 @@ mod tests {
       queries.check_constraints.is_none(),
       "SQLite 没有检查约束目录，必须用 None 说出来，不能给一段查不到东西的 SQL"
     );
+  }
+
+  /// PostgreSQL 的建表语句：**当前版本不做**。
+  ///
+  /// 它没有 `SHOW CREATE TABLE`，要从目录重建就得覆盖类型、默认值、identity、
+  /// 排序规则、存储参数、分区、继承、注释、触发器、RLS。少任何一项，产出的
+  /// 就是**看起来权威、照着重建却不等价**的 DDL——那比没有更糟，因为没人会
+  /// 去核对它。
+  ///
+  /// 重估条件（可执行）：这条断言。哪天真的实现了 PostgreSQL DDL，
+  /// 它会红，逼着回来把这段理由改掉或删掉，而不是让一个过期的判断留在代码里。
+  #[test]
+  fn postgres_has_no_ddl_query() {
+    let queries = schema_metadata_queries(&DatabaseType::PostgreSQL).expect("supported");
+    assert!(queries.ddl.is_none(), "PostgreSQL 没有权威的建表语句来源");
+  }
+
+  #[test]
+  fn mysql_interpolates_the_table_identifier_because_show_rejects_placeholders() {
+    let queries = schema_metadata_queries(&DatabaseType::MySQL).expect("supported");
+    match queries.ddl {
+      Some(DdlQuery::Interpolated { sql }) => {
+        assert!(sql.contains("{table}"), "插值形态必须留出 {{table}}: {sql}")
+      }
+      other => panic!("MySQL 的 SHOW CREATE TABLE 只能插值，不能绑参: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn sqlite_binds_the_table_name_as_a_string() {
+    let queries = schema_metadata_queries(&DatabaseType::SQLite).expect("supported");
+    match queries.ddl {
+      // sqlite_master.tbl_name 是字符串字面量，按标识符引用会查不到
+      Some(DdlQuery::Bound { sql }) => assert!(sql.contains('?'), "绑定形态必须带占位符: {sql}"),
+      other => panic!("SQLite 应走绑定参数: {other:?}"),
+    }
   }
 
   #[test]

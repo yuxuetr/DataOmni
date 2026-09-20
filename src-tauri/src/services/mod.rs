@@ -13,4 +13,4 @@ pub use query_executor::{
   DEFAULT_QUERY_ROW_LIMIT, QUERY_TIMEOUT_CODE,
 };
 pub use query_session::{QuerySessionState, StreamingQueryOptions};
-pub use schema_metadata::{schema_metadata_queries, SchemaMetadataQueries};
+pub use schema_metadata::{schema_metadata_queries, DdlQuery, SchemaMetadataQueries};

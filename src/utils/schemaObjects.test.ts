@@ -3,6 +3,8 @@ import {
   EXPRESSION_COLUMN_PLACEHOLDER,
   groupForeignKeyRows,
   groupIndexRows,
+  extractDdlStatements,
+  joinDdlStatements,
   toCheckConstraints
 } from './schemaObjects';
 
@@ -143,5 +145,51 @@ describe('toCheckConstraints', () => {
   it('空表达式不会变成 undefined', () => {
     expect(toCheckConstraints([{ constraint_name: 'ck', expression: null }]))
       .toEqual([{ name: 'ck', expression: '' }]);
+  });
+});
+
+describe('extractDdlStatements', () => {
+  it('MySQL 的列名字面就叫 `Create Table`（带空格）', () => {
+    expect(
+      extractDdlStatements([{ Table: 'orders', 'Create Table': 'CREATE TABLE `orders` (...)' }])
+    ).toEqual(['CREATE TABLE `orders` (...)']);
+  });
+
+  it('对视图 MySQL 返回的是 `Create View`', () => {
+    expect(
+      extractDdlStatements([{ View: 'v', 'Create View': 'CREATE VIEW v AS SELECT 1' }])
+    ).toEqual(['CREATE VIEW v AS SELECT 1']);
+  });
+
+  it('SQLite 的多行按顺序拼成多条语句', () => {
+    expect(
+      extractDdlStatements([
+        { sql: 'CREATE TABLE t (...)' },
+        { sql: 'CREATE INDEX ix ON t (a)' }
+      ])
+    ).toEqual(['CREATE TABLE t (...)', 'CREATE INDEX ix ON t (a)']);
+  });
+
+  it('认不出来的行被跳过，而不是塞进一个 [object Object]', () => {
+    expect(extractDdlStatements([{ unexpected: 'CREATE TABLE t' }])).toEqual([]);
+  });
+
+  it('空字符串不算一条语句', () => {
+    expect(extractDdlStatements([{ sql: '' }, { sql: '   ' }])).toEqual([]);
+  });
+});
+
+describe('joinDdlStatements', () => {
+  it('每条以分号结尾，条与条之间空一行', () => {
+    expect(joinDdlStatements(['CREATE TABLE t (a INT)', 'CREATE INDEX ix ON t (a)']))
+      .toBe('CREATE TABLE t (a INT);\n\nCREATE INDEX ix ON t (a);');
+  });
+
+  it('本来就带分号的不再补一个', () => {
+    expect(joinDdlStatements(['CREATE TABLE t (a INT);'])).toBe('CREATE TABLE t (a INT);');
+  });
+
+  it('没有语句时是空串', () => {
+    expect(joinDdlStatements([])).toBe('');
   });
 });

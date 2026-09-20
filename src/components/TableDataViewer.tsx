@@ -53,8 +53,10 @@ import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { ExportResultDialog } from './ExportResultDialog';
 import {
+  extractDdlStatements,
   groupForeignKeyRows,
   groupIndexRows,
+  joinDdlStatements,
   toCheckConstraints
 } from '../utils/schemaObjects';
 import { SchemaObjectSections, type SchemaObjects } from './SchemaObjectSections';
@@ -94,7 +96,14 @@ interface SchemaMetadataQueries {
   indexes: string;
   foreign_keys: string;
   check_constraints: string | null;
+  /** null = 该方言没有权威的建表语句来源（PostgreSQL） */
+  ddl: DdlQuery | null;
 }
+
+/** `bound` 走绑定参数，`interpolated` 要把 `{table}` 换成引用过的标识符 */
+type DdlQuery =
+  | { kind: 'bound'; sql: string }
+  | { kind: 'interpolated'; sql: string };
 
 function asRows(value: unknown): Array<Record<string, unknown>> {
   return Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
@@ -138,6 +147,12 @@ export default function TableDataViewer({
   
   const { database, connectionId } = useQueryStore();
   const currentTableKey = `${connection.id}:${schema ?? ''}:${tableName}`;
+  // 标识符引用方言。此前这行三元式在四个函数里各抄了一份
+  const dialect = connection.db_type === 'mysql'
+    ? 'mysql'
+    : connection.db_type === 'postgresql'
+      ? 'postgresql'
+      : 'sqlite';
 
   // COUNT(*) 在大表上是全表扫描（InnoDB 与 PostgreSQL 都没有常数级行数），
   // 按数据集身份缓存，使翻页和调整页大小不再重复付这笔代价。
@@ -184,6 +199,18 @@ export default function TableDataViewer({
     return true;
   };
 
+  const runDdlQuery = (ddl: DdlQuery | null) => {
+    if (!ddl) {
+      return Promise.resolve(null);
+    }
+    if (ddl.kind === 'bound') {
+      return database!.select(ddl.sql, [tableName]);
+    }
+    // SHOW CREATE TABLE 不接受占位符，表名只能作为引用过的标识符插进去
+    const quoted = quoteQualifiedSqlIdentifier(schema ? [schema, tableName] : [tableName], dialect);
+    return database!.select(ddl.sql.replace('{table}', quoted), []);
+  };
+
   /**
    * 索引、外键与检查约束。
    *
@@ -200,18 +227,20 @@ export default function TableDataViewer({
 
       // SQLite 的 pragma 表值函数只认一个表名参数，没有 schema 概念
       const params = connection.db_type === 'sqlite' ? [tableName] : [tableName, schema ?? null];
-      const [indexRows, foreignKeyRows, checkRows] = await Promise.all([
+      const [indexRows, foreignKeyRows, checkRows, ddlRows] = await Promise.all([
         database!.select(queries.indexes, params),
         database!.select(queries.foreign_keys, params),
         queries.check_constraints
           ? database!.select(queries.check_constraints, params)
-          : Promise.resolve(null)
+          : Promise.resolve(null),
+        runDdlQuery(queries.ddl)
       ]);
 
       setSchemaObjects({
         indexes: groupIndexRows(asRows(indexRows)),
         foreignKeys: groupForeignKeyRows(asRows(foreignKeyRows)),
-        checkConstraints: checkRows === null ? null : toCheckConstraints(asRows(checkRows))
+        checkConstraints: checkRows === null ? null : toCheckConstraints(asRows(checkRows)),
+        ddl: ddlRows === null ? null : joinDdlStatements(extractDdlStatements(asRows(ddlRows)))
       });
     } catch (err) {
       // 结构对象读失败不该把已经拿到的列信息一起打掉：列是主体，这里是补充
@@ -220,6 +249,7 @@ export default function TableDataViewer({
         indexes: [],
         foreignKeys: [],
         checkConstraints: null,
+        ddl: null,
         error: describeError(err, '读取索引与约束失败')
       });
     }
@@ -324,8 +354,7 @@ export default function TableDataViewer({
     setError(null);
     
     try {
-      const dialect = connection.db_type === 'mysql' ? 'mysql' : connection.db_type === 'postgresql' ? 'postgresql' : 'sqlite';
-      const tableReference = quoteQualifiedSqlIdentifier(
+        const tableReference = quoteQualifiedSqlIdentifier(
         schema ? [schema, tableName] : [tableName],
         dialect
       );
@@ -669,7 +698,6 @@ export default function TableDataViewer({
       }
     });
     
-    const dialect = connection.db_type === 'mysql' ? 'mysql' : connection.db_type === 'postgresql' ? 'postgresql' : 'sqlite';
     const tableNameWithSchema = quoteQualifiedSqlIdentifier(
       schema ? [schema, tableName] : [tableName],
       dialect
@@ -719,7 +747,6 @@ export default function TableDataViewer({
       return;
     }
     
-    const dialect = connection.db_type === 'mysql' ? 'mysql' : connection.db_type === 'postgresql' ? 'postgresql' : 'sqlite';
     const setClause = updateColumns.map((col, index) => {
       const quotedColumn = quoteSqlIdentifier(col, dialect);
       switch (connection.db_type) {
@@ -800,7 +827,6 @@ export default function TableDataViewer({
     const pkValue = unwrapResultValue(rowData[primaryKeyColumn.name] as SerializedResultValue);
     const pkColumn = primaryKeyColumn.name;
     
-    const dialect = connection.db_type === 'mysql' ? 'mysql' : connection.db_type === 'postgresql' ? 'postgresql' : 'sqlite';
     const tableNameWithSchema = quoteQualifiedSqlIdentifier(
       schema ? [schema, tableName] : [tableName],
       dialect

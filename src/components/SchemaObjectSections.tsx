@@ -1,6 +1,8 @@
-import React from 'react';
-import { AlertCircle } from 'lucide-react';
+import React, { useState } from 'react';
+import { AlertCircle, Check, Copy } from 'lucide-react';
+import { describeError } from '../utils/describeError';
 import clsx from 'clsx';
+import { DatabaseType } from '../contracts/connection';
 import type { ConnectionProfile } from '../contracts';
 import type {
   CheckConstraintInfo,
@@ -13,6 +15,8 @@ export interface SchemaObjects {
   foreignKeys: ForeignKeyInfo[];
   /** null = 该方言没有检查约束目录，不是「没有检查约束」 */
   checkConstraints: CheckConstraintInfo[] | null;
+  /** 建表语句原文；null = 该方言没有权威来源（PostgreSQL） */
+  ddl: string | null;
   error?: string;
 }
 
@@ -109,7 +113,70 @@ export function SchemaObjectSections({
           ))}
         </SchemaSection>
       )}
+
+      <DdlSection ddl={objects.ddl} dbType={dbType} />
     </div>
+  );
+}
+
+/**
+ * 建表语句。给的是**数据库自己吐出来的原文**，不是我们从目录重建的。
+ *
+ * 所以 PostgreSQL 这里是空的：它没有 `SHOW CREATE TABLE`，而从目录重建要覆盖
+ * 类型、默认值、identity、排序规则、存储参数、分区、继承、注释、触发器、RLS。
+ * 少任何一项，产出的就是看起来权威、照着重建却不等价的 DDL——比没有更糟，
+ * 因为没人会去核对它。上面的列 / 索引 / 外键 / 检查约束已经是权威的。
+ */
+function DdlSection({ ddl, dbType }: { ddl: string | null; dbType: ConnectionProfile['db_type'] }) {
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
+
+  const copy = async () => {
+    if (!ddl) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(ddl);
+      setCopyError(null);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch (cause) {
+      // 剪贴板可能被权限或非安全上下文拒绝；静默失败会让人以为复制成功了
+      setCopyError(describeError(cause, '复制到剪贴板失败'));
+    }
+  };
+
+  return (
+    <section>
+      <h3 className="flex items-center gap-2 bg-surface-sunken px-4 py-2 text-xs font-medium text-fg-muted">
+        建表语句
+        {ddl && (
+          <button
+            type="button"
+            onClick={copy}
+            className="ml-auto flex items-center gap-1 rounded-control border border-line-strong px-2 py-0.5 text-xs text-fg hover:bg-surface-hover"
+          >
+            {copied ? <Check size={12} className="text-success" /> : <Copy size={12} />}
+            {copied ? '已复制' : '复制'}
+          </button>
+        )}
+      </h3>
+
+      {copyError && <p className="px-4 py-2 text-xs text-danger">{copyError}</p>}
+
+      {ddl ? (
+        <pre className="overflow-x-auto px-4 py-3 font-mono text-xs text-fg select-text whitespace-pre">
+          {ddl}
+        </pre>
+      ) : (
+        <p className="px-4 py-2 text-xs text-fg-subtle">
+          {dbType === DatabaseType.PostgreSQL
+            ? 'PostgreSQL 没有 SHOW CREATE TABLE，也不提供权威的建表语句。'
+              + '从目录重建的 DDL 无法保证与原表等价，这里不生成——上面的列、索引、外键与检查约束是权威的。'
+            : '数据库没有返回建表语句。'}
+        </p>
+      )}
+    </section>
   );
 }
 
