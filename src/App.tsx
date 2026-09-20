@@ -21,6 +21,9 @@ import { useSessionManager } from './utils/stateSync';
 import { saveWorkspaceSnapshot } from './utils/workspacePersistence';
 import { useResizablePanel } from './hooks/useResizablePanel';
 import { PanelResizeHandle } from './components/PanelResizeHandle';
+import { CommandPalette, type PaletteCommand } from './components/CommandPalette';
+import { useProfileConnector } from './hooks/useProfileConnector';
+import { useThemeStore } from './stores/themeStore';
 
 function App() {
   const { activeConnection, selectedTable, openConnectionForm } = useAppStore();
@@ -43,6 +46,10 @@ function App() {
   >(null);
   const documents = useQueryStore((state) => state.documents);
   const connections = useConnectionStore((state) => state.connections);
+  const databaseMetadata = useAppStore((state) => state.databaseMetadata);
+  const setThemePreference = useThemeStore((state) => state.setPreference);
+  const { connect, openSqliteFile } = useProfileConnector();
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   const unsavedTabIds = useMemo(
     () => new Set(
@@ -116,6 +123,12 @@ function App() {
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 't') {
         event.preventDefault();
         reopenClosedTab();
+        return;
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
       }
     };
 
@@ -278,6 +291,95 @@ function App() {
     );
   };
 
+  // 命令面板的条目由当前状态现算：已保存的连接、当前连接已加载出来的表，
+  // 以及若干全局动作。表只在对象树加载过之后才有——不为了面板再查一次库。
+  //
+  // 刻意不做 useMemo：条目里的 run 闭包捕获了 tabs、activeConnection 等状态，
+  // 缓存住就会执行到旧的那一份（比如新标签的序号算错）。这段只在面板打开时
+  // 调用一次，几百个条目的字符串拼接不值得为它承担失效风险。
+  const buildPaletteCommands = (): PaletteCommand[] => {
+    const items: PaletteCommand[] = [];
+
+    for (const connection of connections) {
+      const isActive = connection.id === activeProfileId;
+      items.push({
+        id: `connect:${connection.id}`,
+        title: connection.name,
+        keywords: `${connection.db_type} ${connection.host} ${connection.database ?? ''}`,
+        group: isActive ? '当前连接' : '连接',
+        detail: connection.db_type === 'sqlite'
+          ? connection.database ?? ''
+          : `${connection.host}:${connection.port}`,
+        run: () => {
+          if (!isActive) {
+            void connect(connection);
+          }
+        }
+      });
+    }
+
+    const metadata = activeProfileId ? databaseMetadata[activeProfileId] : undefined;
+    for (const schema of metadata?.schemas ?? []) {
+      for (const table of schema.tables) {
+        items.push({
+          id: `table:${schema.name}:${table.name}`,
+          title: table.name,
+          keywords: schema.name,
+          group: '表',
+          detail: schema.name,
+          run: () => openTableTab(table.name, schema.name || undefined)
+        });
+      }
+    }
+
+    items.push(
+      {
+        id: 'action:new-sql',
+        title: '新建查询标签',
+        group: '操作',
+        run: () => openSqlTab()
+      },
+      {
+        id: 'action:new-connection',
+        title: '新建连接',
+        group: '操作',
+        run: () => openConnectionForm()
+      },
+      {
+        id: 'action:open-sqlite',
+        title: '打开 SQLite 文件',
+        group: '操作',
+        run: () => void openSqliteFile()
+      },
+      {
+        id: 'action:reopen-tab',
+        title: '重新打开最近关闭的标签',
+        group: '操作',
+        run: () => reopenClosedTab()
+      },
+      {
+        id: 'action:theme-light',
+        title: '外观：浅色',
+        group: '操作',
+        run: () => setThemePreference('light')
+      },
+      {
+        id: 'action:theme-dark',
+        title: '外观：深色',
+        group: '操作',
+        run: () => setThemePreference('dark')
+      },
+      {
+        id: 'action:theme-system',
+        title: '外观：跟随系统',
+        group: '操作',
+        run: () => setThemePreference('system')
+      }
+    );
+
+    return items;
+  };
+
   const renderActiveTab = () => {
     if (!activeTab) {
       return (
@@ -397,6 +499,13 @@ function App() {
             closeWorkspaceTab(menuTab.id);
           }}
           onDismiss={() => setTabMenu(null)}
+        />
+      )}
+
+      {paletteOpen && (
+        <CommandPalette
+          commands={buildPaletteCommands()}
+          onDismiss={() => setPaletteOpen(false)}
         />
       )}
 
