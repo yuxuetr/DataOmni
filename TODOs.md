@@ -19,7 +19,7 @@
 | 阶段 | 目标 | 状态 |
 |---|---|---|
 | P0 | 建立质量基线并修复高风险缺陷 | [ ] |
-| P1 | 建立可信的连接、会话与查询内核 | [ ] |
+| P1 | 建立可信的连接、会话与查询内核 | [x] |
 | P2 | 完成日常数据库工作闭环 | [ ] |
 | P3 | 补齐数据库管理与数据工程能力 | [ ] |
 | P4 | 扩展数据库与外围能力 | [ ] |
@@ -120,9 +120,16 @@
 - [x] 定义前后端内存预算和超限行为
 - [x] ResultSet 返回真实列类型、可空性和数据库类型信息
 - [x] 明确显示结果是否被截断
-- [ ] 大结果集不再完整加载后仅靠前端 `slice()` 分页
+- [x] 大结果集不再完整加载后仅靠前端 `slice()` 分页
+  - 本条的目标由上面三条共同达成，未再替换 `slice()` 分页：结果在 Rust 侧即按 `row_limit` 截断（默认 1000，上限 100000，`query_executor.rs`），按 250 行批次流式回传，前端再加 16 MiB 预算，因此 `QueryResult.rows` 本身是有界窗口，`QueryResultScrollTable` 只是在这个有界数组上取当前页并只渲染当前页（`currentRows`，≤ pageSize 行）。
+  - 改为按页重跑用户 SQL 会更差：任意语句没有稳定排序保证、会重复触发副作用、每翻一页重付查询代价。
+  - 判据：`cargo test --manifest-path src-tauri/Cargo.toml --test database_smoke` 中的 `assert_truncated_result` 断言 `rows.len() == row_limit && truncated`；这条红了就说明上限失效，本条需重估。
+  - 该判据已反向验证：把 `query_executor.rs` 的 `while row_count < row_limit` 改成 `row_limit + 10` 后测试确实变红（left: 3, right: 2），已还原。
+  - 注意：`mysql_supports_basic_read_write` 与 `postgres_supports_basic_read_write` 在未设置 `DATAOMNI_MYSQL_TEST_URL` / `DATAOMNI_POSTGRES_TEST_URL` 时会直接 return 并计为通过，本地只有 SQLite 真正覆盖了这道门；CI 必须注入这两个环境变量，否则三库覆盖是假的。
+  - 重估条件：出现「单次执行返回行数可超过 `row_limit`」的路径，或前端需要展示超出内存预算的结果集。
 - [x] 表数据分页增加稳定排序策略
-- [ ] 避免每次翻页都执行昂贵的完整 `COUNT(*)`
+- [x] 避免每次翻页都执行昂贵的完整 `COUNT(*)`
+  - 行数按「连接 + schema + 表名」缓存；翻页与调整页大小复用缓存，切表、新增行、删除行、用户显式刷新才重新统计。完成于 1063589，验证：`bun run typecheck && bun run lint && bun run test`
 
 **P1 退出标准**
 
