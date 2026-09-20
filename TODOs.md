@@ -146,8 +146,19 @@
 
 ### 2.1 多标签工作区
 
-- [ ] 支持 SQL、表数据、表结构等标签类型
-- [ ] 每个标签永久绑定 Session，不随侧边栏选择变化
+- [x] 支持 SQL、表数据、表结构等标签类型
+  - 标签栏落地于 5e7c65f，`WorkspaceTabBar` 按 `workspaceStore.tabs` 渲染；
+    退休了 `appStore.viewMode` / `tableViewerState` 单视图模型。
+  - 当前 SQL 标签每个连接一个（多个 SQL 标签属增量 B，需把 `queryStore` 的
+    `sqlInput` / `statements` / `executions` 按 tabId 分片）。
+- [x] 每个标签永久绑定 Session，不随侧边栏选择变化
+  - 同时修掉一个已复现的缺陷：切换侧边栏连接后，已打开的表视图会拿旧表名查新库
+    （`performConnectionSwitch` 不清 `tableViewerState`，`ensureDatabaseConnection`
+    只检查 `database` 非空）。现在按 `queryStore.connectionId` 比对标签的
+    `connection.id`，不匹配即停下并说明原因。
+  - 限制：`SessionManager` 只维护一个活跃会话，所以绑定到其它连接的标签无法同时
+    执行，界面明确标为「绑定的连接未激活」而不是静默改到当前连接上执行。
+    并发多会话是独立的更大改动，出现「需要同时查询两个库」的真实需求时再重估。
 - [ ] 支持新建、关闭、固定、复制、重新打开标签
 - [ ] 未保存标签关闭时提供保存、丢弃、取消
 - [ ] 恢复窗口、标签、布局、草稿和最后活动位置
