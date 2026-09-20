@@ -179,6 +179,23 @@ describe('工作区快照', () => {
     expect(loadWorkspaceSnapshot()?.closedTabs.map((closed) => closed.tab.id)).toEqual(['sql-1']);
   });
 
+  it('固定状态往返保留，旧快照缺 pinned 时归一为 false', () => {
+    const pinned = { ...createSqlWorkspaceTab('profile-a', { id: 'sql-1' }), pinned: true };
+    saveWorkspaceSnapshot({ tabs: [pinned], activeTabId: 'sql-1', drafts: {}, closedTabs: [] });
+    expect(loadWorkspaceSnapshot()?.tabs[0].pinned).toBe(true);
+
+    const legacy = createSqlWorkspaceTab('profile-a', { id: 'sql-2' });
+    const withoutPinned = { ...legacy } as Record<string, unknown>;
+    delete withoutPinned.pinned;
+    storage.set(STORAGE_KEY, JSON.stringify({
+      version: 1,
+      tabs: [withoutPinned],
+      activeTabId: 'sql-2',
+      drafts: {}
+    }));
+    expect(loadWorkspaceSnapshot()?.tabs[0].pinned).toBe(false);
+  });
+
   it('localStorage 抛错时读取返回 null、写入不抛', () => {
     vi.stubGlobal('localStorage', {
       getItem: () => {

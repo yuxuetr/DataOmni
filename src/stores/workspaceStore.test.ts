@@ -185,6 +185,17 @@ describe('workspace store', () => {
     expect(state.closedTabs.map((closed) => closed.tab.id)).toEqual(['sql-1']);
   });
 
+  it('toggleTabPinned 只影响目标标签', () => {
+    useWorkspaceStore.getState().registerTab(createSqlWorkspaceTab('p', { id: 'a' }));
+    useWorkspaceStore.getState().registerTab(createSqlWorkspaceTab('p', { id: 'b' }));
+
+    useWorkspaceStore.getState().toggleTabPinned('a');
+    expect(useWorkspaceStore.getState().tabs.map((tab) => tab.pinned)).toEqual([true, false]);
+
+    useWorkspaceStore.getState().toggleTabPinned('a');
+    expect(useWorkspaceStore.getState().tabs.map((tab) => tab.pinned)).toEqual([false, false]);
+  });
+
   it('没有可取回的标签时返回 null', () => {
     expect(useWorkspaceStore.getState().reopenLastClosedTab()).toBeNull();
   });

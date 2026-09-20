@@ -3,6 +3,7 @@ import {
   createSqlWorkspaceTab,
   createTableWorkspaceTab,
   markWorkspaceTabProfileDeleted,
+  orderWorkspaceTabs,
   updateSqlWorkspaceTabDraft,
   workspaceTabId
 } from './workspace';
@@ -99,5 +100,32 @@ describe('workspaceTabId', () => {
   it('SQL 标签的身份只由连接决定', () => {
     expect(workspaceTabId('profile-1', 'sql')).toBe('profile-1:sql');
     expect(workspaceTabId('profile-1', 'sql')).not.toBe(workspaceTabId('profile-2', 'sql'));
+  });
+});
+
+describe('orderWorkspaceTabs', () => {
+  it('固定的排在前面，各组内保持原有顺序', () => {
+    const tabs = [
+      createSqlWorkspaceTab('p', { id: 'a' }),
+      { ...createSqlWorkspaceTab('p', { id: 'b' }), pinned: true },
+      createSqlWorkspaceTab('p', { id: 'c' }),
+      { ...createSqlWorkspaceTab('p', { id: 'd' }), pinned: true }
+    ];
+
+    expect(orderWorkspaceTabs(tabs).map((tab) => tab.id)).toEqual(['b', 'd', 'a', 'c']);
+  });
+
+  it('没有固定标签时顺序不变', () => {
+    const tabs = [
+      createSqlWorkspaceTab('p', { id: 'a' }),
+      createSqlWorkspaceTab('p', { id: 'b' })
+    ];
+
+    expect(orderWorkspaceTabs(tabs).map((tab) => tab.id)).toEqual(['a', 'b']);
+  });
+
+  it('新建的标签默认不固定', () => {
+    expect(createSqlWorkspaceTab('p', { id: 'a' }).pinned).toBe(false);
+    expect(createTableWorkspaceTab('p', 'users', { id: 't' }).pinned).toBe(false);
   });
 });

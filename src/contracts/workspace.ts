@@ -13,6 +13,8 @@ interface WorkspaceTabBase {
   title: string;
   binding: WorkspaceTabBinding;
   availability: WorkspaceTabAvailability;
+  /** 固定的标签排在标签栏前面，不随新开标签往右漂 */
+  pinned: boolean;
   dirty: boolean;
   createdAt: string;
   lastActivatedAt: string;
@@ -95,6 +97,7 @@ function createTabBase(
       sessionId: options.sessionId ?? null
     },
     availability: 'available',
+    pinned: false,
     dirty: false,
     createdAt: now,
     lastActivatedAt: now
@@ -141,6 +144,19 @@ export function updateSqlWorkspaceTabDraft(
     dirty: sql !== tab.draft.sql || tab.dirty,
     draft: { sql }
   };
+}
+
+/**
+ * 固定优先的展示顺序。
+ *
+ * 只影响呈现，不改变 `tabs` 本身的顺序：存储里保持插入顺序，固定与否是
+ * 标签自己的属性，两者各管各的。
+ */
+export function orderWorkspaceTabs(tabs: WorkspaceTab[]): WorkspaceTab[] {
+  return [
+    ...tabs.filter((tab) => tab.pinned),
+    ...tabs.filter((tab) => !tab.pinned)
+  ];
 }
 
 export function markWorkspaceTabProfileDeleted(

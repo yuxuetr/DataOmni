@@ -6,6 +6,7 @@ import TableDataViewer from './components/TableDataViewer';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { CloseTabPrompt, type CloseTabChoice } from './components/CloseTabPrompt';
 import { OfflineTabView } from './components/OfflineTabView';
+import { WorkspaceTabMenu } from './components/WorkspaceTabMenu';
 import { WorkspaceTabBar } from './components/WorkspaceTabBar';
 import { useAppStore } from './stores/appStore';
 import { useConnectionStore } from './stores/connectionStore';
@@ -28,12 +29,16 @@ function App() {
     registerTab,
     activateTab,
     closeTab,
+    toggleTabPinned,
     retainClosedTab,
     reopenLastClosedTab
   } = useWorkspaceStore();
   const { openDocument, closeDocument, setActiveDocument, setSqlInput } = useQueryStore();
   // 等待用户在三选一里做决定的标签
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
+  const [tabMenu, setTabMenu] = useState<
+    { tabId: string; position: { x: number; y: number } } | null
+  >(null);
   const documents = useQueryStore((state) => state.documents);
   const connections = useConnectionStore((state) => state.connections);
 
@@ -52,6 +57,7 @@ function App() {
   const pendingCloseTab = pendingCloseTabId
     ? tabs.find((tab) => tab.id === pendingCloseTabId) ?? null
     : null;
+  const menuTab = tabMenu ? tabs.find((tab) => tab.id === tabMenu.tabId) ?? null : null;
 
   // 标签、最后活动标签和草稿的任一变化都写回快照
   // （恢复发生在 main.tsx 首次渲染之前，这里不会覆盖掉上次的内容）
@@ -199,6 +205,23 @@ function App() {
     finishCloseTab(tabId, choice === 'retain');
   };
 
+  const duplicateSqlTab = (tabId: string) => {
+    const tab = tabs.find((candidate) => candidate.id === tabId);
+    if (tab?.kind !== 'sql') {
+      return;
+    }
+
+    // 新 id 由 createSqlWorkspaceTab 生成，不走 workspaceTabId 的确定性身份：
+    // 那是用来去重的，复制出来的标签本就要和原标签共存。
+    const duplicate = createSqlWorkspaceTab(tab.binding.profileId, {
+      title: `${tab.title} 副本`
+    });
+
+    registerTab(duplicate);
+    openDocument(duplicate.id);
+    setSqlInput(useQueryStore.getState().documents[tabId]?.sqlInput ?? '');
+  };
+
   const reopenClosedTab = () => {
     const reopened = reopenLastClosedTab();
     if (!reopened) {
@@ -335,6 +358,7 @@ function App() {
             onActivate={activateTab}
             unsavedTabIds={unsavedTabIds}
             onClose={closeWorkspaceTab}
+            onContextMenu={(tabId, position) => setTabMenu({ tabId, position })}
             onNewSqlTab={activeConnection ? openSqlTab : undefined}
             onReopenClosedTab={closedTabs.length > 0 ? reopenClosedTab : undefined}
             closedTabCount={closedTabs.length}
@@ -344,6 +368,28 @@ function App() {
           {renderActiveTab()}
         </div>
       </div>
+
+      {menuTab && tabMenu && (
+        <WorkspaceTabMenu
+          tab={menuTab}
+          position={tabMenu.position}
+          onTogglePinned={() => {
+            toggleTabPinned(menuTab.id);
+            setTabMenu(null);
+          }}
+          onDuplicate={menuTab.kind === 'sql'
+            ? () => {
+                duplicateSqlTab(menuTab.id);
+                setTabMenu(null);
+              }
+            : undefined}
+          onClose={() => {
+            setTabMenu(null);
+            closeWorkspaceTab(menuTab.id);
+          }}
+          onDismiss={() => setTabMenu(null)}
+        />
+      )}
 
       {pendingCloseTab && (
         <CloseTabPrompt tabTitle={pendingCloseTab.title} onChoose={handleCloseChoice} />

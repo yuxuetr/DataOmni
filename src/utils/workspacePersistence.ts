@@ -66,6 +66,8 @@ function normalizeTab(tab: WorkspaceTab): WorkspaceTab {
   // 会话是运行期的东西，重启后一律作废，由重新连接重建
   return {
     ...tab,
+    // 旧快照没有 pinned 字段，归一成布尔值
+    pinned: tab.pinned === true,
     binding: { profileId: tab.binding.profileId, sessionId: null }
   };
 }

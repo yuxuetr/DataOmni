@@ -1,6 +1,6 @@
-import { FileText, History, Plus, Table, X } from 'lucide-react';
+import { FileText, History, Pin, Plus, Table, X } from 'lucide-react';
 import { clsx } from 'clsx';
-import type { WorkspaceTab, WorkspaceTabKind } from '../contracts/workspace';
+import { orderWorkspaceTabs, type WorkspaceTab, type WorkspaceTabKind } from '../contracts/workspace';
 
 interface WorkspaceTabBarProps {
   tabs: WorkspaceTab[];
@@ -11,6 +11,7 @@ interface WorkspaceTabBarProps {
   unsavedTabIds: ReadonlySet<string>;
   onActivate: (tabId: string) => void;
   onClose: (tabId: string) => void;
+  onContextMenu: (tabId: string, position: { x: number; y: number }) => void;
   /** 未连接时不传，按钮隐藏 */
   onNewSqlTab?: () => void;
   /** 没有可重新打开的标签时不传，按钮隐藏 */
@@ -31,13 +32,14 @@ export function WorkspaceTabBar({
   unsavedTabIds,
   onActivate,
   onClose,
+  onContextMenu,
   onNewSqlTab,
   onReopenClosedTab,
   closedTabCount = 0
 }: WorkspaceTabBarProps) {
   return (
     <div className="flex items-stretch bg-gray-50 border-b border-gray-200 overflow-x-auto">
-      {tabs.map((tab) => {
+      {orderWorkspaceTabs(tabs).map((tab) => {
         const Icon = TAB_ICONS[tab.kind];
         const isActive = tab.id === activeTabId;
         // 只有一个活跃会话，绑定到其它连接的标签无法执行，先在标签上说明
@@ -50,6 +52,11 @@ export function WorkspaceTabBar({
             role="tab"
             aria-selected={isActive}
             onClick={() => onActivate(tab.id)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              onActivate(tab.id);
+              onContextMenu(tab.id, { x: event.clientX, y: event.clientY });
+            }}
             title={
               tab.availability === 'profile-deleted'
                 ? `${tab.title}（连接已删除，仅可查看草稿）`
@@ -65,7 +72,9 @@ export function WorkspaceTabBar({
               isDetached && 'italic text-gray-400'
             )}
           >
-            <Icon size={14} className="shrink-0" />
+            {tab.pinned
+              ? <Pin size={12} className="shrink-0 text-blue-500" />
+              : <Icon size={14} className="shrink-0" />}
             <span className="max-w-[160px] truncate">{tab.title}</span>
             {(tab.dirty || unsavedTabIds.has(tab.id)) && (
               <span

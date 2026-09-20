@@ -23,6 +23,7 @@ interface WorkspaceActions {
     activeTabId: string | null,
     closedTabs?: ClosedWorkspaceTab[]
   ) => void;
+  toggleTabPinned: (tabId: string) => void;
   /** 关闭标签但保留它，之后可以重新打开 */
   retainClosedTab: (tab: WorkspaceTab, draft: string) => void;
   /** 取回最近关闭的标签；没有可取回的返回 null */
@@ -53,6 +54,14 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         : tabs[0]?.id ?? null,
       closedTabs
     });
+  },
+
+  toggleTabPinned: (tabId) => {
+    set((state) => ({
+      tabs: state.tabs.map((tab) => (
+        tab.id === tabId ? { ...tab, pinned: !tab.pinned } : tab
+      ))
+    }));
   },
 
   retainClosedTab: (tab, draft) => {
