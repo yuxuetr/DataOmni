@@ -1,16 +1,29 @@
 import { useState, useEffect } from 'react';
-import { 
-  Database, 
-  ChevronDown, 
-  ChevronRight, 
-  Table, 
+import {
+  Database,
+  ChevronDown,
+  ChevronRight,
+  Table,
   View,
+  FunctionSquare,
+  Hash,
   RefreshCw,
   Loader,
   AlertCircle,
   Info
 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { describeError } from '../utils/describeError';
+import {
+  buildObjectTree,
+  isBrowsableKind,
+  normalizeObjectRows,
+  showsSchemaLevel,
+  type DatabaseObject,
+  type DatabaseObjectKind,
+  type ObjectTreeNode
+} from '../utils/databaseObjects';
+import { ObjectDefinitionDialog } from './ObjectDefinitionDialog';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useQueryStore } from '../stores/queryStore';
 import { useAppStore } from '../stores/appStore';
@@ -21,12 +34,13 @@ interface DatabaseExplorerProps {
   onTableSelect?: (tableName: string, schema?: string) => void;
 }
 
-// interface DatabaseMetadata {
-//   schemas: Array<{
-//     name: string;
-//     tables: Array<{ name: string; type: string }>;
-//   }>;
-// }
+/** `get_object_catalog_queries` 的返回；字段名按 Rust 侧的 snake_case */
+export interface ObjectCatalogQueries {
+  objects: string;
+  routine_definition: string;
+  sequence_properties: string | null;
+  object_parameter_count: number;
+}
 
 export default function DatabaseExplorer({ connectionId, onTableSelect }: DatabaseExplorerProps) {
   const { connections } = useConnectionStore();
@@ -39,7 +53,9 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [expandedSchemas, setExpandedSchemas] = useState<Set<string>>(new Set());
+  // 展开状态按节点 key 存；schema 与类型分组共用一套
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  const [inspecting, setInspecting] = useState<DatabaseObject | null>(null);
 
   const connection = connections.find(c => c.id === connectionId);
 
@@ -62,9 +78,12 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
       console.log('🔄 加载数据库元数据:', connectionId, forceRefresh ? '(强制刷新)' : '');
     } else {
       console.log('📋 使用缓存的数据库元数据:', connectionId);
-      // 默认展开第一个schema
-      if (cachedMetadata.schemas.length > 0) {
-        setExpandedSchemas(new Set([cachedMetadata.schemas[0].name]));
+      const cachedTree = buildObjectTree(
+        cachedMetadata.objects,
+        showsSchemaLevel(connection.db_type)
+      );
+      if (cachedTree.length > 0) {
+        setExpandedNodes(new Set(defaultExpandedKeys(cachedTree)));
       }
       return;
     }
@@ -73,103 +92,28 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
     setError(null);
     
     try {
-      let schemas: Array<{ name: string; tables: Array<{ name: string; type: string }> }> = [];
-      
-      switch (connection.db_type) {
-        case 'postgresql':
-          // PostgreSQL: 获取所有schema和表
-          const schemaResult = await database.select(`
-            SELECT 
-              table_schema::text AS table_schema,
-              table_name::text AS table_name,
-              table_type::text AS table_type
-            FROM information_schema.tables 
-            WHERE table_schema NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
-            ORDER BY table_schema, table_name
-          `);
-          
-          // 按schema分组
-          const schemaMap = new Map<string, Array<{ name: string; type: string }>>();
-          if (Array.isArray(schemaResult)) {
-            schemaResult.forEach((row: any) => {
-              const schemaName = row.table_schema || 'public';
-              if (!schemaMap.has(schemaName)) {
-                schemaMap.set(schemaName, []);
-              }
-              schemaMap.get(schemaName)!.push({
-                name: row.table_name,
-                type: row.table_type
-              });
-            });
-          }
-          
-          schemas = Array.from(schemaMap.entries()).map(([name, tables]) => ({
-            name,
-            tables
-          }));
-          break;
-          
-        case 'mysql':
-          // CAST 不是装饰：MySQL 8 的 information_schema 以 VARBINARY 返回标识符列，
-          // 而 tauri-plugin-sql 的解码器类型表里没有 VARBINARY，会直接报
-          // 「unsupported datatype: VARBINARY」。转成 CHAR 才落在它认识的范围内。
-          // 没有库名时 `table_schema = NULL` 恒不匹配，会安静地查出 0 行，
-          // 让人以为库是空的。这里直接说清楚。
-          if (!connection.database) {
-            throw new Error('该连接没有指定数据库名，无法列出表。请在连接配置中填写数据库。');
-          }
+      const queries = await invoke<ObjectCatalogQueries>('get_object_catalog_queries', {
+        dbType: connection.db_type
+      });
 
-          // MySQL: 获取当前数据库的所有表
-          const tableResult = await database.select(`
-            SELECT 
-              CAST(table_name AS CHAR) AS table_name,
-              CAST(table_type AS CHAR) AS table_type
-            FROM information_schema.tables 
-            WHERE table_schema = ?
-            ORDER BY table_name
-          `, [connection.database]);
-          
-          if (Array.isArray(tableResult)) {
-            schemas = [{
-              name: connection.database || 'default',
-              tables: tableResult.map((row: any) => ({
-                name: row.table_name,
-                type: row.table_type
-              }))
-            }];
-          }
-          break;
-          
-        case 'sqlite':
-          // SQLite: 获取所有表
-          const sqliteResult = await database.select(`
-            SELECT 
-              name as table_name,
-              type as table_type
-            FROM sqlite_master 
-            WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
-            ORDER BY name
-          `);
-          
-          if (Array.isArray(sqliteResult)) {
-            schemas = [{
-              name: 'default',
-              tables: sqliteResult.map((row: any) => ({
-                name: row.table_name,
-                type: row.table_type
-              }))
-            }];
-          }
-          break;
+      // 没有库名时 `table_schema = NULL` 恒不匹配，会安静地查出 0 行，
+      // 让人以为库是空的。这里直接说清楚。
+      if (queries.object_parameter_count > 0 && !connection.database) {
+        throw new Error('该连接没有指定数据库名，无法列出对象。请在连接配置中填写数据库。');
       }
-      
-      // 缓存元数据
-      setDatabaseMetadata(connectionId, { schemas, lastUpdated: Date.now() });
-      
-      // 默认展开第一个schema
-      if (schemas.length > 0) {
-        setExpandedSchemas(new Set([schemas[0].name]));
-      }
+      // MySQL 的 UNION 两边各要绑一次库名，个数由后端声明，不在这里猜
+      const params = Array.from(
+        { length: queries.object_parameter_count },
+        () => connection.database
+      );
+
+      const rows = await database.select(queries.objects, params);
+      const objects = normalizeObjectRows(Array.isArray(rows) ? rows : []);
+
+      setDatabaseMetadata(connectionId, { objects, lastUpdated: Date.now() });
+
+      const tree = buildObjectTree(objects, showsSchemaLevel(connection.db_type));
+      setExpandedNodes(new Set(defaultExpandedKeys(tree)));
     } catch (err) {
       console.error('加载数据库元数据失败:', err);
       // 原始错误必须可见：只说「失败」等于没说，用户和我们都无从下手
@@ -196,7 +140,7 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
   useEffect(() => {
     console.log('🔄 DatabaseExplorer: 连接ID变化，清理旧状态:', connectionId);
     setError(null);
-    setExpandedSchemas(new Set());
+    setExpandedNodes(new Set());
   }, [connectionId]);
 
   // 调试：监控连接状态变化
@@ -219,30 +163,31 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
     );
   }
 
-  // 使用缓存的数据或空数据
-  const metadata = cachedMetadata && !isMetadataStale ? cachedMetadata : { schemas: [] };
+  const objects = cachedMetadata && !isMetadataStale ? cachedMetadata.objects : [];
+  const tree = buildObjectTree(objects, showsSchemaLevel(connection.db_type));
 
-  // 切换schema展开状态
-  const toggleSchema = (schemaName: string) => {
-    const newExpanded = new Set(expandedSchemas);
-    if (newExpanded.has(schemaName)) {
-      newExpanded.delete(schemaName);
-    } else {
-      newExpanded.add(schemaName);
-    }
-    setExpandedSchemas(newExpanded);
+  const toggleNode = (key: string) => {
+    setExpandedNodes(current => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
   };
 
-  // 处理表点击
-  const handleTableClick = (tableName: string, schema?: string) => {
-    if (onTableSelect) {
-      onTableSelect(tableName, schema);
+  /**
+   * 表、视图、物化视图有行，用表视图打开；函数与序列没有行，
+   * 打开表视图只会查询失败，改为弹出定义。
+   */
+  const handleObjectClick = (object: DatabaseObject) => {
+    if (!isBrowsableKind(object.kind)) {
+      setInspecting(object);
+      return;
     }
-  };
-
-  // 获取表图标
-  const getTableIcon = (type: string) => {
-    return type === 'VIEW' ? <View size={14} /> : <Table size={14} />;
+    onTableSelect?.(object.name, object.schema ?? undefined);
   };
 
   return (
@@ -307,55 +252,120 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
               重试
             </button>
           </div>
-        ) : metadata.schemas.length === 0 ? (
+        ) : tree.length === 0 ? (
           <div className="p-4 text-center text-fg-muted text-sm">
             <Info className="mx-auto mb-2" size={16} />
             <p>暂无数据库对象</p>
           </div>
         ) : (
           <div className="p-2">
-            {metadata.schemas.map((schema) => (
-              <div key={schema.name} className="mb-2">
-                {/* Schema 标题 */}
-                <button
-                  onClick={() => toggleSchema(schema.name)}
-                  className="w-full flex items-center justify-between px-2 py-1.5 text-sm font-medium text-fg hover:bg-surface-hover rounded-control transition-colors"
-                >
-                  <div className="flex items-center space-x-2">
-                    {expandedSchemas.has(schema.name) ? (
-                      <ChevronDown size={14} />
-                    ) : (
-                      <ChevronRight size={14} />
-                    )}
-                    <Database size={14} className="text-accent" />
-                    <span>{schema.name}</span>
-                    <span className="text-xs text-fg-muted">({schema.tables.length})</span>
-                  </div>
-                </button>
-                
-                {/* Schema 下的表 */}
-                {expandedSchemas.has(schema.name) && (
-                  <div className="ml-6 mt-1 space-y-1">
-                    {schema.tables.map((table) => (
-                      <button
-                        key={table.name}
-                        onClick={() => handleTableClick(table.name, schema.name === 'default' ? undefined : schema.name)}
-                        className="w-full flex items-center space-x-2 px-2 py-1 text-sm text-fg-muted hover:bg-accent-soft hover:text-accent rounded-control transition-colors"
-                      >
-                        {getTableIcon(table.type)}
-                        <span className="truncate">{table.name}</span>
-                        {table.type === 'VIEW' && (
-                          <span className="text-xs text-fg-subtle">(视图)</span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+            {tree.map(node => (
+              <ObjectTreeGroup
+                key={node.key}
+                node={node}
+                depth={0}
+                expandedNodes={expandedNodes}
+                onToggle={toggleNode}
+                onSelect={handleObjectClick}
+              />
             ))}
           </div>
         )}
       </div>
+
+      {inspecting && (
+        <ObjectDefinitionDialog
+          object={inspecting}
+          connection={connection}
+          onClose={() => setInspecting(null)}
+        />
+      )}
     </div>
   );
+}
+
+/** 默认展开：顶层第一组，以及（有 schema 层时）它下面的第一类。 */
+function defaultExpandedKeys(tree: ObjectTreeNode[]): string[] {
+  const first = tree[0];
+  if (!first) {
+    return [];
+  }
+  return [first.key, ...(first.children?.slice(0, 1).map(child => child.key) ?? [])];
+}
+
+function ObjectTreeGroup({
+  node,
+  depth,
+  expandedNodes,
+  onToggle,
+  onSelect
+}: {
+  node: ObjectTreeNode;
+  depth: number;
+  expandedNodes: Set<string>;
+  onToggle: (key: string) => void;
+  onSelect: (object: DatabaseObject) => void;
+}) {
+  const expanded = expandedNodes.has(node.key);
+
+  return (
+    <div className="mb-1">
+      <button
+        onClick={() => onToggle(node.key)}
+        className="w-full flex items-center gap-2 px-2 py-1.5 text-sm font-medium text-fg hover:bg-surface-hover rounded-control transition-colors"
+        style={{ paddingLeft: `${8 + depth * 12}px` }}
+      >
+        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        {/* 只有 schema 一层给图标；类型分组的标题本身就说明了类型，再加图标是噪音 */}
+        {node.children && <Database size={14} className="text-accent" />}
+        <span className="truncate">{node.label}</span>
+        <span className="text-xs text-fg-muted">({node.objects.length})</span>
+      </button>
+
+      {expanded && node.children && (
+        <div className="mt-1">
+          {node.children.map(child => (
+            <ObjectTreeGroup
+              key={child.key}
+              node={child}
+              depth={depth + 1}
+              expandedNodes={expandedNodes}
+              onToggle={onToggle}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      )}
+
+      {expanded && !node.children && (
+        <div className="mt-0.5 space-y-0.5">
+          {node.objects.map(object => (
+            <button
+              key={`${object.kind}:${object.id}`}
+              onClick={() => onSelect(object)}
+              className="w-full flex items-center gap-2 px-2 py-1 text-sm text-fg-muted hover:bg-accent-soft hover:text-accent rounded-control transition-colors"
+              style={{ paddingLeft: `${28 + depth * 12}px` }}
+              title={object.name}
+            >
+              <ObjectIcon kind={object.kind} />
+              <span className="truncate">{object.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ObjectIcon({ kind }: { kind: DatabaseObjectKind }) {
+  if (kind === 'view' || kind === 'materialized-view') {
+    return <View size={14} className="shrink-0" />;
+  }
+  if (kind === 'function' || kind === 'procedure') {
+    return <FunctionSquare size={14} className="shrink-0" />;
+  }
+  if (kind === 'sequence') {
+    return <Hash size={14} className="shrink-0" />;
+  }
+  return <Table size={14} className="shrink-0" />;
 } 

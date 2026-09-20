@@ -1257,3 +1257,238 @@ async fn sqlite_returns_view_and_trigger_definitions() {
   assert_eq!(rows[0].get::<String, _>("trigger_name"), trigger);
   assert!(rows[0].get::<String, _>("definition").starts_with("CREATE TRIGGER"));
 }
+
+// ---------------------------------------------------------------------------
+// 库级对象目录：表 / 视图 / 物化视图 / 函数 / 存储过程 / 序列
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn postgres_lists_database_objects_and_resolves_overloaded_routines() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+
+  let fixture = MetaFixture::new("pgcat");
+  let view = format!("{}_v", fixture.child);
+  let matview = format!("{}_mv", fixture.child);
+  let sequence = format!("{}_seq", fixture.child);
+  let routine = format!("{}_fn", fixture.child);
+
+  sqlx::query(&format!("DROP MATERIALIZED VIEW IF EXISTS {matview}")).execute(&pool).await.ok();
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  sqlx::query(&format!("DROP SEQUENCE IF EXISTS {sequence}")).execute(&pool).await.ok();
+  for statement in fixture.ddl("postgres") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare PostgreSQL fixture");
+  }
+  sqlx::query(&format!("CREATE VIEW {view} AS SELECT id FROM {}", fixture.child))
+    .execute(&pool)
+    .await
+    .expect("create view");
+  sqlx::query(&format!("CREATE MATERIALIZED VIEW {matview} AS SELECT id FROM {}", fixture.child))
+    .execute(&pool)
+    .await
+    .expect("create materialized view");
+  sqlx::query(&format!("CREATE SEQUENCE {sequence} START 7 INCREMENT 3"))
+    .execute(&pool)
+    .await
+    .expect("create sequence");
+  // 两个同名函数，只有参数类型不同——这正是「按名字取定义」会出错的情形
+  sqlx::query(&format!(
+    "CREATE OR REPLACE FUNCTION {routine}(a int) RETURNS int AS $$ SELECT a + 1 $$ LANGUAGE sql"
+  ))
+  .execute(&pool)
+  .await
+  .expect("create function int");
+  sqlx::query(&format!("CREATE OR REPLACE FUNCTION {routine}(a text) RETURNS text AS $$ SELECT a || 'x' $$ LANGUAGE sql"))
+    .execute(&pool)
+    .await
+    .expect("create function text");
+
+  let queries =
+    dataomni_lib::services::object_catalog_queries(&dataomni_lib::models::DatabaseType::PostgreSQL)
+      .expect("supported");
+  let rows = sqlx::query(queries.objects).fetch_all(&pool).await.expect("list objects");
+  let objects: Vec<(String, String, String)> = rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("object_name"),
+        row.get::<String, _>("object_kind"),
+        row.get::<String, _>("object_id"),
+      )
+    })
+    .collect();
+
+  let kind_of =
+    |name: &str| objects.iter().find(|(n, ..)| n == name).map(|(_, kind, _)| kind.clone());
+  assert_eq!(kind_of(&fixture.child).as_deref(), Some("table"));
+  assert_eq!(kind_of(&view).as_deref(), Some("view"));
+  assert_eq!(kind_of(&matview).as_deref(), Some("materialized-view"));
+  assert_eq!(kind_of(&sequence).as_deref(), Some("sequence"));
+
+  // 重载的两个函数必须是两条、显示名带参数签名，否则树里长得一模一样
+  let overloads: Vec<&(String, String, String)> =
+    objects.iter().filter(|(name, ..)| name.starts_with(&routine)).collect();
+  assert_eq!(overloads.len(), 2, "两个重载应各占一条: {overloads:?}");
+  assert!(
+    overloads.iter().any(|(name, ..)| name.ends_with("(a integer)"))
+      && overloads.iter().any(|(name, ..)| name.ends_with("(a text)")),
+    "显示名要带参数签名: {overloads:?}"
+  );
+  assert_ne!(overloads[0].2, overloads[1].2, "两个重载的 object_id 必须不同");
+
+  // 按 oid 取定义，取到的必须是对应的那一个重载
+  for (name, _, id) in &overloads {
+    let definition: String = sqlx::query(queries.routine_definition)
+      .bind(id)
+      .fetch_one(&pool)
+      .await
+      .expect("run routine definition query")
+      .get("definition");
+    let expected = if name.ends_with("(a text)") { "text" } else { "integer" };
+    assert!(
+      definition.contains(&format!("RETURNS {expected}")),
+      "oid {id} 应取到 {name} 的定义，实际: {definition}"
+    );
+  }
+
+  let sequence_id = objects
+    .iter()
+    .find(|(name, ..)| name == &sequence)
+    .map(|(.., id)| id.clone())
+    .expect("sequence listed");
+  let sequence_sql = queries.sequence_properties.expect("PostgreSQL has sequences");
+  let row = sqlx::query(sequence_sql)
+    .bind(&sequence_id)
+    .fetch_one(&pool)
+    .await
+    .expect("run sequence properties query");
+  assert_eq!(row.get::<String, _>("start_value"), "7");
+  assert_eq!(row.get::<String, _>("increment_by"), "3");
+
+  sqlx::query(&format!("DROP MATERIALIZED VIEW IF EXISTS {matview}")).execute(&pool).await.ok();
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  sqlx::query(&format!("DROP SEQUENCE IF EXISTS {sequence}")).execute(&pool).await.ok();
+  sqlx::query(&format!("DROP FUNCTION IF EXISTS {routine}(int)")).execute(&pool).await.ok();
+  sqlx::query(&format!("DROP FUNCTION IF EXISTS {routine}(text)")).execute(&pool).await.ok();
+  for table in [&fixture.child, &fixture.parent] {
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  }
+}
+
+#[tokio::test]
+async fn mysql_lists_tables_views_and_routines() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+
+  let fixture = MetaFixture::new("mycat");
+  let view = format!("{}_v", fixture.child);
+  let routine = format!("{}_fn", fixture.child);
+  let procedure = format!("{}_sp", fixture.child);
+
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  sqlx::raw_sql(&format!("DROP FUNCTION IF EXISTS {routine}")).execute(&pool).await.ok();
+  sqlx::raw_sql(&format!("DROP PROCEDURE IF EXISTS {procedure}")).execute(&pool).await.ok();
+  for statement in fixture.ddl("mysql") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
+  }
+  sqlx::query(&format!("CREATE VIEW {view} AS SELECT id FROM {}", fixture.child))
+    .execute(&pool)
+    .await
+    .expect("create view");
+  // CREATE FUNCTION / PROCEDURE 不支持预处理协议
+  sqlx::raw_sql(&format!(
+    "CREATE FUNCTION {routine}(a INT) RETURNS INT DETERMINISTIC RETURN a + 1"
+  ))
+  .execute(&pool)
+  .await
+  .expect("create function");
+  sqlx::raw_sql(&format!("CREATE PROCEDURE {procedure}() SELECT 1"))
+    .execute(&pool)
+    .await
+    .expect("create procedure");
+
+  let database: String =
+    sqlx::query_scalar("SELECT DATABASE()").fetch_one(&pool).await.expect("current database");
+
+  let queries =
+    dataomni_lib::services::object_catalog_queries(&dataomni_lib::models::DatabaseType::MySQL)
+      .expect("supported");
+  let rows = sqlx::query(queries.objects)
+    .bind(&database)
+    .bind(&database)
+    .fetch_all(&pool)
+    .await
+    .expect("list objects");
+  let objects: Vec<(String, String)> = rows
+    .iter()
+    .map(|row| (row.get::<String, _>("object_name"), row.get::<String, _>("object_kind")))
+    .collect();
+
+  let kind_of = |name: &str| objects.iter().find(|(n, _)| n == name).map(|(_, kind)| kind.clone());
+  assert_eq!(kind_of(&fixture.child).as_deref(), Some("table"));
+  assert_eq!(kind_of(&view).as_deref(), Some("view"));
+  assert_eq!(kind_of(&routine).as_deref(), Some("function"));
+  assert_eq!(kind_of(&procedure).as_deref(), Some("procedure"));
+
+  let definition: String = sqlx::query(queries.routine_definition)
+    .bind(&routine)
+    .bind(Option::<String>::None)
+    .fetch_one(&pool)
+    .await
+    .expect("run routine definition query")
+    .get("definition");
+  assert!(definition.contains("a + 1"), "应给出语句体: {definition}");
+
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  sqlx::raw_sql(&format!("DROP FUNCTION IF EXISTS {routine}")).execute(&pool).await.ok();
+  sqlx::raw_sql(&format!("DROP PROCEDURE IF EXISTS {procedure}")).execute(&pool).await.ok();
+  for table in [&fixture.child, &fixture.parent] {
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  }
+}
+
+#[tokio::test]
+async fn sqlite_lists_tables_and_views_without_internal_objects() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("connect to in-memory SQLite");
+
+  let fixture = MetaFixture::new("litecat");
+  let view = format!("{}_v", fixture.child);
+  for statement in fixture.ddl("sqlite") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare SQLite fixture");
+  }
+  sqlx::query(&format!("CREATE VIEW {view} AS SELECT id FROM {}", fixture.child))
+    .execute(&pool)
+    .await
+    .expect("create view");
+  // AUTOINCREMENT 会让 SQLite 建一张内部的 sqlite_sequence 表
+  sqlx::query("CREATE TABLE auto_t (id INTEGER PRIMARY KEY AUTOINCREMENT)")
+    .execute(&pool)
+    .await
+    .expect("create autoincrement table");
+
+  let queries =
+    dataomni_lib::services::object_catalog_queries(&dataomni_lib::models::DatabaseType::SQLite)
+      .expect("supported");
+  let rows = sqlx::query(queries.objects).fetch_all(&pool).await.expect("list objects");
+  let objects: Vec<(String, String)> = rows
+    .iter()
+    .map(|row| (row.get::<String, _>("object_name"), row.get::<String, _>("object_kind")))
+    .collect();
+
+  assert!(objects.contains(&(fixture.child.clone(), "table".into())));
+  assert!(objects.contains(&(view.clone(), "view".into())));
+  assert!(
+    !objects.iter().any(|(name, _)| name.starts_with("sqlite_")),
+    "SQLite 内部对象不该出现在树里: {objects:?}"
+  );
+}

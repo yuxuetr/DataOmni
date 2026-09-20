@@ -109,6 +109,7 @@ pub fn run() {
       release_database_session,
       validate_query,
       get_schema_metadata_queries,
+      get_object_catalog_queries,
       // 文件写入
       write_text_file,
     ])

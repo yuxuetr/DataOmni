@@ -8,6 +8,7 @@ import { CloseTabPrompt, type CloseTabChoice } from './components/CloseTabPrompt
 import { OfflineTabView } from './components/OfflineTabView';
 import { WorkspaceTabMenu } from './components/WorkspaceTabMenu';
 import { WorkspaceTabBar } from './components/WorkspaceTabBar';
+import { isBrowsableKind, KIND_LABELS } from './utils/databaseObjects';
 import { useAppStore } from './stores/appStore';
 import { useConnectionStore } from './stores/connectionStore';
 import { selectSqlDocumentHasUnsavedContent, useQueryStore } from './stores/queryStore';
@@ -331,17 +332,19 @@ function App() {
     }
 
     const metadata = activeProfileId ? databaseMetadata[activeProfileId] : undefined;
-    for (const schema of metadata?.schemas ?? []) {
-      for (const table of schema.tables) {
-        items.push({
-          id: `table:${schema.name}:${table.name}`,
-          title: table.name,
-          keywords: schema.name,
-          group: '表',
-          detail: schema.name,
-          run: () => openTableTab(table.name, schema.name || undefined)
-        });
+    // 只收能打开的对象：函数与序列没有行，放进来选中后无事发生
+    for (const object of metadata?.objects ?? []) {
+      if (!isBrowsableKind(object.kind)) {
+        continue;
       }
+      items.push({
+        id: `object:${object.kind}:${object.schema ?? ''}:${object.name}`,
+        title: object.name,
+        keywords: object.schema ?? '',
+        group: KIND_LABELS[object.kind],
+        detail: object.schema ?? '',
+        run: () => openTableTab(object.name, object.schema ?? undefined)
+      });
     }
 
     items.push(

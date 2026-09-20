@@ -52,17 +52,29 @@ export interface TableSchema {
   constraints?: Array<{ name: string; type: string; columns: string[] }>;
 }
 
-export interface ExplorerTableInfo {
-  name: string;
-  type: string;
-}
+/**
+ * 库级对象的类型。
+ *
+ * 不是所有方言都有全部类型：MySQL 与 SQLite 没有序列（AUTO_INCREMENT 是列
+ * 属性，不是独立对象），SQLite 的函数是宿主程序注册的、目录里查不到。
+ */
+export type DatabaseObjectKind =
+  | 'table'
+  | 'view'
+  | 'materialized-view'
+  | 'function'
+  | 'procedure'
+  | 'sequence';
 
-export interface ExplorerSchemaInfo {
+export interface DatabaseObject {
+  schema: string | null;
   name: string;
-  tables: ExplorerTableInfo[];
+  kind: DatabaseObjectKind;
+  /** 取定义时用的标识。PostgreSQL 是 oid——函数可以重载，名字不唯一。 */
+  id: string;
 }
 
 export interface CachedDatabaseMetadata {
-  schemas: ExplorerSchemaInfo[];
+  objects: DatabaseObject[];
   lastUpdated: number;
 }

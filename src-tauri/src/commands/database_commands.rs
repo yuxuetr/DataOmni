@@ -490,3 +490,12 @@ pub fn get_schema_metadata_queries(
   crate::services::schema_metadata_queries(&db_type)
     .ok_or_else(|| format!("{:?} 尚未支持结构浏览", db_type))
 }
+
+/// 取该方言的库级对象目录查询。与 `get_schema_metadata_queries` 同样只回 SQL 文本。
+#[tauri::command]
+pub fn get_object_catalog_queries(
+  db_type: crate::models::DatabaseType,
+) -> Result<crate::services::ObjectCatalogQueries, String> {
+  crate::services::object_catalog_queries(&db_type)
+    .ok_or_else(|| format!("{:?} 尚未支持对象浏览", db_type))
+}
