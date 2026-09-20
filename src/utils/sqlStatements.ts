@@ -260,7 +260,13 @@ function firstTopLevelKeyword(sql: string): string | undefined {
   return topLevelKeywords(sql)[0];
 }
 
-function topLevelKeywords(sql: string): string[] {
+/**
+ * 语句里处在顶层（不在括号、字符串、注释内）的标识符，全部大写。
+ *
+ * 导出给风险判定用：识别「DELETE 有没有带 WHERE」需要的正是这种既跳过字符串
+ * 和注释、又不把子查询里的词算进来的扫描。再写一个更弱的分词器是重复。
+ */
+export function topLevelKeywords(sql: string): string[] {
   const keywords: string[] = [];
   let state: LexerState = NORMAL_STATE;
   let depth = 0;

@@ -22,6 +22,9 @@ import type { EditorView } from '@codemirror/view';
 import { useThemeStore } from '../stores/themeStore';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { PanelResizeHandle } from './PanelResizeHandle';
+import { DestructiveStatementPrompt } from './DestructiveStatementPrompt';
+import { highestRiskNeedingConfirmation, type StatementRisk } from '../utils/statementRisk';
+import type { ConnectionEnvironment } from '../contracts';
 import {
   findSqlStatementAtOffset,
   splitSqlStatements
@@ -77,7 +80,13 @@ const sqlCompletions = (context: CompletionContext) => {
   };
 };
 
-export const SqlEditor: React.FC = () => {
+interface SqlEditorProps {
+  /** 确认框要把「在哪个库上执行」说清楚 */
+  connectionName: string;
+  environment: ConnectionEnvironment;
+}
+
+export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environment }) => {
   // 文档随活动 SQL 标签切换，单独订阅
   const { sqlInput, statements, latestExecutionIdByStatement } =
     useQueryStore(selectActiveSqlDocument);
@@ -101,6 +110,24 @@ export const SqlEditor: React.FC = () => {
   } = useQueryStore();
 
   const [autoParseEnabled, setAutoParseEnabled] = useState(true);
+  // 等待确认的一次执行。run 留着原本要做的事，确认后原样放行。
+  const [pendingRun, setPendingRun] = useState<
+    { sql: string; risk: StatementRisk; statementCount: number; run: () => void } | null
+  >(null);
+
+  /**
+   * 所有执行入口都要过这道闸，漏掉一个这道闸就是装饰。
+   * 不需要确认时直接执行，不额外加一次点击。
+   */
+  const runGuarded = (candidates: string[], run: () => void) => {
+    const worst = highestRiskNeedingConfirmation(candidates, environment);
+    if (!worst) {
+      run();
+      return;
+    }
+
+    setPendingRun({ ...worst, statementCount: candidates.length, run });
+  };
   // 编辑器高度此前写死 200px，结果区再长也抢不到空间
   const editorPanel = useResizablePanel({
     storageKey: 'sql-editor-height',
@@ -148,21 +175,23 @@ export const SqlEditor: React.FC = () => {
     setError(null);
   };
 
-  const executeCurrentStatement = async () => {
+  const executeCurrentStatement = () => {
     const view = editorViewRef.current;
     const cursor = view?.state.selection.main.head ?? 0;
     const current = findSqlStatementAtOffset(sqlInput, cursor);
-    if (current) {
-      const parsedStatement = statements[current.index];
-      if (parsedStatement?.sql === current.sql) {
-        await executeStatement(parsedStatement.id);
-      } else {
-        await executeSql(current.sql);
-      }
+    if (!current) {
+      return;
     }
+
+    runGuarded([current.sql], () => {
+      const parsedStatement = statements[current.index];
+      void (parsedStatement?.sql === current.sql
+        ? executeStatement(parsedStatement.id)
+        : executeSql(current.sql));
+    });
   };
 
-  const executeSelectedSql = async () => {
+  const executeSelectedSql = () => {
     const selection = editorViewRef.current?.state.selection.main;
     if (!selection || selection.empty) {
       return;
@@ -171,12 +200,17 @@ export const SqlEditor: React.FC = () => {
     const selectedStatements = splitSqlStatements(
       sqlInput.slice(selection.from, selection.to)
     );
-    for (const statement of selectedStatements) {
-      const succeeded = await executeSql(statement);
-      if (!succeeded) {
-        break;
-      }
-    }
+
+    runGuarded(selectedStatements, () => {
+      void (async () => {
+        for (const statement of selectedStatements) {
+          const succeeded = await executeSql(statement);
+          if (!succeeded) {
+            break;
+          }
+        }
+      })();
+    });
   };
 
   const handleEditorKeyDown = (event: React.KeyboardEvent) => {
@@ -186,14 +220,22 @@ export const SqlEditor: React.FC = () => {
 
     event.preventDefault();
     if (event.shiftKey) {
-      void executeAllStatements();
+      runAllGuarded();
       return;
     }
 
     const selection = editorViewRef.current?.state.selection.main;
-    void (selection && !selection.empty
-      ? executeSelectedSql()
-      : executeCurrentStatement());
+    if (selection && !selection.empty) {
+      executeSelectedSql();
+    } else {
+      executeCurrentStatement();
+    }
+  };
+
+  const runAllGuarded = () => {
+    runGuarded(statements.map((statement) => statement.sql), () => {
+      void executeAllStatements();
+    });
   };
 
   // 格式化执行时间
@@ -209,6 +251,21 @@ export const SqlEditor: React.FC = () => {
 
   return (
     <div className="h-full flex flex-col bg-surface">
+      {pendingRun && (
+        <DestructiveStatementPrompt
+          sql={pendingRun.sql}
+          risk={pendingRun.risk}
+          statementCount={pendingRun.statementCount}
+          connectionName={connectionName}
+          environment={environment}
+          onCancel={() => setPendingRun(null)}
+          onConfirm={() => {
+            const run = pendingRun.run;
+            setPendingRun(null);
+            run();
+          }}
+        />
+      )}
       {/* SQL编辑器头部 */}
       <div className="flex items-center justify-between gap-3 border-b border-line bg-surface-sunken px-3 py-1.5">
         <div className="flex shrink-0 items-center">
@@ -313,7 +370,7 @@ export const SqlEditor: React.FC = () => {
           {/* 多语句的执行规则原本是编辑器下方一行常驻说明；挪进按钮提示里——
               这件事只在要按它的时候才需要知道 */}
           <button
-            onClick={executeAllStatements}
+            onClick={runAllGuarded}
             disabled={statements.length === 0 || isConnecting}
             title="按顺序执行所有语句，遇到失败、超时或取消即停止（⌘⇧⏎）"
             className={clsx(
@@ -412,7 +469,10 @@ export const SqlEditor: React.FC = () => {
                   ordinal={index + 1}
                   statement={statement}
                   execution={execution}
-                  onExecute={() => executeStatement(statement.id)}
+                  onExecute={() => runGuarded(
+                    [statement.sql],
+                    () => void executeStatement(statement.id)
+                  )}
                   onCancel={() => execution && cancelExecution(execution.id)}
                   onRemove={() => removeStatement(statement.id)}
                   formatExecutionTime={formatExecutionTime}
