@@ -261,7 +261,7 @@ export const SqlEditor: React.FC = () => {
           {!autoParseEnabled && (
             <button
               onClick={handleManualParse}
-              className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken transition-colors"
+              className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors"
             >
               <RotateCcw size={14} />
               <span>解析</span>
@@ -276,7 +276,7 @@ export const SqlEditor: React.FC = () => {
               "flex items-center space-x-1 px-3 py-1.5 text-sm border rounded-control transition-colors",
               statements.length === 0
                 ? "text-fg-subtle border-line cursor-not-allowed"
-                : "text-fg-muted border-line-strong hover:bg-surface-sunken"
+                : "text-fg-muted border-line-strong hover:bg-surface-hover"
             )}
           >
             <Trash2 size={14} />
@@ -286,7 +286,7 @@ export const SqlEditor: React.FC = () => {
           <button
             onClick={executeSelectedSql}
             disabled={!hasSelection || isConnecting}
-            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken transition-colors disabled:text-fg-subtle disabled:border-line disabled:cursor-not-allowed"
+            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors disabled:text-fg-subtle disabled:border-line disabled:cursor-not-allowed"
             title="执行选中内容"
           >
             <Play size={14} />
@@ -296,7 +296,7 @@ export const SqlEditor: React.FC = () => {
           <button
             onClick={executeCurrentStatement}
             disabled={statements.length === 0 || isConnecting}
-            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken transition-colors disabled:text-fg-subtle disabled:border-line disabled:cursor-not-allowed"
+            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors disabled:text-fg-subtle disabled:border-line disabled:cursor-not-allowed"
             title="执行光标所在语句 (Cmd/Ctrl+Enter)"
           >
             <Play size={14} />

@@ -62,9 +62,16 @@ export const useAppStore = create<AppStore>((set) => ({
   connectionReady: false,
 
   openConnectionForm: (connection?: ConnectionProfile) => {
+    // 只认真正的配置对象。把这个动作直接挂到 onClick 上时，React 传进来的是
+    // MouseEvent——它是真值，会让表单以「编辑」模式打开一个事件对象，
+    // 而 TypeScript 拦不住：`() => void` 的调用点允许多传实参。
+    const editing = typeof connection === 'object'
+      && connection !== null
+      && typeof (connection as ConnectionProfile).id === 'string';
+
     set({
-      connectionForm: connection
-        ? { mode: 'edit', connection }
+      connectionForm: editing
+        ? { mode: 'edit', connection: connection as ConnectionProfile }
         : { mode: 'create' }
     });
   },

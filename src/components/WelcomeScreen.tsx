@@ -48,7 +48,7 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
 
   return (
     <div className="flex-1 overflow-auto">
-      <div className="mx-auto flex min-h-full w-full max-w-lg flex-col justify-center px-6 py-10">
+      <div className="mx-auto w-full max-w-lg px-6 pb-10 pt-16">
         <h1 className="text-lg font-semibold text-fg">DataOmni</h1>
         <p className="mt-1 text-xs text-fg-subtle">选择一个连接，或新建一个。</p>
 
@@ -101,9 +101,11 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
         )}
 
         <div className="mt-4 flex gap-2">
+          {/* 不能写成 onClick={onConnect}：React 会把 MouseEvent 当作「要编辑的
+              连接」传进去，表单就会以编辑模式打开一个事件对象 */}
           <button
             type="button"
-            onClick={onConnect}
+            onClick={() => onConnect()}
             className="flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:bg-accent-hover"
           >
             <Plus size={14} />

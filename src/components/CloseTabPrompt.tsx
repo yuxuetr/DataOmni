@@ -66,7 +66,7 @@ export function CloseTabPrompt({ tabTitle, onChoose }: CloseTabPromptProps) {
           <button
             type="button"
             onClick={() => onChoose('cancel')}
-            className="px-3 py-1.5 text-sm text-fg bg-surface border border-line-strong rounded-control hover:bg-surface-sunken"
+            className="px-3 py-1.5 text-sm text-fg bg-surface border border-line-strong rounded-control hover:bg-surface-hover"
           >
             取消
           </button>

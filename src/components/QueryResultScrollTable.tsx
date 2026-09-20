@@ -331,7 +331,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                         </button>
                         <button
                           onClick={cancelAddRow}
-                          className="p-1 text-fg-muted hover:bg-surface-sunken rounded-control"
+                          className="p-1 text-fg-muted hover:bg-surface-hover rounded-control"
                         >
                           <Square size={14} />
                         </button>
@@ -343,7 +343,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
               
               {/* 数据行 */}
               {currentRows.map((row, rowIndex) => (
-                <tr key={startIndex + rowIndex} className="hover:bg-surface-sunken">
+                <tr key={startIndex + rowIndex} className="hover:bg-surface-hover">
                   {row.map((cell, cellIndex) => {
                     const isEditing = editingCell?.rowIndex === rowIndex && editingCell?.columnIndex === cellIndex;
                     const formattedValue = formatResultValue(cell);

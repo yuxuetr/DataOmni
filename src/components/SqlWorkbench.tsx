@@ -161,7 +161,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
           {/* 连接信息按钮 */}
           <button
             onClick={() => setShowConnectionInfo(true)}
-            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken transition-colors"
+            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors"
             title="连接信息"
           >
             <Info size={14} />
@@ -182,7 +182,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
           {/* 关闭按钮 */}
           <button
             onClick={handleClose}
-            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken transition-colors"
+            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors"
             title="断开与该数据库的连接"
           >
             <X size={14} />

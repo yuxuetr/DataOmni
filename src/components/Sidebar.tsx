@@ -100,31 +100,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="relative">
           <button
             onClick={() => setShowConnectionMenu(!showConnectionMenu)}
-            className="w-full flex items-center justify-between px-3 py-2.5 text-sm bg-surface hover:bg-surface-sunken rounded-panel border border-line transition-colors shadow-sm"
+            className="flex w-full items-center justify-between rounded-control border border-line bg-surface px-2.5 py-1.5 text-sm transition-colors hover:bg-surface-hover"
           >
-            <div className="flex items-center space-x-2">
-              <Database size={16} className="text-fg-muted" />
-              <span className="font-medium text-fg">
+            <div className="flex min-w-0 items-center gap-2">
+              <Database size={14} className="shrink-0 text-fg-muted" />
+              <span className="truncate font-medium text-fg">
                 {currentConnection ? currentConnection.name : '选择数据库连接'}
               </span>
             </div>
-            <ChevronDown size={16} className="text-fg-muted" />
+            <ChevronDown size={14} className="shrink-0 text-fg-muted" />
           </button>
 
           {/* 连接下拉菜单 */}
           {showConnectionMenu && (
             <div className="absolute top-full left-0 right-0 mt-1 bg-surface rounded-panel shadow-lg border border-line z-50 max-h-64 overflow-y-auto">
               {connections.length === 0 ? (
-                <div className="p-4 text-center text-fg-muted text-sm">
-                  <Database size={24} className="mx-auto mb-2 text-fg-subtle" />
-                  <p>暂无数据库连接</p>
-                  <p className="text-xs mt-1">点击下方按钮创建新连接</p>
-                </div>
+                <p className="px-3 py-2 text-xs text-fg-subtle">暂无连接</p>
               ) : (
                 connections.map(conn => (
                   <div
                     key={conn.id}
-                    className="group flex items-center justify-between px-3 py-2.5 hover:bg-surface-sunken cursor-pointer border-b border-line last:border-b-0"
+                    className="group flex items-center justify-between px-3 py-2.5 hover:bg-surface-hover cursor-pointer border-b border-line last:border-b-0"
                     onClick={() => handleConnectionSelect(conn)}
                   >
                     <div className="flex items-center space-x-2">
@@ -210,13 +206,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onTableSelect={handleTableSelect}
           />
         ) : (
-          // 显示提示信息
-          <div className="p-6 text-center text-fg-muted">
-            <Database size={48} className="mx-auto mb-4 text-fg-subtle" />
-            <p className="text-sm font-medium mb-2">欢迎使用 DataOmni</p>
-            <p className="text-xs">请从上方菜单选择或创建数据库连接</p>
-            <p className="text-xs mt-1">支持 SQLite、MySQL、PostgreSQL 等数据库</p>
-          </div>
+          // 右侧启动面板已经在说「选一个连接」，这里不再用 48px 图标加三行
+          // 文案重复一遍
+          <p className="px-3 py-2 text-xs text-fg-subtle">尚未连接</p>
         )}
       </div>
 

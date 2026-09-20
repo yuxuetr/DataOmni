@@ -925,7 +925,7 @@ export default function TableDataViewer({
                   </button>
                   <button
                     onClick={setNull}
-                    className="px-2 py-1 text-xs text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken"
+                    className="px-2 py-1 text-xs text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover"
                   >
                     清空
                   </button>
@@ -940,7 +940,7 @@ export default function TableDataViewer({
                   </button>
                   <button
                     onClick={closePicker}
-                    className="flex-1 px-3 py-1 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken"
+                    className="flex-1 px-3 py-1 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover"
                   >
                     取消
                   </button>
@@ -1000,7 +1000,7 @@ export default function TableDataViewer({
             {onClose && (
               <button
                 onClick={onClose}
-                className="px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken transition-colors"
+                className="px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors"
               >
                 关闭
               </button>
@@ -1018,7 +1018,7 @@ export default function TableDataViewer({
                 "flex items-center space-x-2 px-6 py-3 text-sm font-medium border-b-2 transition-colors",
                 activeTab === tab.id
                   ? "border-accent text-accent bg-accent-soft"
-                  : "border-transparent text-fg-muted hover:text-fg hover:bg-surface-sunken"
+                  : "border-transparent text-fg-muted hover:text-fg hover:bg-surface-hover"
               )}
               title={tab.description}
             >
@@ -1073,7 +1073,7 @@ export default function TableDataViewer({
                 </thead>
                 <tbody className="bg-surface divide-y divide-line">
                   {tableSchema.columns.map((column, index) => (
-                    <tr key={index} className="hover:bg-surface-sunken">
+                    <tr key={index} className="hover:bg-surface-hover">
                       <td className="px-4 py-3 text-sm font-medium text-fg">
                         {column.name}
                       </td>
@@ -1175,7 +1175,7 @@ export default function TableDataViewer({
                     <button
                       onClick={cancelEdit}
                       disabled={editingLoading}
-                      className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-sunken transition-colors disabled:opacity-50"
+                      className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors disabled:opacity-50"
                     >
                       <X size={14} />
                       <span>取消</span>
@@ -1330,7 +1330,7 @@ export default function TableDataViewer({
                         
                         <tbody className="bg-surface divide-y divide-line">
                           {tableData.map((row, rowIndex) => (
-                            <tr key={rowIndex} className="hover:bg-surface-sunken">
+                            <tr key={rowIndex} className="hover:bg-surface-hover">
                               {tableSchema?.columns.map((column, colIndex) => (
                                 <EditableCell
                                   key={colIndex}
@@ -1377,7 +1377,7 @@ export default function TableDataViewer({
                                     <button
                                       onClick={cancelEdit}
                                       disabled={editingLoading}
-                                      className="p-1 text-fg-muted hover:text-fg hover:bg-surface-sunken rounded-control disabled:opacity-50"
+                                      className="p-1 text-fg-muted hover:text-fg hover:bg-surface-hover rounded-control disabled:opacity-50"
                                       title="取消"
                                     >
                                       <X size={14} />
