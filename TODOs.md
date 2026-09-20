@@ -214,7 +214,7 @@
 
 ### 2.4 表数据浏览
 
-- [ ] 元数据与表数据查询改走自建 query_executor，不再用 tauri-plugin-sql 的解码器
+- [-] 元数据与表数据查询改走自建 query_executor，不再用 tauri-plugin-sql 的解码器
   - 证据：用户实测 MySQL 8 报 `unsupported datatype: VARBINARY`（84495ab 已用 CAST 绕开元数据查询）。
     插件解码器类型表是硬编码的：MySQL 缺 `VARBINARY` / `BINARY` / `DECIMAL` / `BIT` / `SET` /
     `GEOMETRY`，PostgreSQL 缺 `NUMERIC` / `DECIMAL`
@@ -223,7 +223,16 @@
     在表视图里仍会失败。而 P1 的 `query_executor.rs` 早已实现完整解码并保持 BigInt / Decimal 精度，
     等于同一个问题解决了两次、只有一次是对的。
   - 阻碍：`execute_query` 命令目前不接受绑定参数，改走它需要先补参数支持，否则只能拼接字面量。
-  - 判据：连一张含 `DECIMAL(10,2)` 与 `VARBINARY` 列的 MySQL 表，表视图能正常显示且小数不丢精度。
+  - 表数据查询完成于 74ee3f9（新增 `runReadQuery`）。解码器缺口补齐并加了全类型覆盖测试于 29aafc2，
+    同时把查询从非预处理文本模式改为预处理二进制协议——`INTERVAL` 与 MySQL `TIME` 在文本模式下
+    sqlx 根本不做转换。
+  - 剩余：表结构查询仍走插件，因为它带绑定参数而 `execute_query` 还没有参数支持；
+    84495ab 的 CAST 已让它工作，等真需要时再给命令补参数。
+  - 未支持且暂不打算支持：PostgreSQL 的 `BIT` 与 `INET` / `CIDR`，需分别开启 sqlx 的
+    `bit-vec` 与 `ipnetwork` feature，在应用 schema 中少见。碰上时会报出点名类型的错误。
+  - 判据：`cargo test --test database_smoke` 中的 `mysql_decodes_common_column_types` 与
+    `postgres_decodes_common_column_types`，针对真实 MySQL 8.4 / PostgreSQL 16 断言每列可解码
+    且 DECIMAL / BIGINT UNSIGNED 不丢精度。已反向验证：移除 BINARY 支持后精确红在 `col_binary`。
 
 
 - [ ] 支持服务端排序和筛选
