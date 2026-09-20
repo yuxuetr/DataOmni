@@ -6,7 +6,8 @@ import {
   ChevronsRight,
   Square,
   Trash2,
-  Edit
+  Edit,
+  Download
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { QueryResult } from '../contracts/query';
@@ -18,6 +19,7 @@ import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { ColumnSortButton } from './ColumnSortButton';
 import { nextColumnSort, sortRowsByColumn, type ColumnSort } from '../utils/resultSorting';
 import { useCellSelection } from '../hooks/useCellSelection';
+import { ExportResultDialog } from './ExportResultDialog';
 
 interface QueryResultScrollTableProps {
   result: QueryResult;
@@ -47,6 +49,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   // 新增行状态
   const [showAddForm, setShowAddForm] = useState(false);
   const [newRowData, setNewRowData] = useState<Record<string, string>>({});
+  const [showExport, setShowExport] = useState(false);
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   
@@ -209,16 +212,38 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
           <span className="text-fg-subtle">点选单元格后 ⌘C 复制</span>
         </div>
         
-        {canEdit && (
+        <div className="flex items-center gap-2">
+          {canEdit && (
+            <button
+              onClick={showAddRowForm}
+              className="flex items-center space-x-1 px-3 py-1.5 text-sm text-success border border-success-line rounded-control hover:bg-success-soft"
+            >
+              <Edit size={14} />
+              <span>新增</span>
+            </button>
+          )}
           <button
-            onClick={showAddRowForm}
-            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-success border border-success-line rounded-control hover:bg-success-soft"
+            onClick={() => setShowExport(true)}
+            disabled={totalRows === 0}
+            className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover disabled:opacity-50"
+            title="导出当前结果"
           >
-            <Edit size={14} />
-            <span>新增</span>
+            <Download size={14} />
+            <span>导出</span>
           </button>
-        )}
+        </div>
       </div>
+
+      {/* 导出的是排序后的整份结果，不是当前这一页——用户看到的次序就是文件里的次序 */}
+      {showExport && (
+        <ExportResultDialog
+          columns={result.columns}
+          rows={sortedRows}
+          sourceName={result.table_name ?? '查询结果'}
+          truncated={result.truncated}
+          onClose={() => setShowExport(false)}
+        />
+      )}
       
       {cells.copyError && (
         <div className="border-b border-danger-line bg-danger-soft px-3 py-1.5 text-xs text-danger">

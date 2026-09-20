@@ -106,6 +106,8 @@ pub fn run() {
       cancel_query,
       release_database_session,
       validate_query,
+      // 文件写入
+      write_text_file,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

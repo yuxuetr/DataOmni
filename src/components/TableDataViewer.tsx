@@ -28,7 +28,8 @@ import {
   Check,
   ChevronsLeft,
   ChevronsRight,
-  BarChart3
+  BarChart3,
+  Download
 } from 'lucide-react';
 import clsx from 'clsx';
 import type {
@@ -49,6 +50,7 @@ import { useCellSelection } from '../hooks/useCellSelection';
 import { toPositionalRows } from '../utils/columnWidths';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
+import { ExportResultDialog } from './ExportResultDialog';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 
 // 编辑模式类型
@@ -96,6 +98,7 @@ export default function TableDataViewer({
   const [pageSize, setPageSize] = useState(50);
   // 排序在数据库里做：只排当前页得到的是「这一页内部的次序」
   const [sort, setSort] = useState<ColumnSort | null>(null);
+  const [showExport, setShowExport] = useState(false);
   const sortRef = useRef<ColumnSort | null>(null);
   sortRef.current = sort;
   const [totalRows, setTotalRows] = useState(0);
@@ -1217,6 +1220,16 @@ export default function TableDataViewer({
                       <Plus size={14} />
                       <span>添加</span>
                     </button>
+
+                    <button
+                      onClick={() => setShowExport(true)}
+                      disabled={tableData.length === 0}
+                      className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg border border-line-strong rounded-control hover:bg-surface-hover transition-colors disabled:opacity-50"
+                      title="导出当前页"
+                    >
+                      <Download size={14} />
+                      <span>导出</span>
+                    </button>
                   </>
                 )}
                 
@@ -1564,6 +1577,17 @@ export default function TableDataViewer({
           </div>
         )}
       </div>
+
+      {/* 表数据是服务端分页的，内存里只有当前这一页——导出必须如实说明范围 */}
+      {showExport && (
+        <ExportResultDialog
+          columns={columnNames}
+          rows={positionalRows}
+          sourceName={tableName}
+          scopeNote={`导出的是当前第 ${currentPage} 页的 ${tableData.length} 行；整表共 ${totalRows} 行。`}
+          onClose={() => setShowExport(false)}
+        />
+      )}
     </div>
   );
 } 
