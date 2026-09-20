@@ -226,7 +226,7 @@ export default function TableDataViewer({
       return loadedSchema;
     } catch (err) {
       console.error('加载表结构失败:', err);
-      setError('加载表结构失败');
+      setError(err instanceof Error ? err.message : String(err));
       return null;
     }
   };
@@ -269,30 +269,24 @@ export default function TableDataViewer({
 
       setTotalRows(total);
       
-      // 获取分页数据
-      const offset = (page - 1) * requestedPageSize;
-      let dataQuery = '';
-      
-      switch (connection.db_type) {
-        case 'postgresql':
-          dataQuery = `SELECT * FROM ${tableReference} ${order.clause} LIMIT $1 OFFSET $2`;
-          break;
-        case 'mysql':
-          dataQuery = `SELECT * FROM ${tableReference} ${order.clause} LIMIT ? OFFSET ?`;
-          break;
-        case 'sqlite':
-          dataQuery = `SELECT * FROM ${tableReference} ${order.clause} LIMIT ${requestedPageSize} OFFSET ${offset}`;
-          break;
-      }
-      
-      const dataResult = await database!.select(dataQuery, 
-        connection.db_type === 'sqlite' ? [] : [requestedPageSize, offset]
-      );
-      
+      // 获取分页数据。
+      //
+      // LIMIT / OFFSET 直接内联，不走绑定参数：tauri-plugin-sql 把所有数字
+      // 一律按 f64 绑定（wrapper.rs 的 `bind(number.as_f64())`），MySQL 与
+      // PostgreSQL 都不接受 DOUBLE 作为 LIMIT，会直接报错。这两个值是内部
+      // 算出来的页长与偏移，不是用户输入，下面再收敛成非负整数兜底。
+      const limitValue = Math.max(1, Math.trunc(requestedPageSize));
+      const offsetValue = Math.max(0, Math.trunc((page - 1) * requestedPageSize));
+      const dataQuery =
+        `SELECT * FROM ${tableReference} ${order.clause} LIMIT ${limitValue} OFFSET ${offsetValue}`;
+
+      const dataResult = await database!.select(dataQuery);
+
       setTableData(Array.isArray(dataResult) ? dataResult : []);
     } catch (err) {
       console.error('加载表数据失败:', err);
-      setError('加载表数据失败');
+      // 原始错误必须可见，否则无从判断是类型解码、权限还是语法问题
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }

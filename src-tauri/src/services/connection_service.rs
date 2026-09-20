@@ -16,6 +16,23 @@ trait CredentialStore: Send + Sync {
   fn delete_password(&self, profile_id: &str) -> Result<(), String>;
 }
 
+/// 把凭据读取失败翻译成用户能据以行动的说明。
+///
+/// macOS 在钥匙串 ACL 校验不通过时返回的原文是「用户名或密码不正确」，
+/// 指向的却不是数据库账号——照搬只会把人引到错误的方向。未签名的开发
+/// 构建每次重建都换一个代码签名身份，旧条目因此拒绝访问，这是最常见的成因。
+fn describe_credential_read_failure(error: &keyring::Error) -> String {
+  match error {
+    keyring::Error::NoEntry => {
+      "系统凭据库中没有这个连接的密码，请在连接配置中重新输入并保存。".to_string()
+    }
+    keyring::Error::PlatformFailure(cause) => format!(
+      "系统凭据库拒绝了访问：{cause}。\n       常见原因是该条目由另一个版本的应用写入（未签名的开发构建每次重建都会更换签名身份），\n       在连接配置中重新输入并保存密码即可重建条目。"
+    ),
+    other => format!("无法从系统凭据库读取凭据: {other}"),
+  }
+}
+
 struct SystemCredentialStore;
 
 impl CredentialStore for SystemCredentialStore {
@@ -28,7 +45,7 @@ impl CredentialStore for SystemCredentialStore {
   fn get_password(&self, profile_id: &str) -> Result<String, String> {
     credential_entry(profile_id)?
       .get_password()
-      .map_err(|error| format!("无法从系统凭据库读取凭据: {error}"))
+      .map_err(|error| describe_credential_read_failure(&error))
   }
 
   fn delete_password(&self, profile_id: &str) -> Result<(), String> {

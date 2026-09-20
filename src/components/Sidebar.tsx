@@ -165,24 +165,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         <Trash2 size={14} />
                       </button>
                     </div>
-                    {connectionError && (
-                      <div className="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">
-                        <AlertCircle size={14} className="mt-0.5 shrink-0" />
-                        <span className="flex-1 break-words">{connectionError}</span>
-                        <button
-                          type="button"
-                          onClick={() => setConnectionError(null)}
-                          className="text-red-500 hover:text-red-700"
-                          title="关闭错误提示"
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    )}
                   </div>
                 ))
               )}
               
+              {/* 错误只属于整个面板，不属于某一行连接；
+                  此前渲染在 connections.map() 内部，会按连接数重复出现，
+                  而且被挤在窄列里换行成一个词一行 */}
+              {connectionError && (
+                <div className="flex items-start gap-2 border-t border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                  <span className="min-w-0 flex-1 break-words">{connectionError}</span>
+                  <button
+                    type="button"
+                    onClick={() => setConnectionError(null)}
+                    className="shrink-0 text-red-500 hover:text-red-700"
+                    title="关闭错误提示"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
               <div className="border-t border-gray-200">
                 <button
                   onClick={() => {
