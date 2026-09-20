@@ -405,3 +405,157 @@ fn network_database_url(variable: &str) -> Option<String> {
 fn network_databases_required() -> bool {
   std::env::var(REQUIRE_NETWORK_DATABASES_ENV).as_deref() == Ok("1")
 }
+
+/// MySQL 常用类型 + 已知坑点的解码覆盖。
+///
+/// 这些类型此前只在用户实际点开某张表时才暴露问题（`unsupported datatype: BINARY`），
+/// 这里把它们固定成一道门。
+#[tokio::test]
+async fn mysql_decodes_common_column_types() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool = MySqlPoolOptions::new()
+    .max_connections(1)
+    .connect(&url)
+    .await
+    .expect("connect to MySQL smoke database");
+
+  sqlx::query(
+    "CREATE TEMPORARY TABLE type_coverage (
+       col_tinyint TINYINT,
+       col_int INT,
+       col_bigint BIGINT,
+       col_bigint_unsigned BIGINT UNSIGNED,
+       col_decimal DECIMAL(20, 4),
+       col_float FLOAT,
+       col_double DOUBLE,
+       col_bit BIT(8),
+       col_char CHAR(8),
+       col_varchar VARCHAR(32),
+       col_text TEXT,
+       col_enum ENUM('a', 'b'),
+       col_set SET('x', 'y'),
+       col_binary BINARY(4),
+       col_varbinary VARBINARY(16),
+       col_blob BLOB,
+       col_date DATE,
+       col_time TIME,
+       col_datetime DATETIME,
+       col_timestamp TIMESTAMP NULL,
+       col_year YEAR,
+       col_json JSON
+     )",
+  )
+  .execute(&pool)
+  .await
+  .expect("create MySQL type coverage table");
+
+  sqlx::query(
+    "INSERT INTO type_coverage VALUES (
+       -1, 2147483647, 9223372036854775807, 18446744073709551615,
+       12345678901234.5678, 1.5, 2.5, b'10101010',
+       'chr', 'varchar', 'text', 'a', 'x,y',
+       0x00FF1020, 0x0102, 0x03,
+       '2026-09-20', '12:34:56', '2026-09-20 12:34:56', '2026-09-20 12:34:56',
+       2026, '{\"k\": 1}'
+     )",
+  )
+  .execute(&pool)
+  .await
+  .expect("insert MySQL type coverage row");
+
+  let result = execute_query(&DbPool::MySql(pool.clone()), "SELECT * FROM type_coverage")
+    .await
+    .expect("decode every MySQL column type");
+
+  // 精度是重点：DECIMAL 与 BIGINT UNSIGNED 都超出 JavaScript Number 的安全范围
+  assert_tagged_values(
+    result,
+    &[
+      ("col_bigint", "bigint", "9223372036854775807"),
+      ("col_bigint_unsigned", "bigint", "18446744073709551615"),
+      ("col_decimal", "decimal", "12345678901234.5678"),
+      ("col_binary", "binary", "00ff1020"),
+      ("col_date", "date", "2026-09-20"),
+    ],
+  );
+}
+
+/// PostgreSQL 常用类型 + 已知坑点的解码覆盖。
+///
+/// 未覆盖 `BIT` 与 `INET` / `CIDR`：sqlx 要分别开启 `bit-vec` 与 `ipnetwork`
+/// feature 才能解码，而这两种类型在应用 schema 中少见，为它们引入依赖不划算。
+/// 真碰上时解码器会报出明确的「不支持的 PostgreSQL 数据类型: BIT」，届时再加。
+#[tokio::test]
+async fn postgres_decodes_common_column_types() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool = PgPoolOptions::new()
+    .max_connections(1)
+    .connect(&url)
+    .await
+    .expect("connect to PostgreSQL smoke database");
+
+  sqlx::query(
+    "CREATE TEMP TABLE type_coverage (
+       col_smallint SMALLINT,
+       col_int INTEGER,
+       col_bigint BIGINT,
+       col_numeric NUMERIC(20, 4),
+       col_real REAL,
+       col_double DOUBLE PRECISION,
+       col_bool BOOLEAN,
+       col_char CHAR(8),
+       col_varchar VARCHAR(32),
+       col_text TEXT,
+       col_uuid UUID,
+       col_bytea BYTEA,
+       col_date DATE,
+       col_time TIME,
+       col_timestamp TIMESTAMP,
+       col_timestamptz TIMESTAMPTZ,
+       col_interval INTERVAL,
+       col_json JSON,
+       col_jsonb JSONB,
+       col_text_array TEXT[],
+       col_int_array INTEGER[],
+       col_bit_placeholder BOOLEAN
+     )",
+  )
+  .execute(&pool)
+  .await
+  .expect("create PostgreSQL type coverage table");
+
+  sqlx::query(
+    "INSERT INTO type_coverage VALUES (
+       -1, 2147483647, 9223372036854775807,
+       12345678901234.5678, 1.5, 2.5, true,
+       'chr', 'varchar', 'text',
+       '00000000-0000-0000-0000-000000000001',
+       '\\x00ff1020'::bytea,
+       '2026-09-20', '12:34:56', '2026-09-20 12:34:56', '2026-09-20 12:34:56+00',
+       '1 day', '{\"k\": 1}', '{\"k\": 1}',
+       ARRAY['a', 'b'], ARRAY[1, 2],
+       false
+     )",
+  )
+  .execute(&pool)
+  .await
+  .expect("insert PostgreSQL type coverage row");
+
+  let result = execute_query(&DbPool::Postgres(pool.clone()), "SELECT * FROM type_coverage")
+    .await
+    .expect("decode every PostgreSQL column type");
+
+  assert_tagged_values(
+    result,
+    &[
+      ("col_bigint", "bigint", "9223372036854775807"),
+      ("col_numeric", "decimal", "12345678901234.5678"),
+      ("col_bytea", "binary", "00ff1020"),
+      ("col_date", "date", "2026-09-20"),
+    ],
+  );
+}

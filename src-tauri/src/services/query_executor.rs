@@ -258,7 +258,7 @@ async fn execute_sqlite_connection_streaming(
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let mut stream = (&mut *connection).fetch(sql);
+  let mut stream = (&mut *connection).fetch(sqlx::query(sql));
   let mut rows = Vec::with_capacity(batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
@@ -372,7 +372,7 @@ async fn execute_mysql_connection_streaming(
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let mut stream = (&mut *connection).fetch(sql);
+  let mut stream = (&mut *connection).fetch(sqlx::query(sql));
   let mut rows = Vec::with_capacity(batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
@@ -487,7 +487,7 @@ async fn execute_postgres_connection_streaming(
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let mut stream = (&mut *connection).fetch(sql);
+  let mut stream = (&mut *connection).fetch(sqlx::query(sql));
   let mut rows = Vec::with_capacity(batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
@@ -598,6 +598,8 @@ fn mysql_logical_type(database_type: &str) -> &'static str {
     "DATETIME" | "TIMESTAMP" => "datetime",
     "JSON" => "json",
     "CHAR" | "VARCHAR" | "TINYTEXT" | "TEXT" | "MEDIUMTEXT" | "LONGTEXT" | "ENUM" | "SET" => "text",
+    "BIT" => "integer",
+    "GEOMETRY" => "binary",
     _ => "unknown",
   }
 }
@@ -608,6 +610,8 @@ fn postgres_logical_type(database_type: &str) -> &'static str {
     "INT2" | "INT4" | "INT8" => "integer",
     "NUMERIC" | "FLOAT4" | "FLOAT8" => "decimal",
     "BYTEA" => "binary",
+    "INTERVAL" => "time",
+    "TEXT[]" | "VARCHAR[]" | "NAME[]" | "INT2[]" | "INT4[]" | "INT8[]" => "unknown",
     "DATE" => "date",
     "TIME" | "TIMETZ" => "time",
     "TIMESTAMP" | "TIMESTAMPTZ" => "datetime",
@@ -738,9 +742,11 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, String> {
     | "BIGINT UNSIGNED" | "YEAR" => {
       tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<u64>())
     }
-    "CHAR" | "VARCHAR" | "TINYTEXT" | "TEXT" | "MEDIUMTEXT" | "LONGTEXT" | "ENUM" => {
+    "CHAR" | "VARCHAR" | "TINYTEXT" | "TEXT" | "MEDIUMTEXT" | "LONGTEXT" | "ENUM" | "SET" => {
       json_value(ValueRef::to_owned(&value).try_decode::<String>())
     }
+    // BIT(n) 按无符号整数取值，保持精确；BIT(64) 仍在 u64 范围内
+    "BIT" => tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<u64>()),
     "TINYINT" | "SMALLINT" | "INT" | "MEDIUMINT" | "BIGINT" => {
       tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<i64>())
     }
@@ -748,14 +754,20 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, String> {
     "DOUBLE" => json_value(ValueRef::to_owned(&value).try_decode::<f64>()),
     "BOOLEAN" => json_value(ValueRef::to_owned(&value).try_decode::<bool>()),
     "DATE" => tagged_display_value("date", ValueRef::to_owned(&value).try_decode::<Date>()),
-    "TIME" => tagged_display_value("time", ValueRef::to_owned(&value).try_decode::<Time>()),
+    // MySQL 的 TIME 是时长而非时刻（-838:59:59 ~ 838:59:59），装不进 time::Time
+    "TIME" => {
+      let duration = ValueRef::to_owned(&value)
+        .try_decode::<time::Duration>()
+        .map_err(|error| error.to_string())?;
+      Ok(tagged_value("time", format_mysql_time(duration)))
+    }
     "DATETIME" => {
       tagged_display_value("datetime", ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>())
     }
     "TIMESTAMP" => {
       tagged_display_value("datetime", ValueRef::to_owned(&value).try_decode::<OffsetDateTime>())
     }
-    "TINYBLOB" | "MEDIUMBLOB" | "BLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => {
+    "TINYBLOB" | "MEDIUMBLOB" | "BLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" | "GEOMETRY" => {
       tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>())
     }
     "NULL" => Ok(JsonValue::Null),
@@ -774,9 +786,12 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, String> {
     "INT2" => json_value(ValueRef::to_owned(&value).try_decode::<i16>()),
     "INT4" => json_value(ValueRef::to_owned(&value).try_decode::<i32>()),
     "JSON" | "JSONB" => tagged_json_value(ValueRef::to_owned(&value).try_decode::<JsonValue>()),
-    "CHAR" | "VARCHAR" | "TEXT" | "NAME" | "UUID" => {
+    "CHAR" | "VARCHAR" | "TEXT" | "NAME" => {
       json_value(ValueRef::to_owned(&value).try_decode::<String>())
     }
+    // UUID 此前与字符串共用分支，但 sqlx 不允许把 UUID 解成 String，
+    // 任何 uuid 列都会报 mismatched types
+    "UUID" => tagged_display_value("text", ValueRef::to_owned(&value).try_decode::<uuid::Uuid>()),
     "INT8" => tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<i64>()),
     "NUMERIC" => tagged_display_value(
       "decimal",
@@ -797,9 +812,48 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, String> {
       Ok(tagged_value("datetime", value.to_rfc3339()))
     }
     "BYTEA" => tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>()),
+    "TEXT[]" | "VARCHAR[]" | "NAME[]" => {
+      json_value(ValueRef::to_owned(&value).try_decode::<Vec<String>>())
+    }
+    "INT2[]" => json_value(ValueRef::to_owned(&value).try_decode::<Vec<i16>>()),
+    "INT4[]" => json_value(ValueRef::to_owned(&value).try_decode::<Vec<i32>>()),
+    "INT8[]" => json_value(ValueRef::to_owned(&value).try_decode::<Vec<i64>>()),
+    "INTERVAL" => {
+      let interval = ValueRef::to_owned(&value)
+        .try_decode::<sqlx::postgres::types::PgInterval>()
+        .map_err(|error| error.to_string())?;
+      Ok(tagged_value("time", format_pg_interval(&interval)))
+    }
     "VOID" => Ok(JsonValue::Null),
     _ => Err(format!("不支持的 PostgreSQL 数据类型: {type_name}")),
   }
+}
+
+/// MySQL 的 TIME 是带符号时长，按它自己的 `[-]HH:MM:SS` 文本形式呈现。
+fn format_mysql_time(duration: time::Duration) -> String {
+  let sign = if duration.is_negative() { "-" } else { "" };
+  let total = duration.abs();
+  let hours = total.whole_hours();
+  let minutes = total.whole_minutes() % 60;
+  let seconds = total.whole_seconds() % 60;
+  format!("{sign}{hours:02}:{minutes:02}:{seconds:02}")
+}
+
+/// PostgreSQL 的 interval 由「月 / 日 / 微秒」三段组成，没有统一的标量表示，
+/// 这里按 PostgreSQL 自己的文本形式拼回去。
+fn format_pg_interval(interval: &sqlx::postgres::types::PgInterval) -> String {
+  let mut parts = Vec::new();
+  if interval.months != 0 {
+    parts.push(format!("{} mons", interval.months));
+  }
+  if interval.days != 0 {
+    parts.push(format!("{} days", interval.days));
+  }
+  if interval.microseconds != 0 || parts.is_empty() {
+    let total_seconds = interval.microseconds as f64 / 1_000_000.0;
+    parts.push(format!("{total_seconds} secs"));
+  }
+  parts.join(" ")
 }
 
 fn json_value<T, E>(value: Result<T, E>) -> Result<JsonValue, String>
