@@ -1,4 +1,4 @@
-import { FileText, Table, X } from 'lucide-react';
+import { FileText, Plus, Table, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { WorkspaceTab, WorkspaceTabKind } from '../contracts/workspace';
 
@@ -9,6 +9,8 @@ interface WorkspaceTabBarProps {
   activeProfileId: string | null;
   onActivate: (tabId: string) => void;
   onClose: (tabId: string) => void;
+  /** 未连接时不传，按钮隐藏 */
+  onNewSqlTab?: () => void;
 }
 
 const TAB_ICONS: Record<WorkspaceTabKind, typeof Table> = {
@@ -22,7 +24,8 @@ export function WorkspaceTabBar({
   activeTabId,
   activeProfileId,
   onActivate,
-  onClose
+  onClose,
+  onNewSqlTab
 }: WorkspaceTabBarProps) {
   return (
     <div className="flex items-stretch bg-gray-50 border-b border-gray-200 overflow-x-auto">
@@ -76,6 +79,17 @@ export function WorkspaceTabBar({
           </div>
         );
       })}
+      {onNewSqlTab && (
+        <button
+          type="button"
+          onClick={onNewSqlTab}
+          title="新建查询标签"
+          aria-label="新建查询标签"
+          className="flex items-center px-3 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+        >
+          <Plus size={16} />
+        </button>
+      )}
     </div>
   );
 }

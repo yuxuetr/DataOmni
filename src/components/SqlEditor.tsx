@@ -12,7 +12,7 @@ import {
   Loader,
   Square
 } from 'lucide-react';
-import { useQueryStore, SqlStatement } from '../stores/queryStore';
+import { selectActiveSqlDocument, useQueryStore, SqlStatement } from '../stores/queryStore';
 import type { QueryExecution } from '../contracts/queryExecution';
 import CodeMirror from '@uiw/react-codemirror';
 import { sql } from '@codemirror/lang-sql';
@@ -76,11 +76,11 @@ const sqlCompletions = (context: CompletionContext) => {
 };
 
 export const SqlEditor: React.FC = () => {
+  // 文档随活动 SQL 标签切换，单独订阅
+  const { sqlInput, statements, latestExecutionIdByStatement } =
+    useQueryStore(selectActiveSqlDocument);
   const {
-    sqlInput,
-    statements,
     executions,
-    latestExecutionIdByStatement,
     queryTimeoutMs,
     queryResultRowLimit,
     isConnecting,

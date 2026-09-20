@@ -3,7 +3,7 @@
  */
 
 import { useAppStore } from '../stores/appStore';
-import { useQueryStore } from '../stores/queryStore';
+import { selectActiveSqlDocument, useQueryStore } from '../stores/queryStore';
 import { useWorkspaceStore } from '../stores/workspaceStore';
 import { ConnectionConfig } from '../stores/connectionStore';
 import { createDatabaseSession } from '../contracts/session';
@@ -215,7 +215,8 @@ export class SessionManager {
     }
 
     // 2. 保存当前SQL历史（如果有活跃连接）
-    if (queryStore.connectionId && (queryStore.sqlInput.trim() || queryStore.statements.length > 0)) {
+    const activeDocument = selectActiveSqlDocument(queryStore);
+    if (queryStore.connectionId && (activeDocument.sqlInput.trim() || activeDocument.statements.length > 0)) {
       console.log('💾 保存当前SQL历史:', queryStore.connectionId);
       queryStore.saveSqlHistory();
     }

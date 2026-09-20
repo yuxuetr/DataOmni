@@ -6,6 +6,7 @@ import TableDataViewer from './components/TableDataViewer';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { WorkspaceTabBar } from './components/WorkspaceTabBar';
 import { useAppStore } from './stores/appStore';
+import { useQueryStore } from './stores/queryStore';
 import { useWorkspaceStore } from './stores/workspaceStore';
 import {
   createSqlWorkspaceTab,
@@ -17,10 +18,19 @@ import { useSessionManager } from './utils/stateSync';
 function App() {
   const { activeConnection, selectedTable } = useAppStore();
   const { tabs, activeTabId, registerTab, activateTab, closeTab } = useWorkspaceStore();
+  const { openDocument, closeDocument, setActiveDocument } = useQueryStore();
 
   const sessionManager = useSessionManager();
   const activeProfileId = activeConnection?.config.id ?? null;
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
+
+  // 活动标签决定当前编辑的是哪一份 SQL 文档；非 SQL 标签不改变它，
+  // 这样在表标签里看数据不会影响后台仍在执行的查询写回哪个文档。
+  useEffect(() => {
+    if (activeTab?.kind === 'sql') {
+      openDocument(activeTab.id);
+    }
+  }, [activeTab?.id, activeTab?.kind, openDocument]);
 
   // 每个连接有一个 SQL 标签，连接就绪后按需创建；id 由连接决定，重复注册会被去重
   useEffect(() => {
@@ -36,6 +46,12 @@ function App() {
       })
     );
   }, [activeConnection, registerTab]);
+
+  useEffect(() => {
+    if (!activeConnection) {
+      setActiveDocument(null);
+    }
+  }, [activeConnection, setActiveDocument]);
 
   useEffect(() => {
     const appWindow = getCurrentWindow();
@@ -85,6 +101,31 @@ function App() {
       window.removeEventListener('online', handleOnline);
     };
   }, [sessionManager]);
+
+  const closeWorkspaceTab = (tabId: string) => {
+    const tab = tabs.find((candidate) => candidate.id === tabId);
+    closeTab(tabId);
+    if (tab?.kind === 'sql') {
+      closeDocument(tabId);
+    }
+  };
+
+  const openSqlTab = () => {
+    if (!activeConnection) {
+      return;
+    }
+
+    const profileId = activeConnection.config.id;
+    const sqlTabCount = tabs.filter(
+      (tab) => tab.kind === 'sql' && tab.binding.profileId === profileId
+    ).length;
+
+    registerTab(
+      createSqlWorkspaceTab(profileId, {
+        title: `查询 ${sqlTabCount + 1} · ${activeConnection.config.name}`
+      })
+    );
+  };
 
   const openTableTab = (tableName: string, schema?: string) => {
     if (!activeConnection) {
@@ -162,7 +203,7 @@ function App() {
         tableName={activeTab.object.table}
         schema={activeTab.object.schema ?? undefined}
         initialTab={activeTab.kind === 'table-structure' ? 'schema' : 'data'}
-        onClose={() => closeTab(activeTab.id)}
+        onClose={() => closeWorkspaceTab(activeTab.id)}
       />
     );
   };
@@ -194,7 +235,8 @@ function App() {
             activeTabId={activeTabId}
             activeProfileId={activeProfileId}
             onActivate={activateTab}
-            onClose={closeTab}
+            onClose={closeWorkspaceTab}
+            onNewSqlTab={activeConnection ? openSqlTab : undefined}
           />
         )}
         <div className="flex-1 flex flex-col overflow-hidden">

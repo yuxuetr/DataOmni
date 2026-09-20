@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { ConnectionConfig } from '../stores/connectionStore';
-import { useQueryStore } from '../stores/queryStore';
+import { selectActiveSqlDocument, useQueryStore } from '../stores/queryStore';
 import { useAppStore } from '../stores/appStore';
 import { SqlEditor } from './SqlEditor';
 
@@ -71,7 +71,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
       
       // 延迟执行，确保语句已经解析
       setTimeout(() => {
-        const parsedStatements = useQueryStore.getState().statements;
+        const parsedStatements = selectActiveSqlDocument(useQueryStore.getState()).statements;
         if (parsedStatements.length > 0) {
           executeStatement(parsedStatements[0].id);
         }

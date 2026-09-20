@@ -35,16 +35,35 @@ export type { QueryResult, SqlHistory, SqlStatement } from '../contracts/query';
 const QUERY_RESULT_BACKEND_BYTE_LIMIT = 12 * 1024 * 1024;
 const QUERY_RESULT_FRONTEND_BYTE_LIMIT = 16 * 1024 * 1024;
 
+/** 一个 SQL 标签的编辑文档：草稿、解析出的语句及其结果 */
+export interface SqlDocument {
+  sqlInput: string;
+  statements: SqlStatement[];
+  latestExecutionIdByStatement: Record<string, string>;
+}
+
+/** 未知文档统一返回这一个常量，保证选择器的引用相等、不触发重渲染 */
+const EMPTY_SQL_DOCUMENT: SqlDocument = Object.freeze({
+  sqlInput: '',
+  statements: [],
+  latestExecutionIdByStatement: {}
+});
+
+function createSqlDocument(): SqlDocument {
+  return { sqlInput: '', statements: [], latestExecutionIdByStatement: {} };
+}
+
 // 查询状态
 export interface QueryState {
   connectionString: string | null;
   connectionId: string | null; // 保存的连接配置 ID，用于草稿和元数据
   session: DatabaseSession | null;
   database: Database | null;
-  sqlInput: string;
-  statements: SqlStatement[];
+  /** 每个 SQL 标签一份独立文档，键为工作区标签 id */
+  documents: Record<string, SqlDocument>;
+  activeDocumentId: string | null;
+  /** 执行记录保持扁平，靠 QueryExecution.tabId 归属到文档 */
   executions: QueryExecution[];
-  latestExecutionIdByStatement: Record<string, string>;
   queryTimeoutMs: number;
   queryResultRowLimit: number;
   isConnecting: boolean;
@@ -61,6 +80,11 @@ interface QueryActions {
   ) => Promise<void>;
   disconnect: () => Promise<void>;
   
+  // SQL 文档（每个 SQL 标签一份）
+  openDocument: (documentId: string) => void;
+  setActiveDocument: (documentId: string | null) => void;
+  closeDocument: (documentId: string) => void;
+
   // SQL 编辑
   setSqlInput: (sql: string) => void;
   parseStatements: () => void;
@@ -327,16 +351,56 @@ const getAllSqlHistoriesFromStorage = (): SqlHistory[] => {
 };
 
 // 创建Zustand Store
+/** 读取文档；未知 id 返回空文档常量 */
+function readSqlDocument(
+  state: Pick<QueryState, 'documents'>,
+  documentId: string | null
+): SqlDocument {
+  if (!documentId) {
+    return EMPTY_SQL_DOCUMENT;
+  }
+
+  return state.documents[documentId] ?? EMPTY_SQL_DOCUMENT;
+}
+
+/**
+ * 把更新写回指定文档。
+ *
+ * 异步操作在开始时捕获 documentId 再调用这里，所以执行期间用户切到别的
+ * 标签时，结果仍然回到发起它的那份文档，而不是落到当前可见的文档上。
+ * 文档已被关闭时整个更新丢弃。
+ */
+function writeSqlDocument(
+  state: Pick<QueryState, 'documents'>,
+  documentId: string,
+  update: (document: SqlDocument) => Partial<SqlDocument>
+): Pick<QueryState, 'documents'> {
+  const current = state.documents[documentId];
+  if (!current) {
+    return { documents: state.documents };
+  }
+
+  return {
+    documents: {
+      ...state.documents,
+      [documentId]: { ...current, ...update(current) }
+    }
+  };
+}
+
+/** 供组件订阅当前活动文档 */
+export const selectActiveSqlDocument = (state: QueryState): SqlDocument =>
+  readSqlDocument(state, state.activeDocumentId);
+
 export const useQueryStore = create<QueryStore>((set, get) => ({
   // 初始状态
   connectionString: null,
   connectionId: null,
   session: null,
   database: null,
-  sqlInput: '',
-  statements: [],
+  documents: {},
+  activeDocumentId: null,
   executions: [],
-  latestExecutionIdByStatement: {},
   queryTimeoutMs: 30_000,
   queryResultRowLimit: 1_000,
   isConnecting: false,
@@ -357,7 +421,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     }
     
     // 在连接新数据库前，保存当前的SQL历史
-    if (currentState.connectionId && currentState.connectionId !== connectionId && (currentState.sqlInput.trim() || currentState.statements.length > 0)) {
+    const activeDocument = selectActiveSqlDocument(currentState);
+    if (currentState.connectionId && currentState.connectionId !== connectionId && (activeDocument.sqlInput.trim() || activeDocument.statements.length > 0)) {
       console.log('💾 保存旧连接的SQL历史:', currentState.connectionId);
       const { saveSqlHistory } = get();
       saveSqlHistory();
@@ -378,12 +443,12 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       }
     }
 
-    set({ 
-      isConnecting: true, 
+    // 文档归属于工作区标签而不是连接，标签还在就不该被清空：
+    // 切换连接时属于其它连接的 SQL 标签要保留各自的草稿。
+    set({
+      isConnecting: true,
       error: null,
-      database: null, // 清空旧连接
-      sqlInput: '',   // 清空旧SQL输入
-      statements: []  // 清空旧语句
+      database: null // 清空旧连接
     });
     
     try {
@@ -447,7 +512,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   disconnect: async () => {
     // 在断开连接前保存SQL历史
     const currentState = get();
-    if (currentState.connectionId && (currentState.sqlInput.trim() || currentState.statements.length > 0)) {
+    const activeDocument = selectActiveSqlDocument(currentState);
+    if (currentState.connectionId && (activeDocument.sqlInput.trim() || activeDocument.statements.length > 0)) {
       const { saveSqlHistory } = get();
       saveSqlHistory();
     }
@@ -472,15 +538,55 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       connectionString: null,
       connectionId: null,
       session: null,
-      sqlInput: '',
-      statements: [],
       error: null
     });
     console.log('🔌 已断开数据库连接');
   },
 
+  openDocument: (documentId: string) => {
+    set((state) => (
+      state.documents[documentId]
+        ? { activeDocumentId: documentId }
+        : {
+            documents: { ...state.documents, [documentId]: createSqlDocument() },
+            activeDocumentId: documentId
+          }
+    ));
+  },
+
+  setActiveDocument: (documentId: string | null) => {
+    set({ activeDocumentId: documentId });
+  },
+
+  closeDocument: (documentId: string) => {
+    set((state) => {
+      if (!state.documents[documentId]) {
+        return state;
+      }
+
+      const documents = { ...state.documents };
+      delete documents[documentId];
+
+      return {
+        documents,
+        activeDocumentId: state.activeDocumentId === documentId
+          ? Object.keys(documents)[0] ?? null
+          : state.activeDocumentId,
+        // 文档没了，它的执行记录不再有归属，一并丢弃
+        executions: state.executions.filter(
+          (execution) => execution.tabId !== documentId
+        )
+      };
+    });
+  },
+
   setSqlInput: (sql: string) => {
-    set({ sqlInput: sql });
+    const documentId = get().activeDocumentId;
+    if (!documentId) {
+      return;
+    }
+
+    set((state) => writeSqlDocument(state, documentId, () => ({ sqlInput: sql })));
   },
 
   setQueryTimeoutMs: (queryTimeoutMs: number) => {
@@ -492,19 +598,26 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   },
 
   parseStatements: () => {
-    const { sqlInput, statements } = get();
+    const documentId = get().activeDocumentId;
+    if (!documentId) {
+      return;
+    }
+
+    const { sqlInput, statements } = readSqlDocument(get(), documentId);
     if (!sqlInput.trim()) {
-      set({
+      set((state) => writeSqlDocument(state, documentId, () => ({
         statements: statements.some((statement) => statement.result)
           ? statements
               .filter((statement) => statement.result)
               .map((statement) => ({ ...statement, sql: '', error: undefined }))
           : []
-      });
+      })));
       return;
     }
-    
-    set({ statements: reconcileSqlStatements(sqlInput, statements) });
+
+    set((state) => writeSqlDocument(state, documentId, () => ({
+      statements: reconcileSqlStatements(sqlInput, statements)
+    })));
   },
 
   executeSql: async (sql: string) => {
@@ -513,7 +626,14 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       return false;
     }
 
-    const existing = get().statements.find((statement) => statement.sql === normalizedSql);
+    const documentId = get().activeDocumentId;
+    if (!documentId) {
+      set({ error: '没有活动的 SQL 标签' });
+      return false;
+    }
+
+    const existing = readSqlDocument(get(), documentId)
+      .statements.find((statement) => statement.sql === normalizedSql);
     if (existing) {
       return get().executeStatement(existing.id);
     }
@@ -523,7 +643,9 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       sql: normalizedSql,
       isExecuting: false
     };
-    set((state) => ({ statements: [...state.statements, statement] }));
+    set((state) => writeSqlDocument(state, documentId, (document) => ({
+      statements: [...document.statements, statement]
+    })));
     return get().executeStatement(statement.id);
   },
 
@@ -532,7 +654,6 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       connectionId,
       database,
       session,
-      statements,
       queryTimeoutMs,
       queryResultRowLimit
     } = get();
@@ -541,30 +662,36 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       return false;
     }
 
-    const statement = statements.find(s => s.id === statementId);
+    // 在开始时锁定文档，之后所有写回都指向它：执行期间用户切到别的
+    // SQL 标签时，结果仍然落在发起这次执行的标签里。
+    const documentId = get().activeDocumentId;
+    if (!documentId) {
+      set({ error: '没有活动的 SQL 标签' });
+      return false;
+    }
+
+    const statement = readSqlDocument(get(), documentId)
+      .statements.find(s => s.id === statementId);
     if (!statement) return false;
     const dialect = getSqlDialect(get().connectionString);
     const execution = startQueryExecution(
-      createQueryExecution(
-        `workbench:${connectionId}`,
-        statement.sql,
-        session,
-        dialect
-      )
+      createQueryExecution(documentId, statement.sql, session, dialect)
     );
 
     // 更新执行状态
     set((state) => ({
-      statements: state.statements.map(s =>
-        s.id === statementId
-          ? { ...s, isExecuting: true, error: undefined }
-          : s
-      ),
-      executions: [...state.executions.slice(-99), execution],
-      latestExecutionIdByStatement: {
-        ...state.latestExecutionIdByStatement,
-        [statementId]: execution.id
-      }
+      ...writeSqlDocument(state, documentId, (document) => ({
+        statements: document.statements.map(s =>
+          s.id === statementId
+            ? { ...s, isExecuting: true, error: undefined }
+            : s
+        ),
+        latestExecutionIdByStatement: {
+          ...document.latestExecutionIdByStatement,
+          [statementId]: execution.id
+        }
+      })),
+      executions: [...state.executions.slice(-99), execution]
     }));
 
     try {
@@ -670,16 +797,18 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
       // 更新结果
       set((state) => ({
-        statements: state.statements.map(s =>
-          s.id === statementId 
-            ? completeSqlStatement(
-                s,
-                queryResult,
-                new Date().toLocaleTimeString(),
-                statement.sql
-              )
-            : s
-        ),
+        ...writeSqlDocument(state, documentId, (document) => ({
+          statements: document.statements.map(s =>
+            s.id === statementId
+              ? completeSqlStatement(
+                  s,
+                  queryResult,
+                  new Date().toLocaleTimeString(),
+                  statement.sql
+                )
+              : s
+          )
+        })),
         executions: state.executions.map((candidate) =>
           candidate.id === execution.id
             ? completeQueryExecution(
@@ -705,13 +834,15 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       
       // 更新错误状态
       set((state) => ({
-        statements: state.statements.map(s =>
-          s.id === statementId
-            ? cancelled
-              ? { ...s, isExecuting: false, error: undefined }
-              : failSqlStatement(s, errorMessage)
-            : s
-        ),
+        ...writeSqlDocument(state, documentId, (document) => ({
+          statements: document.statements.map(s =>
+            s.id === statementId
+              ? cancelled
+                ? { ...s, isExecuting: false, error: undefined }
+                : failSqlStatement(s, errorMessage)
+              : s
+          )
+        })),
         executions: state.executions.map((candidate) =>
           candidate.id === execution.id
             ? cancelled
@@ -784,9 +915,9 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   },
 
   executeAllStatements: async () => {
-    const { statements } = get();
+    const { statements } = selectActiveSqlDocument(get());
     const { executeStatement } = get();
-    
+
     await executeSequentially(
       statements.filter((statement) => !statement.isExecuting),
       (statement) => executeStatement(statement.id)
@@ -794,17 +925,25 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   },
 
   clearResults: () => {
-    const { statements } = get();
-    set({
-      statements: statements.map(clearSqlStatementResult)
-    });
+    const documentId = get().activeDocumentId;
+    if (!documentId) {
+      return;
+    }
+
+    set((state) => writeSqlDocument(state, documentId, (document) => ({
+      statements: document.statements.map(clearSqlStatementResult)
+    })));
   },
 
   removeStatement: (statementId: string) => {
-    const { statements } = get();
-    set({
-      statements: statements.filter(s => s.id !== statementId)
-    });
+    const documentId = get().activeDocumentId;
+    if (!documentId) {
+      return;
+    }
+
+    set((state) => writeSqlDocument(state, documentId, (document) => ({
+      statements: document.statements.filter(s => s.id !== statementId)
+    })));
   },
 
   setError: (error: string | null) => {
@@ -812,10 +951,13 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   },
 
   // SQL历史缓存方法
+  // 注意：历史仍按 connectionId 存一份，只覆盖当前活动文档。
+  // 一个连接下多个 SQL 标签的草稿全量恢复属于 P2.1-E / P2.3 的范围。
   saveSqlHistory: () => {
-    const { connectionId, sqlInput, statements } = get();
+    const { connectionId } = get();
     if (!connectionId) return;
 
+    const { sqlInput, statements } = selectActiveSqlDocument(get());
     const history: SqlHistory = {
       connectionId,
       sqlInput,
@@ -828,13 +970,16 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
   loadSqlHistory: (connectionId: string) => {
     const history = loadSqlHistoryFromStorage(connectionId);
-    if (history) {
-      set({
-        sqlInput: history.sqlInput,
-        statements: history.statements,
-      });
-      console.log('📂 已恢复SQL历史:', connectionId);
-    }
+    if (!history) return;
+
+    const documentId = get().activeDocumentId;
+    if (!documentId) return;
+
+    set((state) => writeSqlDocument(state, documentId, () => ({
+      sqlInput: history.sqlInput,
+      statements: history.statements
+    })));
+    console.log('📂 已恢复SQL历史:', connectionId);
   },
 
   clearSqlHistory: (connectionId?: string) => {
@@ -847,7 +992,12 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
   // 数据操作方法
   updateRowData: async (statementId: string, rowIndex: number, columnName: string, newValue: any) => {
-    const { database, statements, connectionString } = get();
+    const documentId = get().activeDocumentId;
+    if (!documentId) {
+      throw new Error('没有活动的 SQL 标签');
+    }
+    const { database, connectionString } = get();
+    const { statements } = readSqlDocument(get(), documentId);
     if (!database) {
       set({ error: '数据库未连接' });
       return;
@@ -901,11 +1051,11 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         updatedRows[rowIndex] = [...updatedRows[rowIndex]];
         updatedRows[rowIndex][columnIndex] = newValue;
 
-        set({
-          statements: statements.map(s => 
-            s.id === statementId 
-              ? { 
-                  ...s, 
+        set((state) => writeSqlDocument(state, documentId, () => ({
+          statements: statements.map(s =>
+            s.id === statementId
+              ? {
+                  ...s,
                   result: {
                     ...result,
                     rows: updatedRows
@@ -913,7 +1063,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
                 }
               : s
           )
-        });
+        })));
       }
 
       console.log('✅ 数据更新成功');
@@ -925,7 +1075,12 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   },
 
   deleteRowData: async (statementId: string, rowIndex: number) => {
-    const { database, statements, connectionString } = get();
+    const documentId = get().activeDocumentId;
+    if (!documentId) {
+      throw new Error('没有活动的 SQL 标签');
+    }
+    const { database, connectionString } = get();
+    const { statements } = readSqlDocument(get(), documentId);
     if (!database) {
       set({ error: '数据库未连接' });
       return;
@@ -974,11 +1129,11 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       // 更新本地数据
       const updatedRows = result.rows.filter((_, index) => index !== rowIndex);
 
-      set({
-        statements: statements.map(s => 
-          s.id === statementId 
-            ? { 
-                ...s, 
+      set((state) => writeSqlDocument(state, documentId, () => ({
+        statements: statements.map(s =>
+          s.id === statementId
+            ? {
+                ...s,
                 result: {
                   ...result,
                   rows: updatedRows,
@@ -987,7 +1142,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
               }
             : s
         )
-      });
+      })));
 
       console.log('✅ 数据删除成功');
     } catch (error) {
@@ -998,7 +1153,12 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   },
 
   insertRowData: async (statementId: string, newRowData: Record<string, any>) => {
-    const { database, statements, connectionString } = get();
+    const documentId = get().activeDocumentId;
+    if (!documentId) {
+      throw new Error('没有活动的 SQL 标签');
+    }
+    const { database, connectionString } = get();
+    const { statements } = readSqlDocument(get(), documentId);
     if (!database) {
       set({ error: '数据库未连接' });
       return;
@@ -1149,11 +1309,11 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         const newColumns = Object.keys(refreshResult[0]);
         const newRows = refreshResult.map(row => newColumns.map(col => row[col]));
         
-        set({
-          statements: statements.map(s => 
-            s.id === statementId 
-              ? { 
-                  ...s, 
+        set((state) => writeSqlDocument(state, documentId, () => ({
+          statements: statements.map(s =>
+            s.id === statementId
+              ? {
+                  ...s,
                   result: {
                     ...result,
                     columns: newColumns,
@@ -1163,7 +1323,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
                 }
               : s
           )
-        });
+        })));
       }
 
       console.log('✅ 数据新增成功');
