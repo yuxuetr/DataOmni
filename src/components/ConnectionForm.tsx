@@ -14,8 +14,11 @@ import {
   Network,
   Zap,
   Search,
-  BarChart3
+  BarChart3,
+  FolderOpen
 } from 'lucide-react';
+import { open } from '@tauri-apps/plugin-dialog';
+import { isDatabaseTypeSupported } from '../contracts/databaseSupport';
 import { clsx } from 'clsx';
 import { 
   ConnectionConfig, 
@@ -31,6 +34,12 @@ interface ConnectionFormProps {
   onClose: () => void;
   mode: 'create' | 'edit';
 }
+
+const DATABASE_CATEGORIES = [
+  { name: '关系型数据库', icon: Database },
+  { name: '非关系型数据库', icon: Globe },
+  { name: '分析平台', icon: BarChart3 }
+] as const;
 
 // 数据库类型配置
 const databaseTypes = [
@@ -123,6 +132,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   });
 
   const [showPassword, setShowPassword] = useState(false);
+  // 测试结果是后端返回的一句话，成功与否只能从文案判断；集中在这里判一次，
+  // 免得图标、边框、文字颜色各判各的
+  const testSucceeded = testResult?.includes('成功') ?? false;
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   // 清除测试结果当组件卸载时
@@ -162,12 +174,38 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
   // 处理数据库类型变化
   const handleDatabaseTypeChange = (type: DatabaseType) => {
+    // 按钮本身已 disabled，这里再挡一次：键盘或将来的调用方绕过按钮时，不会
+    // 落进一个保存得下、却永远连不上的配置
+    if (!isDatabaseTypeSupported(type)) {
+      return;
+    }
+
     const defaultConfig = createDefaultConfig(type);
     setFormData(prev => ({
       ...prev,
       ...defaultConfig,
       name: prev.name, // 保留名称
     }));
+  };
+
+  // 选择数据库文件。选完直接写回路径框，用户仍可手改。
+  const handleBrowseDatabaseFile = async () => {
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: 'SQLite 数据库', extensions: ['db', 'sqlite', 'sqlite3', 'db3'] }]
+    });
+
+    if (typeof selected === 'string') {
+      setFormData(prev => ({
+        ...prev,
+        database: selected,
+        // 还没起过名字就用文件名，省掉一次输入
+        name: prev.name?.trim()
+          ? prev.name
+          : (selected.split(/[\\/]/).pop() ?? '').replace(/\.(db|sqlite|sqlite3|db3)$/i, '')
+      }));
+    }
   };
 
   // 处理端口变化
@@ -205,10 +243,10 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
   return (
     <div className="fixed inset-0 bg-scrim flex items-center justify-center z-50">
-      <div className="bg-surface rounded-panel shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-panel bg-surface shadow-xl">
         {/* 标题栏 */}
-        <div className="flex items-center justify-between p-6 border-b">
-          <h2 className="text-xl font-semibold text-fg">
+        <div className="flex shrink-0 items-center justify-between border-b border-line px-5 py-3">
+          <h2 className="text-base font-semibold text-fg">
             {mode === 'create' ? '新建数据库连接' : '编辑数据库连接'}
           </h2>
           <button
@@ -220,40 +258,10 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         </div>
 
         {/* 表单内容 */}
-        <div className="p-6 space-y-6">
-          {/* 错误提示 */}
-          {error && (
-            <div className="flex items-center space-x-2 p-3 bg-danger-soft border border-danger-line rounded-control">
-              <AlertCircle className="text-danger" size={16} />
-              <span className="text-danger text-sm">{error}</span>
-            </div>
-          )}
-
-          {/* 测试结果 */}
-          {testResult && (
-            <div className={clsx(
-              "flex items-center space-x-2 p-3 border rounded-control",
-              testResult.includes('成功') 
-                ? "bg-success-soft border-success-line" 
-                : "bg-danger-soft border-danger-line"
-            )}>
-              {testResult.includes('成功') ? (
-                <CheckCircle className="text-success" size={16} />
-              ) : (
-                <AlertCircle className="text-danger" size={16} />
-              )}
-              <span className={clsx(
-                "text-sm",
-                testResult.includes('成功') ? "text-success" : "text-danger"
-              )}>
-                {testResult}
-              </span>
-            </div>
-          )}
-
+        <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
           {/* 基本信息 */}
           <div className="space-y-4">
-            <h3 className="text-lg font-medium text-fg">基本信息</h3>
+            <h3 className="text-xs font-semibold tracking-wide text-fg-subtle">基本信息</h3>
             
             {/* 连接名称 */}
             <div>
@@ -285,171 +293,97 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 数据库类型 *
               </label>
               
-              {/* 按分类显示数据库类型 */}
-              <div className="space-y-4">
-                {/* 关系型数据库 */}
-                <div>
-                  <h4 className="text-sm font-medium text-fg-muted mb-2 flex items-center">
-                    <Database className="w-4 h-4 mr-2" />
-                    关系型数据库
-                  </h4>
-                  <div className="grid grid-cols-3 gap-2">
-                    {databaseTypes
-                      .filter(db => db.category === '关系型数据库')
-                      .map((dbType) => (
-                        <button
-                          key={dbType.type}
-                          type="button"
-                          onClick={() => handleDatabaseTypeChange(dbType.type)}
-                          className={clsx(
-                            "flex flex-col items-center space-y-1 p-3 border rounded-panel transition-all duration-200",
-                            formData.db_type === dbType.type
-                              ? "border-accent bg-accent-soft text-accent shadow-md"
-                              : "border-line-strong hover:border-line-strong hover:bg-surface-sunken"
-                          )}
-                        >
-                          <div className={clsx(
-                            "p-2 rounded-control",
-                            formData.db_type === dbType.type
-                              ? "bg-accent-soft"
-                              : "bg-surface-hover"
-                          )}>
-                            {dbType.icon}
-                          </div>
-                          <span className="text-sm font-medium">{dbType.name}</span>
-                          <span className="text-xs text-fg-muted">{dbType.description}</span>
-                        </button>
-                      ))}
-                  </div>
-                </div>
+              <div className="space-y-3">
+                {DATABASE_CATEGORIES.map(({ name: category, icon: CategoryIcon }) => (
+                  <div key={category}>
+                    <h4 className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-fg-subtle">
+                      <CategoryIcon size={12} />
+                      {category}
+                    </h4>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {databaseTypes
+                        .filter((dbType) => dbType.category === category)
+                        .map((dbType) => {
+                          const supported = isDatabaseTypeSupported(dbType.type);
+                          const selected = formData.db_type === dbType.type;
 
-                {/* 非关系型数据库 */}
-                <div>
-                  <h4 className="text-sm font-medium text-fg-muted mb-2 flex items-center">
-                    <Globe className="w-4 h-4 mr-2" />
-                    非关系型数据库
-                  </h4>
-                  <div className="grid grid-cols-3 gap-2">
-                    {databaseTypes
-                      .filter(db => db.category === '非关系型数据库')
-                      .map((dbType) => (
-                        <button
-                          key={dbType.type}
-                          type="button"
-                          onClick={() => handleDatabaseTypeChange(dbType.type)}
-                          className={clsx(
-                            "flex flex-col items-center space-y-1 p-3 border rounded-panel transition-all duration-200",
-                            formData.db_type === dbType.type
-                              ? "border-accent bg-accent-soft text-accent shadow-md"
-                              : "border-line-strong hover:border-line-strong hover:bg-surface-sunken"
-                          )}
-                        >
-                          <div className={clsx(
-                            "p-2 rounded-control",
-                            formData.db_type === dbType.type
-                              ? "bg-accent-soft"
-                              : "bg-surface-hover"
-                          )}>
-                            {dbType.icon}
-                          </div>
-                          <span className="text-sm font-medium">{dbType.name}</span>
-                          <span className="text-xs text-fg-muted">{dbType.description}</span>
-                        </button>
-                      ))}
+                          return (
+                            <button
+                              key={dbType.type}
+                              type="button"
+                              disabled={!supported}
+                              aria-disabled={!supported}
+                              onClick={() => handleDatabaseTypeChange(dbType.type)}
+                              title={supported ? dbType.description : `${dbType.name}：尚未支持`}
+                              className={clsx(
+                                'flex items-center gap-2 rounded-control border px-2.5 py-1.5 text-left transition-colors',
+                                !supported && 'cursor-not-allowed border-line bg-surface-sunken text-fg-subtle',
+                                supported && selected && 'border-accent bg-accent-soft text-accent',
+                                supported && !selected
+                                  && 'border-line-strong text-fg hover:bg-surface-hover'
+                              )}
+                            >
+                              <span className="shrink-0">{dbType.icon}</span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm">{dbType.name}</span>
+                                {!supported && (
+                                  <span className="block text-[11px] leading-tight">尚未支持</span>
+                                )}
+                              </span>
+                            </button>
+                          );
+                        })}
+                    </div>
                   </div>
-                </div>
-
-                {/* 分析平台 */}
-                <div>
-                  <h4 className="text-sm font-medium text-fg-muted mb-2 flex items-center">
-                    <BarChart3 className="w-4 h-4 mr-2" />
-                    分析平台
-                  </h4>
-                  <div className="grid grid-cols-3 gap-2">
-                    {databaseTypes
-                      .filter(db => db.category === '分析平台')
-                      .map((dbType) => (
-                        <button
-                          key={dbType.type}
-                          type="button"
-                          onClick={() => handleDatabaseTypeChange(dbType.type)}
-                          className={clsx(
-                            "flex flex-col items-center space-y-1 p-3 border rounded-panel transition-all duration-200",
-                            formData.db_type === dbType.type
-                              ? "border-accent bg-accent-soft text-accent shadow-md"
-                              : "border-line-strong hover:border-line-strong hover:bg-surface-sunken"
-                          )}
-                        >
-                          <div className={clsx(
-                            "p-2 rounded-control",
-                            formData.db_type === dbType.type
-                              ? "bg-accent-soft"
-                              : "bg-surface-hover"
-                          )}>
-                            {dbType.icon}
-                          </div>
-                          <span className="text-sm font-medium">{dbType.name}</span>
-                          <span className="text-xs text-fg-muted">{dbType.description}</span>
-                        </button>
-                      ))}
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
           </div>
 
           {/* 连接配置 */}
           <div className="space-y-4">
-            <h3 className="text-lg font-medium text-fg">连接配置</h3>
+            <h3 className="text-xs font-semibold tracking-wide text-fg-subtle">连接配置</h3>
             
             {formData.db_type === DatabaseType.SQLite || formData.db_type === DatabaseType.DuckDB ? (
               /* SQLite/DuckDB 配置 */
               <>
-                <div className="grid grid-cols-4 gap-4 items-center">
-                  <label className="text-right text-sm font-medium text-fg">
-                    {formData.db_type === DatabaseType.SQLite ? '数据库文件' : '数据库文件'}
+                <div>
+                  <label htmlFor="database-file" className="mb-1 block text-sm font-medium text-fg">
+                    数据库文件 *
                   </label>
-                  <div className="col-span-3">
+                  {/* 原先这里挂着一个 25 行的蓝底说明框，讲相对路径、应用数据目录、
+                      绝对路径和 :memory:。能直接选文件之后，那些话没人需要读。 */}
+                  <div className="flex gap-2">
                     <input
+                      id="database-file"
                       type="text"
                       name="database"
-                      value={formData.database}
+                      value={formData.database ?? ''}
                       onChange={(e) => setFormData(prev => ({ ...prev, database: e.target.value }))}
-                      placeholder={formData.db_type === DatabaseType.SQLite 
-                        ? "例如: mydata.db 或 /完整/路径/到/数据库.db"
-                        : "例如: mydata.duckdb 或 /完整/路径/到/数据库.duckdb"
-                      }
-                      className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
+                      placeholder="/路径/到/数据库.db，或 :memory:"
+                      className={clsx(
+                        'min-w-0 flex-1 rounded-control border px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent',
+                        validationErrors.database ? 'border-danger-line' : 'border-line-strong'
+                      )}
                       autoCapitalize="none"
                       autoCorrect="off"
                       spellCheck={false}
                     />
-                    {/* 路径帮助说明 */}
-                    <div className="mt-2 p-3 bg-accent-soft border border-accent-line rounded-control">
-                      <h4 className="text-sm font-medium text-accent mb-2">
-                        💡 {formData.db_type === DatabaseType.SQLite ? 'SQLite' : 'DuckDB'}数据库文件路径说明
-                      </h4>
-                      <div className="text-xs text-accent space-y-1">
-                        <div><strong>相对路径:</strong> 输入文件名如 <code className="bg-accent-soft px-1 rounded-control">
-                          {formData.db_type === DatabaseType.SQLite ? 'mydata.db' : 'mydata.duckdb'}
-                        </code></div>
-                        <div className="ml-4 text-accent">→ 将存储在应用数据目录: 
-                          <code className="bg-accent-soft px-1 rounded-control">
-                            {navigator.platform.toLowerCase().includes('mac') 
-                              ? '~/Library/Application Support/dataomni/' 
-                              : navigator.platform.toLowerCase().includes('win')
-                              ? '%APPDATA%/dataomni/'
-                              : '~/.local/share/dataomni/'
-                            }[filename]
-                          </code>
-                        </div>
-                        <div><strong>绝对路径:</strong> 输入完整路径如 <code className="bg-accent-soft px-1 rounded-control">
-                          /Users/用户名/Documents/{formData.db_type === DatabaseType.SQLite ? 'mydata.db' : 'mydata.duckdb'}
-                        </code></div>
-                        <div><strong>内存数据库:</strong> 留空或输入 <code className="bg-accent-soft px-1 rounded-control">:memory:</code> (不会持久化)</div>
-                      </div>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleBrowseDatabaseFile()}
+                      className="flex shrink-0 items-center gap-1.5 rounded-control border border-line-strong px-3 py-2 text-sm text-fg-muted hover:bg-surface-hover"
+                    >
+                      <FolderOpen size={14} />
+                      <span>选择…</span>
+                    </button>
                   </div>
+                  {validationErrors.database && (
+                    <p className="mt-1 text-sm text-danger">{validationErrors.database}</p>
+                  )}
+                  <p className="mt-1 text-xs text-fg-subtle">
+                    留空或填 <code className="font-mono">:memory:</code> 使用内存数据库，不会持久化。
+                  </p>
                 </div>
               </>
             ) : (
@@ -712,45 +646,70 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
           </div>
         </div>
 
-        {/* 底部按钮 */}
-        <div className="flex items-center justify-between p-6 border-t bg-surface-sunken">
-          <button
-            onClick={handleTestConnection}
-            disabled={isLoading}
-            className={clsx(
-              "flex items-center space-x-2 px-4 py-2 border border-accent text-accent rounded-control transition-colors",
-              isLoading
-                ? "opacity-50 cursor-not-allowed"
-                : "hover:bg-accent-soft"
-            )}
-          >
-            <TestTube size={16} />
-            <span>{isLoading ? '测试中...' : '测试连接'}</span>
-          </button>
+        {/* 底栏：反馈紧挨着产生它的按钮。整张卡此前一起滚动，点「测试连接」
+            要先滚到底，结果却画在顶部，等于看不见。 */}
+        <div className="shrink-0 border-t border-line bg-surface-sunken">
+          {error && (
+            <div className="flex items-start gap-2 border-b border-danger-line bg-danger-soft px-5 py-2 text-sm text-danger">
+              <AlertCircle size={15} className="mt-0.5 shrink-0" />
+              <span className="min-w-0 flex-1 break-words">{error}</span>
+            </div>
+          )}
 
-          <div className="flex space-x-3">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-fg border border-line-strong rounded-control hover:bg-surface-sunken transition-colors"
-            >
-              取消
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={isLoading}
+          {testResult && (
+            <div
               className={clsx(
-                "flex items-center space-x-2 px-4 py-2 bg-accent text-fg-on-accent rounded-control transition-colors",
-                isLoading
-                  ? "opacity-50 cursor-not-allowed"
-                  : "hover:bg-accent-hover"
+                'flex items-start gap-2 border-b px-5 py-2 text-sm',
+                testSucceeded
+                  ? 'border-success-line bg-success-soft text-success'
+                  : 'border-danger-line bg-danger-soft text-danger'
               )}
             >
-              <Save size={16} />
-              <span>{isLoading ? '保存中...' : '保存连接'}</span>
+              {testSucceeded
+                ? <CheckCircle size={15} className="mt-0.5 shrink-0" />
+                : <AlertCircle size={15} className="mt-0.5 shrink-0" />}
+              <span className="min-w-0 flex-1 break-words">{testResult}</span>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between px-5 py-3">
+            <button
+              type="button"
+              onClick={handleTestConnection}
+              disabled={isLoading}
+              className={clsx(
+                'flex items-center gap-1.5 rounded-control border border-accent px-3 py-1.5 text-sm text-accent transition-colors',
+                isLoading ? 'cursor-not-allowed opacity-50' : 'hover:bg-accent-soft'
+              )}
+            >
+              <TestTube size={14} />
+              <span>{isLoading ? '测试中…' : '测试连接'}</span>
             </button>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg transition-colors hover:bg-surface-hover"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={isLoading}
+                className={clsx(
+                  'flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent transition-colors',
+                  isLoading ? 'cursor-not-allowed opacity-50' : 'hover:bg-accent-hover'
+                )}
+              >
+                <Save size={14} />
+                <span>{isLoading ? '保存中…' : '保存连接'}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
     </div>
   );
-}; 
+};
