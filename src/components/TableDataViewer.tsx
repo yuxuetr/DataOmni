@@ -723,8 +723,8 @@ export default function TableDataViewer({
       // 非编辑状态或主键列，显示只读
       return (
         <td className="px-4 py-3 text-sm text-gray-900 border-r border-gray-200 min-w-[180px]">
-          <div className="truncate" title={String(currentValue)}>
-            {currentValue === null ? (
+          <div className="truncate" title={currentValue === null || currentValue === undefined ? 'NULL' : String(currentValue)}>
+            {currentValue === null || currentValue === undefined ? (
               <span className="text-gray-400 italic">NULL</span>
             ) : typeof currentValue === 'object' ? (
               <span className="text-gray-500">{JSON.stringify(currentValue)}</span>

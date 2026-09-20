@@ -112,8 +112,8 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
           // MySQL: 获取当前数据库的所有表
           const tableResult = await database.select(`
             SELECT 
-              table_name,
-              table_type
+              table_name AS table_name,
+              table_type AS table_type
             FROM information_schema.tables 
             WHERE table_schema = ?
             ORDER BY table_name
@@ -137,7 +137,7 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
               name as table_name,
               type as table_type
             FROM sqlite_master 
-            WHERE type IN ('table', 'view')
+            WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
             ORDER BY name
           `);
           
