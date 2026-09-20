@@ -313,7 +313,30 @@
 
 ### 3.1 结构与对象管理
 
-- [ ] 浏览索引、主键、唯一约束、外键和检查约束
+- [x] 浏览索引、主键、唯一约束、外键和检查约束
+  - 完成于 `47c5381`。表结构页的列表格下面新增索引 / 外键 / 检查约束三块，
+    一条一行：`uq_orders_code (tenant_id, code) 唯一`、
+    `fk_orders_region (region_a, region_b) → public.regions (x, y) 删除时 SET NULL`。
+  - 九段目录查询放在 `services/schema_metadata.rs` 而不是前端：唯一能证明它们
+    对的是拿真库跑一遍，而那只有 SQL 住在 Rust 侧时才做得到。前端取回三段
+    文本自己绑参数执行，不做字符串拼接。
+  - 夹具里刻意设了陷阱：复合外键 (ref_a, ref_b) → (x, y)，而 ref_b 在表里
+    声明在 ref_a 之前。按列序而不是键序配对会错位，且错位后页面上仍是一行
+    整齐的 `(a, b) → (x, y)`。
+  - PostgreSQL 列名用 `pg_get_indexdef(oid, colno, true)`（表达式索引的 indkey
+    是 0，join pg_attribute 会让那一列消失）；MySQL 用
+    `COALESCE(COLUMN_NAME, EXPRESSION)`（函数索引的 COLUMN_NAME 是 NULL）；
+    检查约束走 `pg_constraint` 而非 information_schema（后者把每个 NOT NULL
+    也列成一条，淹掉真正的 CHECK）。
+  - SQLite 没有检查约束目录，用 `Option::None` 表达，不返回一段查不到东西的
+    SQL 再显示「0 条」。SQLite 表达式索引既无列名也无表达式原文，显示为
+    `<表达式>`。
+  - 判据：`cargo test --test database_smoke` 中的
+    `{postgres,mysql}_reports_indexes_foreign_keys_and_checks` 与
+    `sqlite_reports_indexes_and_foreign_keys`，针对真实 MySQL 8.4 /
+    PostgreSQL 16 断言复合键的列顺序与配对。已反向验证：外键改成分两次
+    unnest、MySQL 去掉 EXPRESSION 回退、PG 列名改回 join pg_attribute，
+    三次都精确变红。
 - [ ] 查看视图定义、函数、触发器和序列
 - [ ] 查看建表 DDL
 - [ ] 新建和修改表结构
