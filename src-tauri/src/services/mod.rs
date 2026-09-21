@@ -1,3 +1,4 @@
+pub mod completion_catalog;
 pub mod connection_service;
 pub mod database_service;
 pub mod er_diagram;
@@ -6,6 +7,7 @@ pub mod query_executor;
 pub mod query_session;
 pub mod schema_metadata;
 
+pub use completion_catalog::{completion_catalog_query, CompletionCatalogQuery};
 pub use connection_service::ConnectionService;
 pub use database_service::DatabaseService;
 pub use er_diagram::{er_diagram_queries, ErDiagramQueries};

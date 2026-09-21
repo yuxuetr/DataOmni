@@ -219,9 +219,9 @@ export const en: Translations = {
   'table.loading': 'Loading…',
   'table.empty': 'No data',
 
-  'editor.completion.keyword': 'SQL keyword: {name}',
-  'editor.completion.table': 'Table: {name}',
-  'editor.completion.column': 'Column: {name}',
+  'completion.schema': 'Schema',
+  'completion.noDatabaseName': 'This connection has no database name, so the completion catalog cannot be read.',
+  'completion.catalogFailed': 'Completion catalog failed to load; only keywords are completed',
   'editor.statementCount': '{count} statements',
   'editor.noStatements': 'No statements parsed',
   'editor.rowLimit': 'Row limit',

@@ -236,9 +236,9 @@ export const zh = {
   'table.empty': '暂无数据',
 
   // SQL 编辑器
-  'editor.completion.keyword': 'SQL 关键字: {name}',
-  'editor.completion.table': '表名: {name}',
-  'editor.completion.column': '列名: {name}',
+  'completion.schema': 'Schema',
+  'completion.noDatabaseName': '该连接没有指定数据库名，无法读取补全目录。',
+  'completion.catalogFailed': '补全目录加载失败，当前只补全关键字',
   'editor.statementCount': '{count} 条语句',
   'editor.noStatements': '未解析出语句',
   'editor.rowLimit': '结果上限',

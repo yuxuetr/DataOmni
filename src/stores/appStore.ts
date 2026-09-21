@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type {
+  CachedCompletionCatalog,
   CachedDatabaseMetadata,
   ConnectionProfile
 } from '../contracts';
@@ -26,6 +27,12 @@ export interface AppState {
   
   // 数据库元数据缓存
   databaseMetadata: Record<string, CachedDatabaseMetadata>;
+
+  /**
+   * SQL 补全目录：整库的关系与列。由编辑器按需加载，对象树不需要它。
+   * 与 `databaseMetadata` 同生共死——两者描述的是同一个库的结构。
+   */
+  completionCatalogs: Record<string, CachedCompletionCatalog>;
   
   // 连接状态监听
   connectionReady: boolean;
@@ -53,7 +60,9 @@ export interface AppActions {
   
   // 数据库元数据管理
   setDatabaseMetadata: (connectionId: string, metadata: AppState['databaseMetadata'][string]) => void;
+  /** 忘掉这个连接（不给 id 就是所有连接）的库结构：对象目录与补全目录一起清 */
   clearDatabaseMetadata: (connectionId?: string) => void;
+  setCompletionCatalog: (connectionId: string, catalog: CachedCompletionCatalog) => void;
   
   // 连接状态管理
   setConnectionReady: (ready: boolean) => void;
@@ -72,6 +81,7 @@ export const useAppStore = create<AppStore>((set) => ({
   selectedTable: null,
   connectionForm: null,
   databaseMetadata: {},
+  completionCatalogs: {},
   connectionReady: false,
   schemaVersion: 0,
 
@@ -122,13 +132,21 @@ export const useAppStore = create<AppStore>((set) => ({
       console.log('🗑️ 清除特定数据库元数据:', connectionId);
       set(state => {
         const newMetadata = { ...state.databaseMetadata };
+        const newCatalogs = { ...state.completionCatalogs };
         delete newMetadata[connectionId];
-        return { databaseMetadata: newMetadata };
+        delete newCatalogs[connectionId];
+        return { databaseMetadata: newMetadata, completionCatalogs: newCatalogs };
       });
     } else {
       console.log('🗑️ 清除所有数据库元数据');
-      set({ databaseMetadata: {} });
+      set({ databaseMetadata: {}, completionCatalogs: {} });
     }
+  },
+
+  setCompletionCatalog: (connectionId: string, catalog: CachedCompletionCatalog) => {
+    set(state => ({
+      completionCatalogs: { ...state.completionCatalogs, [connectionId]: catalog }
+    }));
   },
 
   setConnectionReady: (ready: boolean) => {

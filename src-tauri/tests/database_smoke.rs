@@ -1705,3 +1705,187 @@ async fn sqlite_er_diagram_reads_every_table_in_one_round_trip() {
     ]
   );
 }
+
+#[tokio::test]
+async fn postgres_completion_catalog_lists_views_next_to_tables() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+
+  let fixture = MetaFixture::new("pgcomp");
+  let view = format!("{}_v", fixture.child);
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  for statement in fixture.ddl("postgres") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare PostgreSQL fixture");
+  }
+  sqlx::query(&format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child))
+    .execute(&pool)
+    .await
+    .expect("create view");
+
+  let query = dataomni_lib::services::completion_catalog_query(
+    &dataomni_lib::models::DatabaseType::PostgreSQL,
+  )
+  .expect("supported");
+  let rows = sqlx::query(query.relations).fetch_all(&pool).await.expect("list relations");
+  let catalog: Vec<(String, String, String, String)> = rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("relation_name"),
+        row.get::<String, _>("relation_kind"),
+        row.get::<String, _>("column_name"),
+        row.get::<String, _>("data_type"),
+      )
+    })
+    .collect();
+
+  // 列必须按表内顺序返回：补全列表照抄这个次序，按字母排会把 id 冲到中间
+  let child_columns: Vec<&str> = catalog
+    .iter()
+    .filter(|(relation, ..)| relation == &fixture.child)
+    .map(|(_, _, column, _)| column.as_str())
+    .collect();
+  assert_eq!(child_columns, vec!["id", "ref_b", "ref_a", "label", "score"], "列要保持表内顺序");
+
+  assert!(
+    catalog
+      .iter()
+      .any(|(relation, kind, column, _)| relation == &view && kind == "view" && column == "label"),
+    "视图的列也要能补全，且标成 view: {catalog:?}"
+  );
+  assert_eq!(
+    catalog
+      .iter()
+      .find(|(relation, _, column, _)| relation == &fixture.child && column == "label")
+      .map(|(.., data_type)| data_type.as_str()),
+    Some("character varying(32)"),
+    "补全项的说明里要看得见长度"
+  );
+
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  for table in [&fixture.child, &fixture.parent] {
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  }
+}
+
+#[tokio::test]
+async fn mysql_completion_catalog_lists_views_next_to_tables() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+
+  let fixture = MetaFixture::new("mycomp");
+  let view = format!("{}_v", fixture.child);
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  for statement in fixture.ddl("mysql") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
+  }
+  sqlx::query(&format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child))
+    .execute(&pool)
+    .await
+    .expect("create view");
+
+  let database: String =
+    sqlx::query_scalar("SELECT DATABASE()").fetch_one(&pool).await.expect("current database");
+  let query =
+    dataomni_lib::services::completion_catalog_query(&dataomni_lib::models::DatabaseType::MySQL)
+      .expect("supported");
+  let rows =
+    sqlx::query(query.relations).bind(&database).fetch_all(&pool).await.expect("list relations");
+  let catalog: Vec<(String, String, String, String)> = rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("relation_name"),
+        row.get::<String, _>("relation_kind"),
+        row.get::<String, _>("column_name"),
+        row.get::<String, _>("data_type"),
+      )
+    })
+    .collect();
+
+  let child_columns: Vec<&str> = catalog
+    .iter()
+    .filter(|(relation, ..)| relation == &fixture.child)
+    .map(|(_, _, column, _)| column.as_str())
+    .collect();
+  assert_eq!(child_columns, vec!["id", "ref_b", "ref_a", "label", "score"], "列要保持表内顺序");
+
+  assert!(
+    catalog
+      .iter()
+      .any(|(relation, kind, column, _)| relation == &view && kind == "view" && column == "label"),
+    "视图的列也要能补全，且标成 view: {catalog:?}"
+  );
+  assert_eq!(
+    catalog
+      .iter()
+      .find(|(relation, _, column, _)| relation == &fixture.child && column == "label")
+      .map(|(.., data_type)| data_type.as_str()),
+    Some("varchar(32)"),
+    "COLUMN_TYPE 才带长度"
+  );
+
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  for table in [&fixture.child, &fixture.parent] {
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  }
+}
+
+#[tokio::test]
+async fn sqlite_completion_catalog_lists_views_next_to_tables() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("connect to in-memory SQLite");
+
+  let fixture = MetaFixture::new("litecomp");
+  for statement in fixture.ddl("sqlite") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare SQLite fixture");
+  }
+  let view = format!("{}_v", fixture.child);
+  sqlx::query(&format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child))
+    .execute(&pool)
+    .await
+    .expect("create view");
+
+  let query =
+    dataomni_lib::services::completion_catalog_query(&dataomni_lib::models::DatabaseType::SQLite)
+      .expect("supported");
+  let rows = sqlx::query(query.relations).fetch_all(&pool).await.expect("list relations");
+  let catalog: Vec<(String, String, String)> = rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("relation_name"),
+        row.get::<String, _>("relation_kind"),
+        row.get::<String, _>("column_name"),
+      )
+    })
+    .collect();
+
+  let child_columns: Vec<&str> = catalog
+    .iter()
+    .filter(|(relation, ..)| relation == &fixture.child)
+    .map(|(_, _, column)| column.as_str())
+    .collect();
+  assert_eq!(child_columns, vec!["id", "ref_b", "ref_a", "label", "score"], "列要保持表内顺序");
+
+  assert!(
+    catalog
+      .iter()
+      .any(|(relation, kind, column)| relation == &view && kind == "view" && column == "label"),
+    "pragma_table_info 对视图同样给列: {catalog:?}"
+  );
+  // sqlite_master 里的内部表不该混进补全
+  assert!(
+    !catalog.iter().any(|(relation, ..)| relation.starts_with("sqlite_")),
+    "内部表要挡住: {catalog:?}"
+  );
+}

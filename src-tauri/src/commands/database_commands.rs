@@ -508,3 +508,12 @@ pub fn get_er_diagram_queries(
   crate::services::er_diagram_queries(&db_type)
     .ok_or_else(|| format!("{:?} 尚未支持 ER 关系图", db_type))
 }
+
+/// 取该方言的补全目录查询。与另外三个目录命令一样只回 SQL 文本。
+#[tauri::command]
+pub fn get_completion_catalog_query(
+  db_type: crate::models::DatabaseType,
+) -> Result<crate::services::CompletionCatalogQuery, String> {
+  crate::services::completion_catalog_query(&db_type)
+    .ok_or_else(|| format!("{:?} 尚未支持 SQL 补全目录", db_type))
+}

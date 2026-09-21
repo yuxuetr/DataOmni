@@ -16,79 +16,47 @@ import type { QueryExecution } from '../contracts/queryExecution';
 import CodeMirror from '@uiw/react-codemirror';
 import { sql } from '@codemirror/lang-sql';
 import { oneDark } from '@codemirror/theme-one-dark';
-import { autocompletion, CompletionContext } from '@codemirror/autocomplete';
 import { QueryResultScrollTable } from './QueryResultScrollTable';
-import type { EditorView } from '@codemirror/view';
+import { EditorView } from '@codemirror/view';
 import { useThemeStore } from '../stores/themeStore';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { PanelResizeHandle } from './PanelResizeHandle';
 import { DestructiveStatementPrompt } from './DestructiveStatementPrompt';
 import { highestRiskNeedingConfirmation, type StatementRisk } from '../utils/statementRisk';
-import type { ConnectionEnvironment } from '../contracts';
+import type { ConnectionProfile } from '../contracts';
 import {
   findSqlStatementAtOffset,
   splitSqlStatements
 } from '../utils/sqlStatements';
-import { useLanguageStore, translateNow } from '../stores/languageStore';
+import { useLanguageStore } from '../stores/languageStore';
+import { useCompletionCatalog } from '../hooks/useCompletionCatalog';
+import {
+  buildCompletionSchema,
+  sqlDialectFor
+} from '../utils/sqlCompletionSchema';
 
-// SQL关键字列表
-const SQL_KEYWORDS = [
-  'SELECT', 'FROM', 'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'FULL', 'OUTER',
-  'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP', 'ALTER', 'TABLE', 'DATABASE',
-  'INDEX', 'VIEW', 'TRIGGER', 'PROCEDURE', 'FUNCTION', 'SCHEMA',
-  'ORDER', 'BY', 'GROUP', 'HAVING', 'LIMIT', 'OFFSET', 'DISTINCT', 'UNION',
-  'AND', 'OR', 'NOT', 'NULL', 'IS', 'IN', 'LIKE', 'BETWEEN', 'EXISTS',
-  'COUNT', 'SUM', 'AVG', 'MIN', 'MAX', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END',
-  'PRIMARY', 'KEY', 'FOREIGN', 'UNIQUE', 'CHECK', 'DEFAULT', 'AUTO_INCREMENT',
-  'VARCHAR', 'CHAR', 'TEXT', 'INT', 'INTEGER', 'BIGINT', 'DECIMAL', 'FLOAT',
-  'DOUBLE', 'DATE', 'TIME', 'DATETIME', 'TIMESTAMP', 'BOOLEAN', 'BOOL',
-  'COMMIT', 'ROLLBACK', 'TRANSACTION', 'BEGIN', 'START', 'SAVEPOINT',
-  'GRANT', 'REVOKE', 'PRIVILEGES', 'USAGE'
-];
-
-// 常用表名和列名补全
-const COMMON_TABLE_NAMES = ['users', 'orders', 'products', 'customers', 'categories'];
-const COMMON_COLUMN_NAMES = ['id', 'name', 'email', 'created_at', 'updated_at', 'status'];
-
-// 自定义自动补全函数
-const sqlCompletions = (context: CompletionContext) => {
-  const word = context.matchBefore(/\w*/);
-  if (!word) return null;
-  if (word.from === word.to && !context.explicit) return null;
-
-  const suggestions = [
-    ...SQL_KEYWORDS.map(keyword => ({
-      label: keyword,
-      type: 'keyword',
-      info: translateNow('editor.completion.keyword', { name: keyword })
-    })),
-    ...COMMON_TABLE_NAMES.map(table => ({
-      label: table,
-      type: 'variable',
-      info: translateNow('editor.completion.table', { name: table })
-    })),
-    ...COMMON_COLUMN_NAMES.map(column => ({
-      label: column,
-      type: 'property',
-      info: translateNow('editor.completion.column', { name: column })
-    }))
-  ];
-
-  return {
-    from: word.from,
-    options: suggestions,
-    validFor: /^\w*$/
-  };
-};
+/**
+ * 补全弹窗的选中项用应用自己的强调色。
+ *
+ * oneDark 给选中项的背景是 #2c313a，压在 #21252b 的弹窗上几乎分辨不出来。
+ * 这个列表是用上下键翻的——看不见光标就不知道回车会插入哪一条。
+ */
+const completionSelectionTheme = EditorView.theme({
+  '&.cm-editor .cm-tooltip-autocomplete > ul > li[aria-selected]': {
+    backgroundColor: 'var(--color-accent)',
+    color: 'var(--color-fg-on-accent)'
+  }
+});
 
 interface SqlEditorProps {
-  /** 确认框要把「在哪个库上执行」说清楚 */
-  connectionName: string;
-  environment: ConnectionEnvironment;
+  /** 补全要方言与库名，确认框要把「在哪个库上执行」说清楚 */
+  connection: ConnectionProfile;
 }
 
-export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environment }) => {
+export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
   const t = useLanguageStore((state) => state.t);
+  const environment = connection.environment;
+  const { relations, error: catalogError } = useCompletionCatalog(connection);
   // 文档随活动 SQL 标签切换，单独订阅
   const { sqlInput, statements, latestExecutionIdByStatement } =
     useQueryStore(selectActiveSqlDocument);
@@ -141,15 +109,29 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environmen
   const [hasSelection, setHasSelection] = useState(false);
   const editorViewRef = useRef<EditorView | null>(null);
 
-  // CodeMirror扩展配置
-  const extensions = useMemo(() => [
-    sql(),
-    autocompletion({
-      override: [sqlCompletions],
-      maxRenderedOptions: 20,
-      closeOnBlur: true
-    })
-  ], []);
+  /**
+   * 补全交给 `@codemirror/lang-sql` 自己的 schema 补全源：它按真实的语法树
+   * 判断位置，`FROM orders o` 之后 `o.` 能补出 orders 的列——这件事用正则
+   * 认前缀是做不对的。我们负责的是喂给它**真的**库结构。
+   */
+  const extensions = useMemo(() => {
+    const { schema, defaultSchema } = buildCompletionSchema(relations, connection.db_type, {
+      table: t('objectKind.table'),
+      view: t('objectKind.view'),
+      schema: t('completion.schema')
+    });
+
+    return [
+      sql({
+        dialect: sqlDialectFor(connection.db_type),
+        schema,
+        defaultSchema,
+        // 关键字补成大写，和手写 SQL 的惯例一致
+        upperCaseKeywords: true
+      }),
+      completionSelectionTheme
+    ];
+  }, [relations, connection.db_type, t]);
 
   // 编辑器跟随应用主题。此前这里有个只管 CodeMirror 的「深色模式」勾选框，
   // 勾上以后只有代码框变深、其余界面仍是浅色——它表达的不是用户想要的那件事。
@@ -258,7 +240,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environmen
           sql={pendingRun.sql}
           risk={pendingRun.risk}
           statementCount={pendingRun.statementCount}
-          connectionName={connectionName}
+          connectionName={connection.name}
           environment={environment}
           onCancel={() => setPendingRun(null)}
           onConfirm={() => {
@@ -270,13 +252,24 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environmen
       )}
       {/* SQL编辑器头部 */}
       <div className="flex items-center justify-between gap-3 border-b border-line bg-surface-sunken px-3 py-1.5">
-        <div className="flex shrink-0 items-center">
+        <div className="flex shrink-0 items-center gap-2">
           {/* 不再用「SQL编辑器」大标题：标签栏已经标明这是查询标签 */}
           <span className="text-xs text-fg-subtle">
             {statements.length > 0
               ? t('editor.statementCount', { count: statements.length })
               : t('editor.noStatements')}
           </span>
+          {/* 补全退化成只有关键字时要说出来：否则「它不认识我的表」和
+              「它还在加载」长得一模一样。原始错误放在 title 里 */}
+          {catalogError && (
+            <span
+              className="flex items-center gap-1 text-xs text-warning"
+              title={catalogError}
+            >
+              <AlertCircle size={12} />
+              {t('completion.catalogFailed')}
+            </span>
+          )}
         </div>
         
         <div className="flex items-center space-x-2">

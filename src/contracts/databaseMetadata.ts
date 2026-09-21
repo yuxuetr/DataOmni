@@ -78,3 +78,33 @@ export interface CachedDatabaseMetadata {
   objects: DatabaseObject[];
   lastUpdated: number;
 }
+
+/**
+ * 补全目录里的关系类型。只有表和视图——函数与序列没有列，补不出字段来。
+ */
+export type RelationKind = 'table' | 'view';
+
+export interface CompletionColumn {
+  name: string;
+  /** 完整类型，带长度：`varchar(32)` 而不是 `varchar` */
+  dataType: string;
+}
+
+export interface CompletionRelation {
+  schema: string | null;
+  name: string;
+  kind: RelationKind;
+  columns: CompletionColumn[];
+}
+
+/**
+ * SQL 编辑器的补全目录缓存。
+ *
+ * 与 `CachedDatabaseMetadata` 分开：对象树不需要列，而整库的列在大库上是
+ * 几千行，不该让侧边栏为补全付这个代价。它由编辑器按需加载。
+ */
+export interface CachedCompletionCatalog {
+  relations: CompletionRelation[];
+  /** 加载时的 schemaVersion。对不上说明我们自己执行过 DDL，目录要重拉。 */
+  schemaVersion: number;
+}

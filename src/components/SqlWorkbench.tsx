@@ -220,10 +220,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
 
       {/* SQL编辑器主体 */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <SqlEditor
-          connectionName={connection.name}
-          environment={connection.environment}
-        />
+        <SqlEditor connection={connection} />
       </div>
     </div>
   );

@@ -46,3 +46,34 @@ describe('连接表单弹窗', () => {
     expect(useAppStore.getState().connectionForm).toEqual({ mode: 'create' });
   });
 });
+
+describe('库结构缓存', () => {
+  const relations = [
+    { schema: 'public', name: 'orders', kind: 'table' as const, columns: [] }
+  ];
+
+  beforeEach(() => {
+    useAppStore.getState().clearDatabaseMetadata();
+    useAppStore.getState().setDatabaseMetadata('profile-1', { objects: [], lastUpdated: 1 });
+    useAppStore.getState().setCompletionCatalog('profile-1', { relations, schemaVersion: 0 });
+  });
+
+  it('清一个连接时，对象目录与补全目录一起清', () => {
+    // 两者描述的是同一个库的结构。只清一半，补全会继续拿已经失效的表名
+    // 往外提示，而界面上没有任何迹象表明它是旧的。
+    useAppStore.getState().clearDatabaseMetadata('profile-1');
+    expect(useAppStore.getState().databaseMetadata['profile-1']).toBeUndefined();
+    expect(useAppStore.getState().completionCatalogs['profile-1']).toBeUndefined();
+  });
+
+  it('清全部时同样两边都清', () => {
+    useAppStore.getState().clearDatabaseMetadata();
+    expect(useAppStore.getState().completionCatalogs).toEqual({});
+  });
+
+  it('清某个连接不影响别的连接', () => {
+    useAppStore.getState().setCompletionCatalog('profile-2', { relations, schemaVersion: 0 });
+    useAppStore.getState().clearDatabaseMetadata('profile-1');
+    expect(useAppStore.getState().completionCatalogs['profile-2']?.relations).toEqual(relations);
+  });
+});
