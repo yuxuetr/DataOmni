@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Loader2, Maximize2, Minus, Plus, RefreshCw, Search } from 'lucide-react';
+import {
+  AlertCircle,
+  Download,
+  Loader2,
+  Maximize2,
+  Minus,
+  Plus,
+  RefreshCw,
+  Search,
+  Undo2
+} from 'lucide-react';
+import { save } from '@tauri-apps/plugin-dialog';
+import { readCssColor, serializeSvgWithInlineStyles } from '../utils/svgExport';
 import { invoke } from '@tauri-apps/api/core';
 import { useQueryStore } from '../stores/queryStore';
 import { useAppStore } from '../stores/appStore';
@@ -19,6 +31,7 @@ import {
   type ErNode
 } from '../utils/erLayout';
 import type { ConnectionProfile } from '../contracts';
+import { requireDatabase } from '../utils/requireDatabase';
 
 interface ErDiagramQueries {
   columns: string;
@@ -66,6 +79,9 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
     const load = async () => {
       setError(null);
       setLayout(null);
+      if (!database) {
+        return;
+      }
 
       try {
         const queries = await invoke<ErDiagramQueries>('get_er_diagram_queries', {
@@ -81,8 +97,8 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
         );
 
         const [columnRows, linkRows] = await Promise.all([
-          database!.select(queries.columns, params),
-          database!.select(queries.foreign_keys, params)
+          requireDatabase(database).select(queries.columns, params),
+          requireDatabase(database).select(queries.foreign_keys, params)
         ]);
 
         const tables = toErTables(Array.isArray(columnRows) ? columnRows : []);
@@ -112,6 +128,12 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
         <span className="min-w-0 flex-1 break-words">{error}</span>
       </p>
     );
+  }
+
+  // 未连接是正常状态，不是错误：这个标签会从工作区快照里恢复，
+  // 在任何连接建立之前就挂载。画成红色报错等于把正常流程说成故障。
+  if (!database) {
+    return <p className="px-4 py-3 text-xs text-fg-subtle">{t('er.needsConnection')}</p>;
   }
 
   if (!layout) {
@@ -154,15 +176,106 @@ export function ErDiagramCanvas({
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [query, setQuery] = useState('');
+  /**
+   * 手工挪过的框的偏移量，按 key 存。
+   *
+   * 存偏移而不是绝对坐标：自动布局在结构变化后会重算，存绝对坐标的话
+   * 挪过的框会留在原地，和重排后的其它框叠在一起。
+   */
+  const [dragOffsets, setDragOffsets] = useState<Record<string, { x: number; y: number }>>({});
+  const [exported, setExported] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
 
-  const nodesByKey = useMemo(
-    () => new Map(layout.nodes.map(node => [node.key, node])),
-    [layout]
-  );
+
 
   // null = 没在搜索，全亮；空集合 = 搜了但一个都没命中，全暗
   const matches = useMemo(() => matchErTables(layout.nodes, query), [layout, query]);
+
+  // 把手工偏移叠上去，连线自然跟着动——它取的就是这份节点坐标
+  const nodes = useMemo(
+    () =>
+      layout.nodes.map(node => {
+        const offset = dragOffsets[node.key];
+        return offset ? { ...node, x: node.x + offset.x, y: node.y + offset.y } : node;
+      }),
+    [layout, dragOffsets]
+  );
+
+  /**
+   * 拖动一个框。
+   *
+   * 鼠标位移要除以缩放比例：缩到 50% 时拖 100 个屏幕像素，图上应该走 200，
+   * 不除的话缩得越小越拖不动。
+   *
+   * `stopPropagation` 是必须的——不然这次按下同时会被画布的平移接管，
+   * 框和整张图一起动。
+   */
+  const nodesByKey = useMemo(() => new Map(nodes.map(node => [node.key, node])), [nodes]);
+
+  // 画布要把拖出去的框算进来，不然往右下角一拖就被裁掉
+  const canvas = useMemo(() => {
+    const right = nodes.reduce((max, node) => Math.max(max, node.x + node.width), layout.width);
+    const bottom = nodes.reduce((max, node) => Math.max(max, node.y + node.height), layout.height);
+    return { width: right + 32, height: bottom + 32 };
+  }, [nodes, layout]);
+
+  const dragNode = (key: string, event: React.PointerEvent) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.stopPropagation();
+
+    const origin = { x: event.clientX, y: event.clientY };
+    const start = dragOffsets[key] ?? { x: 0, y: 0 };
+
+    const move = (moveEvent: PointerEvent) => {
+      setDragOffsets(current => ({
+        ...current,
+        [key]: {
+          x: start.x + (moveEvent.clientX - origin.x) / scale,
+          y: start.y + (moveEvent.clientY - origin.y) / scale
+        }
+      }));
+    };
+    const end = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+  };
+
+  const resetPositions = () => setDragOffsets({});
+
+  const exportSvg = async () => {
+    const svg = svgRef.current;
+    if (!svg) {
+      return;
+    }
+    try {
+      const path = await save({
+        defaultPath: `er-diagram-${new Date().toISOString().slice(0, 10)}.svg`,
+        filters: [{ name: 'SVG', extensions: ['svg'] }]
+      });
+      // 取消保存对话框不是错误，不该留下任何提示
+      if (!path) {
+        return;
+      }
+      const contents = serializeSvgWithInlineStyles(svg, {
+        background: readCssColor('--dm-canvas', '#ffffff'),
+        width: canvas.width,
+        height: canvas.height
+      });
+      await invoke('write_text_file', { path, contents });
+      setExported(path);
+      window.setTimeout(() => setExported(null), 2500);
+    } catch (cause) {
+      setExportError(describeError(cause, t('er.exportFailed')));
+    }
+  };
 
   const fit = useCallback(() => {
     const viewport = viewportRef.current;
@@ -170,13 +283,13 @@ export function ErDiagramCanvas({
       return;
     }
     const next = Math.min(
-      viewport.clientWidth / layout.width,
-      viewport.clientHeight / layout.height,
+      viewport.clientWidth / canvas.width,
+      viewport.clientHeight / canvas.height,
       1
     );
     setScale(Math.max(MIN_SCALE, next));
     setOffset({ x: 0, y: 0 });
-  }, [layout]);
+  }, [canvas]);
 
   // 拖动平移。监听器在 pointerdown 里直接挂，不走以 state 为依赖的 effect——
   // 那样挂上去的监听器总是慢一帧，第一次拖动会没反应。
@@ -235,6 +348,12 @@ export function ErDiagramCanvas({
             {t('er.matchCount', { count: matches.size })}
           </span>
         )}
+        {exported && (
+          <span className="max-w-64 truncate text-xs text-success">
+            {t('er.exported', { path: exported })}
+          </span>
+        )}
+        {exportError && <span className="text-xs text-danger">{exportError}</span>}
         <div className="flex items-center gap-1">
           <ToolButton label={t('er.zoomOut')} onClick={() => zoomBy(1 / 1.2)}>
             <Minus size={13} />
@@ -247,6 +366,12 @@ export function ErDiagramCanvas({
           </ToolButton>
           <ToolButton label={t('er.fit')} onClick={fit}>
             <Maximize2 size={13} />
+          </ToolButton>
+          <ToolButton label={t('er.resetPositions')} onClick={resetPositions}>
+            <Undo2 size={13} />
+          </ToolButton>
+          <ToolButton label={t('er.export')} onClick={exportSvg}>
+            <Download size={13} />
           </ToolButton>
           {onRefresh && (
             <ToolButton label={t('er.refresh')} onClick={onRefresh}>
@@ -262,9 +387,10 @@ export function ErDiagramCanvas({
         className="relative min-h-0 flex-1 cursor-grab overflow-hidden bg-canvas active:cursor-grabbing"
       >
         <svg
-          width={layout.width * scale}
-          height={layout.height * scale}
-          viewBox={`0 0 ${layout.width} ${layout.height}`}
+          ref={svgRef}
+          width={canvas.width * scale}
+          height={canvas.height * scale}
+          viewBox={`0 0 ${canvas.width} ${canvas.height}`}
           style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}
           className="select-none"
         >
@@ -278,12 +404,13 @@ export function ErDiagramCanvas({
               />
             ))}
           </g>
-          {layout.nodes.map(node => (
+          {nodes.map(node => (
             <TableBox
               key={node.key}
               node={node}
               query={query}
               dimmed={matches !== null && !matches.has(node.key)}
+              onDragStart={event => dragNode(node.key, event)}
             />
           ))}
         </svg>
@@ -317,18 +444,20 @@ function ToolButton({
 function TableBox({
   node,
   query,
-  dimmed
+  dimmed,
+  onDragStart
 }: {
   node: ErNode;
   query: string;
   dimmed: boolean;
+  onDragStart: (event: React.PointerEvent) => void;
 }) {
   const needle = query.trim().toLowerCase();
 
   return (
     // 没命中的表压暗而不是隐藏：藏起来会让图的形状跟着变，
     // 反而认不出剩下的是哪几张表
-    <g opacity={dimmed ? 0.22 : 1}>
+    <g opacity={dimmed ? 0.22 : 1} onPointerDown={onDragStart} style={{ cursor: 'grab' }}>
       <rect
         x={node.x}
         y={node.y}

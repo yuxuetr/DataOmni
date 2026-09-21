@@ -61,6 +61,7 @@ import {
 } from '../utils/schemaObjects';
 import { SchemaObjectSections, type SchemaObjects } from './SchemaObjectSections';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
+import { requireDatabase } from '../utils/requireDatabase';
 
 // 编辑模式类型
 type EditMode = 'view' | 'edit' | 'add';
@@ -200,11 +201,11 @@ export default function TableDataViewer({
       return Promise.resolve(null);
     }
     if (ddl.kind === 'bound') {
-      return database!.select(ddl.sql, [tableName]);
+      return requireDatabase(database).select(ddl.sql, [tableName]);
     }
     // SHOW CREATE TABLE 不接受占位符，表名只能作为引用过的标识符插进去
     const quoted = quoteQualifiedSqlIdentifier(schema ? [schema, tableName] : [tableName], dialect);
-    return database!.select(ddl.sql.replace('{table}', quoted), []);
+    return requireDatabase(database).select(ddl.sql.replace('{table}', quoted), []);
   };
 
   /**
@@ -224,14 +225,14 @@ export default function TableDataViewer({
       // SQLite 的 pragma 表值函数只认一个表名参数，没有 schema 概念
       const params = connection.db_type === 'sqlite' ? [tableName] : [tableName, schema ?? null];
       const [indexRows, foreignKeyRows, checkRows, ddlRows, triggerRows] = await Promise.all([
-        database!.select(queries.indexes, params),
-        database!.select(queries.foreign_keys, params),
+        requireDatabase(database).select(queries.indexes, params),
+        requireDatabase(database).select(queries.foreign_keys, params),
         queries.check_constraints
-          ? database!.select(queries.check_constraints, params)
+          ? requireDatabase(database).select(queries.check_constraints, params)
           : Promise.resolve(null),
         runDdlQuery(queries.ddl),
         // SQLite 的 pragma 之外的目录查询同样只认一个表名参数
-        database!.select(queries.triggers, params)
+        requireDatabase(database).select(queries.triggers, params)
       ]);
 
       setSchemaObjects({
@@ -316,7 +317,7 @@ export default function TableDataViewer({
           break;
       }
       
-      const columnsResult = await database!.select(
+      const columnsResult = await requireDatabase(database).select(
         schemaQuery,
         connection.db_type === 'sqlite' ? [] : [tableName, schema ?? null]
       );
