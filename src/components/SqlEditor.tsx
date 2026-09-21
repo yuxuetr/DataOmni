@@ -15,10 +15,11 @@ import {
 import { selectActiveSqlDocument, useQueryStore, SqlStatement } from '../stores/queryStore';
 import type { QueryExecution } from '../contracts/queryExecution';
 import CodeMirror from '@uiw/react-codemirror';
+import { EditorState } from '@codemirror/state';
 import { sql } from '@codemirror/lang-sql';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { QueryResultScrollTable } from './QueryResultScrollTable';
-import { EditorView } from '@codemirror/view';
+import type { EditorView } from '@codemirror/view';
 import { useThemeStore } from '../stores/themeStore';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { PanelResizeHandle } from './PanelResizeHandle';
@@ -30,25 +31,14 @@ import {
   splitSqlStatements
 } from '../utils/sqlStatements';
 import { planFormat, sqlFormatterLanguage } from '../utils/formatSql';
+import { appEditorTheme } from '../utils/editorTheme';
+import { editorPhrases } from '../utils/editorPhrases';
 import { useLanguageStore } from '../stores/languageStore';
 import { useCompletionCatalog } from '../hooks/useCompletionCatalog';
 import {
   buildCompletionSchema,
   sqlDialectFor
 } from '../utils/sqlCompletionSchema';
-
-/**
- * 补全弹窗的选中项用应用自己的强调色。
- *
- * oneDark 给选中项的背景是 #2c313a，压在 #21252b 的弹窗上几乎分辨不出来。
- * 这个列表是用上下键翻的——看不见光标就不知道回车会插入哪一条。
- */
-const completionSelectionTheme = EditorView.theme({
-  '&.cm-editor .cm-tooltip-autocomplete > ul > li[aria-selected]': {
-    backgroundColor: 'var(--color-accent)',
-    color: 'var(--color-fg-on-accent)'
-  }
-});
 
 interface SqlEditorProps {
   /** 补全要方言与库名，确认框要把「在哪个库上执行」说清楚 */
@@ -133,7 +123,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
         // 关键字补成大写，和手写 SQL 的惯例一致
         upperCaseKeywords: true
       }),
-      completionSelectionTheme
+      // 查找 / 替换 / 跳转面板的文字，跟着界面语言走
+      EditorState.phrases.of(editorPhrases(t)),
+      appEditorTheme
     ];
   }, [relations, connection.db_type, t]);
 
