@@ -7,6 +7,7 @@ import { KIND_LABEL_KEYS, type DatabaseObject } from '../utils/databaseObjects';
 import { useLanguageStore } from '../stores/languageStore';
 import type { ConnectionProfile } from '../contracts';
 import type { ObjectCatalogQueries } from './DatabaseExplorer';
+import { requireDatabase } from '../utils/requireDatabase';
 
 interface ObjectDefinitionDialogProps {
   object: DatabaseObject;
@@ -64,7 +65,7 @@ export function ObjectDefinitionDialog({
           if (!queries.sequence_properties) {
             throw new Error(t('objectDefinition.noSequences'));
           }
-          const rows = await database!.select(queries.sequence_properties, [object.id]);
+          const rows = await requireDatabase(database).select(queries.sequence_properties, [object.id]);
           const row = Array.isArray(rows) ? rows[0] : undefined;
           if (!cancelled) {
             setProperties(row ? Object.entries(row).map(([key, value]) => [key, String(value)]) : []);
@@ -76,7 +77,7 @@ export function ObjectDefinitionDialog({
         const params = connection.db_type === 'postgresql'
           ? [object.id]
           : [object.id, connection.database ?? null];
-        const rows = await database!.select(queries.routine_definition, params);
+        const rows = await requireDatabase(database).select(queries.routine_definition, params);
         const row = Array.isArray(rows) ? rows[0] : undefined;
         const text = row ? String(Object.values(row)[0] ?? '') : '';
         if (!cancelled) {

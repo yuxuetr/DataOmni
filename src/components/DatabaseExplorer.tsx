@@ -281,7 +281,9 @@ export default function DatabaseExplorer({
         ) : tree.length === 0 ? (
           <div className="p-4 text-center text-fg-muted text-sm">
             <Info className="mx-auto mb-2" size={16} />
-            <p>{t('explorer.empty')}</p>
+            {/* 「暂无对象」是在说这个库是空的。没连上时说这句是假话，
+                而且会让人去找一个根本不存在的空库问题 */}
+            <p>{database ? t('explorer.empty') : t('explorer.notConnected')}</p>
           </div>
         ) : (
           <div className="p-2">
