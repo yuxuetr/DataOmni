@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { clsx } from 'clsx';
 import {
   Play,
+  Network,
   PlayCircle,
   Trash2,
   RotateCcw,
@@ -26,6 +27,7 @@ import { useThemeStore } from '../stores/themeStore';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { PanelResizeHandle } from './PanelResizeHandle';
 import { DestructiveStatementPrompt } from './DestructiveStatementPrompt';
+import { QueryPlanDialog } from './QueryPlanDialog';
 import { highestRiskNeedingConfirmation, type StatementRisk } from '../utils/statementRisk';
 import { useSettingsStore } from '../stores/settingsStore';
 import type { ConnectionProfile } from '../contracts';
@@ -113,6 +115,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
     axis: 'y'
   });
   const [hasSelection, setHasSelection] = useState(false);
+  // 正在看执行计划的那条语句
+  const [explaining, setExplaining] = useState<string | null>(null);
   const [formatError, setFormatError] = useState<string | null>(null);
   const formatterLanguage = sqlFormatterLanguage(connection.db_type);
   const editorViewRef = useRef<EditorView | null>(null);
@@ -186,6 +190,22 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
         ? executeStatement(parsedStatement.id)
         : executeSql(current.sql));
     });
+  };
+
+  /**
+   * 解释光标所在的那条语句。
+   *
+   * 和执行走同一套定位逻辑——解释的必须是**将要执行的那一条**，否则看到的
+   * 计划是另一条语句的。
+   *
+   * 不走 `runGuarded`：普通 EXPLAIN 什么也不执行，为它弹一次确认，弹到第三次
+   * 就没人看了。真正会执行的是对话框里那个「真的执行一遍」，确认在那里。
+   */
+  const explainCurrentStatement = () => {
+    const view = editorViewRef.current;
+    const cursor = view?.state.selection.main.head ?? 0;
+    const current = findSqlStatementAtOffset(sqlInput, cursor);
+    setExplaining(current?.sql ?? statements[0]?.sql ?? null);
   };
 
   const executeSelectedSql = () => {
@@ -345,6 +365,16 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
           }}
         />
       )}
+
+      {explaining !== null && (
+        <QueryPlanDialog
+          sql={explaining}
+          connectionId={connection.id}
+          dbType={connection.db_type}
+          databaseLabel={connection.db_type}
+          onClose={() => setExplaining(null)}
+        />
+      )}
       {/* SQL编辑器头部 */}
       <div className="flex items-center justify-between gap-3 border-b border-line bg-surface-sunken px-3 py-1.5">
         <div className="flex shrink-0 items-center gap-2">
@@ -470,6 +500,16 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
           >
             <Play size={14} />
             <span>{t('editor.runSelection')}</span>
+          </button>
+
+          <button
+            onClick={explainCurrentStatement}
+            disabled={statements.length === 0 || isConnecting}
+            className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors disabled:text-fg-subtle disabled:border-line disabled:cursor-not-allowed"
+            title={t('plan.buttonTitle')}
+          >
+            <Network size={14} />
+            <span>{t('plan.button')}</span>
           </button>
 
           <button
