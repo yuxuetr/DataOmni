@@ -18,6 +18,7 @@ use serde::Serialize;
 /// SQL 再让前端显示「0 条」要诚实——后者会让人以为这张表没有检查约束。
 #[derive(Debug, Clone, Serialize)]
 pub struct SchemaMetadataQueries {
+  pub columns: &'static str,
   pub indexes: &'static str,
   pub foreign_keys: &'static str,
   pub check_constraints: Option<&'static str>,
@@ -45,6 +46,7 @@ pub enum DdlQuery {
 pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQueries> {
   match db_type {
     DatabaseType::PostgreSQL => Some(SchemaMetadataQueries {
+      columns: POSTGRES_COLUMNS,
       indexes: POSTGRES_INDEXES,
       foreign_keys: POSTGRES_FOREIGN_KEYS,
       check_constraints: Some(POSTGRES_CHECK_CONSTRAINTS),
@@ -54,6 +56,7 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       triggers: POSTGRES_TRIGGERS,
     }),
     DatabaseType::MySQL => Some(SchemaMetadataQueries {
+      columns: MYSQL_COLUMNS,
       indexes: MYSQL_INDEXES,
       foreign_keys: MYSQL_FOREIGN_KEYS,
       check_constraints: Some(MYSQL_CHECK_CONSTRAINTS),
@@ -61,6 +64,7 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       triggers: MYSQL_TRIGGERS,
     }),
     DatabaseType::SQLite => Some(SchemaMetadataQueries {
+      columns: SQLITE_COLUMNS,
       indexes: SQLITE_INDEXES,
       foreign_keys: SQLITE_FOREIGN_KEYS,
       check_constraints: None,
@@ -70,6 +74,88 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
     _ => None,
   }
 }
+
+/// 表的列目录。
+///
+/// 三段查询返回同一组列名与同一种类型，前端不再按方言认字段——此前
+/// PostgreSQL 给 `'YES'`/`'NO'`、SQLite 给 `notnull` 的 0/1、MySQL 又给
+/// 另一套，合并逻辑写在前端，而三种形状里任何一种漂了都不会有人发现。
+///
+/// `is_generated` 回答的是「这一列的值由数据库产生」。没有它，
+/// `GENERATED ALWAYS AS IDENTITY`（PostgreSQL）与 `AUTO_INCREMENT`（MySQL）
+/// 会同时满足「非空」与「无默认值」，新增行时被当成必填项点名，
+/// 于是这两种表**一行都插不进去**。它们的自增值不在 `column_default` 里，
+/// 只能从 `attidentity` / `EXTRA` 读。
+///
+/// `attgenerated` / `GENERATION_EXPRESSION` / `hidden` 把计算列也一并算进来：
+/// 计算列同样不能由调用方赋值。
+const POSTGRES_COLUMNS: &str = r#"
+SELECT
+  a.attname::text AS column_name,
+  format_type(a.atttypid, a.atttypmod)::text AS data_type,
+  (NOT a.attnotnull) AS is_nullable,
+  pg_get_expr(d.adbin, d.adrelid)::text AS column_default,
+  (pk.ord IS NOT NULL) AS is_primary_key,
+  pk.ord::int AS primary_key_ordinal,
+  (a.attidentity <> '' OR a.attgenerated <> '') AS is_generated
+FROM pg_class t
+JOIN pg_namespace n ON n.oid = t.relnamespace
+JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum > 0 AND NOT a.attisdropped
+LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+LEFT JOIN LATERAL (
+  SELECT k.ord
+  FROM pg_constraint c
+  CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+  WHERE c.conrelid = t.oid AND c.contype = 'p' AND k.attnum = a.attnum
+) pk ON true
+WHERE t.relname = $1
+  AND n.nspname = COALESCE($2, current_schema())
+ORDER BY a.attnum
+"#;
+
+/// `COLUMN_TYPE` 而不是 `DATA_TYPE`：后者只有 `varchar`、`int`，丢掉长度、
+/// 精度与 `unsigned`。结构页显示的就是这个字段，也是改结构时唯一的起点。
+///
+/// `GENERATION_EXPRESSION` 在非计算列上是空串而不是 NULL，所以用 `<> ''`。
+const MYSQL_COLUMNS: &str = r#"
+SELECT
+  CAST(c.COLUMN_NAME AS CHAR) AS column_name,
+  CAST(c.COLUMN_TYPE AS CHAR) AS data_type,
+  (c.IS_NULLABLE = 'YES') AS is_nullable,
+  CAST(c.COLUMN_DEFAULT AS CHAR) AS column_default,
+  (kcu.ORDINAL_POSITION IS NOT NULL) AS is_primary_key,
+  kcu.ORDINAL_POSITION AS primary_key_ordinal,
+  (c.EXTRA LIKE '%auto_increment%' OR c.GENERATION_EXPRESSION <> '') AS is_generated
+FROM INFORMATION_SCHEMA.COLUMNS c
+LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+  ON kcu.TABLE_SCHEMA = c.TABLE_SCHEMA
+ AND kcu.TABLE_NAME = c.TABLE_NAME
+ AND kcu.COLUMN_NAME = c.COLUMN_NAME
+ AND kcu.CONSTRAINT_NAME = 'PRIMARY'
+WHERE c.TABLE_NAME = ?
+  AND c.TABLE_SCHEMA = COALESCE(?, DATABASE())
+ORDER BY c.ORDINAL_POSITION
+"#;
+
+/// `table_xinfo` 而不是 `table_info`：后者**看不见计算列**，于是结构页少一列，
+/// 而 `SELECT *` 又把它查得出来——两处对同一张表的列数说法不一致。
+/// `hidden` 的取值：0 普通、1 虚表的隐藏列、2 VIRTUAL 计算列、3 STORED 计算列。
+/// 只排掉 1，它在 `SELECT *` 里同样取不到。
+///
+/// `pk` 本身就是键内次序（0 表示不是主键），不需要再算一次。
+const SQLITE_COLUMNS: &str = r#"
+SELECT
+  p.name AS column_name,
+  p.type AS data_type,
+  (p."notnull" = 0) AS is_nullable,
+  p.dflt_value AS column_default,
+  (p.pk > 0) AS is_primary_key,
+  NULLIF(p.pk, 0) AS primary_key_ordinal,
+  (p.hidden IN (2, 3)) AS is_generated
+FROM pragma_table_xinfo(?1) p
+WHERE p.hidden <> 1
+ORDER BY p.cid
+"#;
 
 /// 列名用 `pg_get_indexdef(oid, colno, true)` 取而不是 join `pg_attribute`：
 /// 表达式索引在 `indkey` 里的位置是 0，join 不上任何列，那一列会凭空消失。
@@ -397,6 +483,56 @@ mod tests {
     }
   }
 
+  /// 列目录的字段名是前端与三种方言之间唯一的约定。
+  ///
+  /// 少一个不会报错：`toColumnInfo` 读到 `undefined`，于是
+  /// `is_generated` 变成 false、`is_nullable` 变成 false，
+  /// 那个方言的自增主键表就再也插不进一行——而错误信息只说「主键必填」。
+  #[test]
+  fn every_column_query_returns_the_same_shape() {
+    for db_type in [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite] {
+      let queries = schema_metadata_queries(&db_type).expect("supported");
+      for alias in [
+        "column_name",
+        "data_type",
+        "is_nullable",
+        "column_default",
+        "is_primary_key",
+        "primary_key_ordinal",
+        "is_generated",
+      ] {
+        assert!(
+          queries.columns.contains(alias),
+          "{:?} 的列目录缺少 {}: {}",
+          db_type,
+          alias,
+          queries.columns
+        );
+      }
+    }
+  }
+
+  /// 类型必须是数据库自己的声明原文。
+  ///
+  /// `information_schema.columns.data_type` 给的是类目名：`text[]` 变成
+  /// `ARRAY`、`varchar(32)` 变成 `character varying`。结构页显示的就是这个字段，
+  /// 显示 `ARRAY` 等于没说。
+  #[test]
+  fn column_types_come_from_the_authoritative_reverse_parser() {
+    let postgres = schema_metadata_queries(&DatabaseType::PostgreSQL).expect("supported");
+    assert!(
+      postgres.columns.contains("format_type("),
+      "PostgreSQL 的类型要用 format_type 反解: {}",
+      postgres.columns
+    );
+    let mysql = schema_metadata_queries(&DatabaseType::MySQL).expect("supported");
+    assert!(
+      mysql.columns.contains("COLUMN_TYPE"),
+      "MySQL 的 DATA_TYPE 丢掉长度与 unsigned: {}",
+      mysql.columns
+    );
+  }
+
   #[test]
   fn unsupported_databases_get_no_queries() {
     // 这些类型连查询执行层都没有，给出 SQL 只会让前端拿去执行然后失败
@@ -410,6 +546,7 @@ mod tests {
     for db_type in [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite] {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       for sql in [
+        Some(queries.columns),
         Some(queries.indexes),
         Some(queries.foreign_keys),
         Some(queries.triggers),

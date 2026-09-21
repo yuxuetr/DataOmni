@@ -55,7 +55,7 @@ import {
 import { SchemaObjectSections, type SchemaObjects } from './SchemaObjectSections';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { requireDatabase } from '../utils/requireDatabase';
-import { tableColumnsQuery, toColumnInfo } from '../utils/tableMetadata';
+import { tableColumnsParams, toColumnInfo } from '../utils/tableMetadata';
 import { describeRowIdentity, type IndexMetadata } from '../utils/rowIdentity';
 import type { RowKey, TableTarget } from '../utils/rowStatements';
 import {
@@ -117,6 +117,7 @@ type TabType = 'schema' | 'data';
 
 /** `get_schema_metadata_queries` 的返回；字段名按 Rust 侧的 snake_case */
 interface SchemaMetadataQueries {
+  columns: string;
   indexes: string;
   foreign_keys: string;
   check_constraints: string | null;
@@ -294,13 +295,12 @@ export default function TableDataViewer({
     if (!await ensureDatabaseConnection()) return null;
     
     try {
-      const columnsQuery = tableColumnsQuery(connection.db_type, tableName, schema);
-      if (!columnsQuery) {
-        throw new Error(t('table.schemaLoadFailedStopped'));
-      }
+      const queries = await invoke<SchemaMetadataQueries>('get_schema_metadata_queries', {
+        dbType: connection.db_type
+      });
       const columnsResult = await requireDatabase(database).select(
-        columnsQuery.sql,
-        columnsQuery.params
+        queries.columns,
+        tableColumnsParams(connection.db_type, tableName, schema)
       );
       const columns = toColumnInfo(columnsResult);
 
@@ -574,19 +574,6 @@ export default function TableDataViewer({
   ].join('|');
   const cells = useCellSelection(visibleRows, visibleColumnNames, datasetKey);
 
-  /**
-   * 这一列的值由数据库生成（自增 / serial / identity）。
-   *
-   * 新增时它的起点是「默认值」而不是空文本：填一个空串进去，数据库要么报错，
-   * 要么真的写了个 0 覆盖掉自增序列该给的那个值。
-   */
-  const isGeneratedKeyColumn = (column: { data_type: string; default_value?: string }): boolean => {
-    const type = column.data_type.toLowerCase();
-    return type.includes('serial')
-      || type.includes('auto_increment')
-      || type.includes('identity')
-      || (column.default_value ?? '').toLowerCase().includes('nextval(');
-  };
 
   // 处理标签页切换
   const handleTabChange = (tabId: TabType) => {
@@ -632,7 +619,7 @@ export default function TableDataViewer({
     // 由 `missingRequiredColumns` 在提交前点名，而不是让数据库去拒绝
     const newRowData: Record<string, CellInput> = {};
     for (const column of tableSchema?.columns ?? []) {
-      if (column.default_value != null || isGeneratedKeyColumn(column)) {
+      if (column.default_value != null || column.is_generated) {
         newRowData[column.name] = { kind: 'default' };
       } else if (column.is_nullable) {
         newRowData[column.name] = { kind: 'null' };
@@ -1261,10 +1248,12 @@ export default function TableDataViewer({
                         {column.is_primary_key && (
                           <span className="ml-1 text-accent">{t('table.primaryKeyTag')}</span>
                         )}
-                        {isGeneratedKeyColumn(column) && (
+                        {column.is_generated && (
                           <span className="ml-1 text-success">{t('table.autoIncrementTag')}</span>
                         )}
-                        {!column.is_nullable && column.default_value == null && (
+                        {!column.is_nullable
+                          && column.default_value == null
+                          && !column.is_generated && (
                           <span className="ml-1 text-danger">*</span>
                         )}
                         <span className="ml-1 font-normal text-fg-subtle">{column.data_type}</span>

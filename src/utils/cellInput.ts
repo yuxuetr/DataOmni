@@ -81,11 +81,17 @@ export function willWrite(input: CellInput): boolean {
  */
 export function missingRequiredColumns(
   inputs: Readonly<Record<string, CellInput>>,
-  columns: readonly { name: string; is_nullable: boolean; default_value?: string }[]
+  columns: readonly {
+    name: string;
+    is_nullable: boolean;
+    default_value?: string;
+    is_generated?: boolean;
+  }[]
 ): string[] {
   return columns
     .filter((column) => {
-      if (column.is_nullable || column.default_value != null) {
+      // 自增与计算列由数据库填，点名要求用户填反而会让整张表插不进行
+      if (column.is_nullable || column.default_value != null || column.is_generated) {
         return false;
       }
       const input = inputs[column.name];

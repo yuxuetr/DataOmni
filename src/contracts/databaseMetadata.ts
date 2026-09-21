@@ -10,6 +10,14 @@ export interface ColumnInfo {
   is_primary_key: boolean;
   primary_key_ordinal?: number;
   default_value?: string;
+  /**
+   * 值由数据库产生：自增、identity、计算列。
+   *
+   * 和「有默认值」是两回事。`GENERATED ALWAYS AS IDENTITY` 与
+   * `AUTO_INCREMENT` 的 `default_value` 都是 null，同时又是非空列——
+   * 少了这个标志，新增行时它们会被当成必填项点名，那两种表一行都插不进去。
+   */
+  is_generated?: boolean;
 }
 
 export interface TableInfo {

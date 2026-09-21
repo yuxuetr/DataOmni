@@ -2280,3 +2280,213 @@ async fn export_error(pool: &DbPool, sql: &str) -> QueryError {
   assert!(!target.exists(), "拒绝时不该留下文件");
   error
 }
+
+/// 列目录夹具：把「非空、没有默认值、却不能由用户填」的那几种列摆出来。
+///
+/// 自增主键在三种方言里的表示各不相同，而它们的共同点正是问题所在——
+/// `COLUMN_DEFAULT` 是 NULL、`IS_NULLABLE` 是 NO。只看这两个字段，
+/// 一张最普通的表也会被判成「主键必填」，于是一行都插不进去。
+fn column_fixture_ddl(dialect: &str, table: &str) -> Vec<String> {
+  let drop = format!("DROP TABLE IF EXISTS {table}");
+  match dialect {
+    "postgres" => vec![
+      drop,
+      format!(
+        "CREATE TABLE {table} (
+           id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+           code varchar(32) NOT NULL,
+           tags text[],
+           amount numeric(10,2) DEFAULT 0,
+           w int NOT NULL,
+           h int NOT NULL,
+           area int GENERATED ALWAYS AS (w * h) STORED
+         )"
+      ),
+    ],
+    "mysql" => vec![
+      drop,
+      format!(
+        "CREATE TABLE {table} (
+           id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+           code VARCHAR(32) NOT NULL,
+           flags INT UNSIGNED,
+           amount DECIMAL(10,2) DEFAULT 0,
+           w INT NOT NULL,
+           h INT NOT NULL,
+           area INT GENERATED ALWAYS AS (w * h) STORED
+         )"
+      ),
+    ],
+    _ => vec![
+      drop,
+      format!(
+        "CREATE TABLE {table} (
+           id INTEGER PRIMARY KEY,
+           code VARCHAR(32) NOT NULL,
+           amount NUMERIC DEFAULT 0,
+           w INT NOT NULL,
+           h INT NOT NULL,
+           area INT GENERATED ALWAYS AS (w * h) VIRTUAL
+         )"
+      ),
+    ],
+  }
+}
+
+fn column_queries(db_type: dataomni_lib::models::DatabaseType) -> &'static str {
+  dataomni_lib::services::schema_metadata_queries(&db_type).expect("supported").columns
+}
+
+#[tokio::test]
+async fn postgres_reports_declared_types_and_generated_columns() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+
+  let table = "dataomni_columns_pg";
+  for statement in column_fixture_ddl("postgres", table) {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare PostgreSQL column fixture");
+  }
+
+  let rows = sqlx::query(column_queries(dataomni_lib::models::DatabaseType::PostgreSQL))
+    .bind(table)
+    .bind(Option::<String>::None)
+    .fetch_all(&pool)
+    .await
+    .expect("run PostgreSQL column query");
+  let columns: Vec<(String, String, bool, Option<i32>, bool)> = rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("column_name"),
+        row.get::<String, _>("data_type"),
+        row.get::<bool, _>("is_nullable"),
+        row.get::<Option<i32>, _>("primary_key_ordinal"),
+        row.get::<bool, _>("is_generated"),
+      )
+    })
+    .collect();
+
+  let by_name = |name: &str| {
+    columns.iter().find(|(column, ..)| column == name).cloned().unwrap_or_else(|| {
+      panic!("{name} 应出现在列目录里: {columns:?}");
+    })
+  };
+
+  // information_schema 把这三种类型分别报成 integer / character varying / ARRAY，
+  // 其中 ARRAY 等于什么都没说——结构页显示的就是这个字段。
+  assert_eq!(by_name("code").1, "character varying(32)", "长度不能丢: {columns:?}");
+  assert_eq!(by_name("tags").1, "text[]", "数组类型不能报成 ARRAY: {columns:?}");
+  assert_eq!(by_name("amount").1, "numeric(10,2)", "精度不能丢: {columns:?}");
+
+  // identity 列没有 column_default 又是非空——没有 is_generated 就插不进行
+  assert!(by_name("id").4, "GENERATED ALWAYS AS IDENTITY 必须标成由数据库产生: {columns:?}");
+  assert!(by_name("area").4, "计算列必须标成由数据库产生: {columns:?}");
+  assert!(!by_name("code").4, "普通非空列不是由数据库产生的: {columns:?}");
+
+  assert_eq!(by_name("id").3, Some(1), "主键次序: {columns:?}");
+  assert_eq!(by_name("code").3, None, "非主键列没有键内次序: {columns:?}");
+  assert!(!by_name("code").2 && by_name("tags").2, "可空性: {columns:?}");
+
+  sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+}
+
+#[tokio::test]
+async fn mysql_reports_declared_types_and_generated_columns() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+
+  let table = "dataomni_columns_my";
+  for statement in column_fixture_ddl("mysql", table) {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL column fixture");
+  }
+
+  let rows = sqlx::query(column_queries(dataomni_lib::models::DatabaseType::MySQL))
+    .bind(table)
+    .bind(Option::<String>::None)
+    .fetch_all(&pool)
+    .await
+    .expect("run MySQL column query");
+  let columns: Vec<(String, String, i64, Option<u32>, i64)> = rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("column_name"),
+        row.get::<String, _>("data_type"),
+        row.get::<i64, _>("is_nullable"),
+        row.get::<Option<u32>, _>("primary_key_ordinal"),
+        row.get::<i64, _>("is_generated"),
+      )
+    })
+    .collect();
+
+  let by_name = |name: &str| {
+    columns.iter().find(|(column, ..)| column == name).cloned().unwrap_or_else(|| {
+      panic!("{name} 应出现在列目录里: {columns:?}");
+    })
+  };
+
+  // DATA_TYPE 给的是 varchar / int / decimal，长度、unsigned、精度全丢
+  assert_eq!(by_name("code").1, "varchar(32)", "长度不能丢: {columns:?}");
+  assert_eq!(by_name("flags").1, "int unsigned", "unsigned 不能丢: {columns:?}");
+  assert_eq!(by_name("amount").1, "decimal(10,2)", "精度不能丢: {columns:?}");
+
+  assert_eq!(by_name("id").4, 1, "AUTO_INCREMENT 必须标成由数据库产生: {columns:?}");
+  assert_eq!(by_name("area").4, 1, "计算列必须标成由数据库产生: {columns:?}");
+  assert_eq!(by_name("code").4, 0, "普通非空列不是由数据库产生的: {columns:?}");
+
+  assert_eq!(by_name("id").3, Some(1), "主键次序: {columns:?}");
+  assert_eq!(by_name("code").3, None, "非主键列没有键内次序: {columns:?}");
+  assert_eq!((by_name("code").2, by_name("flags").2), (0, 1), "可空性: {columns:?}");
+
+  sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+}
+
+#[tokio::test]
+async fn sqlite_reports_generated_columns_that_table_info_hides() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("connect to in-memory SQLite");
+
+  let table = "dataomni_columns_lite";
+  for statement in column_fixture_ddl("sqlite", table) {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare SQLite column fixture");
+  }
+
+  let rows = sqlx::query(column_queries(dataomni_lib::models::DatabaseType::SQLite))
+    .bind(table)
+    .fetch_all(&pool)
+    .await
+    .expect("run SQLite column query");
+  let columns: Vec<(String, String, i64, Option<i64>, i64)> = rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("column_name"),
+        row.get::<String, _>("data_type"),
+        row.get::<i64, _>("is_nullable"),
+        row.get::<Option<i64>, _>("primary_key_ordinal"),
+        row.get::<i64, _>("is_generated"),
+      )
+    })
+    .collect();
+
+  let by_name = |name: &str| {
+    columns.iter().find(|(column, ..)| column == name).cloned().unwrap_or_else(|| {
+      panic!("{name} 应出现在列目录里: {columns:?}");
+    })
+  };
+
+  // pragma_table_info 看不见计算列，而 `SELECT *` 查得出来——结构页会比数据页少一列
+  assert_eq!(by_name("area").4, 1, "VIRTUAL 计算列必须出现且标成由数据库产生: {columns:?}");
+  assert_eq!(by_name("code").1, "VARCHAR(32)", "SQLite 的声明类型原样带回: {columns:?}");
+  assert_eq!(by_name("id").3, Some(1), "主键次序: {columns:?}");
+  assert_eq!(by_name("code").2, 0, "NOT NULL 列不可空: {columns:?}");
+}

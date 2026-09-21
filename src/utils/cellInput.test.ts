@@ -73,4 +73,20 @@ describe('missingRequiredColumns', () => {
   it('填了就不点名，空字符串也算填了', () => {
     expect(missingRequiredColumns({ name: { kind: 'value', value: '' } }, columns)).toEqual([]);
   });
+
+  it('自增与计算列不点名——它们非空、没有默认值，却不能由用户填', () => {
+    // GENERATED ALWAYS AS IDENTITY 与 AUTO_INCREMENT 的 default_value 都是 null。
+    // 少了 is_generated，这两种表的主键每次都会被点名，于是一行都插不进去。
+    const generated = [
+      { name: 'id', is_nullable: false, is_generated: true },
+      { name: 'area', is_nullable: false, is_generated: true },
+      { name: 'name', is_nullable: false }
+    ];
+    const inputs: Record<string, CellInput> = {
+      id: { kind: 'default' },
+      area: { kind: 'default' },
+      name: { kind: 'value', value: 'x' }
+    };
+    expect(missingRequiredColumns(inputs, generated)).toEqual([]);
+  });
 });

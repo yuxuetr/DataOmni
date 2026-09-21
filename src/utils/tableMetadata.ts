@@ -3,7 +3,6 @@ import { invoke } from '@tauri-apps/api/core';
 import type { ColumnInfo } from '../contracts';
 import { describeRowIdentity, type RowIdentityResult } from './rowIdentity';
 import { groupIndexRows } from './schemaObjects';
-import { quoteSqlIdentifier } from './sqlIdentifiers';
 import { requireDatabase } from './requireDatabase';
 
 /**
@@ -16,93 +15,53 @@ import { requireDatabase } from './requireDatabase';
  * UPDATE 都语法正确、执行成功、不报任何错。
  */
 
-const COLUMNS_QUERY: Record<string, string> = {
-  postgresql: `
-    SELECT
-      c.column_name::text AS column_name,
-      c.data_type::text AS data_type,
-      c.is_nullable::text AS is_nullable,
-      c.column_default::text AS column_default,
-      CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END as is_primary_key,
-      pk.primary_key_ordinal
-    FROM information_schema.columns c
-    LEFT JOIN (
-      SELECT kcu.table_schema, kcu.table_name, kcu.column_name,
-             kcu.ordinal_position as primary_key_ordinal
-      FROM information_schema.table_constraints tc
-      JOIN information_schema.key_column_usage kcu
-        ON tc.constraint_schema = kcu.constraint_schema
-       AND tc.constraint_name = kcu.constraint_name
-       AND tc.table_schema = kcu.table_schema
-       AND tc.table_name = kcu.table_name
-      WHERE tc.constraint_type = 'PRIMARY KEY'
-    ) pk ON c.table_schema = pk.table_schema
-        AND c.table_name = pk.table_name
-        AND c.column_name = pk.column_name
-    WHERE c.table_name = $1
-      AND c.table_schema = COALESCE($2, current_schema())
-    ORDER BY c.ordinal_position
-  `,
-  mysql: `
-    SELECT
-      CAST(c.COLUMN_NAME AS CHAR) as column_name,
-      CAST(c.DATA_TYPE AS CHAR) as data_type,
-      CAST(c.IS_NULLABLE AS CHAR) as is_nullable,
-      CAST(c.COLUMN_DEFAULT AS CHAR) as column_default,
-      kcu.COLUMN_NAME IS NOT NULL as is_primary_key,
-      kcu.ORDINAL_POSITION as primary_key_ordinal
-    FROM INFORMATION_SCHEMA.COLUMNS c
-    LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
-      ON c.TABLE_SCHEMA = kcu.TABLE_SCHEMA
-     AND c.TABLE_NAME = kcu.TABLE_NAME
-     AND c.COLUMN_NAME = kcu.COLUMN_NAME
-     AND kcu.CONSTRAINT_NAME = 'PRIMARY'
-    WHERE c.TABLE_NAME = ?
-      AND c.TABLE_SCHEMA = COALESCE(?, DATABASE())
-    ORDER BY c.ORDINAL_POSITION
-  `
-};
-
 /**
- * 列查询与它的参数。
+ * 列目录查询的参数。
  *
- * SQLite 走 `PRAGMA table_info`，表名是**标识符**不是字符串字面量，只能插值；
- * 它也没有 schema 这一层。另外两家按绑定参数传表名与 schema。
+ * SQL 文本住在 Rust 的 `schema_metadata.rs`，和索引、外键那几段一起——只有
+ * 住在那边才能被 `tests/database_smoke.rs` 拿真库跑一遍。此前这三段 SQL 写
+ * 在这里，于是「PostgreSQL 把 `text[]` 报成 ARRAY」和「自增主键的表一行都
+ * 插不进去」这两处一直没有任何测试碰得到。
+ *
+ * SQLite 只有一个参数：pragma 表值函数认表名，没有 schema 这一层。
  */
-export function tableColumnsQuery(
+export function tableColumnsParams(
   dbType: string,
   tableName: string,
   schema?: string
-): { sql: string; params: unknown[] } | null {
-  if (dbType === 'sqlite') {
-    return { sql: `PRAGMA table_info(${quoteSqlIdentifier(tableName, 'sqlite')})`, params: [] };
-  }
-  const sql = COLUMNS_QUERY[dbType];
-  return sql ? { sql, params: [tableName, schema ?? null] } : null;
+): unknown[] {
+  return dbType === 'sqlite' ? [tableName] : [tableName, schema ?? null];
 }
 
-/** 三种方言的列目录字段名各不相同，在这里合并成一种形状 */
+/**
+ * 目录行转成 `ColumnInfo`。
+ *
+ * 三段查询已经在 Rust 侧对齐成同一组列名与同一种类型，这里不再按方言认字段。
+ * 只有布尔的**表示**还有差别：PostgreSQL 给真布尔，MySQL 与 SQLite 给 1/0，
+ * 所以统一用真值判断而不是 `=== true`。
+ */
 export function toColumnInfo(rows: unknown): ColumnInfo[] {
   if (!Array.isArray(rows)) {
     return [];
   }
   return rows.map((row) => {
     const col = row as Record<string, unknown>;
-    // SQLite 的 pragma 用 `pk` 表示键内次序（0 = 不是主键），另两家用 ordinal_position
-    const primaryKeyOrdinal = Number(col.primary_key_ordinal ?? col.pk ?? 0);
+    const primaryKeyOrdinal = Number(col.primary_key_ordinal ?? 0);
     return {
-      name: String(col.column_name ?? col.name ?? ''),
-      data_type: String(col.data_type ?? col.type ?? ''),
-      is_nullable: col.is_nullable === 'YES' || col.notnull === 0,
-      is_primary_key: primaryKeyOrdinal > 0 || col.is_primary_key === true,
+      name: String(col.column_name ?? ''),
+      data_type: String(col.data_type ?? ''),
+      is_nullable: Boolean(col.is_nullable),
+      is_primary_key: Boolean(col.is_primary_key),
       primary_key_ordinal: primaryKeyOrdinal > 0 ? primaryKeyOrdinal : undefined,
-      default_value: (col.column_default ?? col.dflt_value) as string | undefined
+      default_value: (col.column_default ?? undefined) as string | undefined,
+      is_generated: Boolean(col.is_generated)
     };
   });
 }
 
-/** `get_schema_metadata_queries` 的返回里这里只用得上索引那一条 */
-interface IndexQueries {
+/** `get_schema_metadata_queries` 的返回里这里用得上列与索引两条 */
+interface ColumnAndIndexQueries {
+  columns: string;
   indexes: string;
 }
 
@@ -132,19 +91,13 @@ export async function loadTableMetadata(
   tableName: string,
   schema?: string
 ): Promise<TableMetadata> {
-  const columnsQuery = tableColumnsQuery(dbType, tableName, schema);
-  if (!columnsQuery) {
-    return UNAVAILABLE;
-  }
-
   try {
     const handle = requireDatabase(database);
-    const queries = await invoke<IndexQueries>('get_schema_metadata_queries', { dbType });
-    // SQLite 的 pragma 表值函数只认一个表名参数，没有 schema 概念
-    const indexParams = dbType === 'sqlite' ? [tableName] : [tableName, schema ?? null];
+    const queries = await invoke<ColumnAndIndexQueries>('get_schema_metadata_queries', { dbType });
+    const params = tableColumnsParams(dbType, tableName, schema);
     const [columnRows, indexRows] = await Promise.all([
-      handle.select(columnsQuery.sql, columnsQuery.params),
-      handle.select(queries.indexes, indexParams)
+      handle.select(queries.columns, params),
+      handle.select(queries.indexes, params)
     ]);
 
     const columns = toColumnInfo(columnRows);
