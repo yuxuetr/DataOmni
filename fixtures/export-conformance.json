@@ -1,0 +1,399 @@
+{
+  "why": "导出有两份实现：对话框里的预览由 src/utils/exportResult.ts 算，写进文件的字节由 src-tauri/src/services/export_writer.rs 写。两边分叉时预览就会变成谎话，而这种分叉不会让任何一侧自己的测试变红。这份语料是同一组输入的唯一期望输出，src/utils/exportResult.conformance.test.ts 与 export_writer 的 matches_the_shared_conformance_corpus 各自照它核对。",
+  "rowsAreKeyedByColumnName": "前后端拿到的行都是「列名 → 值」的映射（Rust 的 QueryRow、前端批次里的 Record<string, SerializedResultValue>），所以重名列在两侧都是后一列顶掉前一列。语料按这个形态给行，而不是按数组。",
+  "cases": [
+    {
+      "name": "csv-every-value-kind",
+      "columns": [
+        "text",
+        "number",
+        "flag",
+        "nothing",
+        "big",
+        "money",
+        "when",
+        "doc",
+        "blob"
+      ],
+      "rows": [
+        {
+          "text": "plain",
+          "number": 1,
+          "flag": true,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-01 12:00:00"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\n  \"a\": 1\n}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "deadbeef"
+          }
+        }
+      ],
+      "options": {
+        "format": "csv",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "NULL",
+        "byteOrderMark": false
+      },
+      "expected": "text,number,flag,nothing,big,money,when,doc,blob\nplain,1,true,NULL,9007199254740993,1.10,2024-01-01 12:00:00,\"{\"\"a\"\":1}\",0xdeadbeef"
+    },
+    {
+      "name": "csv-escaping",
+      "columns": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "rows": [
+        {
+          "a": "has,comma",
+          "b": "has\"quote",
+          "c": "has\nnewline",
+          "d": "has\rreturn"
+        },
+        {
+          "a": "plain",
+          "b": "",
+          "c": "semi;colon",
+          "d": "tab\there"
+        }
+      ],
+      "options": {
+        "format": "csv",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false
+      },
+      "expected": "a,b,c,d\n\"has,comma\",\"has\"\"quote\",\"has\nnewline\",\"has\rreturn\"\nplain,,semi;colon,tab\there"
+    },
+    {
+      "name": "csv-semicolon-delimiter-changes-what-needs-quoting",
+      "columns": [
+        "a",
+        "b"
+      ],
+      "rows": [
+        {
+          "a": "has,comma",
+          "b": "has;semicolon"
+        }
+      ],
+      "options": {
+        "format": "csv",
+        "delimiter": ";",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false
+      },
+      "expected": "a;b\nhas,comma;\"has;semicolon\""
+    },
+    {
+      "name": "csv-tab-delimiter",
+      "columns": [
+        "a",
+        "b"
+      ],
+      "rows": [
+        {
+          "a": "has\ttab",
+          "b": "has,comma"
+        }
+      ],
+      "options": {
+        "format": "csv",
+        "delimiter": "\t",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false
+      },
+      "expected": "a\tb\n\"has\ttab\"\thas,comma"
+    },
+    {
+      "name": "csv-float-text-must-match-javascript",
+      "columns": [
+        "fraction",
+        "huge",
+        "tiny"
+      ],
+      "rows": [
+        {
+          "fraction": 1.5,
+          "huge": 1e+21,
+          "tiny": 1e-07
+        }
+      ],
+      "options": {
+        "format": "csv",
+        "delimiter": ",",
+        "includeHeader": false,
+        "nullText": "",
+        "byteOrderMark": false
+      },
+      "expected": "1.5,1e+21,1e-7"
+    },
+    {
+      "name": "csv-null-written-as-backslash-n",
+      "columns": [
+        "a",
+        "b"
+      ],
+      "rows": [
+        {
+          "a": null,
+          "b": ""
+        }
+      ],
+      "options": {
+        "format": "csv",
+        "delimiter": ",",
+        "includeHeader": false,
+        "nullText": "\\N",
+        "byteOrderMark": false
+      },
+      "expected": "\\N,"
+    },
+    {
+      "name": "csv-header-only-when-there-are-no-rows",
+      "columns": [
+        "a",
+        "b"
+      ],
+      "rows": [],
+      "options": {
+        "format": "csv",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false
+      },
+      "expected": "a,b"
+    },
+    {
+      "name": "csv-empty-file-when-no-header-and-no-rows",
+      "columns": [
+        "a"
+      ],
+      "rows": [],
+      "options": {
+        "format": "csv",
+        "delimiter": ",",
+        "includeHeader": false,
+        "nullText": "",
+        "byteOrderMark": false
+      },
+      "expected": ""
+    },
+    {
+      "name": "csv-with-byte-order-mark",
+      "columns": [
+        "名称"
+      ],
+      "rows": [
+        {
+          "名称": "中文"
+        }
+      ],
+      "options": {
+        "format": "csv",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": true
+      },
+      "expected": "﻿名称\n中文"
+    },
+    {
+      "name": "csv-duplicate-column-names-repeat-the-same-value",
+      "columns": [
+        "id",
+        "id"
+      ],
+      "rows": [
+        {
+          "id": {
+            "type": "bigint",
+            "value": "7"
+          }
+        }
+      ],
+      "options": {
+        "format": "csv",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false
+      },
+      "expected": "id,id\n7,7"
+    },
+    {
+      "name": "json-every-value-kind",
+      "columns": [
+        "text",
+        "number",
+        "flag",
+        "nothing",
+        "big",
+        "money",
+        "when",
+        "doc",
+        "blob"
+      ],
+      "rows": [
+        {
+          "text": "plain",
+          "number": 1.5,
+          "flag": false,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-01 12:00:00"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": [1, 2]}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "deadbeef"
+          }
+        }
+      ],
+      "options": {
+        "format": "json",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "NULL",
+        "byteOrderMark": false
+      },
+      "expected": "[\n  {\n    \"text\": \"plain\",\n    \"number\": 1.5,\n    \"flag\": false,\n    \"nothing\": null,\n    \"big\": \"9007199254740993\",\n    \"money\": \"1.10\",\n    \"when\": \"2024-01-01 12:00:00\",\n    \"doc\": {\n      \"a\": [\n        1,\n        2\n      ]\n    },\n    \"blob\": \"0xdeadbeef\"\n  }\n]"
+    },
+    {
+      "name": "json-two-rows-and-escaping",
+      "columns": [
+        "a",
+        "b"
+      ],
+      "rows": [
+        {
+          "a": "quote \" and \\ backslash",
+          "b": "line\nbreak"
+        },
+        {
+          "a": "中文",
+          "b": null
+        }
+      ],
+      "options": {
+        "format": "json",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false
+      },
+      "expected": "[\n  {\n    \"a\": \"quote \\\" and \\\\ backslash\",\n    \"b\": \"line\\nbreak\"\n  },\n  {\n    \"a\": \"中文\",\n    \"b\": null\n  }\n]"
+    },
+    {
+      "name": "json-empty-array-when-there-are-no-rows",
+      "columns": [
+        "a"
+      ],
+      "rows": [],
+      "options": {
+        "format": "json",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false
+      },
+      "expected": "[]"
+    },
+    {
+      "name": "json-duplicate-column-names-get-a-suffix",
+      "columns": [
+        "id",
+        "id",
+        "id_2"
+      ],
+      "rows": [
+        {
+          "id": 1,
+          "id_2": "taken"
+        }
+      ],
+      "options": {
+        "format": "json",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false
+      },
+      "expected": "[\n  {\n    \"id\": 1,\n    \"id_2\": 1,\n    \"id_2_2\": \"taken\"\n  }\n]"
+    },
+    {
+      "name": "json-malformed-json-column-stays-a-string",
+      "columns": [
+        "doc"
+      ],
+      "rows": [
+        {
+          "doc": {
+            "type": "json",
+            "value": "not json at all"
+          }
+        }
+      ],
+      "options": {
+        "format": "json",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false
+      },
+      "expected": "[\n  {\n    \"doc\": \"not json at all\"\n  }\n]"
+    },
+    {
+      "name": "json-with-byte-order-mark",
+      "columns": [
+        "a"
+      ],
+      "rows": [
+        {
+          "a": "中文"
+        }
+      ],
+      "options": {
+        "format": "json",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": true
+      },
+      "expected": "﻿[\n  {\n    \"a\": \"中文\"\n  }\n]"
+    }
+  ]
+}

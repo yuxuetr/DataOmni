@@ -1,7 +1,8 @@
 use crate::commands::connection_commands::ConnectionServiceState;
 use crate::services::{
-  write_batch, QueryExecutionSummary, QueryResultBatch, QuerySessionState, StreamingQueryOptions,
-  WriteBatchError, WriteStatement, DEFAULT_QUERY_BATCH_SIZE,
+  export_writer, write_batch, ExportOptions, ExportProgress, ExportSummary, QueryExecutionSummary,
+  QueryResultBatch, QuerySessionState, StreamingQueryOptions, WriteBatchError, WriteStatement,
+  DEFAULT_QUERY_BATCH_SIZE,
 };
 // use crate::services::{ConnectionService, DatabaseService};
 use serde::Deserialize;
@@ -147,6 +148,74 @@ pub async fn execute_write_batch(
 /// 而不是指着某一条说它有问题
 fn batch_error(message: impl Into<String>) -> WriteBatchError {
   WriteBatchError { statement_index: 0, error: QueryError::message(message) }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportRequest {
+  connection_id: String,
+  export_id: String,
+  sql: String,
+  path: String,
+  options: ExportOptions,
+}
+
+/// 把一条查询的**全部**结果流式写成文件。
+///
+/// 不走 `execute_query`：那条命令按「结果要回到界面上」设计，行数与字节都被
+/// 上限钉死，而整表导出的行数正是未知且可能很大的那一类。这里一行都不进内存，
+/// 也一行都不过 IPC。
+#[tauri::command]
+pub async fn export_query_to_file(
+  request: ExportRequest,
+  on_progress: Channel<ExportProgress>,
+  connection_service_state: State<'_, ConnectionServiceState>,
+  database_instances: State<'_, DbInstances>,
+  cancellation_state: State<'_, QueryCancellationState>,
+) -> Result<ExportSummary, QueryError> {
+  let connection_string = {
+    let connection_service_guard = connection_service_state
+      .lock()
+      .map_err(|e| QueryError::message(format!("获取连接服务状态失败: {e}")))?;
+    let service =
+      connection_service_guard.as_ref().ok_or_else(|| QueryError::message("连接服务未初始化"))?;
+    service.resolve_connection_string(&request.connection_id).map_err(QueryError::message)?
+  };
+
+  let instances = database_instances.0.read().await;
+  let pool =
+    instances.get(&connection_string).ok_or_else(|| QueryError::message("数据库会话未连接"))?;
+
+  // 取消与查询共用同一个登记表：取消的语义、重复 ID 的检查、结束时的清理
+  // 都已经在那里了，再立一套只会多出一处要同步的状态。
+  let mut receiver =
+    cancellation_state.register(&request.export_id).await.map_err(QueryError::message)?;
+  let mut report = |progress| {
+    // 进度送不出去（窗口关了）不该让导出失败——文件照样写完才是用户要的
+    on_progress.send(progress).ok();
+  };
+  let mut cancelled = || !matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty));
+
+  let result = export_writer::export_query(
+    pool,
+    &request.sql,
+    std::path::Path::new(&request.path),
+    request.options,
+    &mut report,
+    &mut cancelled,
+  )
+  .await;
+  cancellation_state.finish(&request.export_id).await;
+  result
+}
+
+/// 取消一次导出。与 `cancel_query` 共用登记表，所以这里只是换个名字说同一件事。
+#[tauri::command]
+pub async fn cancel_export(
+  export_id: String,
+  cancellation_state: State<'_, QueryCancellationState>,
+) -> Result<bool, String> {
+  Ok(cancellation_state.cancel(&export_id).await)
 }
 
 #[tauri::command]

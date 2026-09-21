@@ -44,6 +44,47 @@ pub enum QueryTruncationReason {
   ByteLimit,
 }
 
+/// 语句不返回结果集时怎么办。
+///
+/// 谁也无法只看 SQL 文本就断定它返不返回行——`WITH ... SELECT` 返回，
+/// `WITH ... DELETE` 不返回，而两者开头一样。唯一权威的回答来自数据库自己：
+/// `describe` 报了 0 列就是不返回。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NonQueryHandling {
+  /// 照常执行，回报受影响行数。编辑器里执行一条 UPDATE 走这条。
+  Execute,
+  /// 拒绝执行。导出走这条：点一下「导出」不该让一条 DELETE 真把数据删掉。
+  Refuse,
+}
+
+/// 流式读的四个旋钮。
+///
+/// 合成一个结构不是为了抽象，是因为位置参数已经排到第六个——
+/// `(connection, sql, 100000, 16777216, 250, sink)` 里哪个是哪个，读的人得回去数。
+#[derive(Debug, Clone, Copy)]
+pub struct StreamOptions {
+  pub row_limit: usize,
+  pub byte_limit: usize,
+  pub batch_size: usize,
+  pub non_query: NonQueryHandling,
+}
+
+impl StreamOptions {
+  pub fn limited(row_limit: usize, byte_limit: usize, batch_size: usize) -> Self {
+    Self { row_limit, byte_limit, batch_size, non_query: NonQueryHandling::Execute }
+  }
+
+  /// 导出用：行数与字节都不设限，且拒绝执行不返回结果集的语句。
+  pub fn unlimited_export(batch_size: usize) -> Self {
+    Self {
+      row_limit: usize::MAX,
+      byte_limit: usize::MAX,
+      batch_size,
+      non_query: NonQueryHandling::Refuse,
+    }
+  }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum QueryExecutionSummary {
@@ -133,30 +174,36 @@ impl SessionConnection {
     }
   }
 
+  /// 只问「这条语句返回哪些列」，不取任何一行。
+  ///
+  /// 导出要先写 CSV 表头，而表头必须在第一批数据之前就写出去。三种驱动的
+  /// `describe` 都是 prepare 而非执行，所以拿列名不会让语句真的跑起来。
+  pub async fn describe_columns(
+    &mut self,
+    sql: &str,
+  ) -> Result<Vec<QueryColumnMetadata>, QueryError> {
+    match self {
+      Self::Sqlite(connection) => describe_sqlite_columns(connection, sql).await,
+      Self::MySql(connection) => describe_mysql_columns(connection, sql).await,
+      Self::Postgres(connection) => describe_postgres_columns(connection, sql).await,
+    }
+  }
+
   pub async fn execute_streaming(
     &mut self,
     sql: &str,
-    row_limit: usize,
-    byte_limit: usize,
-    batch_size: usize,
+    options: StreamOptions,
     sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
   ) -> Result<QueryExecutionSummary, QueryError> {
     match self {
       Self::Sqlite(connection) => {
-        execute_sqlite_connection_streaming(
-          connection, sql, row_limit, byte_limit, batch_size, sink,
-        )
-        .await
+        execute_sqlite_connection_streaming(connection, sql, options, sink).await
       }
       Self::MySql(connection) => {
-        execute_mysql_connection_streaming(connection, sql, row_limit, byte_limit, batch_size, sink)
-          .await
+        execute_mysql_connection_streaming(connection, sql, options, sink).await
       }
       Self::Postgres(connection) => {
-        execute_postgres_connection_streaming(
-          connection, sql, row_limit, byte_limit, batch_size, sink,
-        )
-        .await
+        execute_postgres_connection_streaming(connection, sql, options, sink).await
       }
     }
   }
@@ -210,9 +257,7 @@ async fn execute_sqlite_connection_with_limits(
   let summary = execute_sqlite_connection_streaming(
     connection,
     sql,
-    row_limit,
-    byte_limit,
-    row_limit.max(1),
+    StreamOptions::limited(row_limit, byte_limit, row_limit.max(1)),
     &mut |batch| {
       rows.extend(batch.rows);
       Ok(())
@@ -222,62 +267,69 @@ async fn execute_sqlite_connection_with_limits(
   summary_with_rows(summary, rows)
 }
 
+async fn describe_sqlite_columns(
+  connection: &mut SqliteConnection,
+  sql: &str,
+) -> Result<Vec<QueryColumnMetadata>, QueryError> {
+  let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
+  Ok(
+    description
+      .columns()
+      .iter()
+      .enumerate()
+      .map(|(ordinal, column)| QueryColumnMetadata {
+        name: column.name().to_string(),
+        ordinal,
+        database_type: column.type_info().name().to_string(),
+        logical_type: sqlite_logical_type(column.type_info().name()).to_string(),
+        nullable: description.nullable(ordinal),
+      })
+      .collect(),
+  )
+}
+
 async fn execute_sqlite_connection_streaming(
   connection: &mut SqliteConnection,
   sql: &str,
-  row_limit: usize,
-  byte_limit: usize,
-  batch_size: usize,
+  options: StreamOptions,
   sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
 ) -> Result<QueryExecutionSummary, QueryError> {
   if is_transaction_control_statement(sql) {
+    refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
-  let column_metadata = description
-    .columns()
-    .iter()
-    .enumerate()
-    .map(|(ordinal, column)| QueryColumnMetadata {
-      name: column.name().to_string(),
-      ordinal,
-      database_type: column.type_info().name().to_string(),
-      logical_type: sqlite_logical_type(column.type_info().name()).to_string(),
-      nullable: description.nullable(ordinal),
-    })
-    .collect::<Vec<_>>();
+  let column_metadata = describe_sqlite_columns(connection, sql).await?;
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
   if columns.is_empty() {
+    refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
   let mut stream = (&mut *connection).fetch(sqlx::query(sql));
-  let mut rows = Vec::with_capacity(batch_size);
+  let mut rows = Vec::with_capacity(options.batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
   let mut bytes_read: usize = 0;
   let mut truncation_reason = None;
-  while row_count < row_limit {
+  while row_count < options.row_limit {
     let Some(row) = stream.try_next().await.map_err(QueryError::from)? else {
       break;
     };
     let row = decode_sqlite_row(&row)?;
-    let row_bytes = serialized_row_size(&row)?;
-    if bytes_read.saturating_add(row_bytes) > byte_limit {
+    if !admit_row_bytes(&row, options.byte_limit, &mut bytes_read)? {
       truncation_reason = Some(QueryTruncationReason::ByteLimit);
       break;
     }
-    bytes_read += row_bytes;
     rows.push(row);
     row_count += 1;
-    flush_full_batch(&mut rows, batch_size, &mut batch_count, row_count, sink)?;
+    flush_full_batch(&mut rows, options.batch_size, &mut batch_count, row_count, sink)?;
   }
   if truncation_reason.is_none()
-    && row_count == row_limit
+    && row_count == options.row_limit
     && stream.try_next().await.map_err(QueryError::from)?.is_some()
   {
     truncation_reason = Some(QueryTruncationReason::RowLimit);
@@ -290,8 +342,8 @@ async fn execute_sqlite_connection_streaming(
     batch_count,
     truncated: truncation_reason.is_some(),
     truncation_reason,
-    row_limit,
-    byte_limit,
+    row_limit: options.row_limit,
+    byte_limit: options.byte_limit,
     bytes_read,
   })
 }
@@ -324,9 +376,7 @@ async fn execute_mysql_connection_with_limits(
   let summary = execute_mysql_connection_streaming(
     connection,
     sql,
-    row_limit,
-    byte_limit,
-    row_limit.max(1),
+    StreamOptions::limited(row_limit, byte_limit, row_limit.max(1)),
     &mut |batch| {
       rows.extend(batch.rows);
       Ok(())
@@ -336,62 +386,69 @@ async fn execute_mysql_connection_with_limits(
   summary_with_rows(summary, rows)
 }
 
+async fn describe_mysql_columns(
+  connection: &mut MySqlConnection,
+  sql: &str,
+) -> Result<Vec<QueryColumnMetadata>, QueryError> {
+  let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
+  Ok(
+    description
+      .columns()
+      .iter()
+      .enumerate()
+      .map(|(ordinal, column)| QueryColumnMetadata {
+        name: column.name().to_string(),
+        ordinal,
+        database_type: column.type_info().name().to_string(),
+        logical_type: mysql_logical_type(column.type_info().name()).to_string(),
+        nullable: description.nullable(ordinal),
+      })
+      .collect(),
+  )
+}
+
 async fn execute_mysql_connection_streaming(
   connection: &mut MySqlConnection,
   sql: &str,
-  row_limit: usize,
-  byte_limit: usize,
-  batch_size: usize,
+  options: StreamOptions,
   sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
 ) -> Result<QueryExecutionSummary, QueryError> {
   if is_transaction_control_statement(sql) {
+    refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
-  let column_metadata = description
-    .columns()
-    .iter()
-    .enumerate()
-    .map(|(ordinal, column)| QueryColumnMetadata {
-      name: column.name().to_string(),
-      ordinal,
-      database_type: column.type_info().name().to_string(),
-      logical_type: mysql_logical_type(column.type_info().name()).to_string(),
-      nullable: description.nullable(ordinal),
-    })
-    .collect::<Vec<_>>();
+  let column_metadata = describe_mysql_columns(connection, sql).await?;
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
   if columns.is_empty() {
+    refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
   let mut stream = (&mut *connection).fetch(sqlx::query(sql));
-  let mut rows = Vec::with_capacity(batch_size);
+  let mut rows = Vec::with_capacity(options.batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
   let mut bytes_read: usize = 0;
   let mut truncation_reason = None;
-  while row_count < row_limit {
+  while row_count < options.row_limit {
     let Some(row) = stream.try_next().await.map_err(QueryError::from)? else {
       break;
     };
     let row = decode_mysql_row(&row)?;
-    let row_bytes = serialized_row_size(&row)?;
-    if bytes_read.saturating_add(row_bytes) > byte_limit {
+    if !admit_row_bytes(&row, options.byte_limit, &mut bytes_read)? {
       truncation_reason = Some(QueryTruncationReason::ByteLimit);
       break;
     }
-    bytes_read += row_bytes;
     rows.push(row);
     row_count += 1;
-    flush_full_batch(&mut rows, batch_size, &mut batch_count, row_count, sink)?;
+    flush_full_batch(&mut rows, options.batch_size, &mut batch_count, row_count, sink)?;
   }
   if truncation_reason.is_none()
-    && row_count == row_limit
+    && row_count == options.row_limit
     && stream.try_next().await.map_err(QueryError::from)?.is_some()
   {
     truncation_reason = Some(QueryTruncationReason::RowLimit);
@@ -404,8 +461,8 @@ async fn execute_mysql_connection_streaming(
     batch_count,
     truncated: truncation_reason.is_some(),
     truncation_reason,
-    row_limit,
-    byte_limit,
+    row_limit: options.row_limit,
+    byte_limit: options.byte_limit,
     bytes_read,
   })
 }
@@ -439,9 +496,7 @@ async fn execute_postgres_connection_with_limits(
   let summary = execute_postgres_connection_streaming(
     connection,
     sql,
-    row_limit,
-    byte_limit,
-    row_limit.max(1),
+    StreamOptions::limited(row_limit, byte_limit, row_limit.max(1)),
     &mut |batch| {
       rows.extend(batch.rows);
       Ok(())
@@ -451,62 +506,69 @@ async fn execute_postgres_connection_with_limits(
   summary_with_rows(summary, rows)
 }
 
+async fn describe_postgres_columns(
+  connection: &mut PgConnection,
+  sql: &str,
+) -> Result<Vec<QueryColumnMetadata>, QueryError> {
+  let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
+  Ok(
+    description
+      .columns()
+      .iter()
+      .enumerate()
+      .map(|(ordinal, column)| QueryColumnMetadata {
+        name: column.name().to_string(),
+        ordinal,
+        database_type: column.type_info().name().to_string(),
+        logical_type: postgres_logical_type(column.type_info().name()).to_string(),
+        nullable: description.nullable(ordinal),
+      })
+      .collect(),
+  )
+}
+
 async fn execute_postgres_connection_streaming(
   connection: &mut PgConnection,
   sql: &str,
-  row_limit: usize,
-  byte_limit: usize,
-  batch_size: usize,
+  options: StreamOptions,
   sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
 ) -> Result<QueryExecutionSummary, QueryError> {
   if is_transaction_control_statement(sql) {
+    refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
-  let column_metadata = description
-    .columns()
-    .iter()
-    .enumerate()
-    .map(|(ordinal, column)| QueryColumnMetadata {
-      name: column.name().to_string(),
-      ordinal,
-      database_type: column.type_info().name().to_string(),
-      logical_type: postgres_logical_type(column.type_info().name()).to_string(),
-      nullable: description.nullable(ordinal),
-    })
-    .collect::<Vec<_>>();
+  let column_metadata = describe_postgres_columns(connection, sql).await?;
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
   if columns.is_empty() {
+    refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
   let mut stream = (&mut *connection).fetch(sqlx::query(sql));
-  let mut rows = Vec::with_capacity(batch_size);
+  let mut rows = Vec::with_capacity(options.batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
   let mut bytes_read: usize = 0;
   let mut truncation_reason = None;
-  while row_count < row_limit {
+  while row_count < options.row_limit {
     let Some(row) = stream.try_next().await.map_err(QueryError::from)? else {
       break;
     };
     let row = decode_postgres_row(&row)?;
-    let row_bytes = serialized_row_size(&row)?;
-    if bytes_read.saturating_add(row_bytes) > byte_limit {
+    if !admit_row_bytes(&row, options.byte_limit, &mut bytes_read)? {
       truncation_reason = Some(QueryTruncationReason::ByteLimit);
       break;
     }
-    bytes_read += row_bytes;
     rows.push(row);
     row_count += 1;
-    flush_full_batch(&mut rows, batch_size, &mut batch_count, row_count, sink)?;
+    flush_full_batch(&mut rows, options.batch_size, &mut batch_count, row_count, sink)?;
   }
   if truncation_reason.is_none()
-    && row_count == row_limit
+    && row_count == options.row_limit
     && stream.try_next().await.map_err(QueryError::from)?.is_some()
   {
     truncation_reason = Some(QueryTruncationReason::RowLimit);
@@ -519,8 +581,8 @@ async fn execute_postgres_connection_streaming(
     batch_count,
     truncated: truncation_reason.is_some(),
     truncation_reason,
-    row_limit,
-    byte_limit,
+    row_limit: options.row_limit,
+    byte_limit: options.byte_limit,
     bytes_read,
   })
 }
@@ -561,6 +623,39 @@ fn send_batch(
   sink(QueryResultBatch { index: *batch_count, offset, rows: batch_rows })?;
   *batch_count += 1;
   Ok(())
+}
+
+/// 把这一行计入字节预算；超出预算时返回 false，调用方据此停止读取。
+///
+/// `usize::MAX` 表示不设限（导出路径）。这时不能只是「比较结果恒为假」就算了——
+/// `serialized_row_size` 会把整行再序列化一遍，而结果会被直接丢掉。一次全表
+/// 导出就是白做几百万次。
+fn admit_row_bytes(
+  row: &QueryRow,
+  byte_limit: usize,
+  bytes_read: &mut usize,
+) -> Result<bool, QueryError> {
+  if byte_limit == usize::MAX {
+    return Ok(true);
+  }
+  let row_bytes = serialized_row_size(row)?;
+  if bytes_read.saturating_add(row_bytes) > byte_limit {
+    return Ok(false);
+  }
+  *bytes_read += row_bytes;
+  Ok(true)
+}
+
+/// 不返回结果集时给出的话。导出路径有两处会说这句（先探列、再流式读），
+/// 同一件事说两种话会让人以为是两个不同的问题。
+pub const NON_QUERY_MESSAGE: &str = "这条语句不返回结果集，没有可导出的内容";
+
+/// 导出路径遇到不返回结果集的语句时提前退出，不让它执行。
+fn refuse_non_query(handling: NonQueryHandling) -> Result<(), QueryError> {
+  match handling {
+    NonQueryHandling::Execute => Ok(()),
+    NonQueryHandling::Refuse => Err(QueryError::message(NON_QUERY_MESSAGE)),
+  }
 }
 
 fn serialized_row_size(row: &QueryRow) -> Result<usize, QueryError> {
@@ -1001,9 +1096,7 @@ mod tests {
     let summary = execute_sqlite_connection_streaming(
       &mut connection,
       "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5",
-      5,
-      DEFAULT_QUERY_BYTE_LIMIT,
-      2,
+      StreamOptions::limited(5, DEFAULT_QUERY_BYTE_LIMIT, 2),
       &mut |batch| {
         batches.push(batch);
         Ok(())
@@ -1036,9 +1129,7 @@ mod tests {
     let summary = execute_sqlite_connection_streaming(
       &mut connection,
       "SELECT 'a value larger than the budget' AS value",
-      100,
-      1,
-      10,
+      StreamOptions::limited(100, 1, 10),
       &mut |batch| {
         batches.push(batch);
         Ok(())

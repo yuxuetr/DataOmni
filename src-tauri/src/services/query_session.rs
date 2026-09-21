@@ -1,6 +1,6 @@
 use crate::services::{
   QueryError, QueryExecutionResult, QueryExecutionSummary, QueryResultBatch, SessionConnection,
-  QUERY_TIMEOUT_CODE,
+  StreamOptions, QUERY_TIMEOUT_CODE,
 };
 use std::{collections::HashMap, sync::Arc};
 use tauri_plugin_sql::DbPool;
@@ -85,9 +85,7 @@ impl QuerySessionState {
       connection
         .execute_streaming(
           options.sql,
-          options.row_limit,
-          options.byte_limit,
-          options.batch_size,
+          StreamOptions::limited(options.row_limit, options.byte_limit, options.batch_size),
           sink,
         )
         .await

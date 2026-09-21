@@ -106,6 +106,8 @@ pub fn run() {
       get_table_quick_view_query,
       execute_query,
       execute_write_batch,
+      export_query_to_file,
+      cancel_export,
       cancel_query,
       release_database_session,
       validate_query,
