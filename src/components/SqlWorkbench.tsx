@@ -15,6 +15,7 @@ import { SqlEditor } from './SqlEditor';
 import { ConnectionInfoDialog } from './ConnectionInfoDialog';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
+import { useSessionTarget } from '../hooks/useSessionTarget';
 
 interface SqlWorkbenchProps {
   connection: ConnectionConfig;
@@ -44,6 +45,8 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
   const { selectTable, clearSelectedTable } = useAppStore();
 
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('disconnected');
+  // 服务端说的执行目标。问不出来时退回连接配置里的库名
+  const target = useSessionTarget(connection);
 
   // 监听连接状态
   useEffect(() => {
@@ -131,6 +134,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
   };
 
   const statusDisplay = getConnectionStatusDisplay();
+  const targetDatabase = target.database ?? connection.database;
   const [showConnectionInfo, setShowConnectionInfo] = useState(false);
 
   return (
@@ -149,11 +153,21 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
           <Database className="shrink-0 text-fg-subtle" size={16} />
           <span className="font-medium text-fg">{connection.name}</span>
           <EnvironmentBadgeTag environment={connection.environment} />
+          {target.readOnly && (
+            <span
+              title={t('workbench.readOnlyHint')}
+              className="shrink-0 rounded-control border border-warning-line bg-warning-soft px-1.5 py-0.5 text-[11px] font-medium text-warning"
+            >
+              {t('workbench.readOnly')}
+            </span>
+          )}
           <span className="truncate text-fg-muted">
             {connection.db_type} · {connection.host}:{connection.port}
-            {connection.database
-              ? ` / ${connection.database}`
-              : t('workbench.noDatabase')}
+            {/* 库名优先用服务端报的，问不出来才退回配置里那个 */}
+            {targetDatabase ? ` / ${targetDatabase}` : t('workbench.noDatabase')}
+            {/* Schema 只有 PostgreSQL 有。它回答的是「不带前缀的 CREATE TABLE
+                会落到哪」，在一个连接横跨多个 schema 时是必要信息 */}
+            {target.schema ? ` · ${target.schema}` : ''}
           </span>
           <span className={clsx('flex shrink-0 items-center gap-1 text-xs', statusDisplay.color)}>
             {statusDisplay.icon}

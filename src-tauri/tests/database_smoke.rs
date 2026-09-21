@@ -1889,3 +1889,124 @@ async fn sqlite_completion_catalog_lists_views_next_to_tables() {
     "内部表要挡住: {catalog:?}"
   );
 }
+
+#[tokio::test]
+async fn postgres_session_target_reports_the_servers_own_answer() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+
+  let query =
+    dataomni_lib::services::session_target_query(&dataomni_lib::models::DatabaseType::PostgreSQL)
+      .expect("supported");
+
+  let row = sqlx::query(query.sql).fetch_one(&pool).await.expect("read session target");
+  assert!(!row.get::<String, _>("database_name").is_empty(), "库名不该是空的");
+  assert_eq!(row.get::<Option<String>, _>("schema_name").as_deref(), Some("public"));
+  assert!(!row.get::<bool, _>("read_only"), "普通连接不是只读的");
+
+  // 同一条连接上改掉 search_path 之后，这条查询报的是新值——证明它读的是
+  // 服务端的实际状态，不是把连接串里的东西原样回显。
+  //
+  // 应用里**不会**据此做实时刷新：tauri-plugin-sql 用的是 sqlx 默认的连接池
+  // （最多 10 条连接），`SET` 只改动其中一条，下一条查询可能落在另一条上。
+  // 所以界面上那一栏说的是「新查询默认落在哪」，不是「会话现在在哪」。
+  let mut conn = pool.acquire().await.expect("hold one connection");
+  let schema = "dataomni_target_probe";
+  sqlx::query(&format!("CREATE SCHEMA IF NOT EXISTS {schema}"))
+    .execute(&mut *conn)
+    .await
+    .expect("create probe schema");
+  sqlx::query(&format!("SET search_path TO {schema}"))
+    .execute(&mut *conn)
+    .await
+    .expect("move this connection");
+
+  let moved =
+    sqlx::query(query.sql).fetch_one(&mut *conn).await.expect("read session target again");
+  assert_eq!(
+    moved.get::<Option<String>, _>("schema_name").as_deref(),
+    Some(schema),
+    "读的必须是服务端的实际 schema，不是连接配置的回显"
+  );
+
+  sqlx::query("SET search_path TO public").execute(&mut *conn).await.ok();
+  sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema}")).execute(&mut *conn).await.ok();
+}
+
+#[tokio::test]
+async fn mysql_session_target_reports_database_and_read_only() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+
+  let query =
+    dataomni_lib::services::session_target_query(&dataomni_lib::models::DatabaseType::MySQL)
+      .expect("supported");
+
+  let row = sqlx::query(query.sql).fetch_one(&pool).await.expect("read session target");
+  assert_eq!(
+    row.get::<Option<String>, _>("database_name").as_deref(),
+    Some("dataomni_test"),
+    "报的应当是服务端选定的库"
+  );
+  // MySQL 没有独立于库的 schema，这一列恒为 NULL
+  assert!(row.get::<Option<String>, _>("schema_name").is_none());
+  // 布尔表达式在 MySQL 里是 BIGINT，按整数取
+  assert_eq!(row.get::<i64, _>("read_only"), 0, "测试库不是只读副本");
+}
+
+#[tokio::test]
+async fn mysql_use_is_rejected_by_the_prepared_protocol() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+
+  // 这条钉住的是「MySQL 那一栏为什么不会过期」。
+  //
+  // 两件事叠在一起：(1) `USE` 走不了预处理协议，应用的 `execute_query` 正是
+  // 预处理的，所以用户在编辑器里敲 `USE` 得到的是 1295，不是悄悄换了个库；
+  // (2) 就算换掉了，MySQL 的 `DATABASE()` 在预处理语句里是**准备时**求值的，
+  // 实测 `USE` 之后同一条连接上预处理的 `SELECT DATABASE()` 仍报旧库名，
+  // 只有文本协议才报新的。
+  //
+  // 所以界面上那一栏在 MySQL 下恒等于连上去时选定的库。哪天改回文本协议，
+  // 这条会红，提醒回来重估那一栏的说法。
+  let error = sqlx::query("USE information_schema")
+    .execute(&pool)
+    .await
+    .expect_err("prepared protocol must reject USE");
+  assert!(
+    error.to_string().contains("1295") || error.to_string().contains("prepared statement"),
+    "预期 1295，实际: {error}"
+  );
+}
+
+#[tokio::test]
+async fn sqlite_session_target_reports_query_only() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("connect to in-memory SQLite");
+
+  let query =
+    dataomni_lib::services::session_target_query(&dataomni_lib::models::DatabaseType::SQLite)
+      .expect("supported");
+
+  let row = sqlx::query(query.sql).fetch_one(&pool).await.expect("read session target");
+  // SQLite 的「库」就是那个文件，连接配置里的路径已经说明了一切
+  assert!(row.get::<Option<String>, _>("database_name").is_none());
+  assert!(row.get::<Option<String>, _>("schema_name").is_none());
+  assert_eq!(row.get::<i64, _>("read_only"), 0);
+
+  sqlx::query("PRAGMA query_only = 1").execute(&pool).await.expect("turn on query_only");
+  let locked = sqlx::query(query.sql).fetch_one(&pool).await.expect("read session target again");
+  assert_eq!(locked.get::<i64, _>("read_only"), 1, "query_only 打开后要报出只读");
+}

@@ -517,3 +517,12 @@ pub fn get_completion_catalog_query(
   crate::services::completion_catalog_query(&db_type)
     .ok_or_else(|| format!("{:?} 尚未支持 SQL 补全目录", db_type))
 }
+
+/// 取该方言的会话目标查询。与另外几个目录命令一样只回 SQL 文本。
+#[tauri::command]
+pub fn get_session_target_query(
+  db_type: crate::models::DatabaseType,
+) -> Result<crate::services::SessionTargetQuery, String> {
+  crate::services::session_target_query(&db_type)
+    .ok_or_else(|| format!("{:?} 尚未支持会话目标查询", db_type))
+}

@@ -6,6 +6,7 @@ pub mod object_catalog;
 pub mod query_executor;
 pub mod query_session;
 pub mod schema_metadata;
+pub mod session_target;
 
 pub use completion_catalog::{completion_catalog_query, CompletionCatalogQuery};
 pub use connection_service::ConnectionService;
@@ -20,3 +21,4 @@ pub use query_executor::{
 };
 pub use query_session::{QuerySessionState, StreamingQueryOptions};
 pub use schema_metadata::{schema_metadata_queries, DdlQuery, SchemaMetadataQueries};
+pub use session_target::{session_target_query, SessionTargetQuery};

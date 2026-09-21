@@ -112,6 +112,7 @@ pub fn run() {
       get_object_catalog_queries,
       get_er_diagram_queries,
       get_completion_catalog_query,
+      get_session_target_query,
       // 文件写入
       write_text_file,
       write_binary_file,

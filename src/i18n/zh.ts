@@ -241,6 +241,9 @@ export const zh = {
   'editor.formatTitle': '格式化 SQL（有选区时只排选区）⌘⇧F',
   'editor.formatFailed': '格式化失败，编辑器内容未改动',
 
+  'workbench.readOnly': '只读',
+  'workbench.readOnlyHint': '服务端报告这个连接只读（只读副本，或 SQLite 打开了 query_only），写入会被拒绝',
+
   'editor.search.find': '查找',
   'editor.search.replaceField': '替换为',
   'editor.search.next': '下一个',

@@ -224,6 +224,9 @@ export const en: Translations = {
   'editor.formatTitle': 'Format SQL (the selection only, when there is one) \u2318\u21e7F',
   'editor.formatFailed': 'Formatting failed; the editor was left unchanged',
 
+  'workbench.readOnly': 'read-only',
+  'workbench.readOnlyHint': 'The server reports this connection as read-only (a read-only replica, or SQLite query_only); writes will be rejected',
+
   'editor.search.find': 'Find',
   'editor.search.replaceField': 'Replace with',
   'editor.search.next': 'next',
