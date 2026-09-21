@@ -46,16 +46,20 @@ import { ExportResultDialog } from './ExportResultDialog';
 interface QueryResultScrollTableProps {
   result: QueryResult;
   statementId: string;
+  /** 产生这份结果的那条 SQL。结果被截断时，导出整份要靠它重新执行一遍。 */
+  resultSql?: string;
   formatExecutionTime: (ms: number) => string;
 }
 
 export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({ 
   result, 
   statementId, 
+  resultSql,
   formatExecutionTime 
 }) => {
   const t = useLanguageStore((state) => state.t);
   const commitRowChanges = useQueryStore((state) => state.commitRowChanges);
+  const connectionId = useQueryStore((state) => state.connectionId);
   const dialect = useQueryStore(selectSqlDialect);
   
   // 分页状态
@@ -359,6 +363,22 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
           rows={sortedRows}
           sourceName={editability?.editable ? editability.table : t('result.queryResult')}
           truncated={result.truncated}
+          connectionId={connectionId ?? undefined}
+          // 只在结果真被截断时才给「完整结果」这一档。没截断时内存里的就是全部，
+          // 再跑一遍数据库只是白付一次查询的代价。
+          scopes={
+            result.truncated && resultSql
+              ? [
+                  { id: 'current', label: t('export.scope.currentResult') },
+                  {
+                    id: 'full',
+                    label: t('export.scope.fullResult'),
+                    note: t('export.scope.fullResultNote'),
+                    sql: resultSql
+                  }
+                ]
+              : undefined
+          }
           onClose={() => setShowExport(false)}
         />
       )}

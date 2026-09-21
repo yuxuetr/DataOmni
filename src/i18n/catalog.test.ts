@@ -1,3 +1,5 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { en } from './en';
 import { zh } from './zh';
@@ -6,7 +8,25 @@ import { translate } from './translate';
 const KEYS = Object.keys(zh) as Array<keyof typeof zh>;
 
 function placeholders(text: string): string[] {
-  return [...text.matchAll(/\{(\w+)\}/g)].map(match => match[1]).sort();
+  return [...new Set([...text.matchAll(/\{(\w+)\}/g)].map(match => match[1]))].sort();
+}
+
+/** 遍历 src 下所有 .ts / .tsx，测试文件除外（那里的键是随手编的） */
+function sourceFiles(): Array<[string, string]> {
+  const root = new URL('../..', import.meta.url).pathname;
+  const found: Array<[string, string]> = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(path);
+      } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+        found.push([path.slice(root.length), readFileSync(path, 'utf8')]);
+      }
+    }
+  };
+  walk(join(root, 'src'));
+  return found;
 }
 
 describe('翻译目录', () => {
@@ -20,6 +40,43 @@ describe('翻译目录', () => {
     for (const key of KEYS) {
       expect(placeholders(en[key]), `${key} 的占位符对不上`).toEqual(placeholders(zh[key]));
     }
+  });
+
+  it('调用点传的参数名和文案里的占位符对得上', () => {
+    // `translate` 故意保留没被替换掉的占位符，所以传错名字的后果是界面上
+    // 明晃晃地印着 `{count}`。这不会让任何测试变红——只有把界面渲染出来看才
+    // 发现得了，而一轮改动里同一个错犯了三次。这条门把它变成编译期之外的一次断言。
+    const problems: string[] = [];
+    for (const [file, source] of sourceFiles()) {
+      // 只认字面量键加字面量参数对象的调用；动态键或展开参数跳过——
+      // 猜一个可能对不上的东西，比不查更糟
+      const calls = source.matchAll(/\bt\(\s*'([\w.]+)'\s*,\s*\{([^{}]*)\}\s*\)/g);
+      for (const call of calls) {
+        const key = call[1] as keyof typeof zh;
+        if (!(key in zh)) {
+          continue;
+        }
+        if (call[2].includes('...')) {
+          continue;
+        }
+        // `{ count }` 简写和 `{ count: n }` 都要认出来
+        const passed = new Set(
+          [...call[2].matchAll(/(?:^|,)\s*([A-Za-z_$][\w$]*)\s*(:|,|$)/g)].map(match => match[1])
+        );
+        const expected = placeholders(zh[key]);
+        const missing = expected.filter(name => !passed.has(name));
+        // `count` 可以多传：它不出现在文案里也仍然决定取不取 `.one`。
+        // 其余的多余参数多半是占位符被改了名，而那正是会在界面上留下 `{x}` 的那种。
+        const extra = [...passed].filter(name => name !== 'count' && !expected.includes(name));
+        if (missing.length > 0) {
+          problems.push(`${file}: t('${key}') 没传 [${missing}]，界面上会直接印出占位符`);
+        }
+        if (extra.length > 0) {
+          problems.push(`${file}: t('${key}') 多传了 [${extra}]，文案要的是 [${expected}]`);
+        }
+      }
+    }
+    expect(problems).toEqual([]);
   });
 
   it('英文文案里不残留中日韩字符', () => {

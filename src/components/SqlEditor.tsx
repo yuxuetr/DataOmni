@@ -765,6 +765,7 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
           <QueryResultScrollTable
             result={statement.result}
             statementId={statement.id}
+            resultSql={statement.resultSql}
             formatExecutionTime={formatExecutionTime}
           />
         </>

@@ -36,6 +36,7 @@ import {
   createTablePaginationOrder,
   type TablePaginationOrder
 } from '../utils/tablePagination';
+import { buildTableExportQuery } from '../utils/tableExportQuery';
 import { nextColumnSort, type ColumnSort } from '../utils/resultSorting';
 import { ColumnSortButton } from './ColumnSortButton';
 import { useCellSelection } from '../hooks/useCellSelection';
@@ -519,6 +520,38 @@ export default function TableDataViewer({
     [positionalRows, visibleIndexes]
   );
   const visibleWidths = visibleIndexes.map((index) => columnWidths[index] ?? 0);
+
+  const hiddenColumnsNote =
+    hiddenColumns.size > 0 ? ` ${t('export.scopeHiddenColumns', { count: hiddenColumns.size })}` : '';
+
+  /** 整表导出用的 SQL。与网格取数同源，只是不分页——见 buildTableExportQuery。 */
+  const wholeTableExportSql = React.useMemo(() => {
+    if (!tableSchema || tableSchemaKey !== currentTableKey) {
+      return null;
+    }
+    return buildTableExportQuery({
+      schema,
+      table: tableName,
+      columns: tableSchema.columns,
+      visibleColumns: visibleIndexes.map((index) => columnNames[index] ?? ''),
+      filters: appliedFilters,
+      paginationOrder: paginationOrder ?? createTablePaginationOrder(tableSchema.columns, dialect),
+      sort,
+      dialect
+    });
+  }, [
+    tableSchema,
+    tableSchemaKey,
+    currentTableKey,
+    schema,
+    tableName,
+    dialect,
+    visibleIndexes,
+    columnNames,
+    appliedFilters,
+    paginationOrder,
+    sort
+  ]);
   const frozenOffsets = frozenLeftOffsets(visibleWidths, frozenCount);
   // 冻结区的最后一列画一道粗边：没有分界线时，滚过去的内容看上去是凭空消失的，
   // 而不是被压在冻住的列下面
@@ -1554,14 +1587,32 @@ export default function TableDataViewer({
           columns={visibleIndexes.map((index) => columnNames[index] ?? '')}
           rows={visibleRows}
           sourceName={tableName}
-          scopeNote={
-            // 导出跟着可见列走，否则藏起来的列会在文件里冒出来。范围话必须说全：
-            // 少了哪几列不写出来，用户直到打开文件才发现
-            t('export.scopeCurrentPage', { page: currentPage, rows: tableData.length, total: totalRows })
-            + (hiddenColumns.size > 0
-              ? ` ${t('export.scopeHiddenColumns', { count: hiddenColumns.size })}`
-              : '')
-          }
+          connectionId={connection.id}
+          // 导出跟着可见列走，否则藏起来的列会在文件里冒出来。两个范围各自把
+          // 话说全：少了哪几列、是这一页还是整张表，用户不该打开文件才发现
+          scopes={[
+            {
+              id: 'page',
+              label: t('export.scope.currentPage'),
+              note:
+                t('export.scopeCurrentPage', {
+                  page: currentPage,
+                  rows: tableData.length,
+                  total: totalRows
+                }) + hiddenColumnsNote
+            },
+            ...(wholeTableExportSql
+              ? [
+                  {
+                    id: 'table',
+                    label: t('export.scope.wholeTable'),
+                    note:
+                      t('export.scope.wholeTableNote', { count: totalRows }) + hiddenColumnsNote,
+                    sql: wholeTableExportSql
+                  }
+                ]
+              : [])
+          ]}
           onClose={() => setShowExport(false)}
         />
       )}
