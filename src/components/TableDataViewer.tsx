@@ -30,11 +30,7 @@ import {
   Columns3
 } from 'lucide-react';
 import clsx from 'clsx';
-import type {
-  ColumnInfo,
-  ConnectionProfile,
-  TableSchema
-} from '../contracts';
+import type { ConnectionProfile, TableSchema } from '../contracts';
 import { assertSingleRowAffected } from '../utils/executeResult';
 import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from '../utils/sqlIdentifiers';
 import {
@@ -60,6 +56,7 @@ import {
 import { SchemaObjectSections, type SchemaObjects } from './SchemaObjectSections';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { requireDatabase } from '../utils/requireDatabase';
+import { tableColumnsQuery, toColumnInfo } from '../utils/tableMetadata';
 import { describeRowIdentity, type IndexMetadata } from '../utils/rowIdentity';
 import {
   buildDeleteStatement,
@@ -291,79 +288,16 @@ export default function TableDataViewer({
     if (!await ensureDatabaseConnection()) return null;
     
     try {
-      let schemaQuery = '';
-      
-      switch (connection.db_type) {
-        case 'postgresql':
-          schemaQuery = `
-            SELECT 
-              c.column_name::text AS column_name,
-              c.data_type::text AS data_type,
-              c.is_nullable::text AS is_nullable,
-              c.column_default::text AS column_default,
-              CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END as is_primary_key,
-              pk.primary_key_ordinal
-            FROM information_schema.columns c
-            LEFT JOIN (
-              SELECT kcu.table_schema, kcu.table_name, kcu.column_name,
-                     kcu.ordinal_position as primary_key_ordinal
-              FROM information_schema.table_constraints tc
-              JOIN information_schema.key_column_usage kcu
-                ON tc.constraint_schema = kcu.constraint_schema
-               AND tc.constraint_name = kcu.constraint_name
-               AND tc.table_schema = kcu.table_schema
-               AND tc.table_name = kcu.table_name
-              WHERE tc.constraint_type = 'PRIMARY KEY'
-            ) pk ON c.table_schema = pk.table_schema
-                AND c.table_name = pk.table_name
-                AND c.column_name = pk.column_name
-            WHERE c.table_name = $1
-              AND c.table_schema = COALESCE($2, current_schema())
-            ORDER BY c.ordinal_position
-          `;
-          break;
-        case 'mysql':
-          schemaQuery = `
-            SELECT 
-              CAST(c.COLUMN_NAME AS CHAR) as column_name,
-              CAST(c.DATA_TYPE AS CHAR) as data_type,
-              CAST(c.IS_NULLABLE AS CHAR) as is_nullable,
-              CAST(c.COLUMN_DEFAULT AS CHAR) as column_default,
-              kcu.COLUMN_NAME IS NOT NULL as is_primary_key,
-              kcu.ORDINAL_POSITION as primary_key_ordinal
-            FROM INFORMATION_SCHEMA.COLUMNS c
-            LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
-              ON c.TABLE_SCHEMA = kcu.TABLE_SCHEMA
-             AND c.TABLE_NAME = kcu.TABLE_NAME
-             AND c.COLUMN_NAME = kcu.COLUMN_NAME
-             AND kcu.CONSTRAINT_NAME = 'PRIMARY'
-            WHERE c.TABLE_NAME = ?
-              AND c.TABLE_SCHEMA = COALESCE(?, DATABASE())
-            ORDER BY c.ORDINAL_POSITION
-          `;
-          break;
-        case 'sqlite':
-          schemaQuery = `PRAGMA table_info(${quoteSqlIdentifier(tableName, 'sqlite')})`;
-          break;
+      const columnsQuery = tableColumnsQuery(connection.db_type, tableName, schema);
+      if (!columnsQuery) {
+        throw new Error(t('table.schemaLoadFailedStopped'));
       }
-      
       const columnsResult = await requireDatabase(database).select(
-        schemaQuery,
-        connection.db_type === 'sqlite' ? [] : [tableName, schema ?? null]
+        columnsQuery.sql,
+        columnsQuery.params
       );
-      
-      const columns: ColumnInfo[] = Array.isArray(columnsResult) ? columnsResult.map((col: any) => {
-        const primaryKeyOrdinal = Number(col.primary_key_ordinal ?? col.pk ?? 0);
-        return {
-          name: col.column_name || col.name,
-          data_type: col.data_type || col.type,
-          is_nullable: col.is_nullable === 'YES' || col.notnull === 0,
-          is_primary_key: primaryKeyOrdinal > 0 || col.is_primary_key === true,
-          primary_key_ordinal: primaryKeyOrdinal > 0 ? primaryKeyOrdinal : undefined,
-          default_value: col.column_default || col.dflt_value
-        };
-      }) : [];
-      
+      const columns = toColumnInfo(columnsResult);
+
       const loadedSchema = { columns };
       setTableSchema(loadedSchema);
       setTableSchemaKey(currentTableKey);

@@ -1,5 +1,7 @@
 import type { QueryExecutionError } from './queryExecution';
 import type { SerializedResultValue } from './resultSet';
+import type { ColumnInfo } from './databaseMetadata';
+import type { ResultEditability } from '../utils/resultEditability';
 
 export interface QueryResult {
   columns: string[];
@@ -12,8 +14,15 @@ export interface QueryResult {
   row_limit?: number;
   byte_limit?: number;
   bytes_read?: number;
-  table_name?: string;
-  primary_key?: string;
+  /**
+   * 这份结果能不能就地改，以及靠哪几列定位一行。
+   *
+   * 不存表名和「主键」两个裸字段：那两个字段合法的组合远多于有意义的组合
+   * （有表名没键、有键但键不在投影里…），每个读它们的地方都得自己重新判断一遍。
+   */
+  editability?: ResultEditability;
+  /** 目标表的列元数据，写入时按声明类型决定比较该内联还是绑定 */
+  tableColumns?: ColumnInfo[];
 }
 
 export interface DriverQueryColumn {

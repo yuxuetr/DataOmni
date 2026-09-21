@@ -32,7 +32,17 @@ import {
   failSqlStatement,
   reconcileSqlStatements
 } from '../utils/queryStatements';
-import { quoteSqlIdentifier } from '../utils/sqlIdentifiers';
+import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from '../utils/sqlIdentifiers';
+import { describeResultEditability, parseSingleTableSelect } from '../utils/resultEditability';
+import { loadTableMetadata } from '../utils/tableMetadata';
+import {
+  buildDeleteStatement,
+  buildUpdateStatement,
+  type BoundValue,
+  type RowKey,
+  type TableTarget
+} from '../utils/rowStatements';
+import { unwrapResultValue } from '../utils/resultValues';
 import { executeSequentially } from '../utils/queryExecutionPolicy';
 import { translateNow } from './languageStore';
 import { changesSchema } from '../utils/schemaChanges';
@@ -124,113 +134,6 @@ interface QueryActions {
 // 完整的Store类型
 type QueryStore = QueryState & QueryActions;
 
-// 只有能明确映射到单表完整行的查询结果才允许编辑
-const extractEditableTableName = (sql: string): string | undefined => {
-  const normalizedSql = sql.trim().replace(/;$/, '').trim();
-  const unsupportedClauses = /\b(join|union|intersect|except|group\s+by|having)\b/i;
-
-  if (unsupportedClauses.test(normalizedSql)) {
-    return undefined;
-  }
-
-  const match = normalizedSql.match(
-    /^select\s+\*\s+from\s+([`"]?)([a-zA-Z_][a-zA-Z0-9_$]*)\1(?=\s|$)([\s\S]*)$/i
-  );
-  if (!match) {
-    return undefined;
-  }
-
-  const remainder = match[3].trim();
-  if (
-    remainder &&
-    !/^(where\b|order\s+by\b|limit\b|offset\b)/i.test(remainder)
-  ) {
-    return undefined;
-  }
-
-  return match[2];
-};
-
-// 检测表的主键
-const detectPrimaryKey = async (database: Database, tableName: string | undefined, columns: string[], connectionString: string | null): Promise<string | undefined> => {
-  if (!tableName) return undefined;
-  
-  try {
-    // 常见的主键列名
-    const commonPrimaryKeys = ['id', 'ID', 'Id', `${tableName}_id`, `${tableName.toLowerCase()}_id`];
-    
-    // 检查是否有常见的主键列名
-    for (const pkName of commonPrimaryKeys) {
-      if (columns.includes(pkName)) {
-        console.log('🔑 检测到可能的主键:', pkName);
-        return pkName;
-      }
-    }
-    
-    // 根据连接字符串类型尝试查询数据库schema获取主键信息
-    if (connectionString?.startsWith('postgres://')) {
-      try {
-        // PostgreSQL
-        const pgPkQuery = `
-          SELECT column_name 
-          FROM information_schema.table_constraints tc
-          JOIN information_schema.key_column_usage kcu 
-            ON tc.constraint_name = kcu.constraint_name
-          WHERE tc.table_name = $1 AND tc.constraint_type = 'PRIMARY KEY'
-          LIMIT 1
-        `;
-        const pgResult = await database.select(pgPkQuery, [tableName]);
-        if (Array.isArray(pgResult) && pgResult.length > 0) {
-          const pkColumn = pgResult[0].column_name;
-          console.log('🔑 从PostgreSQL schema检测到主键:', pkColumn);
-          return pkColumn;
-        }
-      } catch (error) {
-        console.warn('⚠️ PostgreSQL主键查询失败:', error);
-      }
-    } else if (connectionString?.startsWith('sqlite:')) {
-      try {
-        // SQLite
-        const sqlitePkQuery = `PRAGMA table_info(${tableName})`;
-        const sqliteResult = await database.select(sqlitePkQuery);
-        if (Array.isArray(sqliteResult)) {
-          const pkColumn = sqliteResult.find((col: any) => col.pk === 1);
-          if (pkColumn) {
-            console.log('🔑 从SQLite schema检测到主键:', pkColumn.name);
-            return pkColumn.name;
-          }
-        }
-      } catch (error) {
-        console.warn('⚠️ SQLite主键查询失败:', error);
-      }
-    } else if (connectionString?.startsWith('mysql://')) {
-      try {
-        // MySQL
-        const mysqlPkQuery = `
-          SELECT COLUMN_NAME 
-          FROM INFORMATION_SCHEMA.COLUMNS 
-          WHERE TABLE_NAME = ? AND COLUMN_KEY = 'PRI'
-          LIMIT 1
-        `;
-        const mysqlResult = await database.select(mysqlPkQuery, [tableName]);
-        if (Array.isArray(mysqlResult) && mysqlResult.length > 0) {
-          const pkColumn = mysqlResult[0].COLUMN_NAME;
-          console.log('🔑 从MySQL schema检测到主键:', pkColumn);
-          return pkColumn;
-        }
-      } catch (error) {
-        console.warn('⚠️ MySQL主键查询失败:', error);
-      }
-    }
-    
-    console.warn('⚠️ 无法检测到主键，数据编辑功能将不可用');
-    return undefined;
-  } catch (error) {
-    console.warn('⚠️ 主键检测失败:', error);
-    return undefined;
-  }
-};
-
 // 格式化执行时间
 const formatExecutionTime = (ms: number): string => {
   if (ms < 1000) {
@@ -305,6 +208,99 @@ function recordHistory(execution: QueryExecution, rowsAffected: number | null): 
   useHistoryStore
     .getState()
     .record(execution, { connectionName: connection?.name ?? profileId, rowsAffected });
+}
+
+/**
+ * 把编辑框里的值变成可绑定的值。
+ *
+ * 不按值的样子猜类型：`Number('9007199254740993')` 会丢精度，
+ * `Boolean('false')` 是 true。原样交给数据库按目标列的类型解析。
+ */
+function toBoundValue(value: unknown): BoundValue {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') {
+    return value;
+  }
+  return unwrapResultValue(value as SerializedResultValue);
+}
+
+interface ResultWriteContext {
+  database: Database;
+  result: QueryResult;
+  target: TableTarget;
+  key: RowKey;
+  rowIndex: number;
+}
+
+/**
+ * 三个行操作共有的前置检查：找到语句、确认这份结果可改、按键列取出这一行的键值。
+ *
+ * 键值要从 tagged 包装里拆出来。此前这里直接把 `result.rows[i][pkIndex]` 绑进
+ * WHERE，而 BigInt / Decimal / 时间列拿到的是 `{type, value}` 对象——绑进去是
+ * 一段 JSON，条件永远匹配不上，报出来的是「没有影响任何行」。
+ */
+async function writeToResultRow(
+  get: () => QueryStore,
+  set: (partial: Partial<QueryState>) => void,
+  statementId: string,
+  write: (context: ResultWriteContext) => Promise<QueryResult>,
+  rowIndex: number,
+  failureKey: 'error.updateFailed' | 'error.deleteFailed'
+): Promise<void> {
+  const documentId = get().activeDocumentId;
+  if (!documentId) {
+    throw new Error(translateNow('error.noActiveSqlTab'));
+  }
+  const { database, connectionString } = get();
+  if (!database) {
+    set({ error: translateNow('error.notConnected') });
+    return;
+  }
+
+  const { statements } = readSqlDocument(get(), documentId);
+  const statement = statements.find(s => s.id === statementId);
+  const result = statement?.result;
+  if (!result) {
+    return;
+  }
+
+  const editability = result.editability;
+  if (!editability?.editable) {
+    set({ error: translateNow('error.cannotUpdateNoKey') });
+    return;
+  }
+
+  const row = result.rows[rowIndex];
+  if (!row) {
+    return;
+  }
+
+  try {
+    const target: TableTarget = {
+      schema: editability.schema,
+      table: editability.table,
+      columns: result.tableColumns ?? [],
+      dialect: getSqlDialect(connectionString)
+    };
+    const key: RowKey = {
+      columns: editability.keyColumns,
+      values: Object.fromEntries(editability.keyColumns.map((name) => {
+        const index = result.columns.indexOf(name);
+        return [name, index === -1 ? null : unwrapResultValue(row[index])];
+      }))
+    };
+
+    const updated = await write({ database, result, target, key, rowIndex });
+    useQueryStore.setState((state) => writeSqlDocument(state, documentId, (document) => ({
+      statements: document.statements.map(s =>
+        s.id === statementId ? { ...s, result: updated } : s
+      )
+    })));
+  } catch (error) {
+    set({ error: describeError(error, translateNow(failureKey)) });
+  }
 }
 
 export const selectActiveSqlDocument = (state: QueryState): SqlDocument =>
@@ -770,12 +766,16 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         const rows = streamedRows.map((row) =>
           driverResult.columns.map((column) => row[column])
         );
-        const tableName = extractEditableTableName(sql);
-        const primaryKey = await detectPrimaryKey(
-          database,
-          tableName,
-          driverResult.columns,
-          connectionString
+        // 能不能改必须是**证明**：认得出是单表 SELECT，而且键来自目录而不是
+        // 「有没有一列叫 id」。目录查询只在认出形态之后才发，复杂查询不付这个代价
+        const dialect = getSqlDialect(connectionString);
+        const parsed = parseSingleTableSelect(sql, dialect);
+        const metadata = parsed
+          ? await loadTableMetadata(database, dialect, parsed.table, parsed.schema ?? undefined)
+          : null;
+        const editability = describeResultEditability(
+          parsed,
+          metadata?.identity ?? { identity: null, absence: 'no-unique-key' }
         );
 
         queryResult = {
@@ -789,8 +789,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           row_limit: driverResult.row_limit,
           byte_limit: driverResult.byte_limit,
           bytes_read: driverResult.bytes_read,
-          table_name: tableName,
-          primary_key: primaryKey,
+          editability,
+          tableColumns: metadata?.columns ?? []
         };
       } else {
         queryResult = {
@@ -972,165 +972,40 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   },
 
   // 数据操作方法
+
   updateRowData: async (statementId: string, rowIndex: number, columnName: string, newValue: any) => {
-    const documentId = get().activeDocumentId;
-    if (!documentId) {
-      throw new Error(translateNow('error.noActiveSqlTab'));
-    }
-    const { database, connectionString } = get();
-    const { statements } = readSqlDocument(get(), documentId);
-    if (!database) {
-      set({ error: translateNow('error.notConnected') });
-      return;
-    }
-
-    const statement = statements.find(s => s.id === statementId);
-    if (!statement?.result) return;
-
-    const result = statement.result;
-    if (!result.table_name || !result.primary_key) {
-      set({ error: translateNow('error.cannotUpdateNoKey') });
-      return;
-    }
-
-    try {
-      // 获取主键值
-      const primaryKeyIndex = result.columns.indexOf(result.primary_key);
-      if (primaryKeyIndex === -1) {
-        throw new Error(translateNow('error.noPrimaryKeyColumn'));
-      }
-      const primaryKeyValue = result.rows[rowIndex][primaryKeyIndex];
-
-      // 根据数据库类型构建正确的UPDATE语句
-      let updateSql: string;
-      let params: any[];
-      const dialect = getSqlDialect(connectionString);
-      const quotedTable = quoteSqlIdentifier(result.table_name, dialect);
-      const quotedColumn = quoteSqlIdentifier(columnName, dialect);
-      const quotedPrimaryKey = quoteSqlIdentifier(result.primary_key, dialect);
-      
-      if (connectionString?.startsWith('postgres://')) {
-        // PostgreSQL 使用 $1, $2 占位符
-        updateSql = `UPDATE ${quotedTable} SET ${quotedColumn} = $1 WHERE ${quotedPrimaryKey} = $2`;
-        params = [newValue, primaryKeyValue];
-      } else {
-        // MySQL 和 SQLite 使用 ? 占位符
-        updateSql = `UPDATE ${quotedTable} SET ${quotedColumn} = ? WHERE ${quotedPrimaryKey} = ?`;
-        params = [newValue, primaryKeyValue];
-      }
-      
-      console.log('🔄 执行更新操作:', updateSql, params);
-      
-      // 执行更新
-      const updateResult = await database.execute(updateSql, params);
+    await writeToResultRow(get, set, statementId, async (context) => {
+      const { result, target, key, rowIndex: row } = context;
+      const statement = buildUpdateStatement(target, key, {
+        [columnName]: toBoundValue(newValue)
+      });
+      const updateResult = await context.database.execute(statement.sql, statement.params);
       assertSingleRowAffected(updateResult, translateNow('table.operation.update'));
 
-      // 更新本地数据
       const columnIndex = result.columns.indexOf(columnName);
-      if (columnIndex !== -1) {
-        const updatedRows = [...result.rows];
-        updatedRows[rowIndex] = [...updatedRows[rowIndex]];
-        updatedRows[rowIndex][columnIndex] = newValue;
-
-        set((state) => writeSqlDocument(state, documentId, () => ({
-          statements: statements.map(s =>
-            s.id === statementId
-              ? {
-                  ...s,
-                  result: {
-                    ...result,
-                    rows: updatedRows
-                  }
-                }
-              : s
-          )
-        })));
+      if (columnIndex === -1) {
+        return result;
       }
-
-      console.log('✅ 数据更新成功');
-    } catch (error) {
-      console.error('❌ 数据更新失败:', error);
-      const errorMessage = describeError(error, translateNow('error.updateFailed'));
-      set({ error: errorMessage });
-    }
+      const rows = [...result.rows];
+      rows[row] = [...rows[row]];
+      rows[row][columnIndex] = newValue;
+      return { ...result, rows };
+    }, rowIndex, 'error.updateFailed');
   },
 
   deleteRowData: async (statementId: string, rowIndex: number) => {
-    const documentId = get().activeDocumentId;
-    if (!documentId) {
-      throw new Error(translateNow('error.noActiveSqlTab'));
-    }
-    const { database, connectionString } = get();
-    const { statements } = readSqlDocument(get(), documentId);
-    if (!database) {
-      set({ error: translateNow('error.notConnected') });
-      return;
-    }
-
-    const statement = statements.find(s => s.id === statementId);
-    if (!statement?.result) return;
-
-    const result = statement.result;
-    if (!result.table_name || !result.primary_key) {
-      set({ error: translateNow('error.cannotDeleteNoKey') });
-      return;
-    }
-
-    try {
-      // 获取主键值
-      const primaryKeyIndex = result.columns.indexOf(result.primary_key);
-      if (primaryKeyIndex === -1) {
-        throw new Error(translateNow('error.noPrimaryKeyColumn'));
-      }
-      const primaryKeyValue = result.rows[rowIndex][primaryKeyIndex];
-
-      // 根据数据库类型构建正确的DELETE语句
-      let deleteSql: string;
-      let params: any[];
-      const dialect = getSqlDialect(connectionString);
-      const quotedTable = quoteSqlIdentifier(result.table_name, dialect);
-      const quotedPrimaryKey = quoteSqlIdentifier(result.primary_key, dialect);
-      
-      if (connectionString?.startsWith('postgres://')) {
-        // PostgreSQL 使用 $1 占位符
-        deleteSql = `DELETE FROM ${quotedTable} WHERE ${quotedPrimaryKey} = $1`;
-        params = [primaryKeyValue];
-      } else {
-        // MySQL 和 SQLite 使用 ? 占位符
-        deleteSql = `DELETE FROM ${quotedTable} WHERE ${quotedPrimaryKey} = ?`;
-        params = [primaryKeyValue];
-      }
-      
-      console.log('🗑️ 执行删除操作:', deleteSql, params);
-      
-      // 执行删除
-      const deleteResult = await database.execute(deleteSql, params);
+    await writeToResultRow(get, set, statementId, async (context) => {
+      const { result, target, key, rowIndex: row } = context;
+      const statement = buildDeleteStatement(target, key);
+      const deleteResult = await context.database.execute(statement.sql, statement.params);
       assertSingleRowAffected(deleteResult, translateNow('table.operation.delete'));
 
-      // 更新本地数据
-      const updatedRows = result.rows.filter((_, index) => index !== rowIndex);
-
-      set((state) => writeSqlDocument(state, documentId, () => ({
-        statements: statements.map(s =>
-          s.id === statementId
-            ? {
-                ...s,
-                result: {
-                  ...result,
-                  rows: updatedRows,
-                  affected_rows: result.affected_rows - 1
-                }
-              }
-            : s
-        )
-      })));
-
-      console.log('✅ 数据删除成功');
-    } catch (error) {
-      console.error('❌ 数据删除失败:', error);
-      const errorMessage = describeError(error, translateNow('error.deleteFailed'));
-      set({ error: errorMessage });
-    }
+      return {
+        ...result,
+        rows: result.rows.filter((_, index) => index !== row),
+        affected_rows: result.affected_rows - 1
+      };
+    }, rowIndex, 'error.deleteFailed');
   },
 
   insertRowData: async (statementId: string, newRowData: Record<string, any>) => {
@@ -1139,179 +1014,44 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       throw new Error(translateNow('error.noActiveSqlTab'));
     }
     const { database, connectionString } = get();
-    const { statements } = readSqlDocument(get(), documentId);
     if (!database) {
       set({ error: translateNow('error.notConnected') });
       return;
     }
 
-    const statement = statements.find(s => s.id === statementId);
-    if (!statement?.result) return;
-
-    const result = statement.result;
-    if (!result.table_name) {
+    const statement = readSqlDocument(get(), documentId).statements.find(s => s.id === statementId);
+    const editability = statement?.result?.editability;
+    if (!editability?.editable) {
       set({ error: translateNow('error.cannotInsertNoTable') });
       return;
     }
 
     try {
-      // 智能数据类型转换
-      const processedData: Record<string, any> = {};
-      const isPostgreSQL = connectionString?.startsWith('postgres://');
-      
-      Object.entries(newRowData).forEach(([key, value]) => {
-        if (value === null || value === undefined || value === '') {
-          // 空值处理
-          processedData[key] = null;
-        } else if (value === 'NULL' || value === 'null') {
-          // 显式NULL值
-          processedData[key] = null;
-        } else if (key.toLowerCase().includes('time') || 
-                   key.toLowerCase().includes('date') || 
-                   key.toLowerCase().includes('created') || 
-                   key.toLowerCase().includes('updated') ||
-                   key.toLowerCase().includes('timestamp')) {
-          // 时间字段智能处理
-          if (value === 'NOW' || value === 'now' || value === 'CURRENT_TIMESTAMP') {
-            // 对于PostgreSQL，使用特殊处理
-            if (isPostgreSQL) {
-              processedData[key] = 'CURRENT_TIMESTAMP';
-            } else {
-              processedData[key] = new Date().toISOString();
-            }
-          } else if (typeof value === 'string' && (value.includes('T') || value.match(/^\d{4}-\d{2}-\d{2}/))) {
-            // 看起来像ISO时间格式或日期格式
-            try {
-              const parsedDate = new Date(value);
-              if (!isNaN(parsedDate.getTime())) {
-                if (isPostgreSQL) {
-                  // PostgreSQL需要特定的时间戳格式
-                  processedData[key] = parsedDate.toISOString();
-                } else {
-                  processedData[key] = parsedDate.toISOString();
-                }
-              } else {
-                processedData[key] = value;
-              }
-            } catch {
-              processedData[key] = value;
-            }
-          } else {
-            // 尝试解析为时间
-            try {
-              const parsedDate = new Date(value);
-              if (!isNaN(parsedDate.getTime())) {
-                if (isPostgreSQL) {
-                  // PostgreSQL需要特定的时间戳格式
-                  processedData[key] = parsedDate.toISOString();
-                } else {
-                  processedData[key] = parsedDate.toISOString();
-                }
-              } else {
-                processedData[key] = value;
-              }
-            } catch {
-              processedData[key] = value;
-            }
-          }
-        } else if (typeof value === 'string' && !isNaN(Number(value)) && value.trim() !== '') {
-          // 数字字段
-          processedData[key] = Number(value);
-        } else if (typeof value === 'string' && (value.toLowerCase() === 'true' || value.toLowerCase() === 'false')) {
-          // 布尔字段
-          processedData[key] = value.toLowerCase() === 'true';
-        } else {
-          // 其他情况保持原值
-          processedData[key] = value;
-        }
-      });
-
-      // 构建INSERT语句
-      const columns = Object.keys(processedData);
-      const values = Object.values(processedData);
       const dialect = getSqlDialect(connectionString);
-      const quotedTable = quoteSqlIdentifier(result.table_name, dialect);
-      const quotedColumns = columns.map(column => quoteSqlIdentifier(column, dialect));
-      
-      let insertSql: string;
-      let params: any[];
-      
-      if (connectionString?.startsWith('postgres://')) {
-        // PostgreSQL 使用 $1, $2... 占位符，但对时间字段需要特殊处理
-        const placeholders: string[] = [];
-        const sqlParams: any[] = [];
-        let paramIndex = 1;
-        
-        columns.forEach((column, index) => {
-          const value = values[index];
-          const isTimeField = column.toLowerCase().includes('time') || 
-                            column.toLowerCase().includes('date') || 
-                            column.toLowerCase().includes('created') || 
-                            column.toLowerCase().includes('updated') ||
-                            column.toLowerCase().includes('timestamp');
-          
-          if (isTimeField && value === 'CURRENT_TIMESTAMP') {
-            // 直接使用SQL函数
-            placeholders.push('CURRENT_TIMESTAMP');
-          } else if (isTimeField && typeof value === 'string' && value !== null) {
-            // 时间字段使用类型转换
-            placeholders.push(`$${paramIndex}::timestamptz`);
-            sqlParams.push(value);
-            paramIndex++;
-          } else {
-            // 普通字段
-            placeholders.push(`$${paramIndex}`);
-            sqlParams.push(value);
-            paramIndex++;
-          }
-        });
-        
-        insertSql = `INSERT INTO ${quotedTable} (${quotedColumns.join(', ')}) VALUES (${placeholders.join(', ')})`;
-        params = sqlParams;
-      } else {
-        // MySQL 和 SQLite 使用 ? 占位符
-        const placeholders = values.map(() => '?').join(', ');
-        insertSql = `INSERT INTO ${quotedTable} (${quotedColumns.join(', ')}) VALUES (${placeholders})`;
-        params = values;
-      }
-      
-      console.log('➕ 执行新增操作:', insertSql, params);
-      console.log('📊 处理后的数据:', processedData);
-      console.log('🔍 数据库类型:', isPostgreSQL ? 'PostgreSQL' : 'MySQL/SQLite');
-      
-      // 执行插入操作
-      await database.execute(insertSql, params);
-      
-      // 重新查询数据以获取最新结果（包括自动生成的ID等）
-      const refreshSql = `SELECT * FROM ${quotedTable}`;
-      const refreshResult = await database.select(refreshSql);
-      
-      if (Array.isArray(refreshResult) && refreshResult.length > 0) {
-        const newColumns = Object.keys(refreshResult[0]);
-        const newRows = refreshResult.map(row => newColumns.map(col => row[col]));
-        
-        set((state) => writeSqlDocument(state, documentId, () => ({
-          statements: statements.map(s =>
-            s.id === statementId
-              ? {
-                  ...s,
-                  result: {
-                    ...result,
-                    columns: newColumns,
-                    rows: newRows,
-                    affected_rows: newRows.length
-                  }
-                }
-              : s
-          )
-        })));
+      const columns = Object.keys(newRowData);
+      if (columns.length === 0) {
+        throw new Error(translateNow('table.noInsertableColumns'));
       }
 
-      console.log('✅ 数据新增成功');
+      // 值原样交给数据库按目标列的类型解析。此前这里按**列名**猜类型
+      // （名字里带 time 就当时间），并把看起来像数字的字符串过一遍 Number()——
+      // 一个叫 `timeout_ms` 的整数列会被当成时间戳，而大整数会丢精度
+      const placeholder = (index: number) => (dialect === 'postgresql' ? `$${index + 1}` : '?');
+      const quotedTable = quoteQualifiedSqlIdentifier(
+        editability.schema ? [editability.schema, editability.table] : [editability.table],
+        dialect
+      );
+      const sql = `INSERT INTO ${quotedTable} (`
+        + columns.map(column => quoteSqlIdentifier(column, dialect)).join(', ')
+        + `) VALUES (${columns.map((_, index) => placeholder(index)).join(', ')})`;
+      await database.execute(sql, columns.map(column => toBoundValue(newRowData[column])));
+
+      // 重新跑一遍原来那条查询，而不是 `SELECT * FROM 表`：后者会把结果集换成
+      // 整张表（没有 WHERE、没有 LIMIT），在大表上直接把界面拖死，而且用户
+      // 原来筛的条件也没了
+      await get().executeStatement(statementId);
     } catch (error) {
-      console.error('❌ 数据新增失败:', error);
-      const errorMessage = describeError(error, translateNow('error.insertFailed'));
-      set({ error: errorMessage });
+      set({ error: describeError(error, translateNow('error.insertFailed')) });
     }
   },
 })); 

@@ -530,7 +530,21 @@ NULL、空字符串、纯空白与二进制在网格里互相区分得开；刷�
     `every_index_query_reports_whether_the_index_can_identify_a_row`。已反向验证七处：
     去掉部分索引 / 未验证 / 可空 / 表达式四道排除、pending 与「没有键」混为一谈、
     同长度候选不排序、MySQL 查询少一列。
-- [ ] 支持复合主键
+- [x] 支持复合主键（81ad120）
+  - `buildUpdateStatement` / `buildDeleteStatement` 用**全部**键列拼 WHERE。此前
+    `columns.find(col => col.is_primary_key)` 只拿第一列，在复合主键上命中所有前缀
+    相同的行——语法正确、执行成功，事后 `assertSingleRowAffected` 抛出时已经改完了。
+  - 键列不限于主键：`describeRowIdentity` 选出的唯一索引同样能定位一行。键列在网格里
+    不可改——改键等于换一行的身份，那是删一行加一行，不是更新。
+  - 值默认绑定，只有**数值列上的比较**内联成不带引号的字面量（MySQL 比较字符串与数字时
+    两边都转 DOUBLE）。赋值一律绑定：那是转换不是比较，字符串转整数是精确的。
+  - 顺带去掉两处按列类型做的转换：`Number(value)` 让大整数丢精度，`Boolean('false')` 是
+    true。原样交给数据库按目标列的类型解析。写入语句与参数值不再打进 console。
+  - 键值为 NULL 时报错而不是拼 `IS NULL`——SQLite 的非 INTEGER 主键列允许存 NULL，
+    那一行定位不到，拼一条匹配不中或匹配一批的条件比报错糟得多。
+  - 判据：`src/utils/rowStatements.test.ts` 十二条。已反向验证五处：只拼第一个键列、
+    WHERE 先于 SET 拼导致 PostgreSQL 的 `$n` 错位、数值键走绑定、数值列上任何值都内联、
+    键值为 NULL 时拼成 `IS NULL`。
 - [ ] 查询结果只有能证明映射到单表唯一记录时才允许编辑
 - [x] BigInt、Decimal 保持精度，不转换为 JavaScript `Number`
 - [x] 时间类型保留时区和数据库语义
