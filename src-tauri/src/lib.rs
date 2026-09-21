@@ -110,6 +110,7 @@ pub fn run() {
       cancel_export,
       cancel_query,
       release_database_session,
+      get_session_transaction,
       validate_query,
       get_schema_metadata_queries,
       get_object_catalog_queries,

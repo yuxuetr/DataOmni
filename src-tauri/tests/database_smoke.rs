@@ -299,6 +299,7 @@ async fn assert_transaction_binding(
         pool_key,
         pool,
         sql: "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5",
+        autocommit: true,
         row_limit: 5,
         byte_limit: 16 * 1024 * 1024,
         batch_size: 2,
@@ -2792,4 +2793,103 @@ async fn sqlite_runs_the_generated_ddl_from_the_shared_corpus() {
     let after = sqlite_catalog_columns(&pool, catalog, &case.final_table).await;
     assert_eq!(after, case.after, "{}: 跑完之后的表和语料说的不一样", case.name);
   }
+}
+
+/// 事务状态是推出来的，而推的前提是「PostgreSQL 在事务里出一次错就废掉整个
+/// 事务」这句话为真。这条用例拿真库把那句话钉住：出错之后再跑一条普通语句
+/// 必须失败，而 ROLLBACK 必须把事务带回可用。
+///
+/// MySQL 不是这样——同一段脚本在 MySQL 上出错之后 SELECT 照常能跑。
+/// 两家的差别正是 `aborts_transaction_on_error` 存在的理由。
+#[tokio::test]
+async fn postgres_aborts_the_whole_transaction_after_one_failed_statement() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let sessions = QuerySessionState::default();
+  let db_pool = DbPool::Postgres(pool);
+
+  let options = |sql: &'static str| StreamingQueryOptions {
+    session_id: "tx-pg",
+    pool_key: &url,
+    pool: &db_pool,
+    sql,
+    autocommit: true,
+    row_limit: 100,
+    byte_limit: 1 << 20,
+    batch_size: 10,
+    timeout_duration: Duration::from_secs(10),
+  };
+
+  sessions.execute_streaming(options("BEGIN"), &mut |_| Ok(())).await.expect("begin");
+  assert_eq!(
+    sessions.transaction("tx-pg").await.status,
+    dataomni_lib::services::TransactionStatus::Active
+  );
+
+  sessions
+    .execute_streaming(options("SELECT no_such_column"), &mut |_| Ok(()))
+    .await
+    .expect_err("这条本来就该失败");
+  assert_eq!(
+    sessions.transaction("tx-pg").await.status,
+    dataomni_lib::services::TransactionStatus::Failed,
+    "PostgreSQL 在事务里出一次错就废掉整个事务"
+  );
+
+  // 钉住「废掉」是真的：一条最普通的语句也跑不了
+  sessions
+    .execute_streaming(options("SELECT 1"), &mut |_| Ok(()))
+    .await
+    .expect_err("事务已废，任何语句都该被拒");
+
+  sessions.execute_streaming(options("ROLLBACK"), &mut |_| Ok(())).await.expect("rollback");
+  assert_eq!(
+    sessions.transaction("tx-pg").await,
+    dataomni_lib::services::TransactionState::default()
+  );
+  sessions.execute_streaming(options("SELECT 1"), &mut |_| Ok(())).await.expect("回滚之后又能用");
+
+  sessions.release("tx-pg").await;
+}
+
+/// 同一段脚本在 MySQL 上：出错之后事务照常可用。把它也标成「已失败」是说假话。
+#[tokio::test]
+async fn mysql_keeps_the_transaction_usable_after_a_failed_statement() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  let sessions = QuerySessionState::default();
+  let db_pool = DbPool::MySql(pool);
+
+  let options = |sql: &'static str| StreamingQueryOptions {
+    session_id: "tx-my",
+    pool_key: &url,
+    pool: &db_pool,
+    sql,
+    autocommit: true,
+    row_limit: 100,
+    byte_limit: 1 << 20,
+    batch_size: 10,
+    timeout_duration: Duration::from_secs(10),
+  };
+
+  sessions.execute_streaming(options("BEGIN"), &mut |_| Ok(())).await.expect("begin");
+  sessions
+    .execute_streaming(options("SELECT no_such_column"), &mut |_| Ok(()))
+    .await
+    .expect_err("这条本来就该失败");
+  assert_eq!(
+    sessions.transaction("tx-my").await.status,
+    dataomni_lib::services::TransactionStatus::Active,
+    "MySQL 的事务在一条语句出错之后照常可用"
+  );
+  sessions.execute_streaming(options("SELECT 1"), &mut |_| Ok(())).await.expect("照常能跑");
+
+  sessions.execute_streaming(options("ROLLBACK"), &mut |_| Ok(())).await.expect("rollback");
+  sessions.release("tx-my").await;
 }

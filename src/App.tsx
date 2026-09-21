@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Sidebar } from './components/Sidebar';
 import { SqlWorkbench } from './components/SqlWorkbench';
@@ -6,6 +6,10 @@ import TableDataViewer from './components/TableDataViewer';
 import { ErDiagramView } from './components/ErDiagramView';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { CloseTabPrompt, type CloseTabChoice } from './components/CloseTabPrompt';
+import {
+  UncommittedTransactionPrompt,
+  type LeaveTransactionChoice
+} from './components/UncommittedTransactionPrompt';
 import { OfflineTabView } from './components/OfflineTabView';
 import { WorkspaceTabMenu } from './components/WorkspaceTabMenu';
 import { WorkspaceTabBar } from './components/WorkspaceTabBar';
@@ -54,6 +58,14 @@ function App() {
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
   const [tabMenu, setTabMenu] = useState<
     { tabId: string; position: { x: number; y: number } } | null
+  >(null);
+  // 事务没结束就要断开时，等用户在三选一里做决定
+  const [leavingTransaction, setLeavingTransaction] = useState<
+    {
+      startedAt: string;
+      canCommit: boolean;
+      decide: (choice: LeaveTransactionChoice) => void;
+    } | null
   >(null);
   const documents = useQueryStore((state) => state.documents);
   const connections = useConnectionStore((state) => state.connections);
@@ -158,6 +170,47 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   });
 
+  /**
+   * 断开之前先问一句事务。
+   *
+   * 状态**当场重新读一次**，不用界面上那份：用户可能刚在别处提交过，
+   * 拿一份旧状态弹框是在为一件已经不存在的事拦人。
+   *
+   * 返回 false = 用户选择留下，调用方原地停下。
+   */
+  const mayLeaveTransaction = useCallback(async () => {
+    const store = useQueryStore.getState();
+    await store.refreshTransaction();
+    const transaction = useQueryStore.getState().session?.transaction;
+    if (!transaction || transaction.status === 'idle') {
+      return true;
+    }
+
+    const choice = await new Promise<LeaveTransactionChoice>((resolve) => {
+      setLeavingTransaction({
+        startedAt: transaction.startedAt
+          ? new Date(transaction.startedAt).toLocaleTimeString()
+          : '—',
+        canCommit: transaction.status === 'active',
+        decide: resolve
+      });
+    });
+    setLeavingTransaction(null);
+
+    if (choice === 'cancel') {
+      return false;
+    }
+    // 提交失败就别走：那条事务还在，而用户以为他已经提交了
+    return useQueryStore.getState().runTransactionStatement(
+      choice === 'commit' ? 'COMMIT' : 'ROLLBACK'
+    );
+  }, []);
+
+  useEffect(() => {
+    sessionManager.setLeaveGuard(mayLeaveTransaction);
+    return () => sessionManager.setLeaveGuard(null);
+  }, [sessionManager, mayLeaveTransaction]);
+
   useEffect(() => {
     const appWindow = getCurrentWindow();
     let closing = false;
@@ -167,6 +220,11 @@ function App() {
       event.preventDefault();
 
       if (closing) {
+        return;
+      }
+
+      // 退出前先问事务：窗口一关，数据库会把没提交的整个回滚掉
+      if (!(await mayLeaveTransaction())) {
         return;
       }
 
@@ -186,7 +244,7 @@ function App() {
     return () => {
       unlisten?.();
     };
-  }, [sessionManager]);
+  }, [sessionManager, mayLeaveTransaction]);
 
   useEffect(() => {
     const handleOffline = () => {
@@ -666,6 +724,14 @@ function App() {
 
       {pendingCloseTab && (
         <CloseTabPrompt tabTitle={tabTitle(pendingCloseTab, t)} onChoose={handleCloseChoice} />
+      )}
+
+      {leavingTransaction && (
+        <UncommittedTransactionPrompt
+          startedAt={leavingTransaction.startedAt}
+          canCommit={leavingTransaction.canCommit}
+          onChoose={leavingTransaction.decide}
+        />
       )}
     </div>
   );

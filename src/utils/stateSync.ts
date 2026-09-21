@@ -30,7 +30,25 @@ export class SessionManager {
     connectionString: string;
   } | null = null;
 
+  /**
+   * 断开之前问一句：这条连接上还有没有没结束的事务。
+   *
+   * 由界面注册——只有界面弹得出对话框，而知道「现在要断开」的是这里。
+   * 只挂在**用户自己发起**的三条路径上（切换连接、断开、退出应用）：
+   * 网络掉线那几条上问也没用，连接已经没了。
+   */
+  private leaveGuard: (() => Promise<boolean>) | null = null;
+
   private constructor() {}
+
+  /** 返回 false 表示用户选择留下，调用方必须原地停下 */
+  setLeaveGuard(guard: (() => Promise<boolean>) | null): void {
+    this.leaveGuard = guard;
+  }
+
+  private async mayLeave(): Promise<boolean> {
+    return this.leaveGuard ? this.leaveGuard() : true;
+  }
 
   static getInstance(): SessionManager {
     if (!SessionManager.instance) {
@@ -45,6 +63,9 @@ export class SessionManager {
    * @param connectionString 连接字符串
    */
   async switchConnection(connection: ConnectionConfig, connectionString: string): Promise<void> {
+    if (!(await this.mayLeave())) {
+      return;
+    }
     this.assertCanConnect();
     this.reconnectTarget = { connection, connectionString };
     this.transition({
@@ -141,6 +162,19 @@ export class SessionManager {
    * 关闭当前数据库会话并清理关联的应用状态
    */
   async disconnect(): Promise<void> {
+    if (!(await this.mayLeave())) {
+      return;
+    }
+    await this.disconnectNow();
+  }
+
+  /**
+   * 不问直接断。
+   *
+   * 连接被删除、网络断开、退出前的收尾走这条：那几处要么已经问过了，
+   * 要么根本没得选——连接已经不在了，再问「要不要提交」是在骗人。
+   */
+  private async disconnectNow(): Promise<void> {
     const appStore = useAppStore.getState();
     const activeConnectionId = appStore.activeConnection?.config.id;
 
@@ -180,7 +214,7 @@ export class SessionManager {
     workspaceStore.handleProfileDeleted(connectionId, tabIdsWithDrafts);
 
     if (appStore.activeConnection?.config.id === connectionId || ownsRuntimeTarget) {
-      await this.disconnect();
+      await this.disconnectNow();
       return;
     }
 
@@ -205,7 +239,7 @@ export class SessionManager {
     await Promise.allSettled(Array.from(this.connectionPromises.values()));
 
     try {
-      await this.disconnect();
+      await this.disconnectNow();
     } finally {
       this.connectionPromises.clear();
     }

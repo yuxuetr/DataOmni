@@ -127,6 +127,21 @@ export const en: Translations = {
   'schema.readObjectsFailed': 'Failed to read indexes and constraints',
 
   // Table structure editing
+  'tx.idle': 'No transaction',
+  'tx.active': 'In transaction',
+  'tx.failed': 'Transaction failed',
+  'tx.failedHint': 'After an error inside a transaction, PostgreSQL runs nothing but a rollback.',
+  'tx.begin': 'Begin',
+  'tx.commit': 'Commit',
+  'tx.rollback': 'Roll back',
+  'tx.autocommit': 'Autocommit',
+  'tx.autocommitHint': 'With this off, statements from the editor open a transaction that you commit or roll back yourself. Browsing table data is unaffected.',
+  'tx.leaveTitle': 'A transaction is still open',
+  'tx.leaveBody': 'The transaction on this connection started at {started} and has not been committed. Disconnecting now makes the database roll all of it back.',
+  'tx.leaveCommit': 'Commit and continue',
+  'tx.leaveRollback': 'Roll back and continue',
+  'tx.leaveCancel': 'Stay',
+
   'ddl.edit': 'Edit structure',
   'ddl.createTitle': 'New table',
   'ddl.createTable': 'New table',

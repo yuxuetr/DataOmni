@@ -1,6 +1,6 @@
 use crate::services::{
-  QueryError, QueryExecutionResult, QueryExecutionSummary, QueryResultBatch, SessionConnection,
-  StreamOptions, QUERY_TIMEOUT_CODE,
+  transaction_state::TransactionState, QueryError, QueryExecutionResult, QueryExecutionSummary,
+  QueryResultBatch, SessionConnection, StreamOptions, QUERY_TIMEOUT_CODE,
 };
 use std::{collections::HashMap, sync::Arc};
 use tauri_plugin_sql::DbPool;
@@ -9,9 +9,45 @@ use tokio::{
   time::{timeout, Duration},
 };
 
+/// 连接和它的事务状态必须一起锁。
+///
+/// 分成两把锁，就可能读到「语句已经 COMMIT 了、状态还写着事务中」的中间态，
+/// 而状态栏正是靠这个值决定要不要在关标签页时拦一下。
+struct SessionRuntime {
+  connection: SessionConnection,
+  transaction: TransactionState,
+}
+
 struct SessionEntry {
   pool_key: String,
-  connection: Mutex<SessionConnection>,
+  runtime: Mutex<SessionRuntime>,
+}
+
+impl SessionRuntime {
+  /// 关掉自动提交时，不在事务里就先开一个。
+  ///
+  /// 只在语句本身与事务无关时补：用户自己写的 `BEGIN` 不需要前面再来一条，
+  /// 而在 `COMMIT` 前面补一条 `BEGIN` 是开一个立刻提交的空事务。
+  async fn begin_if_needed(&mut self, autocommit: bool, sql: &str) -> Result<(), QueryError> {
+    use crate::services::transaction_state::{transaction_effect, TransactionEffect};
+    if autocommit
+      || self.transaction.in_transaction()
+      || transaction_effect(sql) != TransactionEffect::None
+    {
+      return Ok(());
+    }
+    self.connection.execute("BEGIN", 1).await?;
+    self.record("BEGIN", true);
+    Ok(())
+  }
+
+  fn record(&mut self, sql: &str, succeeded: bool) {
+    if succeeded {
+      self.transaction.after_success(sql, &chrono::Utc::now().to_rfc3339());
+    } else {
+      self.transaction.after_failure(self.connection.aborts_transaction_on_error());
+    }
+  }
 }
 
 #[derive(Default)]
@@ -24,6 +60,12 @@ pub struct StreamingQueryOptions<'a> {
   pub pool_key: &'a str,
   pub pool: &'a DbPool,
   pub sql: &'a str,
+  /// false 时，不在事务里就先发一条 `BEGIN`。
+  ///
+  /// 客户端做，不用服务端开关：PostgreSQL 根本没有服务端的自动提交设置
+  /// （它是客户端概念，psql 的 `\set AUTOCOMMIT off` 与 JDBC 的
+  /// `setAutoCommit(false)` 都是这么做的），SQLite 也没有。
+  pub autocommit: bool,
   pub row_limit: usize,
   pub byte_limit: usize,
   pub batch_size: usize,
@@ -50,8 +92,10 @@ impl QuerySessionState {
     }
 
     timeout(timeout_duration, async {
-      let mut connection = entry.connection.lock().await;
-      connection.execute(sql, row_limit).await
+      let mut runtime = entry.runtime.lock().await;
+      let result = runtime.connection.execute(sql, row_limit).await;
+      runtime.record(sql, result.is_ok());
+      result
     })
     .await
     .map_err(|_| {
@@ -64,6 +108,18 @@ impl QuerySessionState {
 
   pub async fn release(&self, session_id: &str) -> bool {
     self.sessions.lock().await.remove(session_id).is_some()
+  }
+
+  /// 这条 session 现在的事务状态。
+  ///
+  /// 没有这条 session 就是「没在事务里」——还没执行过任何语句的标签页
+  /// 确实不在事务里，而不是「状态未知」。
+  pub async fn transaction(&self, session_id: &str) -> TransactionState {
+    let entry = self.sessions.lock().await.get(session_id).cloned();
+    match entry {
+      Some(entry) => entry.runtime.lock().await.transaction.clone(),
+      None => TransactionState::default(),
+    }
   }
 
   pub async fn execute_streaming(
@@ -81,14 +137,18 @@ impl QuerySessionState {
     }
 
     timeout(options.timeout_duration, async {
-      let mut connection = entry.connection.lock().await;
-      connection
+      let mut runtime = entry.runtime.lock().await;
+      runtime.begin_if_needed(options.autocommit, options.sql).await?;
+      let result = runtime
+        .connection
         .execute_streaming(
           options.sql,
           StreamOptions::limited(options.row_limit, options.byte_limit, options.batch_size),
           sink,
         )
-        .await
+        .await;
+      runtime.record(options.sql, result.is_ok());
+      result
     })
     .await
     .map_err(|_| {
@@ -110,8 +170,10 @@ impl QuerySessionState {
     }
 
     let connection = SessionConnection::acquire(pool).await?;
-    let entry =
-      Arc::new(SessionEntry { pool_key: pool_key.to_string(), connection: Mutex::new(connection) });
+    let entry = Arc::new(SessionEntry {
+      pool_key: pool_key.to_string(),
+      runtime: Mutex::new(SessionRuntime { connection, transaction: TransactionState::default() }),
+    });
     let mut sessions = self.sessions.lock().await;
     Ok(sessions.entry(session_id.to_string()).or_insert_with(|| entry.clone()).clone())
   }
@@ -120,6 +182,7 @@ impl QuerySessionState {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::services::transaction_state::TransactionStatus;
   use sqlx::sqlite::SqlitePoolOptions;
 
   #[tokio::test]
@@ -198,6 +261,102 @@ mod tests {
 
     assert!(sessions.release("session-1").await);
     assert!(!sessions.release("session-1").await);
+  }
+
+  async fn memory_pool() -> DbPool {
+    DbPool::Sqlite(
+      SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("connect to SQLite"),
+    )
+  }
+
+  async fn run(
+    sessions: &QuerySessionState,
+    pool: &DbPool,
+    sql: &str,
+    autocommit: bool,
+  ) -> Result<QueryExecutionSummary, QueryError> {
+    sessions
+      .execute_streaming(
+        StreamingQueryOptions {
+          session_id: "s1",
+          pool_key: "sqlite::memory:",
+          pool,
+          sql,
+          autocommit,
+          row_limit: 100,
+          byte_limit: 1 << 20,
+          batch_size: 10,
+          timeout_duration: Duration::from_secs(5),
+        },
+        &mut |_| Ok(()),
+      )
+      .await
+  }
+
+  /// 事务状态得从**真的跑过的语句**推出来，不是从我们打算跑的语句。
+  #[tokio::test]
+  async fn tracks_the_transaction_across_begin_and_rollback() {
+    let pool = memory_pool().await;
+    let sessions = QuerySessionState::default();
+
+    run(&sessions, &pool, "CREATE TABLE t (v TEXT)", true).await.expect("create");
+    assert_eq!(sessions.transaction("s1").await.status, TransactionStatus::Idle);
+
+    run(&sessions, &pool, "BEGIN", true).await.expect("begin");
+    let state = sessions.transaction("s1").await;
+    assert_eq!(state.status, TransactionStatus::Active);
+    assert!(state.started_at.is_some(), "事务中必须给得出开始时间: {state:?}");
+
+    run(&sessions, &pool, "INSERT INTO t (v) VALUES ('x')", true).await.expect("insert");
+    assert_eq!(sessions.transaction("s1").await.status, TransactionStatus::Active);
+
+    run(&sessions, &pool, "ROLLBACK", true).await.expect("rollback");
+    assert_eq!(sessions.transaction("s1").await, TransactionState::default());
+  }
+
+  /// 关掉自动提交之后，一条普通的 INSERT 也在事务里——所以回滚能把它撤掉。
+  ///
+  /// 这才是这个开关的意义。只把状态栏点亮而语句仍然各自提交，是最糟的形态：
+  /// 界面说在事务里，按回滚却什么也没撤销。
+  #[tokio::test]
+  async fn turning_autocommit_off_puts_a_plain_statement_inside_a_transaction() {
+    let pool = memory_pool().await;
+    let sessions = QuerySessionState::default();
+
+    run(&sessions, &pool, "CREATE TABLE t (v TEXT)", true).await.expect("create");
+    run(&sessions, &pool, "INSERT INTO t (v) VALUES ('x')", false).await.expect("insert");
+    assert_eq!(
+      sessions.transaction("s1").await.status,
+      TransactionStatus::Active,
+      "关掉自动提交之后这条 INSERT 应该开了一个事务"
+    );
+
+    run(&sessions, &pool, "ROLLBACK", true).await.expect("rollback");
+    let result = sessions
+      .execute("s1", "sqlite::memory:", &pool, "SELECT v FROM t", 100, Duration::from_secs(5))
+      .await
+      .expect("read back");
+    match result {
+      QueryExecutionResult::Rows { rows, .. } => {
+        assert!(rows.is_empty(), "回滚该把那一行撤掉，否则开关只是个装饰")
+      }
+      QueryExecutionResult::Affected { .. } => panic!("expected rows"),
+    }
+  }
+
+  /// 自己写的 `BEGIN` 前面不该再补一条。
+  #[tokio::test]
+  async fn autocommit_off_does_not_double_begin() {
+    let pool = memory_pool().await;
+    let sessions = QuerySessionState::default();
+    // SQLite 不允许嵌套 BEGIN；补了就会在这里报
+    // "cannot start a transaction within a transaction"
+    run(&sessions, &pool, "BEGIN", false).await.expect("自己写的 BEGIN 前面不该再补一条");
+    assert_eq!(sessions.transaction("s1").await.status, TransactionStatus::Active);
   }
 
   #[tokio::test]

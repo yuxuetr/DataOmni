@@ -13,6 +13,7 @@ import { selectActiveSqlDocument, useQueryStore } from '../stores/queryStore';
 import { useAppStore } from '../stores/appStore';
 import { SqlEditor } from './SqlEditor';
 import { ConnectionInfoDialog } from './ConnectionInfoDialog';
+import { TransactionBar } from './TransactionBar';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
 import { useSessionTarget } from '../hooks/useSessionTarget';
@@ -179,6 +180,8 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          <TransactionBar />
+
           {/* 连接信息按钮 */}
           <button
             onClick={() => setShowConnectionInfo(true)}

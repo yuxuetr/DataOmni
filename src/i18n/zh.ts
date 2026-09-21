@@ -141,6 +141,21 @@ export const zh = {
   'schema.readObjectsFailed': '读取索引与约束失败',
 
   // 表结构编辑
+  'tx.idle': '无事务',
+  'tx.active': '事务中',
+  'tx.failed': '事务已失败',
+  'tx.failedHint': 'PostgreSQL 在事务里出错之后，除了回滚什么都跑不了。',
+  'tx.begin': '开始事务',
+  'tx.commit': '提交',
+  'tx.rollback': '回滚',
+  'tx.autocommit': '自动提交',
+  'tx.autocommitHint': '关掉之后，编辑器里的语句会自动开在一个事务里，要自己提交或回滚。浏览表数据不受影响。',
+  'tx.leaveTitle': '还有一个没结束的事务',
+  'tx.leaveBody': '这个连接上的事务从 {started} 开始，还没提交。现在断开连接，数据库会把它整个回滚掉。',
+  'tx.leaveCommit': '提交并继续',
+  'tx.leaveRollback': '回滚并继续',
+  'tx.leaveCancel': '留下',
+
   'ddl.edit': '编辑结构',
   'ddl.createTitle': '新建表',
   'ddl.createTable': '新建表',

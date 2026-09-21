@@ -29,6 +29,16 @@ pub struct QueryExecutionRequest {
   timeout_ms: u64,
   row_limit: usize,
   byte_limit: usize,
+  /// 关掉之后，不在事务里的语句前面会先发一条 `BEGIN`。
+  ///
+  /// 旧的调用方不带这个字段，默认 true——把默认值定成 false 会让所有没改过
+  /// 的调用方悄悄开始攒事务，而没有任何地方会提交它们。
+  #[serde(default = "default_autocommit")]
+  autocommit: bool,
+}
+
+fn default_autocommit() -> bool {
+  true
 }
 
 #[derive(Default)]
@@ -105,6 +115,7 @@ pub async fn execute_query(
         pool_key: &connection_string,
         pool,
         sql: &request.sql,
+        autocommit: request.autocommit,
         row_limit: request.row_limit,
         byte_limit: request.byte_limit,
         batch_size: DEFAULT_QUERY_BATCH_SIZE,
@@ -596,6 +607,19 @@ pub fn get_schema_metadata_queries(
 ) -> Result<crate::services::SchemaMetadataQueries, String> {
   crate::services::schema_metadata_queries(&db_type)
     .ok_or_else(|| format!("{:?} 尚未支持结构浏览", db_type))
+}
+
+/// 这条 session 现在在不在事务里。
+///
+/// 每执行完一条语句问一次（成功和失败都问）：失败那一条恰恰是 PostgreSQL
+/// 把事务标成废止的时刻，而失败路径上没有结果可以捎带这个状态。查的是内存里
+/// 的一个值，不发任何数据库往返。
+#[tauri::command]
+pub async fn get_session_transaction(
+  session_id: String,
+  query_session_state: State<'_, QuerySessionState>,
+) -> Result<crate::services::transaction_state::TransactionState, String> {
+  Ok(query_session_state.transaction(&session_id).await)
 }
 
 /// 取该方言的库级对象目录查询。与 `get_schema_metadata_queries` 同样只回 SQL 文本。

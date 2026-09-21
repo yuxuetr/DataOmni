@@ -189,6 +189,15 @@ impl SessionConnection {
     }
   }
 
+  /// 这个方言会不会因为一条语句出错就把整个事务废掉。
+  ///
+  /// 只有 PostgreSQL 是：事务里任何一条语句报错之后，后续语句一律 25P02，
+  /// 只有回滚能出去。MySQL 与 SQLite 不是这样，在那两家标成「事务已失败」
+  /// 是在说假话。
+  pub fn aborts_transaction_on_error(&self) -> bool {
+    matches!(self, Self::Postgres(_))
+  }
+
   pub async fn execute_streaming(
     &mut self,
     sql: &str,

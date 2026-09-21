@@ -17,7 +17,7 @@ import {
   QUERY_TIMEOUT_CODE,
   toQueryExecutionError
 } from '../utils/queryError';
-import { DatabaseSession } from '../contracts/session';
+import { DatabaseSession, type TransactionContext } from '../contracts/session';
 import type {
   DriverQueryResult,
   DriverQueryBatch,
@@ -77,6 +77,14 @@ export interface QueryState {
   executions: QueryExecution[];
   queryTimeoutMs: number;
   queryResultRowLimit: number;
+  /**
+   * 关掉之后，不在事务里的语句会先被后端补一条 `BEGIN`。
+   *
+   * 开关在客户端而不是服务端：PostgreSQL 根本没有服务端的自动提交设置，
+   * SQLite 也没有。psql 的 `\set AUTOCOMMIT off` 与 JDBC 的
+   * `setAutoCommit(false)` 做的是同一件事。
+   */
+  autocommit: boolean;
   isConnecting: boolean;
   error: string | null;
 }
@@ -108,6 +116,13 @@ interface QueryActions {
   cancelExecution: (executionId: string) => Promise<void>;
   setQueryTimeoutMs: (timeoutMs: number) => void;
   setQueryResultRowLimit: (rowLimit: number) => void;
+
+  // 事务
+  setAutocommit: (autocommit: boolean) => void;
+  /** 从后端读一次事务状态写回 session；后端是权威，这里不自己推 */
+  refreshTransaction: () => Promise<void>;
+  /** 开始 / 提交 / 回滚。不进文档也不过风险确认——按钮本身就是确认 */
+  runTransactionStatement: (sql: 'BEGIN' | 'COMMIT' | 'ROLLBACK') => Promise<boolean>;
   
   // 结果管理
   clearResults: () => void;
@@ -275,7 +290,11 @@ export async function runReadQuery(
       sql,
       timeoutMs: queryTimeoutMs,
       rowLimit: queryResultRowLimit,
-      byteLimit: QUERY_RESULT_BACKEND_BYTE_LIMIT
+      byteLimit: QUERY_RESULT_BACKEND_BYTE_LIMIT,
+      // 目录与表数据的读取一律自动提交：关掉自动提交管的是**用户在编辑器里
+      // 跑的语句**，浏览一张表不该让状态栏凭空亮起「事务中」。
+      // 事务已经开着时它照样落在同一个事务里——同一条连接，避不开，也正确
+      autocommit: true
     }
   });
 
@@ -304,6 +323,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   connectionString: null,
   connectionId: null,
   session: null,
+  autocommit: true,
   database: null,
   documents: {},
   activeDocumentId: null,
@@ -497,6 +517,62 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
   setQueryResultRowLimit: (queryResultRowLimit: number) => {
     set({ queryResultRowLimit });
+  },
+
+  setAutocommit: (autocommit: boolean) => {
+    // 开着的事务不因为开关翻回去就自动提交：它是用户开的，只能由用户结束。
+    // psql 的 AUTOCOMMIT 也是这个行为
+    set({ autocommit });
+  },
+
+  refreshTransaction: async () => {
+    const { session } = get();
+    if (!session) {
+      return;
+    }
+    try {
+      const transaction = await invoke<TransactionContext>('get_session_transaction', {
+        sessionId: session.id
+      });
+      set((state) => (
+        state.session ? { session: { ...state.session, transaction } } : {}
+      ));
+    } catch (error) {
+      // 读状态失败不该把界面打掉，但也不能假装「没在事务里」——那正是
+      // 关连接前最需要说实话的地方。保留上一次读到的值
+      console.error('读取事务状态失败:', error);
+    }
+  },
+
+  runTransactionStatement: async (sql) => {
+    const { connectionId, session, queryTimeoutMs } = get();
+    if (!connectionId || !session) {
+      return false;
+    }
+    set({ error: null });
+    try {
+      await invoke('execute_query', {
+        onBatch: new Channel<DriverQueryBatch>(() => {}),
+        request: {
+          connectionId,
+          sessionId: session.id,
+          executionId: crypto.randomUUID(),
+          sql,
+          timeoutMs: queryTimeoutMs,
+          rowLimit: 1,
+          byteLimit: QUERY_RESULT_BACKEND_BYTE_LIMIT,
+          // 这三条自己就是事务语句，补 BEGIN 没有意义
+          autocommit: true
+        }
+      });
+      return true;
+    } catch (error) {
+      set({ error: describeError(error) });
+      return false;
+    } finally {
+      // 成功和失败都要刷：失败那一条恰恰是 PostgreSQL 把事务标成废止的时刻
+      await get().refreshTransaction();
+    }
   },
 
   parseStatements: () => {
@@ -789,6 +865,10 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       // 翻出来的一条，只记成功等于历史里永远没有出问题的那次
       recordHistory(finished, null);
       return false;
+    } finally {
+      // 成功和失败都刷一次。失败那一条尤其重要——它正是 PostgreSQL 把事务
+      // 标成废止的时刻，而失败路径上没有结果可以捎带这个状态
+      await get().refreshTransaction();
     }
   },
 

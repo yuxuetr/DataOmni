@@ -9,6 +9,7 @@ pub mod query_executor;
 pub mod query_session;
 pub mod schema_metadata;
 pub mod session_target;
+pub mod transaction_state;
 pub mod write_batch;
 
 pub use completion_catalog::{completion_catalog_query, CompletionCatalogQuery};
@@ -31,6 +32,7 @@ pub use query_executor::{
 pub use query_session::{QuerySessionState, StreamingQueryOptions};
 pub use schema_metadata::{schema_metadata_queries, DdlQuery, SchemaMetadataQueries};
 pub use session_target::{session_target_query, SessionTargetQuery};
+pub use transaction_state::{TransactionState, TransactionStatus};
 pub use write_batch::{
   execute_write_batch, WriteBatchError, WriteStatement, ROW_COUNT_MISMATCH_CODE,
 };
