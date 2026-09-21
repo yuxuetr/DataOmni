@@ -307,7 +307,26 @@
     （同连接 SET 之后报新 schema，证明不是回显）、`sqlite_session_target_reports_query_only`
     （query_only 打开后报只读，证明这一列是活的）、
     `mysql_use_is_rejected_by_the_prepared_protocol`（执行器改回文本协议时会红）。
-- [ ] 查询错误显示数据库原始错误、位置和可复制详情
+- [x] 查询错误显示数据库原始错误、位置和可复制详情
+  - 后端完成于 d252240，界面完成于本轮。执行路径上原本是 `error.to_string()`，
+    数据库给的 SQLSTATE、出错字符位置、DETAIL、HINT、约束名、表名全在那一步丢掉。
+    症状：`syntax error at or near "form"` 不说三百个字符里是哪个 `form`；
+    唯一约束冲突不说撞的是哪个值（DETAIL 里写着，但那一整句从没到过界面）。
+  - 新增 `QueryError`（`From<sqlx::Error>` 取结构）与 `QueryErrorPanel`。
+    可以跳到出错位置；**只有拿得到位置时才显示跳转**——MySQL 与 SQLite 不给
+    字符位置，凭空算一个会精确地指错地方。一键复制完整详情供贴工单。
+  - 位置换算按码位数不按 UTF-16 码元：数据库数的是字符，语句里每多一个 emoji
+    就偏一格，而偏出来的位置看上去完全像个正常位置。
+  - 超时与取消不带结构（不是数据库说的话），且判断改走 `code` 而不是消息前缀——
+    消息要翻译，按前缀匹配等于把判断绑在某一种语言上。
+  - `details` 装箱：clippy 的 `result_large_err` 指出解码**每个单元格**都要经过
+    一个 `Result<_, QueryError>`，而 Result 的大小是成功路径也要付的（152 → 56 字节）。
+    `#[serde(flatten)]` 保证 JSON 仍是平的，另有测试钉住 `size_of <= 128`。
+  - 判据：`database_smoke.rs` 四条（PG 语法错误的 SQLSTATE 与位置——断言该位置切回
+    原文正好是写错的那个词；PG 唯一约束冲突的约束名、表名与带冲突值的 DETAIL；
+    MySQL 有错误码但**没有**位置；SQLite 有扩展结果码），
+    加 `src/utils/queryError.test.ts` 13 条。已反向验证：把 `From<sqlx::Error>`
+    退回只取消息，四条精确变红。
 - [ ] 为危险语句提供可配置确认，不用简单关键字拦截替代权限控制
 
 ### 2.3 查询历史与脚本管理
