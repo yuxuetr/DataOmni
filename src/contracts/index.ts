@@ -1,4 +1,3 @@
-export * from './changeSet';
 export * from './connection';
 export * from './connectionLifecycle';
 export * from './databaseMetadata';
