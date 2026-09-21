@@ -1,7 +1,7 @@
 use dataomni_lib::services::{
   execute_query, execute_query_with_limit, execute_query_with_limits, execute_query_with_timeout,
-  QueryExecutionResult, QueryExecutionSummary, QuerySessionState, QueryTruncationReason,
-  StreamingQueryOptions, QUERY_TIMEOUT_CODE,
+  QueryError, QueryExecutionResult, QueryExecutionSummary, QuerySessionState,
+  QueryTruncationReason, StreamingQueryOptions, QUERY_TIMEOUT_CODE,
 };
 use sqlx::{
   mysql::MySqlPoolOptions, postgres::PgPoolOptions, sqlite::SqlitePoolOptions, Column, Row,
@@ -353,9 +353,11 @@ fn assert_single_row_result(result: QueryExecutionResult, column: &str, value: &
   }
 }
 
-fn assert_query_times_out(result: Result<QueryExecutionResult, String>) {
+fn assert_query_times_out(result: Result<QueryExecutionResult, QueryError>) {
   let error = result.expect_err("query should exceed its timeout");
-  assert!(error.starts_with(QUERY_TIMEOUT_CODE), "unexpected timeout error: {error}");
+  // 按 code 判断而不是按消息前缀：消息是要翻译的，按前缀匹配等于把
+  // 「这是超时」的判断绑在某一种语言上
+  assert_eq!(error.code.as_deref(), Some(QUERY_TIMEOUT_CODE), "unexpected timeout error: {error}");
 }
 
 fn assert_truncated_result(result: QueryExecutionResult, expected_limit: usize) {
@@ -2009,4 +2011,99 @@ async fn sqlite_session_target_reports_query_only() {
   sqlx::query("PRAGMA query_only = 1").execute(&pool).await.expect("turn on query_only");
   let locked = sqlx::query(query.sql).fetch_one(&pool).await.expect("read session target again");
   assert_eq!(locked.get::<i64, _>("read_only"), 1, "query_only 打开后要报出只读");
+}
+
+#[tokio::test]
+async fn postgres_syntax_error_carries_sqlstate_and_position() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+
+  // `form` 是个错别字，PostgreSQL 会指出它在第几个字符上
+  let sql = "SELECT 1 form dual";
+  let error = execute_query(&DbPool::Postgres(pool.clone()), sql)
+    .await
+    .expect_err("syntax error should fail");
+
+  assert_eq!(error.code.as_deref(), Some("42601"), "SQLSTATE 要原样带上来");
+  let position = error.position().expect("PostgreSQL 会给出错字符位置") as usize;
+  // 位置是从 1 开始的字符下标；这条语句里它指向 `dual`
+  assert_eq!(&sql[position - 1..position + 3], "dual", "位置必须能对回原文: {error:?}");
+  assert!(!error.message.is_empty());
+}
+
+#[tokio::test]
+async fn postgres_constraint_violation_names_the_constraint_and_table() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+
+  let table = "dataomni_err_probe";
+  sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  sqlx::query(&format!(
+    "CREATE TABLE {table} (id INT PRIMARY KEY, code TEXT NOT NULL,
+       CONSTRAINT uq_{table}_code UNIQUE (code))"
+  ))
+  .execute(&pool)
+  .await
+  .expect("create probe table");
+  sqlx::query(&format!("INSERT INTO {table} VALUES (1, 'a')"))
+    .execute(&pool)
+    .await
+    .expect("seed probe row");
+
+  let error =
+    execute_query(&DbPool::Postgres(pool.clone()), &format!("INSERT INTO {table} VALUES (2, 'a')"))
+      .await
+      .expect_err("unique violation should fail");
+
+  assert_eq!(error.code.as_deref(), Some("23505"));
+  assert_eq!(error.constraint(), Some(format!("uq_{table}_code").as_str()));
+  assert_eq!(error.table(), Some(table));
+  // DETAIL 才说得出是哪个值撞了；以前这一整句都被 to_string() 丢掉了
+  assert!(
+    error.detail().unwrap_or_default().contains("(code)=(a)"),
+    "DETAIL 要带上冲突的值: {error:?}"
+  );
+
+  sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+}
+
+#[tokio::test]
+async fn mysql_error_carries_its_sqlstate() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+
+  let error = execute_query(&DbPool::MySql(pool.clone()), "SELECT 1 FROM dataomni_no_such_table")
+    .await
+    .expect_err("missing table should fail");
+
+  // MySQL 不给字符位置，只有错误码和消息——界面据此决定不显示「跳到出错位置」
+  assert_eq!(error.code.as_deref(), Some("42S02"));
+  assert!(error.position().is_none(), "MySQL 没有字符位置，不该凭空造一个");
+  assert!(error.message.contains("dataomni_no_such_table"), "消息要带上表名: {error:?}");
+}
+
+#[tokio::test]
+async fn sqlite_error_carries_its_result_code() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("connect to in-memory SQLite");
+
+  let error = execute_query(&DbPool::Sqlite(pool.clone()), "SELECT 1 FROM no_such_table")
+    .await
+    .expect_err("missing table should fail");
+
+  assert!(error.code.is_some(), "SQLite 的扩展结果码要带上来: {error:?}");
+  assert!(error.position().is_none());
+  assert!(error.message.contains("no_such_table"));
 }

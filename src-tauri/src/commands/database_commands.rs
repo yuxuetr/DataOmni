@@ -16,6 +16,8 @@ use tokio::time::Duration;
 
 pub const QUERY_CANCELLED_CODE: &str = "QUERY_CANCELLED";
 
+use crate::services::QueryError;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryExecutionRequest {
@@ -67,29 +69,33 @@ pub async fn execute_query(
   database_instances: State<'_, DbInstances>,
   cancellation_state: State<'_, QueryCancellationState>,
   query_session_state: State<'_, QuerySessionState>,
-) -> Result<QueryExecutionSummary, String> {
+) -> Result<QueryExecutionSummary, QueryError> {
   if !(100..=3_600_000).contains(&request.timeout_ms) {
-    return Err("查询超时必须在 100 毫秒到 1 小时之间".to_string());
+    return Err(QueryError::message("查询超时必须在 100 毫秒到 1 小时之间"));
   }
   if !(1..=100_000).contains(&request.row_limit) {
-    return Err("结果行数上限必须在 1 到 100000 之间".to_string());
+    return Err(QueryError::message("结果行数上限必须在 1 到 100000 之间"));
   }
   if !(1_048_576..=67_108_864).contains(&request.byte_limit) {
-    return Err("结果内存上限必须在 1 MiB 到 64 MiB 之间".to_string());
+    return Err(QueryError::message("结果内存上限必须在 1 MiB 到 64 MiB 之间"));
   }
 
   let connection_string = {
-    let connection_service_guard =
-      connection_service_state.lock().map_err(|e| format!("获取连接服务状态失败: {e}"))?;
+    let connection_service_guard = connection_service_state
+      .lock()
+      .map_err(|e| QueryError::message(format!("获取连接服务状态失败: {e}")))?;
     let service =
-      connection_service_guard.as_ref().ok_or_else(|| "连接服务未初始化".to_string())?;
-    service.resolve_connection_string(&request.connection_id)?
+      connection_service_guard.as_ref().ok_or_else(|| QueryError::message("连接服务未初始化"))?;
+    service.resolve_connection_string(&request.connection_id).map_err(QueryError::message)?
   };
 
   let instances = database_instances.0.read().await;
-  let pool = instances.get(&connection_string).ok_or_else(|| "数据库会话未连接".to_string())?;
-  let receiver = cancellation_state.register(&request.execution_id).await?;
-  let mut send_batch = |batch| on_batch.send(batch).map_err(|error| error.to_string());
+  let pool =
+    instances.get(&connection_string).ok_or_else(|| QueryError::message("数据库会话未连接"))?;
+  let receiver =
+    cancellation_state.register(&request.execution_id).await.map_err(QueryError::message)?;
+  let mut send_batch =
+    |batch| on_batch.send(batch).map_err(|error| QueryError::message(error.to_string()));
 
   let result = tokio::select! {
     result = query_session_state.execute_streaming(
@@ -105,7 +111,7 @@ pub async fn execute_query(
       },
       &mut send_batch
     ) => result,
-    _ = receiver => Err(format!("{QUERY_CANCELLED_CODE}: 查询已取消")),
+    _ = receiver => Err(QueryError::with_code(QUERY_CANCELLED_CODE, "查询已取消")),
   };
   cancellation_state.finish(&request.execution_id).await;
   result

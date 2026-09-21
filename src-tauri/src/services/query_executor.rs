@@ -14,7 +14,7 @@ use tauri_plugin_sql::DbPool;
 use time::{Date, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::time::{timeout, Duration};
 
-pub const QUERY_TIMEOUT_CODE: &str = "QUERY_TIMEOUT";
+pub use crate::services::query_error::{QueryError, QUERY_TIMEOUT_CODE};
 pub const DEFAULT_QUERY_ROW_LIMIT: usize = 1_000;
 pub const DEFAULT_QUERY_BATCH_SIZE: usize = 250;
 pub const DEFAULT_QUERY_BYTE_LIMIT: usize = 16 * 1024 * 1024;
@@ -81,7 +81,7 @@ pub enum QueryExecutionResult {
   },
 }
 
-pub async fn execute_query(pool: &DbPool, sql: &str) -> Result<QueryExecutionResult, String> {
+pub async fn execute_query(pool: &DbPool, sql: &str) -> Result<QueryExecutionResult, QueryError> {
   execute_query_with_limit(pool, sql, DEFAULT_QUERY_ROW_LIMIT).await
 }
 
@@ -89,7 +89,7 @@ pub async fn execute_query_with_limit(
   pool: &DbPool,
   sql: &str,
   row_limit: usize,
-) -> Result<QueryExecutionResult, String> {
+) -> Result<QueryExecutionResult, QueryError> {
   execute_query_with_limits(pool, sql, row_limit, DEFAULT_QUERY_BYTE_LIMIT).await
 }
 
@@ -98,7 +98,7 @@ pub async fn execute_query_with_limits(
   sql: &str,
   row_limit: usize,
   byte_limit: usize,
-) -> Result<QueryExecutionResult, String> {
+) -> Result<QueryExecutionResult, QueryError> {
   match pool {
     DbPool::Sqlite(pool) => execute_sqlite(pool, sql, row_limit, byte_limit).await,
     DbPool::MySql(pool) => execute_mysql(pool, sql, row_limit, byte_limit).await,
@@ -113,17 +113,11 @@ pub enum SessionConnection {
 }
 
 impl SessionConnection {
-  pub async fn acquire(pool: &DbPool) -> Result<Self, String> {
+  pub async fn acquire(pool: &DbPool) -> Result<Self, QueryError> {
     match pool {
-      DbPool::Sqlite(pool) => {
-        pool.acquire().await.map(Self::Sqlite).map_err(|error| error.to_string())
-      }
-      DbPool::MySql(pool) => {
-        pool.acquire().await.map(Self::MySql).map_err(|error| error.to_string())
-      }
-      DbPool::Postgres(pool) => {
-        pool.acquire().await.map(Self::Postgres).map_err(|error| error.to_string())
-      }
+      DbPool::Sqlite(pool) => pool.acquire().await.map(Self::Sqlite).map_err(display_error),
+      DbPool::MySql(pool) => pool.acquire().await.map(Self::MySql).map_err(display_error),
+      DbPool::Postgres(pool) => pool.acquire().await.map(Self::Postgres).map_err(display_error),
     }
   }
 
@@ -131,7 +125,7 @@ impl SessionConnection {
     &mut self,
     sql: &str,
     row_limit: usize,
-  ) -> Result<QueryExecutionResult, String> {
+  ) -> Result<QueryExecutionResult, QueryError> {
     match self {
       Self::Sqlite(connection) => execute_sqlite_connection(connection, sql, row_limit).await,
       Self::MySql(connection) => execute_mysql_connection(connection, sql, row_limit).await,
@@ -145,8 +139,8 @@ impl SessionConnection {
     row_limit: usize,
     byte_limit: usize,
     batch_size: usize,
-    sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
-  ) -> Result<QueryExecutionSummary, String> {
+    sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+  ) -> Result<QueryExecutionSummary, QueryError> {
     match self {
       Self::Sqlite(connection) => {
         execute_sqlite_connection_streaming(
@@ -172,16 +166,19 @@ pub async fn execute_query_with_timeout(
   pool: &DbPool,
   sql: &str,
   timeout_duration: Duration,
-) -> Result<QueryExecutionResult, String> {
+) -> Result<QueryExecutionResult, QueryError> {
   with_timeout(execute_query(pool, sql), timeout_duration).await
 }
 
-async fn with_timeout<F, T>(future: F, timeout_duration: Duration) -> Result<T, String>
+async fn with_timeout<F, T>(future: F, timeout_duration: Duration) -> Result<T, QueryError>
 where
-  F: Future<Output = Result<T, String>>,
+  F: Future<Output = Result<T, QueryError>>,
 {
   timeout(timeout_duration, future).await.map_err(|_| {
-    format!("{QUERY_TIMEOUT_CODE}: 查询执行超过 {} 毫秒", timeout_duration.as_millis())
+    QueryError::with_code(
+      QUERY_TIMEOUT_CODE,
+      format!("查询执行超过 {} 毫秒", timeout_duration.as_millis()),
+    )
   })?
 }
 
@@ -190,8 +187,8 @@ async fn execute_sqlite(
   sql: &str,
   row_limit: usize,
   byte_limit: usize,
-) -> Result<QueryExecutionResult, String> {
-  let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+) -> Result<QueryExecutionResult, QueryError> {
+  let mut connection = pool.acquire().await.map_err(QueryError::from)?;
   execute_sqlite_connection_with_limits(&mut connection, sql, row_limit, byte_limit).await
 }
 
@@ -199,7 +196,7 @@ async fn execute_sqlite_connection(
   connection: &mut SqliteConnection,
   sql: &str,
   row_limit: usize,
-) -> Result<QueryExecutionResult, String> {
+) -> Result<QueryExecutionResult, QueryError> {
   execute_sqlite_connection_with_limits(connection, sql, row_limit, DEFAULT_QUERY_BYTE_LIMIT).await
 }
 
@@ -208,7 +205,7 @@ async fn execute_sqlite_connection_with_limits(
   sql: &str,
   row_limit: usize,
   byte_limit: usize,
-) -> Result<QueryExecutionResult, String> {
+) -> Result<QueryExecutionResult, QueryError> {
   let mut rows = Vec::new();
   let summary = execute_sqlite_connection_streaming(
     connection,
@@ -231,14 +228,14 @@ async fn execute_sqlite_connection_streaming(
   row_limit: usize,
   byte_limit: usize,
   batch_size: usize,
-  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
-) -> Result<QueryExecutionSummary, String> {
+  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+) -> Result<QueryExecutionSummary, QueryError> {
   if is_transaction_control_statement(sql) {
-    let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
+    let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let description = (&mut *connection).describe(sql).await.map_err(|error| error.to_string())?;
+  let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
   let column_metadata = description
     .columns()
     .iter()
@@ -254,7 +251,7 @@ async fn execute_sqlite_connection_streaming(
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
   if columns.is_empty() {
-    let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
+    let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
@@ -265,7 +262,7 @@ async fn execute_sqlite_connection_streaming(
   let mut bytes_read: usize = 0;
   let mut truncation_reason = None;
   while row_count < row_limit {
-    let Some(row) = stream.try_next().await.map_err(|error| error.to_string())? else {
+    let Some(row) = stream.try_next().await.map_err(QueryError::from)? else {
       break;
     };
     let row = decode_sqlite_row(&row)?;
@@ -281,7 +278,7 @@ async fn execute_sqlite_connection_streaming(
   }
   if truncation_reason.is_none()
     && row_count == row_limit
-    && stream.try_next().await.map_err(|error| error.to_string())?.is_some()
+    && stream.try_next().await.map_err(QueryError::from)?.is_some()
   {
     truncation_reason = Some(QueryTruncationReason::RowLimit);
   }
@@ -304,8 +301,8 @@ async fn execute_mysql(
   sql: &str,
   row_limit: usize,
   byte_limit: usize,
-) -> Result<QueryExecutionResult, String> {
-  let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+) -> Result<QueryExecutionResult, QueryError> {
+  let mut connection = pool.acquire().await.map_err(QueryError::from)?;
   execute_mysql_connection_with_limits(&mut connection, sql, row_limit, byte_limit).await
 }
 
@@ -313,7 +310,7 @@ async fn execute_mysql_connection(
   connection: &mut MySqlConnection,
   sql: &str,
   row_limit: usize,
-) -> Result<QueryExecutionResult, String> {
+) -> Result<QueryExecutionResult, QueryError> {
   execute_mysql_connection_with_limits(connection, sql, row_limit, DEFAULT_QUERY_BYTE_LIMIT).await
 }
 
@@ -322,7 +319,7 @@ async fn execute_mysql_connection_with_limits(
   sql: &str,
   row_limit: usize,
   byte_limit: usize,
-) -> Result<QueryExecutionResult, String> {
+) -> Result<QueryExecutionResult, QueryError> {
   let mut rows = Vec::new();
   let summary = execute_mysql_connection_streaming(
     connection,
@@ -345,14 +342,14 @@ async fn execute_mysql_connection_streaming(
   row_limit: usize,
   byte_limit: usize,
   batch_size: usize,
-  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
-) -> Result<QueryExecutionSummary, String> {
+  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+) -> Result<QueryExecutionSummary, QueryError> {
   if is_transaction_control_statement(sql) {
-    let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
+    let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let description = (&mut *connection).describe(sql).await.map_err(|error| error.to_string())?;
+  let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
   let column_metadata = description
     .columns()
     .iter()
@@ -368,7 +365,7 @@ async fn execute_mysql_connection_streaming(
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
   if columns.is_empty() {
-    let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
+    let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
@@ -379,7 +376,7 @@ async fn execute_mysql_connection_streaming(
   let mut bytes_read: usize = 0;
   let mut truncation_reason = None;
   while row_count < row_limit {
-    let Some(row) = stream.try_next().await.map_err(|error| error.to_string())? else {
+    let Some(row) = stream.try_next().await.map_err(QueryError::from)? else {
       break;
     };
     let row = decode_mysql_row(&row)?;
@@ -395,7 +392,7 @@ async fn execute_mysql_connection_streaming(
   }
   if truncation_reason.is_none()
     && row_count == row_limit
-    && stream.try_next().await.map_err(|error| error.to_string())?.is_some()
+    && stream.try_next().await.map_err(QueryError::from)?.is_some()
   {
     truncation_reason = Some(QueryTruncationReason::RowLimit);
   }
@@ -418,8 +415,8 @@ async fn execute_postgres(
   sql: &str,
   row_limit: usize,
   byte_limit: usize,
-) -> Result<QueryExecutionResult, String> {
-  let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+) -> Result<QueryExecutionResult, QueryError> {
+  let mut connection = pool.acquire().await.map_err(QueryError::from)?;
   execute_postgres_connection_with_limits(&mut connection, sql, row_limit, byte_limit).await
 }
 
@@ -427,7 +424,7 @@ async fn execute_postgres_connection(
   connection: &mut PgConnection,
   sql: &str,
   row_limit: usize,
-) -> Result<QueryExecutionResult, String> {
+) -> Result<QueryExecutionResult, QueryError> {
   execute_postgres_connection_with_limits(connection, sql, row_limit, DEFAULT_QUERY_BYTE_LIMIT)
     .await
 }
@@ -437,7 +434,7 @@ async fn execute_postgres_connection_with_limits(
   sql: &str,
   row_limit: usize,
   byte_limit: usize,
-) -> Result<QueryExecutionResult, String> {
+) -> Result<QueryExecutionResult, QueryError> {
   let mut rows = Vec::new();
   let summary = execute_postgres_connection_streaming(
     connection,
@@ -460,14 +457,14 @@ async fn execute_postgres_connection_streaming(
   row_limit: usize,
   byte_limit: usize,
   batch_size: usize,
-  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
-) -> Result<QueryExecutionSummary, String> {
+  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+) -> Result<QueryExecutionSummary, QueryError> {
   if is_transaction_control_statement(sql) {
-    let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
+    let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let description = (&mut *connection).describe(sql).await.map_err(|error| error.to_string())?;
+  let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
   let column_metadata = description
     .columns()
     .iter()
@@ -483,7 +480,7 @@ async fn execute_postgres_connection_streaming(
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
   if columns.is_empty() {
-    let result = (&mut *connection).execute(sql).await.map_err(|error| error.to_string())?;
+    let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
@@ -494,7 +491,7 @@ async fn execute_postgres_connection_streaming(
   let mut bytes_read: usize = 0;
   let mut truncation_reason = None;
   while row_count < row_limit {
-    let Some(row) = stream.try_next().await.map_err(|error| error.to_string())? else {
+    let Some(row) = stream.try_next().await.map_err(QueryError::from)? else {
       break;
     };
     let row = decode_postgres_row(&row)?;
@@ -510,7 +507,7 @@ async fn execute_postgres_connection_streaming(
   }
   if truncation_reason.is_none()
     && row_count == row_limit
-    && stream.try_next().await.map_err(|error| error.to_string())?.is_some()
+    && stream.try_next().await.map_err(QueryError::from)?.is_some()
   {
     truncation_reason = Some(QueryTruncationReason::RowLimit);
   }
@@ -533,8 +530,8 @@ fn flush_full_batch(
   batch_size: usize,
   batch_count: &mut usize,
   row_count: usize,
-  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
-) -> Result<(), String> {
+  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+) -> Result<(), QueryError> {
   if rows.len() < batch_size.max(1) {
     return Ok(());
   }
@@ -545,8 +542,8 @@ fn flush_remaining_batch(
   rows: &mut Vec<QueryRow>,
   batch_count: &mut usize,
   row_count: usize,
-  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
-) -> Result<(), String> {
+  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+) -> Result<(), QueryError> {
   if rows.is_empty() {
     return Ok(());
   }
@@ -557,8 +554,8 @@ fn send_batch(
   rows: &mut Vec<QueryRow>,
   batch_count: &mut usize,
   row_count: usize,
-  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
-) -> Result<(), String> {
+  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+) -> Result<(), QueryError> {
   let batch_rows = std::mem::take(rows);
   let offset = row_count - batch_rows.len();
   sink(QueryResultBatch { index: *batch_count, offset, rows: batch_rows })?;
@@ -566,8 +563,8 @@ fn send_batch(
   Ok(())
 }
 
-fn serialized_row_size(row: &QueryRow) -> Result<usize, String> {
-  serde_json::to_vec(row).map(|bytes| bytes.len()).map_err(|error| error.to_string())
+fn serialized_row_size(row: &QueryRow) -> Result<usize, QueryError> {
+  serde_json::to_vec(row).map(|bytes| bytes.len()).map_err(display_error)
 }
 
 fn sqlite_logical_type(database_type: &str) -> &'static str {
@@ -624,7 +621,7 @@ fn postgres_logical_type(database_type: &str) -> &'static str {
 fn summary_with_rows(
   summary: QueryExecutionSummary,
   rows: Vec<QueryRow>,
-) -> Result<QueryExecutionResult, String> {
+) -> Result<QueryExecutionResult, QueryError> {
   match summary {
     QueryExecutionSummary::Rows {
       columns,
@@ -666,10 +663,10 @@ fn is_transaction_control_statement(sql: &str) -> bool {
   .any(|keyword| normalized == *keyword || normalized.starts_with(&format!("{keyword} ")))
 }
 
-fn decode_sqlite_row(row: &SqliteRow) -> Result<Map<String, JsonValue>, String> {
+fn decode_sqlite_row(row: &SqliteRow) -> Result<Map<String, JsonValue>, QueryError> {
   let mut values = Map::new();
   for (index, column) in row.columns().iter().enumerate() {
-    let value = row.try_get_raw(index).map_err(|error| error.to_string())?;
+    let value = row.try_get_raw(index).map_err(QueryError::from)?;
     let decoded = decode_sqlite(value).map_err(|error| {
       format!("SQLite 列 {} ({}) 解码失败: {error}", column.name(), column.type_info().name())
     })?;
@@ -678,10 +675,10 @@ fn decode_sqlite_row(row: &SqliteRow) -> Result<Map<String, JsonValue>, String> 
   Ok(values)
 }
 
-fn decode_mysql_row(row: &MySqlRow) -> Result<Map<String, JsonValue>, String> {
+fn decode_mysql_row(row: &MySqlRow) -> Result<Map<String, JsonValue>, QueryError> {
   let mut values = Map::new();
   for (index, column) in row.columns().iter().enumerate() {
-    let value = row.try_get_raw(index).map_err(|error| error.to_string())?;
+    let value = row.try_get_raw(index).map_err(QueryError::from)?;
     let decoded = decode_mysql(value).map_err(|error| {
       format!("MySQL 列 {} ({}) 解码失败: {error}", column.name(), column.type_info().name())
     })?;
@@ -690,10 +687,10 @@ fn decode_mysql_row(row: &MySqlRow) -> Result<Map<String, JsonValue>, String> {
   Ok(values)
 }
 
-fn decode_postgres_row(row: &PgRow) -> Result<Map<String, JsonValue>, String> {
+fn decode_postgres_row(row: &PgRow) -> Result<Map<String, JsonValue>, QueryError> {
   let mut values = Map::new();
   for (index, column) in row.columns().iter().enumerate() {
-    let value = row.try_get_raw(index).map_err(|error| error.to_string())?;
+    let value = row.try_get_raw(index).map_err(QueryError::from)?;
     let decoded = decode_postgres(value).map_err(|error| {
       format!("PostgreSQL 列 {} ({}) 解码失败: {error}", column.name(), column.type_info().name())
     })?;
@@ -702,7 +699,7 @@ fn decode_postgres_row(row: &PgRow) -> Result<Map<String, JsonValue>, String> {
   Ok(values)
 }
 
-fn decode_sqlite(value: SqliteValueRef<'_>) -> Result<JsonValue, String> {
+fn decode_sqlite(value: SqliteValueRef<'_>) -> Result<JsonValue, QueryError> {
   if value.is_null() {
     return Ok(JsonValue::Null);
   }
@@ -721,11 +718,11 @@ fn decode_sqlite(value: SqliteValueRef<'_>) -> Result<JsonValue, String> {
     }
     "BLOB" => tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>()),
     "NULL" => Ok(JsonValue::Null),
-    type_name => Err(format!("不支持的 SQLite 数据类型: {type_name}")),
+    type_name => Err(QueryError::message(format!("不支持的 SQLite 数据类型: {type_name}"))),
   }
 }
 
-fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, String> {
+fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, QueryError> {
   if value.is_null() {
     return Ok(JsonValue::Null);
   }
@@ -756,9 +753,8 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, String> {
     "DATE" => tagged_display_value("date", ValueRef::to_owned(&value).try_decode::<Date>()),
     // MySQL 的 TIME 是时长而非时刻（-838:59:59 ~ 838:59:59），装不进 time::Time
     "TIME" => {
-      let duration = ValueRef::to_owned(&value)
-        .try_decode::<time::Duration>()
-        .map_err(|error| error.to_string())?;
+      let duration =
+        ValueRef::to_owned(&value).try_decode::<time::Duration>().map_err(QueryError::from)?;
       Ok(tagged_value("time", format_mysql_time(duration)))
     }
     "DATETIME" => {
@@ -771,11 +767,11 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, String> {
       tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>())
     }
     "NULL" => Ok(JsonValue::Null),
-    _ => Err(format!("不支持的 MySQL 数据类型: {type_name}")),
+    _ => Err(QueryError::message(format!("不支持的 MySQL 数据类型: {type_name}"))),
   }
 }
 
-fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, String> {
+fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
   if value.is_null() {
     return Ok(JsonValue::Null);
   }
@@ -806,9 +802,8 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, String> {
       tagged_display_value("datetime", ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>())
     }
     "TIMESTAMPTZ" => {
-      let value = ValueRef::to_owned(&value)
-        .try_decode::<DateTime<Utc>>()
-        .map_err(|error| error.to_string())?;
+      let value =
+        ValueRef::to_owned(&value).try_decode::<DateTime<Utc>>().map_err(QueryError::from)?;
       Ok(tagged_value("datetime", value.to_rfc3339()))
     }
     "BYTEA" => tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>()),
@@ -821,11 +816,11 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, String> {
     "INTERVAL" => {
       let interval = ValueRef::to_owned(&value)
         .try_decode::<sqlx::postgres::types::PgInterval>()
-        .map_err(|error| error.to_string())?;
+        .map_err(QueryError::from)?;
       Ok(tagged_value("time", format_pg_interval(&interval)))
     }
     "VOID" => Ok(JsonValue::Null),
-    _ => Err(format!("不支持的 PostgreSQL 数据类型: {type_name}")),
+    _ => Err(QueryError::message(format!("不支持的 PostgreSQL 数据类型: {type_name}"))),
   }
 }
 
@@ -856,33 +851,36 @@ fn format_pg_interval(interval: &sqlx::postgres::types::PgInterval) -> String {
   parts.join(" ")
 }
 
-fn json_value<T, E>(value: Result<T, E>) -> Result<JsonValue, String>
+fn json_value<T, E>(value: Result<T, E>) -> Result<JsonValue, QueryError>
 where
   T: Serialize,
   E: std::fmt::Display,
 {
-  let decoded = value.map_err(|error| error.to_string())?;
-  serde_json::to_value(decoded).map_err(|error| error.to_string())
+  let decoded = value.map_err(display_error)?;
+  serde_json::to_value(decoded).map_err(display_error)
 }
 
-fn tagged_display_value<T, E>(value_type: &str, value: Result<T, E>) -> Result<JsonValue, String>
+fn tagged_display_value<T, E>(
+  value_type: &str,
+  value: Result<T, E>,
+) -> Result<JsonValue, QueryError>
 where
   T: std::fmt::Display,
   E: std::fmt::Display,
 {
-  value.map(|value| tagged_value(value_type, value.to_string())).map_err(|error| error.to_string())
+  value.map(|value| tagged_value(value_type, value.to_string())).map_err(display_error)
 }
 
-fn tagged_json_value<E>(value: Result<JsonValue, E>) -> Result<JsonValue, String>
+fn tagged_json_value<E>(value: Result<JsonValue, E>) -> Result<JsonValue, QueryError>
 where
   E: std::fmt::Display,
 {
-  let value = value.map_err(|error| error.to_string())?;
-  let serialized = serde_json::to_string(&value).map_err(|error| error.to_string())?;
+  let value = value.map_err(display_error)?;
+  let serialized = serde_json::to_string(&value).map_err(display_error)?;
   Ok(tagged_value("json", serialized))
 }
 
-fn tagged_binary_value<E>(value: Result<Vec<u8>, E>) -> Result<JsonValue, String>
+fn tagged_binary_value<E>(value: Result<Vec<u8>, E>) -> Result<JsonValue, QueryError>
 where
   E: std::fmt::Display,
 {
@@ -891,7 +889,14 @@ where
       let encoded = bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
       tagged_value("binary", encoded)
     })
-    .map_err(|error| error.to_string())
+    .map_err(display_error)
+}
+
+/// 解码失败、序列化失败这类：错误来自我们这一侧，没有数据库给的结构可取，
+/// 只留一句话。和 `QueryError::from(sqlx::Error)` 分开是为了不把
+/// 「数据库说的」和「我们说的」混成一种东西。
+fn display_error(error: impl std::fmt::Display) -> QueryError {
+  QueryError::message(error.to_string())
 }
 
 fn tagged_value(value_type: &str, value: String) -> JsonValue {
@@ -1092,15 +1097,16 @@ mod tests {
     let error = with_timeout(
       async {
         pending::<()>().await;
-        Ok::<(), String>(())
+        Ok::<(), QueryError>(())
       },
       Duration::from_millis(1),
     )
     .await;
 
-    assert_eq!(
-      error.expect_err("pending query should time out"),
-      "QUERY_TIMEOUT: 查询执行超过 1 毫秒"
-    );
+    let error = error.expect_err("pending query should time out");
+    // 码单独成一个字段，不再拼在消息前缀里：消息是要翻译的，
+    // 按前缀匹配等于把「这是超时」的判断绑在某一种语言上
+    assert_eq!(error.code.as_deref(), Some(QUERY_TIMEOUT_CODE));
+    assert_eq!(error.message, "查询执行超过 1 毫秒");
   }
 }

@@ -3,6 +3,7 @@ pub mod connection_service;
 pub mod database_service;
 pub mod er_diagram;
 pub mod object_catalog;
+pub mod query_error;
 pub mod query_executor;
 pub mod query_session;
 pub mod schema_metadata;
@@ -13,6 +14,7 @@ pub use connection_service::ConnectionService;
 pub use database_service::DatabaseService;
 pub use er_diagram::{er_diagram_queries, ErDiagramQueries};
 pub use object_catalog::{object_catalog_queries, ObjectCatalogQueries};
+pub use query_error::QueryError;
 pub use query_executor::{
   execute_query, execute_query_with_limit, execute_query_with_limits, execute_query_with_timeout,
   QueryColumnMetadata, QueryExecutionResult, QueryExecutionSummary, QueryResultBatch,

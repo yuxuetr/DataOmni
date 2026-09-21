@@ -1,5 +1,5 @@
 use crate::services::{
-  QueryExecutionResult, QueryExecutionSummary, QueryResultBatch, SessionConnection,
+  QueryError, QueryExecutionResult, QueryExecutionSummary, QueryResultBatch, SessionConnection,
   QUERY_TIMEOUT_CODE,
 };
 use std::{collections::HashMap, sync::Arc};
@@ -39,14 +39,14 @@ impl QuerySessionState {
     sql: &str,
     row_limit: usize,
     timeout_duration: Duration,
-  ) -> Result<QueryExecutionResult, String> {
+  ) -> Result<QueryExecutionResult, QueryError> {
     if session_id.trim().is_empty() {
-      return Err("数据库 Session ID 不能为空".to_string());
+      return Err(QueryError::message("数据库 Session ID 不能为空"));
     }
 
     let entry = self.get_or_create(session_id, pool_key, pool).await?;
     if entry.pool_key != pool_key {
-      return Err("数据库 Session 已绑定到其他连接".to_string());
+      return Err(QueryError::message("数据库 Session 已绑定到其他连接"));
     }
 
     timeout(timeout_duration, async {
@@ -55,7 +55,10 @@ impl QuerySessionState {
     })
     .await
     .map_err(|_| {
-      format!("{QUERY_TIMEOUT_CODE}: 查询执行超过 {} 毫秒", timeout_duration.as_millis())
+      QueryError::with_code(
+        QUERY_TIMEOUT_CODE,
+        format!("查询执行超过 {} 毫秒", timeout_duration.as_millis()),
+      )
     })?
   }
 
@@ -66,15 +69,15 @@ impl QuerySessionState {
   pub async fn execute_streaming(
     &self,
     options: StreamingQueryOptions<'_>,
-    sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), String> + Send),
-  ) -> Result<QueryExecutionSummary, String> {
+    sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+  ) -> Result<QueryExecutionSummary, QueryError> {
     if options.session_id.trim().is_empty() {
-      return Err("数据库 Session ID 不能为空".to_string());
+      return Err(QueryError::message("数据库 Session ID 不能为空"));
     }
 
     let entry = self.get_or_create(options.session_id, options.pool_key, options.pool).await?;
     if entry.pool_key != options.pool_key {
-      return Err("数据库 Session 已绑定到其他连接".to_string());
+      return Err(QueryError::message("数据库 Session 已绑定到其他连接"));
     }
 
     timeout(options.timeout_duration, async {
@@ -91,7 +94,10 @@ impl QuerySessionState {
     })
     .await
     .map_err(|_| {
-      format!("{QUERY_TIMEOUT_CODE}: 查询执行超过 {} 毫秒", options.timeout_duration.as_millis())
+      QueryError::with_code(
+        QUERY_TIMEOUT_CODE,
+        format!("查询执行超过 {} 毫秒", options.timeout_duration.as_millis()),
+      )
     })?
   }
 
@@ -100,7 +106,7 @@ impl QuerySessionState {
     session_id: &str,
     pool_key: &str,
     pool: &DbPool,
-  ) -> Result<Arc<SessionEntry>, String> {
+  ) -> Result<Arc<SessionEntry>, QueryError> {
     if let Some(entry) = self.sessions.lock().await.get(session_id).cloned() {
       return Ok(entry);
     }
@@ -212,6 +218,6 @@ mod tests {
       .await
       .expect_err("reject another pool");
 
-    assert_eq!(error, "数据库 Session 已绑定到其他连接");
+    assert_eq!(error.message, "数据库 Session 已绑定到其他连接");
   }
 }
