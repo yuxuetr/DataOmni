@@ -300,6 +300,7 @@ async fn assert_transaction_binding(
         pool,
         sql: "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5",
         autocommit: true,
+        assume_rows: false,
         row_limit: 5,
         byte_limit: 16 * 1024 * 1024,
         batch_size: 2,
@@ -2817,6 +2818,7 @@ async fn postgres_aborts_the_whole_transaction_after_one_failed_statement() {
     pool: &db_pool,
     sql,
     autocommit: true,
+    assume_rows: false,
     row_limit: 100,
     byte_limit: 1 << 20,
     batch_size: 10,
@@ -2872,6 +2874,7 @@ async fn mysql_keeps_the_transaction_usable_after_a_failed_statement() {
     pool: &db_pool,
     sql,
     autocommit: true,
+    assume_rows: false,
     row_limit: 100,
     byte_limit: 1 << 20,
     batch_size: 10,
@@ -2892,4 +2895,234 @@ async fn mysql_keeps_the_transaction_usable_after_a_failed_statement() {
 
   sessions.execute_streaming(options("ROLLBACK"), &mut |_| Ok(())).await.expect("rollback");
   sessions.release("tx-my").await;
+}
+
+/// 执行计划的三个解析器，各自拿真库跑一遍。
+///
+/// 单测里的那几份 JSON 是**从这些库上抄下来的**，但抄下来的那一刻之后，
+/// 数据库的版本、优化器与输出格式还会变。这几条用例保证解析器面对的一直是
+/// 真实输出，而不是某一天的快照。
+fn plan_operations(node: &dataomni_lib::services::PlanNode, into: &mut Vec<String>) {
+  into.push(node.operation.clone());
+  for child in &node.children {
+    plan_operations(child, into);
+  }
+}
+
+fn all_operations(plan: &dataomni_lib::services::QueryPlan) -> Vec<String> {
+  let mut names = Vec::new();
+  for root in &plan.roots {
+    plan_operations(root, &mut names);
+  }
+  names
+}
+
+async fn explain_with_session(
+  sessions: &QuerySessionState,
+  pool: &DbPool,
+  pool_key: &str,
+  db_type: &dataomni_lib::models::DatabaseType,
+  sql: &str,
+  analyze: bool,
+) -> dataomni_lib::services::QueryPlan {
+  let statement =
+    dataomni_lib::services::explain_statement(db_type, sql, analyze).expect("explain statement");
+  // 和 `explain_query` 命令走同一条路径，包括 assume_rows——MySQL 在预处理
+  // `EXPLAIN FORMAT=JSON` 时报告 0 列，不带这个标志就拿不到那一行
+  let mut rows = Vec::new();
+  sessions
+    .execute_streaming(
+      StreamingQueryOptions {
+        session_id: "plan",
+        pool_key,
+        pool,
+        sql: &statement,
+        autocommit: true,
+        assume_rows: true,
+        row_limit: 10_000,
+        byte_limit: 16 * 1024 * 1024,
+        batch_size: 200,
+        timeout_duration: Duration::from_secs(30),
+      },
+      &mut |batch| {
+        rows.extend(batch.rows);
+        Ok(())
+      },
+    )
+    .await
+    .unwrap_or_else(|error| panic!("跑不了: {statement}\n{error}"));
+  dataomni_lib::services::parse_plan(db_type, &rows, analyze).expect("parse plan")
+}
+
+#[tokio::test]
+async fn postgres_explain_gives_a_tree_with_real_numbers_when_analyzed() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let db_pool = DbPool::Postgres(pool);
+  let sessions = QuerySessionState::default();
+  let db_type = dataomni_lib::models::DatabaseType::PostgreSQL;
+
+  for statement in [
+    "DROP TABLE IF EXISTS explain_smoke",
+    "CREATE TABLE explain_smoke (id int primary key, code text, n int)",
+    "INSERT INTO explain_smoke SELECT g, 'c' || g, g % 7 FROM generate_series(1, 300) g",
+    "ANALYZE explain_smoke",
+  ] {
+    sessions
+      .execute("plan", &url, &db_pool, statement, 1, Duration::from_secs(30))
+      .await
+      .expect("prepare fixture");
+  }
+
+  let sql = "SELECT code FROM explain_smoke WHERE n > 2 ORDER BY code LIMIT 5";
+
+  let plain = explain_with_session(&sessions, &db_pool, &url, &db_type, sql, false).await;
+  let operations = all_operations(&plain);
+  assert!(operations.iter().any(|name| name.contains("Scan")), "{operations:?}");
+  assert!(
+    plain.roots.iter().all(|node| node.actual_rows.is_none()),
+    "没 ANALYZE 就不该有实际行数: {:?}",
+    plain.roots
+  );
+  assert!(!plain.raw.trim().is_empty(), "文本那一页要有东西");
+
+  let analyzed = explain_with_session(&sessions, &db_pool, &url, &db_type, sql, true).await;
+  assert!(analyzed.execution_ms.is_some(), "ANALYZE 要给出执行耗时: {analyzed:?}");
+  let has_actual = {
+    let mut found = false;
+    let mut stack: Vec<&dataomni_lib::services::PlanNode> = analyzed.roots.iter().collect();
+    while let Some(node) = stack.pop() {
+      found |= node.actual_rows.is_some();
+      stack.extend(node.children.iter());
+    }
+    found
+  };
+  assert!(has_actual, "ANALYZE 要给出实际行数: {analyzed:?}");
+
+  sessions
+    .execute(
+      "plan",
+      &url,
+      &db_pool,
+      "DROP TABLE IF EXISTS explain_smoke",
+      1,
+      Duration::from_secs(30),
+    )
+    .await
+    .ok();
+  sessions.release("plan").await;
+}
+
+#[tokio::test]
+async fn mysql_explain_nests_the_join_and_names_both_tables() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  let db_pool = DbPool::MySql(pool);
+  let sessions = QuerySessionState::default();
+  let db_type = dataomni_lib::models::DatabaseType::MySQL;
+
+  for statement in [
+    "DROP TABLE IF EXISTS explain_smoke_child",
+    "DROP TABLE IF EXISTS explain_smoke",
+    "CREATE TABLE explain_smoke (id INT PRIMARY KEY, code VARCHAR(32), n INT)",
+    "CREATE TABLE explain_smoke_child (id INT PRIMARY KEY, parent INT, INDEX(parent))",
+    "INSERT INTO explain_smoke VALUES (1,'a',5),(2,'b',1),(3,'c',9)",
+    "INSERT INTO explain_smoke_child VALUES (1,1),(2,2),(3,3)",
+  ] {
+    sessions
+      .execute("plan", &url, &db_pool, statement, 1, Duration::from_secs(30))
+      .await
+      .expect("prepare fixture");
+  }
+
+  let plan = explain_with_session(
+    &sessions,
+    &db_pool,
+    &url,
+    &db_type,
+    "SELECT p.code FROM explain_smoke p JOIN explain_smoke_child c ON c.parent = p.id WHERE p.n > 2",
+    false,
+  )
+  .await;
+
+  let operations = all_operations(&plan);
+  assert!(operations.contains(&"query_block".to_string()), "{operations:?}");
+
+  // 钉住的是**形状**，不只是「两张表在树上某处」。
+  // `nested_loop` 的元素是 `{"table": {...}}` 这样的单键包装，外面那层不该
+  // 在树上占一行——不拆包，两张表照样都在，只是各自深了一层，而一个只看
+  // 「出现过没有」的断言对此一无所知。
+  let mut stack: Vec<&dataomni_lib::services::PlanNode> = plan.roots.iter().collect();
+  let mut join = None;
+  while let Some(node) = stack.pop() {
+    if node.operation == "nested_loop" {
+      join = Some(node);
+      break;
+    }
+    stack.extend(node.children.iter());
+  }
+  let join = join.unwrap_or_else(|| panic!("连接那一层该叫 nested_loop: {operations:?}"));
+  let mut children: Vec<(&str, &str)> = join
+    .children
+    .iter()
+    .map(|child| (child.operation.as_str(), child.target.as_deref().unwrap_or("")))
+    .collect();
+  children.sort();
+  assert_eq!(
+    children,
+    vec![("table", "c"), ("table", "p")],
+    "nested_loop 的直接子节点就是两张表: {operations:?}"
+  );
+
+  for statement in
+    ["DROP TABLE IF EXISTS explain_smoke_child", "DROP TABLE IF EXISTS explain_smoke"]
+  {
+    sessions.execute("plan", &url, &db_pool, statement, 1, Duration::from_secs(30)).await.ok();
+  }
+  sessions.release("plan").await;
+}
+
+#[tokio::test]
+async fn sqlite_explain_query_plan_names_the_index_it_will_use() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("connect to in-memory SQLite");
+  let db_pool = DbPool::Sqlite(pool);
+  let sessions = QuerySessionState::default();
+  let db_type = dataomni_lib::models::DatabaseType::SQLite;
+
+  for statement in [
+    "CREATE TABLE explain_smoke (id INTEGER PRIMARY KEY, code TEXT, n INT)",
+    "CREATE INDEX ix_explain_smoke_n ON explain_smoke(n)",
+  ] {
+    sessions
+      .execute("plan", "sqlite::memory:", &db_pool, statement, 1, Duration::from_secs(5))
+      .await
+      .expect("prepare fixture");
+  }
+
+  let plan = explain_with_session(
+    &sessions,
+    &db_pool,
+    "sqlite::memory:",
+    &db_type,
+    "SELECT code FROM explain_smoke WHERE n = 3",
+    false,
+  )
+  .await;
+
+  let operations = all_operations(&plan);
+  assert!(
+    operations.iter().any(|name| name.contains("ix_explain_smoke_n")),
+    "计划里该点名用了哪个索引: {operations:?}"
+  );
+  assert!(!plan.analyzed);
 }

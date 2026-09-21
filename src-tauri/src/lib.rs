@@ -111,6 +111,7 @@ pub fn run() {
       cancel_query,
       release_database_session,
       get_session_transaction,
+      explain_query,
       validate_query,
       get_schema_metadata_queries,
       get_object_catalog_queries,

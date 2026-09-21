@@ -2,6 +2,7 @@ pub mod completion_catalog;
 pub mod connection_service;
 pub mod database_service;
 pub mod er_diagram;
+pub mod explain;
 pub mod export_writer;
 pub mod object_catalog;
 pub mod query_error;
@@ -16,6 +17,7 @@ pub use completion_catalog::{completion_catalog_query, CompletionCatalogQuery};
 pub use connection_service::ConnectionService;
 pub use database_service::DatabaseService;
 pub use er_diagram::{er_diagram_queries, ErDiagramQueries};
+pub use explain::{explain_statement, parse_plan, supports_analyze, PlanNode, QueryPlan};
 pub use export_writer::{
   export_query, ExportFormat, ExportOptions, ExportProgress, ExportSummary, ExportWriter,
   EXPORT_CANCELLED_CODE,

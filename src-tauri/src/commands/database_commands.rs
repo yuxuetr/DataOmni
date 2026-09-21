@@ -116,6 +116,7 @@ pub async fn execute_query(
         pool,
         sql: &request.sql,
         autocommit: request.autocommit,
+        assume_rows: false,
         row_limit: request.row_limit,
         byte_limit: request.byte_limit,
         batch_size: DEFAULT_QUERY_BATCH_SIZE,
@@ -608,6 +609,90 @@ pub fn get_schema_metadata_queries(
   crate::services::schema_metadata_queries(&db_type)
     .ok_or_else(|| format!("{:?} 尚未支持结构浏览", db_type))
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExplainRequest {
+  connection_id: String,
+  session_id: String,
+  sql: String,
+  /// 真的把语句跑一遍。只有 PostgreSQL 支持，且**写语句会真的写进去**
+  analyze: bool,
+  /// 跟着编辑器当前的自动提交设置走：关掉时这次 EXPLAIN ANALYZE 会落在
+  /// 一个事务里，用户可以回滚掉它写进去的东西
+  #[serde(default = "default_autocommit")]
+  autocommit: bool,
+}
+
+/// 取一条语句的执行计划。
+///
+/// 走 session 连接而不是另开一条：计划受当前事务里的临时表、未提交的 DDL
+/// 与会话参数影响，另开一条连接算出来的是另一个环境下的计划。
+///
+/// 超时用固定的一分钟：`EXPLAIN ANALYZE` 会真的跑，而它跑多久取决于那条语句。
+#[tauri::command]
+pub async fn explain_query(
+  request: ExplainRequest,
+  connection_service_state: State<'_, ConnectionServiceState>,
+  database_instances: State<'_, DbInstances>,
+  query_session_state: State<'_, QuerySessionState>,
+) -> Result<crate::services::explain::QueryPlan, QueryError> {
+  let (connection_string, db_type) = {
+    let connection_service_guard = connection_service_state
+      .lock()
+      .map_err(|e| QueryError::message(format!("获取连接服务状态失败: {e}")))?;
+    let service =
+      connection_service_guard.as_ref().ok_or_else(|| QueryError::message("连接服务未初始化"))?;
+    let connection = service
+      .get_connection(&request.connection_id)
+      .ok_or_else(|| QueryError::message("找不到这个连接"))?;
+    let db_type = connection.db_type.clone();
+    (
+      service.resolve_connection_string(&request.connection_id).map_err(QueryError::message)?,
+      db_type,
+    )
+  };
+
+  let statement =
+    crate::services::explain::explain_statement(&db_type, &request.sql, request.analyze)?;
+
+  let instances = database_instances.0.read().await;
+  let pool =
+    instances.get(&connection_string).ok_or_else(|| QueryError::message("数据库会话未连接"))?;
+  // 走 streaming 而不是 execute：要带上 assume_rows。MySQL 在预处理
+  // `EXPLAIN FORMAT=JSON` 时报告 0 列，按 describe 的说法走会拿回一个
+  // Affected，计划就此消失
+  let mut rows = Vec::new();
+  query_session_state
+    .execute_streaming(
+      StreamingQueryOptions {
+        session_id: &request.session_id,
+        pool_key: &connection_string,
+        pool,
+        sql: &statement,
+        autocommit: request.autocommit,
+        assume_rows: true,
+        row_limit: EXPLAIN_ROW_LIMIT,
+        byte_limit: EXPLAIN_BYTE_LIMIT,
+        batch_size: DEFAULT_QUERY_BATCH_SIZE,
+        timeout_duration: Duration::from_secs(60),
+      },
+      &mut |batch| {
+        rows.extend(batch.rows);
+        Ok(())
+      },
+    )
+    .await?;
+  crate::services::explain::parse_plan(&db_type, &rows, request.analyze)
+}
+
+/// 计划的行数上限。SQLite 的 `EXPLAIN QUERY PLAN` 一行一步，复杂查询几十行；
+/// 一万行足够，而不设上限意味着一条畸形语句能把内存吃光。
+const EXPLAIN_ROW_LIMIT: usize = 10_000;
+
+/// 计划本身的内存上限。PostgreSQL 的 VERBOSE JSON 在几十张表的查询上能到
+/// 几 MB，16 MiB 留足余量，同时挡住失控的情况。
+const EXPLAIN_BYTE_LIMIT: usize = 16 * 1024 * 1024;
 
 /// 这条 session 现在在不在事务里。
 ///

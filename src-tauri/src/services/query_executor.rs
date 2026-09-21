@@ -67,11 +67,29 @@ pub struct StreamOptions {
   pub byte_limit: usize,
   pub batch_size: usize,
   pub non_query: NonQueryHandling,
+  /// describe 说「没有列」时，仍然去取结果集。
+  ///
+  /// MySQL 在预处理 `EXPLAIN FORMAT=JSON` 时报告 **0 列**，而它执行起来确实
+  /// 返回一行 JSON。按 describe 的说法走会拿回一个 `Affected`，执行计划就此
+  /// 消失，而调用方只看到「这条语句没有执行计划」。
+  pub assume_rows: bool,
 }
 
 impl StreamOptions {
   pub fn limited(row_limit: usize, byte_limit: usize, batch_size: usize) -> Self {
-    Self { row_limit, byte_limit, batch_size, non_query: NonQueryHandling::Execute }
+    Self {
+      row_limit,
+      byte_limit,
+      batch_size,
+      non_query: NonQueryHandling::Execute,
+      assume_rows: false,
+    }
+  }
+
+  /// 调用方知道这条语句返回结果集，不信 describe 的说法
+  pub fn assuming_rows(mut self) -> Self {
+    self.assume_rows = true;
+    self
   }
 
   /// 导出用：行数与字节都不设限，且拒绝执行不返回结果集的语句。
@@ -81,6 +99,7 @@ impl StreamOptions {
       byte_limit: usize::MAX,
       batch_size,
       non_query: NonQueryHandling::Refuse,
+      assume_rows: false,
     }
   }
 }
@@ -312,7 +331,7 @@ async fn execute_sqlite_connection_streaming(
   let column_metadata = describe_sqlite_columns(connection, sql).await?;
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
-  if columns.is_empty() {
+  if columns.is_empty() && !options.assume_rows {
     refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
@@ -431,7 +450,7 @@ async fn execute_mysql_connection_streaming(
   let column_metadata = describe_mysql_columns(connection, sql).await?;
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
-  if columns.is_empty() {
+  if columns.is_empty() && !options.assume_rows {
     refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
@@ -551,7 +570,7 @@ async fn execute_postgres_connection_streaming(
   let column_metadata = describe_postgres_columns(connection, sql).await?;
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
-  if columns.is_empty() {
+  if columns.is_empty() && !options.assume_rows {
     refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
