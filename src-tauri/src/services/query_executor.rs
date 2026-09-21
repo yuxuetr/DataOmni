@@ -208,6 +208,61 @@ impl SessionConnection {
     }
   }
 
+  /// 在这条连接上执行一条带参数的语句，返回影响行数。
+  ///
+  /// 与 `execute` 的区别只在参数，而这个区别是导入的全部安全性所在：CSV 里的
+  /// 一个单引号拼进 SQL 就能把语句改写成别的意思。值一律是 `Option<String>`——
+  /// CSV 给出来的本来就是文本与「没有值」两种，再包一层 JSON 只是多一次转换。
+  pub async fn execute_with_params(
+    &mut self,
+    sql: &str,
+    params: &[Option<String>],
+  ) -> Result<u64, QueryError> {
+    match self {
+      Self::Sqlite(connection) => {
+        let mut query = sqlx::query(sql);
+        for param in params {
+          query = query.bind(param.clone());
+        }
+        connection.execute(query).await.map(|done| done.rows_affected()).map_err(display_error)
+      }
+      Self::MySql(connection) => {
+        let mut query = sqlx::query(sql);
+        for param in params {
+          query = query.bind(param.clone());
+        }
+        connection.execute(query).await.map(|done| done.rows_affected()).map_err(display_error)
+      }
+      Self::Postgres(connection) => {
+        let mut query = sqlx::query(sql);
+        for param in params {
+          query = query.bind(param.clone());
+        }
+        connection.execute(query).await.map(|done| done.rows_affected()).map_err(display_error)
+      }
+    }
+  }
+
+  /// 不经预处理直接发一条语句，返回影响行数。
+  ///
+  /// 事务与保存点控制必须走这条路：MySQL 的预处理协议**不收** `BEGIN` 与
+  /// `SAVEPOINT` 这类命令，报的是 1295「This command is not supported in the
+  /// prepared statement protocol yet」——一句完全不指向真正原因的错。
+  /// 这些语句本来也没有参数，预处理对它们只有坏处。
+  pub async fn execute_unprepared(&mut self, sql: &str) -> Result<u64, QueryError> {
+    match self {
+      Self::Sqlite(connection) => {
+        connection.execute(sql).await.map(|done| done.rows_affected()).map_err(display_error)
+      }
+      Self::MySql(connection) => {
+        connection.execute(sql).await.map(|done| done.rows_affected()).map_err(display_error)
+      }
+      Self::Postgres(connection) => {
+        connection.execute(sql).await.map(|done| done.rows_affected()).map_err(display_error)
+      }
+    }
+  }
+
   /// 这个方言会不会因为一条语句出错就把整个事务废掉。
   ///
   /// 只有 PostgreSQL 是：事务里任何一条语句报错之后，后续语句一律 25P02，

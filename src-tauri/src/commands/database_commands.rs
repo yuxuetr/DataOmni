@@ -1,7 +1,8 @@
 use crate::commands::connection_commands::ConnectionServiceState;
 use crate::services::{
-  export_writer, write_batch, ExportOptions, ExportProgress, ExportSummary, QueryExecutionSummary,
-  QueryResultBatch, QuerySessionState, StreamingQueryOptions, WriteBatchError, WriteStatement,
+  csv_import, export_writer, write_batch, CsvPreview, ExportOptions, ExportProgress, ExportSummary,
+  ImportProgress, ImportRequest, ImportSummary, QueryExecutionSummary, QueryResultBatch,
+  QuerySessionState, StreamingQueryOptions, WriteBatchError, WriteStatement,
   DEFAULT_QUERY_BATCH_SIZE,
 };
 // use crate::services::{ConnectionService, DatabaseService};
@@ -228,6 +229,136 @@ pub async fn cancel_export(
   cancellation_state: State<'_, QueryCancellationState>,
 ) -> Result<bool, String> {
   Ok(cancellation_state.cancel(&export_id).await)
+}
+
+/// 正在暂停的导入。
+///
+/// 取消用的是一次性的 oneshot，暂停不是——它要能来回切。所以另开一张表，
+/// 里面只有导入任务的 ID。
+#[derive(Default)]
+pub struct ImportPauseState {
+  paused: Mutex<std::collections::HashSet<String>>,
+}
+
+impl ImportPauseState {
+  async fn is_paused(&self, import_id: &str) -> bool {
+    self.paused.lock().await.contains(import_id)
+  }
+
+  async fn set(&self, import_id: &str, paused: bool) {
+    let mut set = self.paused.lock().await;
+    if paused {
+      set.insert(import_id.to_string());
+    } else {
+      set.remove(import_id);
+    }
+  }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CsvPreviewRequest {
+  path: String,
+  /// 不给就嗅探
+  delimiter: Option<String>,
+  has_header: bool,
+}
+
+/// 读 CSV 的开头，给出表头与前几十行。
+///
+/// 不走 `read_text_file`：那条命令把整个文件读进字符串，而导入要面对的正是
+/// 大到不该整份进内存的文件。这里只读开头。
+#[tauri::command]
+pub async fn preview_csv_file(request: CsvPreviewRequest) -> Result<CsvPreview, QueryError> {
+  let delimiter = match request.delimiter.as_deref() {
+    Some(text) => match text.as_bytes() {
+      [single] => Some(*single),
+      _ => return Err(QueryError::message(format!("分隔符必须是一个字符: {text:?}"))),
+    },
+    None => None,
+  };
+
+  let path = std::path::PathBuf::from(&request.path);
+  // 阻塞的文件读放到阻塞线程池：几十 MB 的文件在异步线程上读会把整个运行时卡住
+  tokio::task::spawn_blocking(move || {
+    csv_import::preview_csv(&path, delimiter, request.has_header, csv_import::PREVIEW_ROWS)
+  })
+  .await
+  .map_err(|error| QueryError::message(format!("预览 CSV 失败: {error}")))?
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CsvImportRequest {
+  connection_id: String,
+  import_id: String,
+  #[serde(flatten)]
+  import: ImportRequest,
+}
+
+/// 把一个 CSV 文件导入一张表。
+#[tauri::command]
+pub async fn import_csv_file(
+  request: CsvImportRequest,
+  on_progress: Channel<ImportProgress>,
+  connection_service_state: State<'_, ConnectionServiceState>,
+  database_instances: State<'_, DbInstances>,
+  cancellation_state: State<'_, QueryCancellationState>,
+  pause_state: State<'_, ImportPauseState>,
+) -> Result<ImportSummary, QueryError> {
+  let connection_string = {
+    let connection_service_guard = connection_service_state
+      .lock()
+      .map_err(|e| QueryError::message(format!("获取连接服务状态失败: {e}")))?;
+    let service =
+      connection_service_guard.as_ref().ok_or_else(|| QueryError::message("连接服务未初始化"))?;
+    service.resolve_connection_string(&request.connection_id).map_err(QueryError::message)?
+  };
+
+  let instances = database_instances.0.read().await;
+  let pool =
+    instances.get(&connection_string).ok_or_else(|| QueryError::message("数据库会话未连接"))?;
+
+  let mut receiver =
+    cancellation_state.register(&request.import_id).await.map_err(QueryError::message)?;
+  let mut report = |progress| {
+    // 进度送不出去（窗口关了）不该让导入失败——已经开着的事务要正常收尾
+    on_progress.send(progress).ok();
+  };
+  let mut cancelled = || !matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty));
+  // 暂停是个可以来回切的开关，只能现问。`try_lock` 读不到就当作没暂停：
+  // 宁可多写一批，也不要为了读一个布尔值把导入卡在这里
+  let mut paused =
+    || pause_state.paused.try_lock().map(|set| set.contains(&request.import_id)).unwrap_or(false);
+
+  let result =
+    csv_import::import_csv(pool, &request.import, &mut report, &mut cancelled, &mut paused).await;
+  cancellation_state.finish(&request.import_id).await;
+  pause_state.set(&request.import_id, false).await;
+  result
+}
+
+/// 取消一次导入。与 `cancel_query` 共用登记表。
+#[tauri::command]
+pub async fn cancel_import(
+  import_id: String,
+  cancellation_state: State<'_, QueryCancellationState>,
+) -> Result<bool, String> {
+  Ok(cancellation_state.cancel(&import_id).await)
+}
+
+/// 暂停 / 继续一次导入。
+///
+/// 暂停只在批次之间生效——一条语句发出去就不能中途停下。单事务策略下暂停
+/// 意味着那个事务一直开着，界面必须把这件事说出来。
+#[tauri::command]
+pub async fn set_import_paused(
+  import_id: String,
+  paused: bool,
+  pause_state: State<'_, ImportPauseState>,
+) -> Result<bool, String> {
+  pause_state.set(&import_id, paused).await;
+  Ok(pause_state.is_paused(&import_id).await)
 }
 
 #[tauri::command]

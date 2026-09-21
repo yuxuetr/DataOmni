@@ -1,5 +1,6 @@
 pub mod completion_catalog;
 pub mod connection_service;
+pub mod csv_import;
 pub mod database_service;
 pub mod er_diagram;
 pub mod explain;
@@ -15,6 +16,10 @@ pub mod write_batch;
 
 pub use completion_catalog::{completion_catalog_query, CompletionCatalogQuery};
 pub use connection_service::ConnectionService;
+pub use csv_import::{
+  import_csv, preview_csv, CsvOptions, CsvPreview, ErrorPolicy, ImportProgress, ImportRequest,
+  ImportSummary, TransactionStrategy, PREVIEW_ROWS,
+};
 pub use database_service::DatabaseService;
 pub use er_diagram::{er_diagram_queries, ErDiagramQueries};
 pub use explain::{explain_statement, parse_plan, supports_analyze, PlanNode, QueryPlan};

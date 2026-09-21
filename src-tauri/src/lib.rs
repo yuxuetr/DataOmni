@@ -26,6 +26,7 @@ pub fn run() {
     .plugin(tauri_plugin_cli::init())
     .manage(ConnectionServiceState::default())
     .manage(QueryCancellationState::default())
+    .manage(ImportPauseState::default())
     .manage(services::QuerySessionState::default())
     .setup(|app| {
       println!("🎯 DataOmni应用启动成功");
@@ -108,6 +109,10 @@ pub fn run() {
       execute_write_batch,
       export_query_to_file,
       cancel_export,
+      preview_csv_file,
+      import_csv_file,
+      cancel_import,
+      set_import_paused,
       cancel_query,
       release_database_session,
       get_session_transaction,

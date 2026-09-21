@@ -3126,3 +3126,238 @@ async fn sqlite_explain_query_plan_names_the_index_it_will_use() {
   );
   assert!(!plan.analyzed);
 }
+
+// ---------------------------------------------------------------------------
+// CSV 导入
+//
+// 单元测试跑在 SQLite 上，而 SQLite 什么都收：文本进 INTEGER 列不报错，
+// 一条语句失败之后事务还能接着用。真正要验的两件事只有真库能给：
+// PostgreSQL 会拒收类型不符的文本，也会在一条语句报错之后把整个事务废掉。
+// ---------------------------------------------------------------------------
+
+fn write_import_csv(name: &str, contents: &str) -> std::path::PathBuf {
+  let path = std::env::temp_dir().join(format!("dataomni-import-{name}.csv"));
+  std::fs::write(&path, contents).expect("write CSV fixture");
+  path
+}
+
+fn import_request(
+  path: &std::path::Path,
+  table: &str,
+  columns: Vec<dataomni_lib::services::csv_import::ImportColumn>,
+) -> dataomni_lib::services::ImportRequest {
+  dataomni_lib::services::ImportRequest {
+    path: path.to_string_lossy().to_string(),
+    schema: None,
+    table: table.to_string(),
+    csv: dataomni_lib::services::CsvOptions {
+      delimiter: ",".into(),
+      has_header: true,
+      null_text: String::new(),
+    },
+    columns,
+    batch_size: 2,
+    strategy: dataomni_lib::services::TransactionStrategy::SingleTransaction,
+    on_error: dataomni_lib::services::ErrorPolicy::Abort,
+  }
+}
+
+fn import_column(
+  source: usize,
+  target: &str,
+  target_type: &str,
+) -> dataomni_lib::services::csv_import::ImportColumn {
+  dataomni_lib::services::csv_import::ImportColumn {
+    source,
+    target: target.to_string(),
+    target_type: target_type.to_string(),
+  }
+}
+
+async fn run_import(
+  pool: &DbPool,
+  request: &dataomni_lib::services::ImportRequest,
+) -> dataomni_lib::services::ImportSummary {
+  let mut progress = |_| {};
+  let mut cancelled = || false;
+  let mut paused = || false;
+  dataomni_lib::services::import_csv(pool, request, &mut progress, &mut cancelled, &mut paused)
+    .await
+    .expect("import runs")
+}
+
+/// 文本绑进 integer / date / numeric / boolean 列。
+///
+/// 这一条是 `$n::text::类型` 存在的全部理由：PostgreSQL 不会替我们转，
+/// 少了那层转换，四列里有三列会当场报类型错。
+#[tokio::test]
+async fn postgres_import_casts_text_into_typed_columns() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(2).connect(&url).await.expect("connect to PostgreSQL");
+  let db_pool = DbPool::Postgres(pool.clone());
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_typed").execute(&pool).await.expect("drop");
+  sqlx::query(
+    "CREATE TABLE import_smoke_typed (n int, d date, amount numeric(10,2), ok boolean, tag varchar(8))",
+  )
+  .execute(&pool)
+  .await
+  .expect("create");
+
+  let path = write_import_csv(
+    "pg-typed",
+    "n,d,amount,ok,tag\n1,2026-01-02,12.50,true,a\n2,2026-03-04,0.99,false,b\n",
+  );
+  let summary = run_import(
+    &db_pool,
+    &import_request(
+      &path,
+      "import_smoke_typed",
+      vec![
+        import_column(0, "n", "integer"),
+        import_column(1, "d", "date"),
+        import_column(2, "amount", "numeric(10,2)"),
+        import_column(3, "ok", "boolean"),
+        import_column(4, "tag", "character varying(8)"),
+      ],
+    ),
+  )
+  .await;
+
+  assert_eq!(summary.rows_failed, 0, "{:?}", summary.errors);
+  assert_eq!(summary.rows_inserted, 2);
+
+  // 只数行数证明不了转换是对的：一串 '2026-01-02' 存进 text 列也是两行
+  let row = sqlx::query("SELECT n, d, amount, ok, tag FROM import_smoke_typed ORDER BY n LIMIT 1")
+    .fetch_one(&pool)
+    .await
+    .expect("read back");
+  assert_eq!(row.get::<i32, _>("n"), 1);
+  assert_eq!(row.get::<chrono::NaiveDate, _>("d").to_string(), "2026-01-02");
+  assert!(row.get::<bool, _>("ok"));
+  assert_eq!(row.get::<String, _>("tag"), "a");
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_typed").execute(&pool).await.expect("cleanup");
+}
+
+/// PostgreSQL 在一条语句报错之后会把整个事务废掉，后续语句一律 25P02。
+///
+/// 所以「跳过错误行」在 PG 上不是「忽略那条错误」那么简单——不退回保存点，
+/// 坏行后面的每一行都会跟着失败。这一条盯的就是它。
+#[tokio::test]
+async fn postgres_keeps_importing_after_a_row_the_server_rejected() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(2).connect(&url).await.expect("connect to PostgreSQL");
+  let db_pool = DbPool::Postgres(pool.clone());
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_skip").execute(&pool).await.expect("drop");
+  sqlx::query("CREATE TABLE import_smoke_skip (n int primary key, tag text)")
+    .execute(&pool)
+    .await
+    .expect("create");
+
+  // 第 3 行的 n 不是数字，第 5 行与第 2 行主键撞车——两种不同的服务端拒收
+  let path = write_import_csv("pg-skip", "n,tag\n1,a\nnot-a-number,b\n3,c\n1,d\n5,e\n");
+  let mut request = import_request(
+    &path,
+    "import_smoke_skip",
+    vec![import_column(0, "n", "integer"), import_column(1, "tag", "text")],
+  );
+  request.on_error = dataomni_lib::services::ErrorPolicy::Skip;
+  let summary = run_import(&db_pool, &request).await;
+
+  assert_eq!(summary.rows_failed, 2, "{:?}", summary.errors);
+  assert_eq!(summary.rows_inserted, 3);
+  // 报的是文件里的行号，不是「第几批第几行」
+  assert_eq!(summary.errors.iter().map(|error| error.line).collect::<Vec<_>>(), vec![3, 5]);
+  assert!(!summary.rolled_back);
+
+  let kept: Vec<i32> = sqlx::query_scalar("SELECT n FROM import_smoke_skip ORDER BY n")
+    .fetch_all(&pool)
+    .await
+    .expect("read back");
+  assert_eq!(kept, vec![1, 3, 5]);
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_skip").execute(&pool).await.expect("cleanup");
+}
+
+/// 单事务下一行坏掉，整份都不能留下——而 PostgreSQL 的 ROLLBACK 必须发得出去。
+#[tokio::test]
+async fn postgres_import_leaves_nothing_behind_when_one_row_fails() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(2).connect(&url).await.expect("connect to PostgreSQL");
+  let db_pool = DbPool::Postgres(pool.clone());
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_atomic").execute(&pool).await.expect("drop");
+  sqlx::query("CREATE TABLE import_smoke_atomic (n int)").execute(&pool).await.expect("create");
+
+  let path = write_import_csv("pg-atomic", "n\n1\n2\nnope\n4\n");
+  let summary = run_import(
+    &db_pool,
+    &import_request(&path, "import_smoke_atomic", vec![import_column(0, "n", "integer")]),
+  )
+  .await;
+
+  assert!(summary.rolled_back);
+  assert_eq!(summary.rows_inserted, 0);
+  // 停下来之前也要说清是哪一行：「这一批失败了」帮不上任何忙
+  assert_eq!(summary.errors.first().map(|error| error.line), Some(4));
+
+  let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM import_smoke_atomic")
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+  assert_eq!(left, 0);
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_atomic").execute(&pool).await.expect("cleanup");
+}
+
+/// MySQL：分批提交下，坏行前面已经提交的批次留在库里。
+#[tokio::test]
+async fn mysql_import_commits_batch_by_batch_and_names_the_bad_line() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(2).connect(&url).await.expect("connect to MySQL");
+  let db_pool = DbPool::MySql(pool.clone());
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_batch").execute(&pool).await.expect("drop");
+  sqlx::query("CREATE TABLE import_smoke_batch (n int primary key, tag varchar(16)) ENGINE=InnoDB")
+    .execute(&pool)
+    .await
+    .expect("create");
+
+  // 每批两行：前两行一批先提交，第 4 行与第 1 行主键撞车
+  let path = write_import_csv("mysql-batch", "n,tag\n1,a\n2,b\n1,c\n4,d\n");
+  let mut request = import_request(
+    &path,
+    "import_smoke_batch",
+    vec![import_column(0, "n", "integer"), import_column(1, "tag", "varchar(16)")],
+  );
+  request.strategy = dataomni_lib::services::TransactionStrategy::PerBatch;
+  request.on_error = dataomni_lib::services::ErrorPolicy::Skip;
+  let summary = run_import(&db_pool, &request).await;
+
+  assert_eq!(summary.rows_failed, 1, "{:?}", summary.errors);
+  assert_eq!(summary.errors[0].line, 4);
+  assert_eq!(summary.rows_inserted, 3);
+  assert!(!summary.rolled_back);
+
+  let kept: Vec<i32> = sqlx::query_scalar("SELECT n FROM import_smoke_batch ORDER BY n")
+    .fetch_all(&pool)
+    .await
+    .expect("read back");
+  assert_eq!(kept, vec![1, 2, 4]);
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_batch").execute(&pool).await.expect("cleanup");
+}
