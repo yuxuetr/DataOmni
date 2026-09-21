@@ -813,10 +813,14 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     字面就叫 `Create Table`（带空格）、类型是 VARCHAR；
     `sqlite_returns_create_table_together_with_its_indexes` 钉住建表语句排在
     索引之前、自动约束索引不重复出现。
-- [-] 新建和修改表结构
-  - **修改**已完成（`2ba8ac6` / `4efbc3d` / `0d0a399`）：结构页的列表格可以直接
-    编辑——改列名、改类型、改可空、改默认值、加列、删列、改表名。**新建表**
-    还没做，另起一条。
+- [x] 新建和修改表结构
+  - **修改**（`2ba8ac6` / `4efbc3d` / `0d0a399`）：结构页的列表格可以直接编辑
+    ——改列名、改类型、改可空、改默认值、加列、删列、改表名。
+  - **新建**（`5c9fb17`）：对象树标题栏的加号，填表名、列、主键，预览之后执行。
+    主键写成表级 `PRIMARY KEY (a, b)`（复合主键只有这一种写法），主键列一律
+    NOT NULL——三家里只有 SQLite 允许主键存 NULL，照着建出来的表会有一行谁也
+    定位不到。没有主键不拦着，但界面上说清那样的表在这里只能看。
+    建表不碰已有数据，风险和一条 INSERT 同级，不走二次确认。
   - 前置：列目录此前会说假话。PostgreSQL 把 `text[]` 报成 `ARRAY`、
     `varchar(32)` 报成 `character varying`；更严重的是自增主键——
     `GENERATED ALWAYS AS IDENTITY`（已在 PG 16 上复现）与 `AUTO_INCREMENT` 的
@@ -841,14 +845,18 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
       重述出来的未必等价。重估条件：能从 `SHOW CREATE TABLE` 拿到该列定义的
       权威原文并有真库测试证明重述前后等价。
     - 主键、索引、约束的增删改：不在这一版，界面上直说「请到 SQL 编辑器」。
-  - 判据：`utils/tableDdl.test.ts` 23 条按方言钉住语句原文与次序；
+  - 判据：`utils/tableDdl.test.ts` 按方言钉住语句原文与次序；
     `fixtures/ddl-conformance.json` 是两侧共用的语料，
     `{postgres,mysql,sqlite}_runs_the_generated_ddl_from_the_shared_corpus`
     拿真库建表、跑同样几条语句、再读一遍列目录核对结果，连语料里的 `origin`
-    也是断言而不是假设。已反向验证：去掉重述里的 COLLATE 并同步改掉语料里的
-    语句，前端全绿而真库那一侧精确变红（排序规则掉回了表默认值）；另有四次
-    针对列目录的注入（format_type 去掉 typmod、MySQL 换回 DATA_TYPE、
-    去掉 attidentity / EXTRA、SQLite 换回 table_info）。
+    也是断言而不是假设。建表那三条用例每条多一步——**不写主键值插一行**：
+    三家的自增写法各不相同，而写错的表现不是建表失败，是建出来了但插不进行。
+  - 已反向验证六次：去掉重述里的 COLLATE 并**同步改掉语料里的语句**（模拟
+    「忘了重述，顺手改了期望」），前端全绿而真库那一侧精确变红——排序规则
+    掉回了表默认值；去掉「主键列一律 NOT NULL」，前端三条建表用例全红且
+    SQLite 的主键变成可空；另有四次针对列目录的注入（format_type 去掉
+    typmod、MySQL 换回 DATA_TYPE、去掉 attidentity / EXTRA、SQLite 换回
+    table_info）。
 - [x] 所有 DDL 变更先生成预览 SQL
   - 结构编辑器不给「保存」，只给「预览 SQL」：改数据错了还能再改回来，
     一条 DROP COLUMN 没有对应的撤销。
