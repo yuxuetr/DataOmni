@@ -224,10 +224,7 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab }: QueryHistoryDial
                     <span className="shrink-0">{formatDuration(entry.durationMs)}</span>
                     {entry.rowsAffected !== null && (
                       <span className="shrink-0">
-                        {/* 英文「1 rows」一眼就露怯。中文两档同文，代价只有一个键 */}
-                        {t(entry.rowsAffected === 1 ? 'history.rows.one' : 'history.rows', {
-                          count: entry.rowsAffected
-                        })}
+                        {t('history.rows', { count: entry.rowsAffected })}
                       </span>
                     )}
 
