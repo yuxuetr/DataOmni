@@ -11,7 +11,11 @@ import {
   Undo2
 } from 'lucide-react';
 import { save } from '@tauri-apps/plugin-dialog';
-import { readCssColor, serializeSvgWithInlineStyles } from '../utils/svgExport';
+import {
+  rasterizeSvgToPngBase64,
+  readCssColor,
+  serializeSvgWithInlineStyles
+} from '../utils/svgExport';
 import { invoke } from '@tauri-apps/api/core';
 import { useQueryStore } from '../stores/queryStore';
 import { useAppStore } from '../stores/appStore';
@@ -185,6 +189,8 @@ export function ErDiagramCanvas({
   const [dragOffsets, setDragOffsets] = useState<Record<string, { x: number; y: number }>>({});
   const [exported, setExported] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const viewportRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -250,30 +256,49 @@ export function ErDiagramCanvas({
 
   const resetPositions = () => setDragOffsets({});
 
-  const exportSvg = async () => {
+  const exportDiagram = async (format: 'svg' | 'png') => {
     const svg = svgRef.current;
     if (!svg) {
       return;
     }
+
+    setExportError(null);
+    setExportMenuOpen(false);
+
     try {
       const path = await save({
-        defaultPath: `er-diagram-${new Date().toISOString().slice(0, 10)}.svg`,
-        filters: [{ name: 'SVG', extensions: ['svg'] }]
+        defaultPath: `er-diagram-${new Date().toISOString().slice(0, 10)}.${format}`,
+        filters: [{ name: format.toUpperCase(), extensions: [format] }]
       });
       // 取消保存对话框不是错误，不该留下任何提示
       if (!path) {
         return;
       }
-      const contents = serializeSvgWithInlineStyles(svg, {
+
+      setExporting(true);
+      const markup = serializeSvgWithInlineStyles(svg, {
         background: readCssColor('--dm-canvas', '#ffffff'),
         width: canvas.width,
         height: canvas.height
       });
-      await invoke('write_text_file', { path, contents });
+
+      if (format === 'svg') {
+        await invoke('write_text_file', { path, contents: markup });
+      } else {
+        const contentsBase64 = await rasterizeSvgToPngBase64(
+          markup,
+          canvas.width,
+          canvas.height
+        );
+        await invoke('write_binary_file', { path, contentsBase64 });
+      }
+
       setExported(path);
       window.setTimeout(() => setExported(null), 2500);
     } catch (cause) {
       setExportError(describeError(cause, t('er.exportFailed')));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -370,9 +395,32 @@ export function ErDiagramCanvas({
           <ToolButton label={t('er.resetPositions')} onClick={resetPositions}>
             <Undo2 size={13} />
           </ToolButton>
-          <ToolButton label={t('er.export')} onClick={exportSvg}>
-            <Download size={13} />
-          </ToolButton>
+          <div className="relative">
+            <ToolButton
+              label={t('er.export')}
+              onClick={() => setExportMenuOpen(open => !open)}
+            >
+              {exporting ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+            </ToolButton>
+            {exportMenuOpen && (
+              <>
+                {/* 点空白处收起来。不铺这一层的话菜单只能靠再点一次按钮关掉 */}
+                <div className="fixed inset-0 z-10" onClick={() => setExportMenuOpen(false)} />
+                <div className="absolute right-0 top-full z-20 mt-1 w-32 overflow-hidden rounded-control border border-line bg-surface-raised shadow-lg">
+                  {(['svg', 'png'] as const).map(format => (
+                    <button
+                      key={format}
+                      type="button"
+                      onClick={() => void exportDiagram(format)}
+                      className="block w-full px-3 py-1.5 text-left text-xs text-fg hover:bg-surface-hover"
+                    >
+                      {t(format === 'svg' ? 'er.exportSvg' : 'er.exportPng')}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
           {onRefresh && (
             <ToolButton label={t('er.refresh')} onClick={onRefresh}>
               <RefreshCw size={13} />

@@ -1,3 +1,5 @@
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use std::path::{Path, PathBuf};
 
 /// 把导出内容写到用户在保存对话框里选定的路径。
@@ -28,6 +30,28 @@ fn file_size(path: &Path) -> Result<u64, String> {
     .map_err(|e| format!("读取 {} 大小失败: {}", path.display(), e))
 }
 
+/// 把 base64 编码的二进制内容写到用户选定的路径。
+///
+/// 位图（ER 图导出的 PNG）没法走 `write_text_file`。走 base64 而不是
+/// JS 数字数组：后者经 IPC 序列化成 JSON 会把体积撑到四倍左右。
+#[tauri::command]
+pub async fn write_binary_file(path: String, contents_base64: String) -> Result<u64, String> {
+  let bytes = STANDARD
+    .decode(contents_base64.as_bytes())
+    .map_err(|e| format!("内容不是合法的 base64: {}", e))?;
+
+  let target = PathBuf::from(&path);
+  if let Some(parent) = target.parent() {
+    if !parent.as_os_str().is_empty() && !parent.exists() {
+      return Err(format!("目录不存在: {}", parent.display()));
+    }
+  }
+
+  std::fs::write(&target, &bytes).map_err(|e| format!("写入 {} 失败: {}", target.display(), e))?;
+
+  file_size(&target)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -49,6 +73,36 @@ mod tests {
     assert_eq!(written, bytes.len() as u64);
 
     std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[tokio::test]
+  async fn writes_decoded_bytes_not_the_base64_text() {
+    let dir = std::env::temp_dir().join(format!("dataomni-bin-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let target = dir.join("out.png");
+
+    // PNG 的魔数；存成 base64 原文的话头四个字节会是 "iVBO"
+    let png_header = [0x89u8, 0x50, 0x4e, 0x47];
+    let encoded = STANDARD.encode(png_header);
+
+    let written =
+      write_binary_file(target.to_string_lossy().to_string(), encoded).await.expect("write");
+
+    let bytes = std::fs::read(&target).expect("read back");
+    assert_eq!(bytes, png_header);
+    assert_eq!(written, 4);
+
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[tokio::test]
+  async fn rejects_content_that_is_not_base64() {
+    let target = std::env::temp_dir().join("dataomni-bad-base64.bin");
+    let error = write_binary_file(target.to_string_lossy().to_string(), "not base64!!".into())
+      .await
+      .expect_err("should fail");
+    assert!(error.contains("base64"), "错误要说清是编码的问题: {}", error);
+    assert!(!target.exists(), "解码失败时不该留下半个文件");
   }
 
   #[tokio::test]

@@ -113,6 +113,7 @@ pub fn run() {
       get_er_diagram_queries,
       // 文件写入
       write_text_file,
+      write_binary_file,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

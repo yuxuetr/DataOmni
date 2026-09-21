@@ -4,7 +4,12 @@
  * @vitest-environment happy-dom
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { readCssColor, serializeSvgWithInlineStyles } from './svgExport';
+import {
+  dataUrlToBase64,
+  readCssColor,
+  serializeSvgWithInlineStyles,
+  svgToDataUrl
+} from './svgExport';
 
 function buildSvg(): SVGSVGElement {
   document.body.innerHTML = `
@@ -84,5 +89,28 @@ describe('serializeSvgWithInlineStyles', () => {
 describe('readCssColor', () => {
   it('读不到变量时用回退值', () => {
     expect(readCssColor('--nope-not-here', '#abcdef')).toBe('#abcdef');
+  });
+});
+
+describe('svgToDataUrl', () => {
+  it('中文表名不会让它抛错', () => {
+    // btoa 只吃 Latin-1，图里有一个中文表名就会抛 InvalidCharacterError
+    const url = svgToDataUrl('<svg><text>用户表</text></svg>');
+    expect(url.startsWith('data:image/svg+xml;charset=utf-8,')).toBe(true);
+    expect(decodeURIComponent(url.split(',')[1])).toContain('用户表');
+  });
+
+  it('尖括号被转义，不会提前截断 URL', () => {
+    expect(svgToDataUrl('<svg/>')).not.toContain('<');
+  });
+});
+
+describe('dataUrlToBase64', () => {
+  it('去掉前缀只留正文', () => {
+    expect(dataUrlToBase64('data:image/png;base64,iVBORw0KGgo=')).toBe('iVBORw0KGgo=');
+  });
+
+  it('不是 data URL 时返回空串，不把整串当成 base64 发出去', () => {
+    expect(dataUrlToBase64('nonsense')).toBe('');
   });
 });

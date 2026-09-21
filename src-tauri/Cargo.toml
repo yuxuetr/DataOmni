@@ -29,6 +29,9 @@ futures-util = "0.3"
 uuid = { version = "1.17.0", features = ["v4"] }
 chrono = { version = "0.4.41", features = ["serde"] }
 tauri-plugin-dialog = "2"
+# ER 图导出 PNG：位图经 IPC 传过来是 base64 字符串。
+# 用 JS 数字数组传 Vec<u8> 会把体积撑到四倍。
+base64 = "0.22"
 # 钉住 2.2.0：2.4.x 会把 tauri-runtime-wry 顶到与当前 tauri 2.5.1 不兼容的版本
 tauri-plugin-window-state = "=2.2.0"
 urlencoding = "2.1.3"

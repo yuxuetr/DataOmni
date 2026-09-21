@@ -76,3 +76,57 @@ export function readCssColor(variable: string, fallback: string): string {
     .trim();
   return value || fallback;
 }
+
+/** 位图导出的倍率。2 倍是为了在高分屏上不糊；再高只是让文件变大。 */
+export const PNG_SCALE = 2;
+
+/**
+ * SVG 文本转成可以直接塞进 `<img src>` 的 data URL。
+ *
+ * 用 `encodeURIComponent` 而不是 `btoa`：`btoa` 只吃 Latin-1，
+ * 图里只要有一个中文表名就会抛 `InvalidCharacterError`。
+ */
+export function svgToDataUrl(svg: string): string {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+/** 从 `canvas.toDataURL()` 的结果里取出 base64 正文，去掉 `data:...;base64,` 前缀 */
+export function dataUrlToBase64(dataUrl: string): string {
+  const comma = dataUrl.indexOf(',');
+  return comma === -1 ? '' : dataUrl.slice(comma + 1);
+}
+
+/**
+ * 把 SVG 光栅化成 PNG，返回 base64 正文。
+ *
+ * 走 `<img>` + canvas：SVG 必须是自包含的（颜色已内联、没有外部引用），
+ * 否则画出来是一张白纸。data URL 不会污染 canvas，所以 `toDataURL` 可用。
+ */
+export async function rasterizeSvgToPngBase64(
+  svg: string,
+  width: number,
+  height: number,
+  scale: number = PNG_SCALE
+): Promise<string> {
+  const image = new Image();
+  image.src = svgToDataUrl(svg);
+
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    // 不给 onerror 的话，SVG 有问题时这个 Promise 永远不会 settle，
+    // 界面卡在「导出中」而没有任何线索
+    image.onerror = () => reject(new Error('SVG_RASTERIZE_FAILED'));
+  });
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('CANVAS_UNAVAILABLE');
+  }
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+  return dataUrlToBase64(canvas.toDataURL('image/png'));
+}
