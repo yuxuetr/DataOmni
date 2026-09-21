@@ -14,6 +14,14 @@ interface DestructiveStatementPromptProps {
   environment: ConnectionEnvironment;
   /** 这一批一共要执行几条；只有一条时不显示 */
   statementCount: number;
+  /**
+   * 这条语句会动到哪些对象，逐条列出。
+   *
+   * 只给 SQL 原文不够：一条 `ALTER TABLE t DROP COLUMN a, DROP COLUMN b`
+   * 要从语句里数出「两列的数据都没了」，而这个框存在的理由正是让人**不必**
+   * 现场读懂一条 SQL。自己写的语句给不出这个清单，所以是可选的。
+   */
+  impacts?: readonly string[];
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -33,6 +41,7 @@ export function DestructiveStatementPrompt({
   connectionName,
   environment,
   statementCount,
+  impacts,
   onConfirm,
   onCancel
 }: DestructiveStatementPromptProps) {
@@ -89,6 +98,14 @@ export function DestructiveStatementPrompt({
               <p className="mt-1 text-sm text-fg-muted">
                 {t('risk.batchNote', { count: statementCount })}
               </p>
+            )}
+
+            {impacts && impacts.length > 0 && (
+              <ul className="mt-2 space-y-0.5 text-sm text-danger">
+                {impacts.map((impact) => (
+                  <li key={impact}>{impact}</li>
+                ))}
+              </ul>
             )}
 
             <pre className="mt-2 max-h-40 overflow-auto rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg select-text whitespace-pre-wrap break-words">

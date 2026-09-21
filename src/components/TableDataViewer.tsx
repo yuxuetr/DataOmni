@@ -53,6 +53,7 @@ import {
   toTriggers
 } from '../utils/schemaObjects';
 import { SchemaObjectSections, type SchemaObjects } from './SchemaObjectSections';
+import { TableStructureEditor } from './TableStructureEditor';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { requireDatabase } from '../utils/requireDatabase';
 import { tableColumnsParams, toColumnInfo } from '../utils/tableMetadata';
@@ -973,78 +974,23 @@ export default function TableDataViewer({
         {/* Schema 标签页 */}
         {activeTab === 'schema' && tableSchema && (
           <div className="h-full flex flex-col">
-            <div className="p-4 border-b bg-surface-sunken">
-              <h2 className="text-sm font-semibold text-fg">{t('table.structureTitle')}</h2>
-              <p className="text-xs text-fg-muted mt-1">
-                {t('table.fieldCount', { count: tableSchema.columns.length })}
-              </p>
-            </div>
             <div className="flex-1 overflow-y-auto">
-              <table className="w-full">
-                <thead className="bg-surface-sunken sticky top-0">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
-                      {t('table.column.name')}
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
-                      {t('table.column.type')}
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
-                      {t('table.column.nullable')}
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
-                      {t('table.column.primaryKey')}
-                    </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
-                      {t('table.column.default')}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-surface divide-y divide-line">
-                  {tableSchema.columns.map((column, index) => (
-                    <tr key={index} className="hover:bg-surface-hover">
-                      <td className="px-4 py-3 text-sm font-medium text-fg">
-                        {column.name}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-fg-muted">
-                        <span className="inline-flex items-center px-2 py-1 rounded-control text-xs font-medium bg-accent-soft text-accent">
-                          {column.data_type}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-fg-muted">
-                        {column.is_nullable ? (
-                          <span className="inline-flex items-center px-2 py-1 rounded-control text-xs font-medium bg-success-soft text-success">
-                            {t('table.yes')}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-2 py-1 rounded-control text-xs font-medium bg-danger-soft text-danger">
-                            {t('table.no')}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-fg-muted">
-                        {column.is_primary_key ? (
-                          <span className="inline-flex items-center px-2 py-1 rounded-control text-xs font-medium bg-accent-soft text-accent">
-                            {t('table.column.primaryKey')}
-                          </span>
-                        ) : (
-                          <span className="text-fg-subtle">-</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-fg-muted">
-                        {column.default_value ? (
-                          <code className="text-xs bg-surface-hover px-2 py-1 rounded-control">
-                            {column.default_value}
-                          </code>
-                        ) : (
-                          <span className="text-fg-subtle">-</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
+              <TableStructureEditor
+                connectionId={connection.id}
+                connectionName={connection.name}
+                environment={connection.environment}
+                schema={schema ?? null}
+                table={tableName}
+                columns={tableSchema.columns}
+                dialect={dialect}
+                onApplied={() => {
+                  // 改完结构必须重读：列可能少了、改名了，而数据页的
+                  // 可见列、行标识与分页次序全是按这份列算出来的
+                  setTableSchema(null);
+                  setTableSchemaKey(null);
+                  void loadTableSchema();
+                }}
+              />
               <SchemaObjectSections objects={schemaObjects} dbType={connection.db_type} />
             </div>
           </div>
@@ -1249,7 +1195,7 @@ export default function TableDataViewer({
                           <span className="ml-1 text-accent">{t('table.primaryKeyTag')}</span>
                         )}
                         {column.is_generated && (
-                          <span className="ml-1 text-success">{t('table.autoIncrementTag')}</span>
+                          <span className="ml-1 text-success">{t('table.generatedTag')}</span>
                         )}
                         {!column.is_nullable
                           && column.default_value == null

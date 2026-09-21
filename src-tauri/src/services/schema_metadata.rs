@@ -89,6 +89,11 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
 ///
 /// `attgenerated` / `GENERATION_EXPRESSION` / `hidden` 把计算列也一并算进来：
 /// 计算列同样不能由调用方赋值。
+///
+/// 最后三个字段只有 MySQL 有值，因为只有 MySQL 需要它们：改一列的类型或
+/// 可空性只能用 `MODIFY COLUMN`，而 MODIFY **重述整段定义**——没写进去的
+/// 排序规则与注释会被静默丢掉。PostgreSQL 与 SQLite 走的是
+/// `ALTER COLUMN ... TYPE` 这类窄语法，只改被点名的那一项，用不上这三项。
 const POSTGRES_COLUMNS: &str = r#"
 SELECT
   a.attname::text AS column_name,
@@ -97,7 +102,10 @@ SELECT
   pg_get_expr(d.adbin, d.adrelid)::text AS column_default,
   (pk.ord IS NOT NULL) AS is_primary_key,
   pk.ord::int AS primary_key_ordinal,
-  (a.attidentity <> '' OR a.attgenerated <> '') AS is_generated
+  (a.attidentity <> '' OR a.attgenerated <> '') AS is_generated,
+  NULL::text AS collation,
+  NULL::text AS comment,
+  NULL::text AS column_extra
 FROM pg_class t
 JOIN pg_namespace n ON n.oid = t.relnamespace
 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum > 0 AND NOT a.attisdropped
@@ -125,7 +133,10 @@ SELECT
   CAST(c.COLUMN_DEFAULT AS CHAR) AS column_default,
   (kcu.ORDINAL_POSITION IS NOT NULL) AS is_primary_key,
   kcu.ORDINAL_POSITION AS primary_key_ordinal,
-  (c.EXTRA LIKE '%auto_increment%' OR c.GENERATION_EXPRESSION <> '') AS is_generated
+  (c.EXTRA LIKE '%auto_increment%' OR c.GENERATION_EXPRESSION <> '') AS is_generated,
+  CAST(c.COLLATION_NAME AS CHAR) AS collation,
+  CAST(NULLIF(c.COLUMN_COMMENT, '') AS CHAR) AS comment,
+  CAST(c.EXTRA AS CHAR) AS column_extra
 FROM INFORMATION_SCHEMA.COLUMNS c
 LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
   ON kcu.TABLE_SCHEMA = c.TABLE_SCHEMA
@@ -151,7 +162,10 @@ SELECT
   p.dflt_value AS column_default,
   (p.pk > 0) AS is_primary_key,
   NULLIF(p.pk, 0) AS primary_key_ordinal,
-  (p.hidden IN (2, 3)) AS is_generated
+  (p.hidden IN (2, 3)) AS is_generated,
+  NULL AS collation,
+  NULL AS comment,
+  NULL AS column_extra
 FROM pragma_table_xinfo(?1) p
 WHERE p.hidden <> 1
 ORDER BY p.cid

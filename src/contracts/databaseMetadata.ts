@@ -18,6 +18,18 @@ export interface ColumnInfo {
    * 少了这个标志，新增行时它们会被当成必填项点名，那两种表一行都插不进去。
    */
   is_generated?: boolean;
+  /**
+   * 以下三项只有 MySQL 有值。
+   *
+   * 改一列的类型或可空性在 MySQL 里只能用 `MODIFY COLUMN`，而 MODIFY
+   * **重述整段定义**：没写进去的排序规则、注释、AUTO_INCREMENT 会被静默丢掉。
+   * PostgreSQL 与 SQLite 走 `ALTER COLUMN ... TYPE` 这类窄语法，只改被点名的
+   * 那一项，用不上这三项。
+   */
+  collation?: string | null;
+  comment?: string | null;
+  /** information_schema 的 `EXTRA` 原文：`auto_increment`、`DEFAULT_GENERATED`… */
+  column_extra?: string | null;
 }
 
 export interface TableInfo {
