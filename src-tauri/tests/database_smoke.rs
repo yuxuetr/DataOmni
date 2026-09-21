@@ -2490,3 +2490,272 @@ async fn sqlite_reports_generated_columns_that_table_info_hides() {
   assert_eq!(by_name("id").3, Some(1), "主键次序: {columns:?}");
   assert_eq!(by_name("code").2, 0, "NOT NULL 列不可空: {columns:?}");
 }
+
+/// 改结构的共用语料：`fixtures/ddl-conformance.json`。
+///
+/// 前端的 `tableDdl.conformance.test.ts` 照它核对**生成的语句**；这里照它
+/// 跑真库，核对两件前端证明不了的事——那串字符是不是合法的 ALTER TABLE，
+/// 以及跑完之后表到底变成了什么样。
+///
+/// `origin` 也在这里被核对：它是前端做 diff 的起点，手写一份假设就等于把
+/// 两边的起点分开了。先建表、再用列目录读一遍、逐字段比对。
+mod ddl_corpus {
+  use serde_json::Value as JsonValue;
+
+  pub struct Case {
+    pub name: String,
+    pub table: String,
+    pub final_table: String,
+    pub fixture: Vec<String>,
+    pub statements: Vec<String>,
+    pub origin: Vec<Column>,
+    pub after: Vec<Column>,
+    pub cleanup: Vec<String>,
+  }
+
+  /// 目录里一列的期望值。`None` 表示这个方言不报告该字段，不参与比对
+  #[derive(Debug, PartialEq, Eq)]
+  pub struct Column {
+    pub name: String,
+    pub data_type: String,
+    pub nullable: bool,
+    pub primary_key_ordinal: Option<i64>,
+    pub default_value: Option<String>,
+    pub generated: bool,
+    pub collation: Option<String>,
+    pub comment: Option<String>,
+    pub extra: Option<String>,
+  }
+
+  fn text(value: &JsonValue, key: &str) -> Option<String> {
+    value.get(key).and_then(|found| found.as_str()).map(str::to_string)
+  }
+
+  fn columns(value: &JsonValue, key: &str) -> Vec<Column> {
+    value
+      .get(key)
+      .and_then(|found| found.as_array())
+      .map(|entries| {
+        entries
+          .iter()
+          .map(|entry| Column {
+            name: text(entry, "name").unwrap_or_default(),
+            data_type: text(entry, "dataType").unwrap_or_default(),
+            nullable: entry.get("nullable").and_then(|found| found.as_bool()).unwrap_or(false),
+            primary_key_ordinal: entry.get("primaryKeyOrdinal").and_then(|found| found.as_i64()),
+            default_value: text(entry, "defaultValue"),
+            generated: entry.get("generated").and_then(|found| found.as_bool()).unwrap_or(false),
+            collation: text(entry, "collation"),
+            comment: text(entry, "comment"),
+            extra: text(entry, "extra"),
+          })
+          .collect()
+      })
+      .unwrap_or_default()
+  }
+
+  fn strings(value: &JsonValue, key: &str) -> Vec<String> {
+    value
+      .get(key)
+      .and_then(|found| found.as_array())
+      .map(|entries| {
+        entries.iter().filter_map(|entry| entry.as_str().map(str::to_string)).collect()
+      })
+      .unwrap_or_default()
+  }
+
+  pub fn load(dialect: &str) -> Vec<Case> {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ddl-conformance.json");
+    let source = std::fs::read_to_string(path).expect("读取改结构语料");
+    let parsed: JsonValue = serde_json::from_str(&source).expect("解析改结构语料");
+    let cases = parsed.get("cases").and_then(|found| found.as_array()).expect("语料里要有 cases");
+    cases
+      .iter()
+      .filter(|case| text(case, "dialect").as_deref() == Some(dialect))
+      .map(|case| Case {
+        name: text(case, "name").unwrap_or_default(),
+        table: text(case, "table").unwrap_or_default(),
+        final_table: text(case, "newTableName").unwrap_or_default(),
+        fixture: strings(case, "fixture"),
+        statements: strings(case, "statements"),
+        origin: columns(case, "origin"),
+        after: columns(case, "after"),
+        cleanup: strings(case, "cleanup"),
+      })
+      .collect()
+  }
+}
+
+/// 三种方言的目录行读法各不相同：PostgreSQL 给真布尔，另两家给 1/0；
+/// 键内次序在 MySQL 的 information_schema 里是无符号整数。所以是三个函数，
+/// 不是一个带类型参数的宏——宏只会让「哪一家怎么解码」这件事更难看清。
+async fn postgres_catalog_columns(
+  pool: &sqlx::PgPool,
+  sql: &str,
+  table: &str,
+) -> Vec<ddl_corpus::Column> {
+  let rows = sqlx::query(sql)
+    .bind(table)
+    .bind("public")
+    .fetch_all(pool)
+    .await
+    .expect("run PostgreSQL column catalog");
+  rows
+    .iter()
+    .map(|row| ddl_corpus::Column {
+      name: row.get::<String, _>("column_name"),
+      data_type: row.get::<String, _>("data_type"),
+      nullable: row.get::<bool, _>("is_nullable"),
+      primary_key_ordinal: row.get::<Option<i32>, _>("primary_key_ordinal").map(i64::from),
+      default_value: row.get::<Option<String>, _>("column_default"),
+      generated: row.get::<bool, _>("is_generated"),
+      collation: row.get::<Option<String>, _>("collation"),
+      comment: row.get::<Option<String>, _>("comment"),
+      extra: row.get::<Option<String>, _>("column_extra"),
+    })
+    .collect()
+}
+
+async fn mysql_catalog_columns(
+  pool: &sqlx::MySqlPool,
+  sql: &str,
+  table: &str,
+) -> Vec<ddl_corpus::Column> {
+  let rows = sqlx::query(sql)
+    .bind(table)
+    .bind(Option::<String>::None)
+    .fetch_all(pool)
+    .await
+    .expect("run MySQL column catalog");
+  rows
+    .iter()
+    .map(|row| ddl_corpus::Column {
+      name: row.get::<String, _>("column_name"),
+      data_type: row.get::<String, _>("data_type"),
+      nullable: row.get::<i64, _>("is_nullable") == 1,
+      primary_key_ordinal: row.get::<Option<u32>, _>("primary_key_ordinal").map(i64::from),
+      default_value: row.get::<Option<String>, _>("column_default"),
+      generated: row.get::<i64, _>("is_generated") == 1,
+      collation: row.get::<Option<String>, _>("collation"),
+      comment: row.get::<Option<String>, _>("comment"),
+      extra: row.get::<Option<String>, _>("column_extra"),
+    })
+    .collect()
+}
+
+async fn sqlite_catalog_columns(
+  pool: &sqlx::SqlitePool,
+  sql: &str,
+  table: &str,
+) -> Vec<ddl_corpus::Column> {
+  let rows = sqlx::query(sql).bind(table).fetch_all(pool).await.expect("run SQLite column catalog");
+  rows
+    .iter()
+    .map(|row| ddl_corpus::Column {
+      name: row.get::<String, _>("column_name"),
+      data_type: row.get::<String, _>("data_type"),
+      nullable: row.get::<i64, _>("is_nullable") == 1,
+      primary_key_ordinal: row.get::<Option<i64>, _>("primary_key_ordinal"),
+      default_value: row.get::<Option<String>, _>("column_default"),
+      generated: row.get::<i64, _>("is_generated") == 1,
+      collation: row.get::<Option<String>, _>("collation"),
+      comment: row.get::<Option<String>, _>("comment"),
+      extra: row.get::<Option<String>, _>("column_extra"),
+    })
+    .collect()
+}
+
+#[tokio::test]
+async fn postgres_runs_the_generated_ddl_from_the_shared_corpus() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let catalog = column_queries(dataomni_lib::models::DatabaseType::PostgreSQL);
+
+  for case in ddl_corpus::load("postgresql") {
+    for statement in &case.fixture {
+      sqlx::query(statement).execute(&pool).await.expect("prepare corpus fixture");
+    }
+
+    let origin = postgres_catalog_columns(&pool, catalog, &case.table).await;
+    assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+
+    for statement in &case.statements {
+      sqlx::query(statement)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("{}: 生成的语句跑不了\n{statement}\n{error}", case.name));
+    }
+
+    let after = postgres_catalog_columns(&pool, catalog, &case.final_table).await;
+    assert_eq!(after, case.after, "{}: 跑完之后的表和语料说的不一样", case.name);
+
+    for statement in &case.cleanup {
+      sqlx::query(statement).execute(&pool).await.ok();
+    }
+  }
+}
+
+#[tokio::test]
+async fn mysql_runs_the_generated_ddl_from_the_shared_corpus() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  let catalog = column_queries(dataomni_lib::models::DatabaseType::MySQL);
+
+  for case in ddl_corpus::load("mysql") {
+    for statement in &case.fixture {
+      sqlx::query(statement).execute(&pool).await.expect("prepare corpus fixture");
+    }
+
+    let origin = mysql_catalog_columns(&pool, catalog, &case.table).await;
+    assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+
+    for statement in &case.statements {
+      sqlx::query(statement)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("{}: 生成的语句跑不了\n{statement}\n{error}", case.name));
+    }
+
+    let after = mysql_catalog_columns(&pool, catalog, &case.final_table).await;
+    assert_eq!(after, case.after, "{}: 跑完之后的表和语料说的不一样", case.name);
+
+    for statement in &case.cleanup {
+      sqlx::query(statement).execute(&pool).await.ok();
+    }
+  }
+}
+
+#[tokio::test]
+async fn sqlite_runs_the_generated_ddl_from_the_shared_corpus() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("connect to in-memory SQLite");
+  let catalog = column_queries(dataomni_lib::models::DatabaseType::SQLite);
+
+  for case in ddl_corpus::load("sqlite") {
+    for statement in &case.fixture {
+      sqlx::query(statement).execute(&pool).await.expect("prepare corpus fixture");
+    }
+
+    let origin = sqlite_catalog_columns(&pool, catalog, &case.table).await;
+    assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+
+    for statement in &case.statements {
+      sqlx::query(statement)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("{}: 生成的语句跑不了\n{statement}\n{error}", case.name));
+    }
+
+    let after = sqlite_catalog_columns(&pool, catalog, &case.final_table).await;
+    assert_eq!(after, case.after, "{}: 跑完之后的表和语料说的不一样", case.name);
+  }
+}

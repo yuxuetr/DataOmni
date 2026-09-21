@@ -1,0 +1,118 @@
+{
+  "why": "改结构有两侧：SQL 由 src/utils/tableDdl.ts 在前端拼出来，真正跑它的是 MySQL / PostgreSQL / SQLite。前端的单测只能证明字符串没变，证明不了那串字符是合法的 ALTER TABLE，更证明不了它跑完以后表是什么样。这份语料是同一组输入的唯一期望输出：tableDdl.conformance.test.ts 核对生成的语句，database_smoke.rs 把 fixture 与同样几条语句拿真库跑一遍，再核对跑完之后的列目录。",
+  "newColumnsInheritTableDefaults": "MySQL 给新加的字符型列套上表的默认排序规则（语料里的 note 是 utf8mb4_0900_ai_ci，不是 null）。这不是我们写的，是数据库补的——所以这份 after 也必须照真库来，不能照 ADD COLUMN 的字面理解写。",
+  "originIsTheCatalogAnswer": "每个用例的 origin 不是手写的假设，而是断言：smoke 测试先跑 fixture 建表，再用 schema_metadata_queries().columns 读一遍，逐字段核对 origin。所以前端 diff 的起点和数据库真实给出的东西对得上——两边漂开时这里会红。",
+  "cases": [
+    {
+      "name": "postgres-rename-retype-drop-add-and-rename-table",
+      "dialect": "postgresql",
+      "schema": "public",
+      "table": "ddl_conf_pg",
+      "newTableName": "ddl_conf_pg_renamed",
+      "fixture": [
+        "DROP TABLE IF EXISTS ddl_conf_pg_renamed",
+        "DROP TABLE IF EXISTS ddl_conf_pg",
+        "CREATE TABLE ddl_conf_pg (id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY, code varchar(32) NOT NULL DEFAULT 'a', amount numeric(10,2), gone int)"
+      ],
+      "origin": [
+        { "name": "id", "dataType": "integer", "nullable": false, "primaryKeyOrdinal": 1, "defaultValue": null, "generated": true },
+        { "name": "code", "dataType": "character varying(32)", "nullable": false, "primaryKeyOrdinal": null, "defaultValue": "'a'::character varying", "generated": false },
+        { "name": "amount", "dataType": "numeric(10,2)", "nullable": true, "primaryKeyOrdinal": null, "defaultValue": null, "generated": false },
+        { "name": "gone", "dataType": "integer", "nullable": true, "primaryKeyOrdinal": null, "defaultValue": null, "generated": false }
+      ],
+      "draft": [
+        { "origin": "id" },
+        { "origin": "code", "name": "sku", "dataType": "text", "nullable": true, "defaultValue": "'b'" },
+        { "origin": "amount" },
+        { "origin": "gone", "dropped": true },
+        { "origin": null, "name": "note", "dataType": "text", "nullable": false, "defaultValue": "''" }
+      ],
+      "statements": [
+        "ALTER TABLE \"public\".\"ddl_conf_pg\" RENAME COLUMN \"code\" TO \"sku\"",
+        "ALTER TABLE \"public\".\"ddl_conf_pg\" DROP COLUMN \"gone\", ALTER COLUMN \"sku\" TYPE text, ALTER COLUMN \"sku\" DROP NOT NULL, ALTER COLUMN \"sku\" SET DEFAULT 'b', ADD COLUMN \"note\" text NOT NULL DEFAULT ''",
+        "ALTER TABLE \"public\".\"ddl_conf_pg\" RENAME TO \"ddl_conf_pg_renamed\""
+      ],
+      "refusals": [],
+      "impacts": ["gone"],
+      "after": [
+        { "name": "id", "dataType": "integer", "nullable": false, "primaryKeyOrdinal": 1, "defaultValue": null, "generated": true },
+        { "name": "sku", "dataType": "text", "nullable": true, "primaryKeyOrdinal": null, "defaultValue": "'b'::text", "generated": false },
+        { "name": "amount", "dataType": "numeric(10,2)", "nullable": true, "primaryKeyOrdinal": null, "defaultValue": null, "generated": false },
+        { "name": "note", "dataType": "text", "nullable": false, "primaryKeyOrdinal": null, "defaultValue": "''::text", "generated": false }
+      ],
+      "cleanup": ["DROP TABLE IF EXISTS ddl_conf_pg_renamed"]
+    },
+    {
+      "name": "mysql-one-atomic-statement-that-restates-everything",
+      "dialect": "mysql",
+      "schema": null,
+      "table": "ddl_conf_my",
+      "newTableName": "ddl_conf_my_renamed",
+      "fixture": [
+        "DROP TABLE IF EXISTS ddl_conf_my_renamed",
+        "DROP TABLE IF EXISTS ddl_conf_my",
+        "CREATE TABLE ddl_conf_my (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, code VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT 'a' COMMENT 'hello', ts TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP, gone INT)"
+      ],
+      "origin": [
+        { "name": "id", "dataType": "int", "nullable": false, "primaryKeyOrdinal": 1, "defaultValue": null, "generated": true, "extra": "auto_increment" },
+        { "name": "code", "dataType": "varchar(32)", "nullable": false, "primaryKeyOrdinal": null, "defaultValue": "a", "generated": false, "collation": "utf8mb4_bin", "comment": "hello", "extra": "" },
+        { "name": "ts", "dataType": "timestamp", "nullable": true, "primaryKeyOrdinal": null, "defaultValue": null, "generated": false, "extra": "on update CURRENT_TIMESTAMP" },
+        { "name": "gone", "dataType": "int", "nullable": true, "primaryKeyOrdinal": null, "defaultValue": null, "generated": false, "extra": "" }
+      ],
+      "draft": [
+        { "origin": "id", "name": "order_id" },
+        { "origin": "code", "name": "sku", "dataType": "varchar(64)", "nullable": true, "defaultValue": "'b'" },
+        { "origin": "ts", "dataType": "datetime" },
+        { "origin": "gone", "dropped": true },
+        { "origin": null, "name": "note", "dataType": "text", "nullable": true, "defaultValue": null }
+      ],
+      "statements": [
+        "ALTER TABLE `ddl_conf_my` DROP COLUMN `gone`, RENAME COLUMN `id` TO `order_id`, CHANGE COLUMN `code` `sku` varchar(64) COLLATE utf8mb4_bin NULL DEFAULT 'b' COMMENT 'hello', MODIFY COLUMN `ts` datetime NULL ON UPDATE CURRENT_TIMESTAMP, ADD COLUMN `note` text, RENAME TO `ddl_conf_my_renamed`"
+      ],
+      "refusals": [],
+      "impacts": ["gone"],
+      "after": [
+        { "name": "order_id", "dataType": "int", "nullable": false, "primaryKeyOrdinal": 1, "defaultValue": null, "generated": true, "extra": "auto_increment" },
+        { "name": "sku", "dataType": "varchar(64)", "nullable": true, "primaryKeyOrdinal": null, "defaultValue": "b", "generated": false, "collation": "utf8mb4_bin", "comment": "hello", "extra": "" },
+        { "name": "ts", "dataType": "datetime", "nullable": true, "primaryKeyOrdinal": null, "defaultValue": null, "generated": false, "extra": "on update CURRENT_TIMESTAMP" },
+        { "name": "note", "dataType": "text", "nullable": true, "primaryKeyOrdinal": null, "defaultValue": null, "generated": false, "collation": "utf8mb4_0900_ai_ci", "comment": null, "extra": "" }
+      ],
+      "cleanup": ["DROP TABLE IF EXISTS ddl_conf_my_renamed"]
+    },
+    {
+      "name": "sqlite-only-the-four-forms-it-really-has",
+      "dialect": "sqlite",
+      "schema": null,
+      "table": "ddl_conf_lite",
+      "newTableName": "ddl_conf_lite",
+      "fixture": [
+        "DROP TABLE IF EXISTS ddl_conf_lite",
+        "CREATE TABLE ddl_conf_lite (id INTEGER PRIMARY KEY, code VARCHAR(32) NOT NULL DEFAULT 'a', gone INT)"
+      ],
+      "origin": [
+        { "name": "id", "dataType": "INTEGER", "nullable": true, "primaryKeyOrdinal": 1, "defaultValue": null, "generated": false },
+        { "name": "code", "dataType": "VARCHAR(32)", "nullable": false, "primaryKeyOrdinal": null, "defaultValue": "'a'", "generated": false },
+        { "name": "gone", "dataType": "INT", "nullable": true, "primaryKeyOrdinal": null, "defaultValue": null, "generated": false }
+      ],
+      "draft": [
+        { "origin": "id" },
+        { "origin": "code", "name": "sku", "dataType": "TEXT" },
+        { "origin": "gone", "dropped": true },
+        { "origin": null, "name": "note", "dataType": "TEXT", "nullable": true, "defaultValue": null }
+      ],
+      "statements": [
+        "ALTER TABLE \"ddl_conf_lite\" RENAME COLUMN \"code\" TO \"sku\"",
+        "ALTER TABLE \"ddl_conf_lite\" DROP COLUMN \"gone\"",
+        "ALTER TABLE \"ddl_conf_lite\" ADD COLUMN \"note\" TEXT"
+      ],
+      "refusals": [{ "column": "sku", "action": "change-type", "reason": "ddl.refuse.sqliteRebuild" }],
+      "impacts": ["gone"],
+      "after": [
+        { "name": "id", "dataType": "INTEGER", "nullable": true, "primaryKeyOrdinal": 1, "defaultValue": null, "generated": false },
+        { "name": "sku", "dataType": "VARCHAR(32)", "nullable": false, "primaryKeyOrdinal": null, "defaultValue": "'a'", "generated": false },
+        { "name": "note", "dataType": "TEXT", "nullable": true, "primaryKeyOrdinal": null, "defaultValue": null, "generated": false }
+      ],
+      "cleanup": []
+    }
+  ]
+}
