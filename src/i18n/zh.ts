@@ -187,6 +187,8 @@ export const zh = {
   'export.writing': '写入中…',
   'export.choosePath': '选择位置并导出',
   'export.scopeCurrentPage': '导出的是当前第 {page} 页的 {rows} 行；整表共 {total} 行。',
+  'export.scopeHiddenColumns': '导出的是当前显示的列；隐藏的 {count} 列不在其中。',
+  'export.scopeHiddenColumns.one': '导出的是当前显示的列；隐藏的 {count} 列不在其中。',
   'export.exportCurrentPage': '导出当前页',
 
   'execute.noRowAffected': '{operation}失败：目标记录不存在或已被其他操作修改',
@@ -244,6 +246,21 @@ export const zh = {
   'table.notNull': '非空',
   'table.loading': '加载中...',
   'table.empty': '暂无数据',
+
+  // 列控制：显示/隐藏、冻结、密度（列宽由拖拽与双击自适应完成）
+  'columns.title': '列',
+  'columns.showAll': '全部显示',
+  'columns.hiddenCount': '已隐藏 {count} 列',
+  'columns.hiddenCount.one': '已隐藏 {count} 列',
+  'columns.lastVisible': '至少要留一列',
+  'columns.density': '行高',
+  'columns.density.compact': '紧凑',
+  'columns.density.default': '标准',
+  'columns.density.comfortable': '宽松',
+  'columns.freeze': '冻结左侧',
+  'columns.freezeNone': '不冻结',
+  'columns.freezeCount': '{count} 列',
+  'columns.freezeCount.one': '{count} 列',
 
   // 表数据筛选（在数据库里执行，不是只筛当前页）
   'filter.title': '筛选',

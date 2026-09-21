@@ -26,7 +26,8 @@ import {
   ChevronsRight,
   Download,
   Lock,
-  Filter
+  Filter,
+  Columns3
 } from 'lucide-react';
 import clsx from 'clsx';
 import type {
@@ -62,6 +63,14 @@ import { requireDatabase } from '../utils/requireDatabase';
 import { describeTableEditability } from '../utils/tableEditability';
 import { GridCellValue } from './GridCellValue';
 import { TableFilterBar } from './TableFilterBar';
+import { GridColumnMenu } from './GridColumnMenu';
+import {
+  DENSITY_CELL_CLASS,
+  frozenLeftOffsets,
+  toggleHiddenColumn,
+  visibleColumnIndexes,
+  type GridDensity
+} from '../utils/gridColumns';
 import { buildFilterClause, isCompleteFilter, type ColumnFilter } from '../utils/tableFilters';
 
 // 编辑模式类型
@@ -133,6 +142,10 @@ export default function TableDataViewer({
   const [filters, setFilters] = useState<ColumnFilter[]>([]);
   const [appliedFilters, setAppliedFilters] = useState<ColumnFilter[]>([]);
   const [showFilters, setShowFilters] = useState(false);
+  const [hiddenColumns, setHiddenColumns] = useState<ReadonlySet<string>>(new Set());
+  const [frozenCount, setFrozenCount] = useState(0);
+  const [density, setDensity] = useState<GridDensity>('default');
+  const [showColumnMenu, setShowColumnMenu] = useState(false);
   // 与 sortRef 同理：loadTableData 的闭包里读不到刚 set 进去的新值
   const appliedFiltersRef = useRef<ColumnFilter[]>([]);
   appliedFiltersRef.current = appliedFilters;
@@ -497,6 +510,9 @@ export default function TableDataViewer({
     setFilters([]);
     setAppliedFilters([]);
     appliedFiltersRef.current = [];
+    // 列偏好同理：隐藏集里存的是列名，换表后指的是另一张表的列
+    setHiddenColumns(new Set());
+    setFrozenCount(0);
   }, [currentTableKey]);
 
   // 计算总页数
@@ -521,14 +537,30 @@ export default function TableDataViewer({
   const {
     widths: columnWidths,
     alignments,
-    totalWidth,
     startResize,
     autoFitColumn,
     resizingIndex
   } = useResizableColumns(columnNames, positionalRows);
-  const gridWidth = totalWidth + ACTION_COLUMN_WIDTH;
-  // positionalRows 已经是 memo 过的稳定引用，符合 useCellSelection 的要求
-  const cells = useCellSelection(positionalRows, columnNames.length);
+
+  const visibleIndexes = React.useMemo(
+    () => visibleColumnIndexes(columnNames, hiddenColumns),
+    [columnNames, hiddenColumns]
+  );
+  // 选区按**看得见的**列建立：用户框住的是他看到的那几格，复制出来的却混进
+  // 藏起来的列，是这类网格最难自查的一种错
+  const visibleRows = React.useMemo(
+    () => positionalRows.map((row) => visibleIndexes.map((index) => row[index] ?? null)),
+    [positionalRows, visibleIndexes]
+  );
+  const visibleWidths = visibleIndexes.map((index) => columnWidths[index] ?? 0);
+  const frozenOffsets = frozenLeftOffsets(visibleWidths, frozenCount);
+  // 冻结区的最后一列画一道粗边：没有分界线时，滚过去的内容看上去是凭空消失的，
+  // 而不是被压在冻住的列下面
+  const lastFrozenPosition = frozenOffsets.filter((offset) => offset !== null).length - 1;
+  const gridWidth = visibleWidths.reduce((sum, width) => sum + width, 0) + ACTION_COLUMN_WIDTH;
+  const densityClass = DENSITY_CELL_CLASS[density];
+  // visibleRows 是 memo 过的稳定引用，符合 useCellSelection 的要求
+  const cells = useCellSelection(visibleRows, visibleIndexes.length);
 
   // 处理标签页切换
   const handleTabChange = (tabId: TabType) => {
@@ -911,6 +943,9 @@ export default function TableDataViewer({
     isPrimaryKey = false,
     dataType = 'text',
     align = 'left',
+    densityClass = 'px-2 py-1',
+    frozenLeft = null,
+    lastFrozen = false,
     selected = false,
     focused = false,
     onSelect
@@ -921,6 +956,11 @@ export default function TableDataViewer({
     isPrimaryKey?: boolean;
     dataType?: string;
     align?: 'left' | 'right';
+    densityClass?: string;
+    /** 冻结列的左偏移；null 表示这一列跟着横向滚动 */
+    frozenLeft?: number | null;
+    /** 冻结区的最后一列，画一道分界线 */
+    lastFrozen?: boolean;
     selected?: boolean;
     focused?: boolean;
     onSelect?: (extend: boolean) => void;
@@ -940,9 +980,16 @@ export default function TableDataViewer({
       return (
         <td
           onClick={(event) => onSelect?.(event.shiftKey)}
+          style={frozenLeft === null ? undefined : { left: `${frozenLeft}px` }}
           className={clsx(
-            'border-r border-line px-2 py-1 font-mono text-[13px] text-fg',
+            'border-r border-line font-mono text-[13px] text-fg',
+            densityClass,
             align === 'right' && 'text-right',
+            // 冻结列必须自带不透明底色，否则滚过来的内容会从它下面透出来。
+            // 选中时让选区色盖过它——那才是此刻要表达的状态
+            frozenLeft !== null && 'sticky z-10',
+            frozenLeft !== null && !selected && 'bg-surface',
+            lastFrozen && 'border-r-2 border-r-line-strong',
             selected && 'bg-accent-soft',
             focused && 'outline outline-1 -outline-offset-1 outline-accent'
           )}
@@ -983,7 +1030,7 @@ export default function TableDataViewer({
     const inputValue = currentValue === null ? '' : String(currentValue);
 
     return (
-      <td className="border-r border-line px-2 py-1">
+      <td className={clsx('border-r border-line', densityClass)}>
         {isDateTimeField ? (
           <DateTimePicker
             field={field}
@@ -1340,6 +1387,40 @@ export default function TableDataViewer({
                     </button>
                     )}
 
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowColumnMenu((open) => !open)}
+                        className={clsx(
+                          'flex items-center space-x-1 rounded-control border px-3 py-1.5 text-sm transition-colors',
+                          hiddenColumns.size > 0
+                            ? 'border-accent-line bg-accent-soft text-accent'
+                            : 'border-line-strong text-fg hover:bg-surface-hover'
+                        )}
+                        title={hiddenColumns.size > 0
+                          ? t('columns.hiddenCount', { count: hiddenColumns.size })
+                          : t('columns.title')}
+                      >
+                        <Columns3 size={14} />
+                        <span>{t('columns.title')}</span>
+                        {hiddenColumns.size > 0 && <span>({visibleIndexes.length}/{columnNames.length})</span>}
+                      </button>
+                      {showColumnMenu && (
+                        <GridColumnMenu
+                          columns={columnNames}
+                          hidden={hiddenColumns}
+                          onToggle={(name) => (
+                            setHiddenColumns((current) => toggleHiddenColumn(current, columnNames, name))
+                          )}
+                          onShowAll={() => setHiddenColumns(new Set())}
+                          density={density}
+                          onDensityChange={setDensity}
+                          frozenCount={frozenCount}
+                          onFrozenCountChange={setFrozenCount}
+                          onClose={() => setShowColumnMenu(false)}
+                        />
+                      )}
+                    </div>
+
                     <button
                       onClick={() => setShowFilters((open) => !open)}
                       className={clsx(
@@ -1549,17 +1630,30 @@ export default function TableDataViewer({
                         style={{ width: `${gridWidth}px` }}
                       >
                         <colgroup>
-                          {columnWidths.map((width, index) => (
+                          {visibleWidths.map((width, index) => (
                             <col key={index} style={{ width: `${width}px` }} />
                           ))}
                           <col style={{ width: `${ACTION_COLUMN_WIDTH}px` }} />
                         </colgroup>
                         <thead className="bg-surface-sunken sticky top-0 z-20">
                           <tr>
-                            {tableSchema?.columns.map((column, index) => (
+                            {visibleIndexes.map((index, visiblePosition) => {
+                              const column = tableSchema?.columns[index];
+                              if (!column) {
+                                return null;
+                              }
+                              const frozenLeft = frozenOffsets[visiblePosition];
+                              return (
                               <th
                                 key={index}
-                                className="relative border-r border-line px-2 py-1 text-left text-xs font-medium text-fg"
+                                // 冻结列自己接管 sticky：thead 的 sticky top 只管纵向，
+                                // 横向要在每个 th 上单独钉住，并压过后面滚过来的列
+                                style={frozenLeft === null ? undefined : { left: `${frozenLeft}px` }}
+                                className={clsx(
+                                  'relative border-r border-line px-2 py-1 text-left text-xs font-medium text-fg',
+                                  frozenLeft !== null && 'sticky top-0 z-30 bg-surface-sunken',
+                                  visiblePosition === lastFrozenPosition && 'border-r-2 border-r-line-strong'
+                                )}
                               >
                                 <div className="flex items-center gap-1">
                                   <ColumnSortButton
@@ -1593,7 +1687,8 @@ export default function TableDataViewer({
                                   onDoubleClick={() => autoFitColumn(index)}
                                 />
                               </th>
-                            ))}
+                              );
+                            })}
                             <th className="px-2 py-1 text-left text-xs font-medium text-fg">{t('result.actions')}</th>
                           </tr>
                         </thead>
@@ -1601,7 +1696,12 @@ export default function TableDataViewer({
                         <tbody className="bg-surface divide-y divide-line">
                           {tableData.map((row, rowIndex) => (
                             <tr key={rowIndex} className="hover:bg-surface-hover">
-                              {tableSchema?.columns.map((column, colIndex) => (
+                              {visibleIndexes.map((colIndex, visiblePosition) => {
+                                const column = tableSchema?.columns[colIndex];
+                                if (!column) {
+                                  return null;
+                                }
+                                return (
                                 <EditableCell
                                   key={colIndex}
                                   value={row[column.name]}
@@ -1610,11 +1710,15 @@ export default function TableDataViewer({
                                   isPrimaryKey={column.is_primary_key}
                                   dataType={column.data_type}
                                   align={alignments[colIndex]}
-                                  selected={cells.isSelected(rowIndex, colIndex)}
-                                  focused={cells.isFocused(rowIndex, colIndex)}
-                                  onSelect={(extend) => cells.selectCell(rowIndex, colIndex, extend)}
+                                  densityClass={densityClass}
+                                  frozenLeft={frozenOffsets[visiblePosition]}
+                                  lastFrozen={visiblePosition === lastFrozenPosition}
+                                  selected={cells.isSelected(rowIndex, visiblePosition)}
+                                  focused={cells.isFocused(rowIndex, visiblePosition)}
+                                  onSelect={(extend) => cells.selectCell(rowIndex, visiblePosition, extend)}
                                 />
-                              ))}
+                                );
+                              })}
                               {/* 操作列 */}
                               <td className="border-l border-line px-2 py-1 text-sm">
                                 {editState.mode === 'view' ? (
@@ -1732,10 +1836,17 @@ export default function TableDataViewer({
       {/* 表数据是服务端分页的，内存里只有当前这一页——导出必须如实说明范围 */}
       {showExport && (
         <ExportResultDialog
-          columns={columnNames}
-          rows={positionalRows}
+          columns={visibleIndexes.map((index) => columnNames[index] ?? '')}
+          rows={visibleRows}
           sourceName={tableName}
-          scopeNote={t('export.scopeCurrentPage', { page: currentPage, rows: tableData.length, total: totalRows })}
+          scopeNote={
+            // 导出跟着可见列走，否则藏起来的列会在文件里冒出来。范围话必须说全：
+            // 少了哪几列不写出来，用户直到打开文件才发现
+            t('export.scopeCurrentPage', { page: currentPage, rows: tableData.length, total: totalRows })
+            + (hiddenColumns.size > 0
+              ? ` ${t('export.scopeHiddenColumns', { count: hiddenColumns.size })}`
+              : '')
+          }
           onClose={() => setShowExport(false)}
         />
       )}

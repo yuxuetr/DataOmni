@@ -173,6 +173,8 @@ export const en: Translations = {
   'export.writing': 'Writing…',
   'export.choosePath': 'Choose a location and export',
   'export.scopeCurrentPage': 'This exports page {page} only ({rows} rows); the table has {total} rows in total.',
+  'export.scopeHiddenColumns': 'Only the columns on screen are exported; {count} hidden columns are left out.',
+  'export.scopeHiddenColumns.one': 'Only the columns on screen are exported; {count} hidden column is left out.',
   'export.exportCurrentPage': 'Export the current page',
 
   'table.tab.schema': 'Schema',
@@ -226,6 +228,21 @@ export const en: Translations = {
   'table.notNull': 'NOT NULL',
   'table.loading': 'Loading…',
   'table.empty': 'No data',
+
+  // Column control: show/hide, freeze, density (width comes from drag and double-click autofit)
+  'columns.title': 'Columns',
+  'columns.showAll': 'Show all',
+  'columns.hiddenCount': '{count} columns hidden',
+  'columns.hiddenCount.one': '{count} column hidden',
+  'columns.lastVisible': 'At least one column must stay visible',
+  'columns.density': 'Row height',
+  'columns.density.compact': 'Compact',
+  'columns.density.default': 'Default',
+  'columns.density.comfortable': 'Comfortable',
+  'columns.freeze': 'Freeze left',
+  'columns.freezeNone': 'None',
+  'columns.freezeCount': '{count} columns',
+  'columns.freezeCount.one': '{count} column',
 
   // Table filtering (runs in the database, not just over the current page)
   'filter.title': 'Filter',
