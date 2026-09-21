@@ -879,11 +879,60 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
 
 ### 3.2 事务控制
 
-- [ ] 支持自动提交开关
-- [ ] 支持开始、提交和回滚事务
-- [ ] 事务固定绑定同一个实际 Session
-- [ ] 状态栏持续显示事务状态和开始时间
-- [ ] 关闭标签、切换连接或退出应用时处理未提交事务
+全部完成于 `74855a2`。`contracts/session.ts` 里的 `TransactionContext` 从 P1
+起就声明着、从没被读过也没被写过，这一轮把它填上。
+
+- [x] 支持自动提交开关
+  - 关掉之后，不在事务里的语句前面补一条 `BEGIN`。**客户端做**，不用服务端
+    开关：PostgreSQL 根本没有服务端的自动提交设置（psql 的
+    `\set AUTOCOMMIT off` 与 JDBC 的 `setAutoCommit(false)` 都是客户端行为），
+    SQLite 也没有。
+  - 用户自己写的 BEGIN / COMMIT 前面不补——SQLite 会直接报嵌套事务，而在
+    COMMIT 前面补一条 BEGIN 是开一个立刻提交的空事务。
+  - 目录与表数据的读取一律自动提交：浏览一张表不该让状态栏凭空亮起
+    「事务中」。事务已经开着时它们照样落在同一个事务里——同一条连接，
+    避不开，也正确。
+  - 判据：`turning_autocommit_off_puts_a_plain_statement_inside_a_transaction`
+    断言回滚真的能把那一行撤掉。已反向验证：去掉隐式 BEGIN 精确变红。
+    只把状态栏点亮而语句仍各自提交，是最糟的形态——界面说在事务里，
+    按回滚却什么也没撤销。
+- [x] 支持开始、提交和回滚事务
+  - 就是三条普通语句，走同一条执行路径，不另开命令。
+  - 但**不过风险确认**：按钮本身就是确认，再弹一次是「弹到第三次就没人看了」
+    的另一种写法。
+  - **废掉的事务不能提交**：PostgreSQL 对 aborted 事务的 COMMIT 照常返回
+    成功，做的却是回滚。工具栏那个按钮禁用，离开对话框里直接不出现。
+    留着它等于让人按下「提交」之后以为数据存进去了。
+- [x] 事务固定绑定同一个实际 Session
+  - 本来就是：`QuerySessionState` 按 session id 扣住一条 `SessionConnection`，
+    `keeps_transaction_statements_on_the_same_sqlite_connection` 从 P1 起就
+    钉着这件事。这一轮补的是**让它看得见**。
+- [x] 状态栏持续显示事务状态和开始时间
+  - 权威在 Rust：三种方言都没有可移植的「我在不在事务里」查询（PostgreSQL 的
+    `txid_current_if_assigned()` 对只读事务返回 NULL，MySQL 没有对应的会话
+    变量，SQLite 的 `sqlite3_get_autocommit()` 在 sqlx 里取不到），而 session
+    连接看得见在它上面跑过的**每一条**语句，包括用户自己写的 `BEGIN`。
+    前端每执行完一条语句（成功和失败都）问一次，查的是内存里的值。
+  - 只有**执行成功**的语句才改状态：一条失败的 BEGIN 什么也没开。
+  - 三处容易写错、都钉了测试：`ROLLBACK TO SAVEPOINT` 不结束事务；
+    已经在事务里再 BEGIN 保持最初的开始时间（覆盖成现在会让计时凭空归零）；
+    读不出开始时间时不显示计时，而不是显示 00:00——后者看起来像一个刚开始
+    的事务。
+  - 「事务已失败」**只有 PostgreSQL 有**，拿真库钉住了两边：
+    `postgres_aborts_the_whole_transaction_after_one_failed_statement` 与
+    `mysql_keeps_the_transaction_usable_after_a_failed_statement`。
+    已反向验证：让 `aborts_transaction_on_error` 对所有方言返回 true，
+    MySQL 那条精确变红。
+- [x] 关闭标签、切换连接或退出应用时处理未提交事务
+  - 挂在三条**用户自己发起**的路径上：切换连接、断开、退出应用。网络掉线那
+    几条不问——连接已经没了，问「要不要提交」是在骗人，所以内部走不经过闸的
+    `disconnectNow`。
+  - 三选一（提交 / 回滚 / 留下）而不是「确定/取消」：断开会让数据库把整个
+    事务回滚掉，而用户此刻最可能想做的恰恰是**提交**它。只给「确定要断开吗」
+    等于逼他先取消、自己去按提交、再断开一次。
+  - 状态在弹框前**当场重读**：拿一份旧状态弹框，是在为一件已经不存在的事拦人。
+  - 关闭 SQL 标签不在这条路径上，因为它不释放 session——事务跟着连接，
+    不跟着标签。
 
 ### 3.3 执行计划与诊断
 
