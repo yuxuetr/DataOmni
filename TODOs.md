@@ -289,7 +289,24 @@
     **全部**文字读回来比对。对着键表自比是没用的——那只能证明「我写的键翻译了」，
     证明不了「面板上的字都来自我写的键」。已反向验证：删掉 `by word` 一条，
     断言里直接多出一个 `by word`。
-- [ ] 显示执行目标、数据库、Schema、只读和生产环境标记
+- [x] 显示执行目标、数据库、Schema、只读和生产环境标记
+  - 执行目标（host:port）与生产环境标记本来就有；这轮补的是数据库、Schema、只读。
+  - 新增 `session_target` 服务：一条查询取回**服务端自己说的**库名、schema、只读标记。
+    头部原本显示的是连接配置里的库名，它回答不了「不带前缀的 CREATE TABLE 会落到哪」——
+    PostgreSQL 上这取决于 `search_path`，而它来自连接串 options 或角色默认值，配置里没有。
+  - 只读是这次唯一的新信息，也最有用：挂在只读副本上时写入会失败，而失败信息往往
+    只说「不能写」，不说「因为这是个副本」。不拦截写入——服务端自己会拒绝，
+    按关键字拦截正是下一条 TODO 点名反对的做法。
+  - **不做实时刷新**，查证后改掉的设计：(1) `tauri-plugin-sql` 用 sqlx 默认连接池
+    （最多 10 条），`SET search_path` 只改其中一条，再查可能落在另一条上，指示器会闪；
+    (2) MySQL 的 `USE` 走不了预处理协议（1295），而 `execute_query` 正是预处理的，
+    在编辑器里根本切不了库；实测就算切了，`DATABASE()` 在预处理语句里是准备时求值的。
+    所以那一栏说的是「新查询默认落在哪」，不是「会话现在在哪」——后者在连接池上
+    不是一个有定义的概念。
+  - 判据：`database_smoke.rs` 的 `postgres_session_target_reports_the_servers_own_answer`
+    （同连接 SET 之后报新 schema，证明不是回显）、`sqlite_session_target_reports_query_only`
+    （query_only 打开后报只读，证明这一列是活的）、
+    `mysql_use_is_rejected_by_the_prepared_protocol`（执行器改回文本协议时会红）。
 - [ ] 查询错误显示数据库原始错误、位置和可复制详情
 - [ ] 为危险语句提供可配置确认，不用简单关键字拦截替代权限控制
 
