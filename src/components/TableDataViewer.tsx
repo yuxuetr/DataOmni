@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useLanguageStore } from '../stores/languageStore';
 import { runReadQuery, useQueryStore } from '../stores/queryStore';
 import {
   formatResultValue,
@@ -118,6 +119,7 @@ export default function TableDataViewer({
   initialTab,
   onClose 
 }: TableDataViewerProps) {
+  const t = useLanguageStore((state) => state.t);
   const [tableSchema, setTableSchema] = useState<TableSchema | null>(null);
   const [tableSchemaKey, setTableSchemaKey] = useState<string | null>(null);
   const [tableData, setTableData] = useState<any[]>([]);
@@ -166,35 +168,35 @@ export default function TableDataViewer({
   const tabs = [
     {
       id: 'schema' as TabType,
-      label: 'Schema',
+      label: t('table.tab.schema'),
       icon: <FileText size={16} />,
-      description: '表结构信息'
+      description: t('table.tab.schema.desc')
     },
     {
       id: 'data' as TabType,
-      label: '数据',
+      label: t('table.tab.data'),
       icon: <Table size={16} />,
-      description: '表数据内容'
+      description: t('table.tab.data.desc')
     },
     {
       id: 'er' as TabType,
-      label: 'ER 图',
+      label: t('table.tab.er'),
       icon: <GitBranch size={16} />,
-      description: '数据库关系图'
+      description: t('table.tab.er.desc')
     }
   ];
 
   // 检查并确保数据库连接
   const ensureDatabaseConnection = async () => {
     if (!database) {
-      setError('数据库会话不可用，请先重新连接');
+      setError(t('table.sessionUnavailable'));
       return false;
     }
 
     // 标签永久绑定到打开它的连接。活跃会话切到别的连接时必须停下：
     // database 是全局唯一会话，继续执行会拿本表的表名去查另一个库。
     if (connectionId !== connection.id) {
-      setError(`此标签绑定的连接「${connection.name}」当前未激活，请在左侧重新选择该连接后再操作`);
+      setError(t('table.connectionInactive', { name: connection.name }));
       return false;
     }
 
@@ -241,7 +243,7 @@ export default function TableDataViewer({
       ]);
 
       setSchemaObjects({
-        indexes: groupIndexRows(asRows(indexRows)),
+        indexes: groupIndexRows(asRows(indexRows), t('schema.expressionColumn')),
         foreignKeys: groupForeignKeyRows(asRows(foreignKeyRows)),
         checkConstraints: checkRows === null ? null : toCheckConstraints(asRows(checkRows)),
         ddl: ddlRows === null ? null : joinDdlStatements(extractDdlStatements(asRows(ddlRows))),
@@ -256,7 +258,7 @@ export default function TableDataViewer({
         checkConstraints: null,
         ddl: null,
         triggers: [],
-        error: describeError(err, '读取索引与约束失败')
+        error: describeError(err, t('schema.readObjectsFailed'))
       });
     }
   };
@@ -368,7 +370,7 @@ export default function TableDataViewer({
         ? tableSchema
         : await loadTableSchema();
       if (!loadedSchema) {
-        throw new Error('无法加载表结构，已停止不稳定的分页查询');
+        throw new Error(t('table.schemaLoadFailedStopped'));
       }
       const order = createTablePaginationOrder(loadedSchema.columns, dialect);
       setPaginationOrder(order);
@@ -592,7 +594,7 @@ export default function TableDataViewer({
       await loadTableData(currentPage);
     } catch (error) {
       console.error('保存失败:', error);
-      setEditingError(describeError(error, '保存失败'));
+      setEditingError(describeError(error, t('table.saveFailed')));
     } finally {
       setEditingLoading(false);
     }
@@ -600,7 +602,7 @@ export default function TableDataViewer({
 
   // 删除行
   const deleteRow = async (rowIndex: number) => {
-    if (!confirm('确定要删除这条数据吗？此操作不可撤销。')) {
+    if (!confirm(t('table.deleteRowConfirm'))) {
       return;
     }
     
@@ -614,7 +616,7 @@ export default function TableDataViewer({
       await loadTableData(currentPage);
     } catch (error) {
       console.error('删除失败:', error);
-      setEditingError(describeError(error, '删除失败'));
+      setEditingError(describeError(error, t('table.deleteFailed')));
     } finally {
       setEditingLoading(false);
     }
@@ -658,7 +660,7 @@ export default function TableDataViewer({
     });
     
     if (columns.length === 0) {
-      throw new Error('没有有效的列可以插入');
+      throw new Error(t('table.noInsertableColumns'));
     }
     
     const values = columns.map(key => {
@@ -724,7 +726,7 @@ export default function TableDataViewer({
     // 找到主键列
     const primaryKeyColumn = tableSchema.columns.find(col => col.is_primary_key);
     if (!primaryKeyColumn) {
-      throw new Error('无法找到主键列，无法更新数据');
+      throw new Error(t('table.noPrimaryKeyForUpdate'));
     }
     
     const pkValue = editState.originalData[primaryKeyColumn.name];
@@ -814,7 +816,7 @@ export default function TableDataViewer({
     console.log('更新值:', values);
     
     const updateResult = await database.execute(updateQuery, values);
-    assertSingleRowAffected(updateResult, '更新');
+    assertSingleRowAffected(updateResult, t('table.operation.update'));
   };
 
   // 删除行
@@ -826,7 +828,7 @@ export default function TableDataViewer({
     // 找到主键列
     const primaryKeyColumn = tableSchema.columns.find(col => col.is_primary_key);
     if (!primaryKeyColumn) {
-      throw new Error('无法找到主键列，无法删除数据');
+      throw new Error(t('table.noPrimaryKeyForDelete'));
     }
     
     // 同 startEditRow：主键原值要进 WHERE，必须先从 tagged 包装里拆出来
@@ -862,7 +864,7 @@ export default function TableDataViewer({
     console.log('删除值:', values);
     
     const deleteResult = await database.execute(deleteQuery, values);
-    assertSingleRowAffected(deleteResult, '删除');
+    assertSingleRowAffected(deleteResult, t('table.operation.delete'));
   };
 
   // 可编辑单元格组件
@@ -971,7 +973,7 @@ export default function TableDataViewer({
             onKeyDown={handleKeyDown}
             onBlur={cancelEdit}
             className="w-full px-2 py-1 text-sm border border-accent-line rounded-control focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
-            placeholder={dataType.includes('int') || dataType.includes('bigint') || dataType.includes('number') || dataType.includes('float') || dataType.includes('decimal') || dataType.includes('numeric') ? '0' : '输入值'}
+            placeholder={dataType.includes('int') || dataType.includes('bigint') || dataType.includes('number') || dataType.includes('float') || dataType.includes('decimal') || dataType.includes('numeric') ? '0' : t('table.enterValue')}
             autoFocus
           />
         )}
@@ -1043,13 +1045,13 @@ export default function TableDataViewer({
             value={value}
             onChange={(e) => onChange(e.target.value)}
             className="flex-1 px-2 py-1 text-sm border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
-            placeholder={dataType.includes('date') ? '选择日期' : dataType.includes('time') ? '选择时间' : '选择日期时间'}
+            placeholder={dataType.includes('date') ? t('table.pickDate') : dataType.includes('time') ? t('table.pickTime') : t('table.pickDateTime')}
           />
           <button
             type="button"
             onClick={openPicker}
             className="px-2 py-1 text-xs text-accent border border-accent-line rounded-control hover:bg-accent-soft"
-            title="打开日期时间选择器"
+            title={t('table.openDateTimePicker')}
           >
             <Calendar size={12} />
           </button>
@@ -1059,7 +1061,7 @@ export default function TableDataViewer({
           <div className="absolute top-full left-0 mt-1 bg-surface border border-line-strong rounded-panel shadow-lg z-50 min-w-[280px]">
             <div className="p-3 border-b border-line">
               <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-medium text-fg">日期时间选择</h4>
+                <h4 className="text-sm font-medium text-fg">{t('table.dateTimePicker')}</h4>
                 <button
                   onClick={closePicker}
                   className="text-fg-subtle hover:text-fg-muted"
@@ -1082,13 +1084,13 @@ export default function TableDataViewer({
                     className="flex-1 px-2 py-1 text-xs text-success border border-success-line rounded-control hover:bg-success-soft"
                   >
                     <Clock size={12} className="mr-1" />
-                    当前时间
+                    {t('table.now')}
                   </button>
                   <button
                     onClick={setNull}
                     className="px-2 py-1 text-xs text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover"
                   >
-                    清空
+                    {t('table.clear')}
                   </button>
                 </div>
                 
@@ -1097,13 +1099,13 @@ export default function TableDataViewer({
                     onClick={applyDateTime}
                     className="flex-1 px-3 py-1 text-sm text-fg-on-accent bg-accent rounded-control hover:bg-accent-hover"
                   >
-                    确定
+                    {t('common.confirm')}
                   </button>
                   <button
                     onClick={closePicker}
                     className="flex-1 px-3 py-1 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover"
                   >
-                    取消
+                    {t('common.cancel')}
                   </button>
                 </div>
               </div>
@@ -1117,7 +1119,7 @@ export default function TableDataViewer({
   if (!database) {
     return (
       <div className="h-full flex items-center justify-center text-fg-muted">
-        数据库未连接
+        {t('table.notConnected')}
       </div>
     );
   }
@@ -1155,7 +1157,7 @@ export default function TableDataViewer({
               disabled={loading}
             >
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-              <span>刷新</span>
+              <span>{t('table.refresh')}</span>
             </button>
             
             {onClose && (
@@ -1163,7 +1165,7 @@ export default function TableDataViewer({
                 onClick={onClose}
                 className="px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors"
               >
-                关闭
+                {t('table.close')}
               </button>
             )}
           </div>
@@ -1206,9 +1208,9 @@ export default function TableDataViewer({
         {activeTab === 'schema' && tableSchema && (
           <div className="h-full flex flex-col">
             <div className="p-4 border-b bg-surface-sunken">
-              <h2 className="text-sm font-semibold text-fg">表结构信息</h2>
+              <h2 className="text-sm font-semibold text-fg">{t('table.structureTitle')}</h2>
               <p className="text-xs text-fg-muted mt-1">
-                {tableSchema.columns.length} 个字段
+                {t('table.fieldCount', { count: tableSchema.columns.length })}
               </p>
             </div>
             <div className="flex-1 overflow-y-auto">
@@ -1216,19 +1218,19 @@ export default function TableDataViewer({
                 <thead className="bg-surface-sunken sticky top-0">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
-                      列名
+                      {t('table.column.name')}
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
-                      数据类型
+                      {t('table.column.type')}
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
-                      可空
+                      {t('table.column.nullable')}
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
-                      主键
+                      {t('table.column.primaryKey')}
                     </th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-fg-muted uppercase tracking-wider">
-                      默认值
+                      {t('table.column.default')}
                     </th>
                   </tr>
                 </thead>
@@ -1246,18 +1248,18 @@ export default function TableDataViewer({
                       <td className="px-4 py-3 text-sm text-fg-muted">
                         {column.is_nullable ? (
                           <span className="inline-flex items-center px-2 py-1 rounded-control text-xs font-medium bg-success-soft text-success">
-                            是
+                            {t('table.yes')}
                           </span>
                         ) : (
                           <span className="inline-flex items-center px-2 py-1 rounded-control text-xs font-medium bg-danger-soft text-danger">
-                            否
+                            {t('table.no')}
                           </span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-sm text-fg-muted">
                         {column.is_primary_key ? (
                           <span className="inline-flex items-center px-2 py-1 rounded-control text-xs font-medium bg-accent-soft text-accent">
-                            主键
+                            {t('table.column.primaryKey')}
                           </span>
                         ) : (
                           <span className="text-fg-subtle">-</span>
@@ -1287,9 +1289,9 @@ export default function TableDataViewer({
           <div className="h-full flex flex-col">
             <div className="p-4 border-b bg-surface-sunken flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-semibold text-fg">表数据</h2>
+                <h2 className="text-sm font-semibold text-fg">{t('table.dataTitle')}</h2>
                 <p className="text-xs text-fg-muted mt-1">
-                  共 {totalRows} 行数据
+                  {t('table.rowCount', { count: totalRows })}
                 </p>
                 {paginationOrder && (
                   <p
@@ -1299,8 +1301,8 @@ export default function TableDataViewer({
                     )}
                   >
                     {paginationOrder.strategy === 'primary-key'
-                      ? `按主键 ${paginationOrder.columns.join(', ')} 稳定分页`
-                      : '表没有主键，正在使用数据库回退顺序；数据变更时页边界可能移动'}
+                      ? t('table.stablePagination', { columns: paginationOrder.columns.join(', ') })
+                      : t('table.unstablePagination')}
                   </p>
                 )}
               </div>
@@ -1314,17 +1316,17 @@ export default function TableDataViewer({
                       className="flex items-center space-x-1 px-3 py-1.5 text-sm text-success border border-success-line rounded-control hover:bg-success-soft transition-colors"
                     >
                       <Plus size={14} />
-                      <span>添加</span>
+                      <span>{t('table.add')}</span>
                     </button>
 
                     <button
                       onClick={() => setShowExport(true)}
                       disabled={tableData.length === 0}
                       className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg border border-line-strong rounded-control hover:bg-surface-hover transition-colors disabled:opacity-50"
-                      title="导出当前页"
+                      title={t('export.exportCurrentPage')}
                     >
                       <Download size={14} />
-                      <span>导出</span>
+                      <span>{t('result.export')}</span>
                     </button>
                   </>
                 )}
@@ -1342,7 +1344,7 @@ export default function TableDataViewer({
                       ) : (
                         <Save size={14} />
                       )}
-                      <span>保存</span>
+                      <span>{t('table.save')}</span>
                     </button>
                     
                     <button
@@ -1351,12 +1353,12 @@ export default function TableDataViewer({
                       className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors disabled:opacity-50"
                     >
                       <X size={14} />
-                      <span>取消</span>
+                      <span>{t('common.cancel')}</span>
                     </button>
                   </>
                 )}
                 
-                <span className="text-sm text-fg-muted">每页显示:</span>
+                <span className="text-sm text-fg-muted">{t('table.pageSizeLabel')}</span>
                 <select
                   value={pageSize}
                   onChange={(e) => handlePageSizeChange(Number(e.target.value))}
@@ -1384,7 +1386,7 @@ export default function TableDataViewer({
               <div className="p-4 bg-accent-soft border-b border-accent-line">
                 <div className="flex items-center space-x-2 mb-3">
                   <Plus className="text-accent" size={16} />
-                  <h3 className="text-sm font-medium text-fg">添加新数据</h3>
+                  <h3 className="text-sm font-medium text-fg">{t('table.addRowTitle')}</h3>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                   {tableSchema.columns.map((column) => {
@@ -1402,10 +1404,10 @@ export default function TableDataViewer({
                         <label className="text-xs font-medium text-fg mb-1">
                           {column.name}
                           {column.is_primary_key && (
-                            <span className="ml-1 text-accent">(主键)</span>
+                            <span className="ml-1 text-accent">{t('table.primaryKeyTag')}</span>
                           )}
                           {isAutoIncrement && (
-                            <span className="ml-1 text-success">(自增)</span>
+                            <span className="ml-1 text-success">{t('table.autoIncrementTag')}</span>
                           )}
                           {!column.is_nullable && !isAutoIncrement && (
                             <span className="ml-1 text-danger">*</span>
@@ -1414,7 +1416,7 @@ export default function TableDataViewer({
                         {isAutoIncrement ? (
                           <input
                             type="text"
-                            value="自动生成"
+                            value={t('table.autoGenerated')}
                             disabled
                             className="px-2 py-1 text-sm border border-line-strong rounded-control bg-surface-hover text-fg-muted cursor-not-allowed"
                           />
@@ -1446,7 +1448,7 @@ export default function TableDataViewer({
                               updateEditData(column.name, newValue);
                             }}
                             className="px-2 py-1 text-sm border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
-                            placeholder={column.default_value && column.default_value !== 'NULL' ? column.default_value : '输入值'}
+                            placeholder={column.default_value && column.default_value !== 'NULL' ? column.default_value : t('table.enterValue')}
                             required={!column.is_nullable && !isAutoIncrement}
                           />
                         )}
@@ -1462,14 +1464,14 @@ export default function TableDataViewer({
               {loading ? (
                 <div className="flex items-center justify-center h-full">
                   <RefreshCw className="animate-spin text-fg-subtle" size={20} />
-                  <span className="ml-2 text-fg-muted">加载中...</span>
+                  <span className="ml-2 text-fg-muted">{t('table.loading')}</span>
                 </div>
               ) : tableData.length > 0 ? (
                 <div className="h-full flex flex-col">
                   {/* 列宽跟着内容走之后横向滚动是常态，不再用提示条解释它 */}
                   {cells.copyError && (
                     <div className="border-b border-danger-line bg-danger-soft px-3 py-1.5 text-xs text-danger">
-                      复制失败：{cells.copyError}
+                      {t('result.copyFailed', { reason: cells.copyError })}
                     </div>
                   )}
 
@@ -1508,10 +1510,10 @@ export default function TableDataViewer({
                                   />
                                   <span className="truncate" title={column.name}>{column.name}</span>
                                   {column.is_primary_key && (
-                                    <span className="shrink-0 text-warning" title="主键">🔑</span>
+                                    <span className="shrink-0 text-warning" title={t('table.column.primaryKey')}>🔑</span>
                                   )}
                                   {!column.is_nullable && (
-                                    <span className="shrink-0 text-danger" title="非空">*</span>
+                                    <span className="shrink-0 text-danger" title={t('table.notNull')}>*</span>
                                   )}
                                 </div>
                                 <div
@@ -1527,7 +1529,7 @@ export default function TableDataViewer({
                                 />
                               </th>
                             ))}
-                            <th className="px-2 py-1 text-left text-xs font-medium text-fg">操作</th>
+                            <th className="px-2 py-1 text-left text-xs font-medium text-fg">{t('result.actions')}</th>
                           </tr>
                         </thead>
                         
@@ -1555,14 +1557,14 @@ export default function TableDataViewer({
                                     <button
                                       onClick={() => startEditRow(rowIndex)}
                                       className="p-1 text-accent hover:text-accent hover:bg-accent-soft rounded-control"
-                                      title="编辑"
+                                      title={t('table.edit')}
                                     >
                                       <Edit size={14} />
                                     </button>
                                     <button
                                       onClick={() => deleteRow(rowIndex)}
                                       className="p-1 text-danger hover:text-danger hover:bg-danger-soft rounded-control"
-                                      title="删除"
+                                      title={t('table.operation.delete')}
                                     >
                                       <Trash2 size={14} />
                                     </button>
@@ -1573,7 +1575,7 @@ export default function TableDataViewer({
                                       onClick={saveEdit}
                                       disabled={editingLoading}
                                       className="p-1 text-success hover:text-success hover:bg-success-soft rounded-control disabled:opacity-50"
-                                      title="保存"
+                                      title={t('table.save')}
                                     >
                                       {editingLoading ? (
                                         <RefreshCw size={14} className="animate-spin" />
@@ -1585,7 +1587,7 @@ export default function TableDataViewer({
                                       onClick={cancelEdit}
                                       disabled={editingLoading}
                                       className="p-1 text-fg-muted hover:text-fg hover:bg-surface-hover rounded-control disabled:opacity-50"
-                                      title="取消"
+                                      title={t('common.cancel')}
                                     >
                                       <X size={14} />
                                     </button>
@@ -1604,7 +1606,7 @@ export default function TableDataViewer({
                     <div className="px-4 py-3 bg-surface-sunken border-t flex items-center justify-between">
                       <div className="flex items-center space-x-2">
                         <span className="text-sm text-fg">
-                          显示 {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, totalRows)} 行，共 {totalRows} 行
+                          {t('result.range', { from: (currentPage - 1) * pageSize + 1, to: Math.min(currentPage * pageSize, totalRows), total: totalRows })}
                         </span>
                       </div>
                       
@@ -1624,7 +1626,7 @@ export default function TableDataViewer({
                           <ChevronLeft size={16} />
                         </button>
                         <span className="px-3 py-1 text-sm text-fg">
-                          第 {currentPage} 页，共 {totalPages} 页
+                          {t('result.pageOf', { page: currentPage, total: totalPages })}
                         </span>
                         <button
                           onClick={() => handlePageChange(currentPage + 1)}
@@ -1646,7 +1648,7 @@ export default function TableDataViewer({
                 </div>
               ) : (
                 <div className="flex items-center justify-center h-full text-fg-muted">
-                  暂无数据
+                  {t('table.empty')}
                 </div>
               )}
             </div>
@@ -1657,17 +1659,17 @@ export default function TableDataViewer({
         {activeTab === 'er' && (
           <div className="h-full flex flex-col">
             <div className="p-4 border-b bg-surface-sunken">
-              <h2 className="text-sm font-semibold text-fg">数据库关系图 (ER 图)</h2>
+              <h2 className="text-sm font-semibold text-fg">{t('table.er.title')}</h2>
               <p className="text-xs text-fg-muted mt-1">
-                显示数据库中所有表的关系结构
+                {t('table.er.subtitle')}
               </p>
             </div>
             <div className="flex-1 flex items-center justify-center bg-surface-sunken">
               <div className="text-center text-fg-muted">
                 <BarChart3 size={48} className="mx-auto mb-4 text-fg-subtle" />
-                <p className="text-sm font-medium mb-2">ER 图功能开发中</p>
-                <p className="text-xs">该功能将展示数据库中所有表的关系结构</p>
-                <p className="text-xs mt-1">包括外键关系、表间连线等</p>
+                <p className="text-sm font-medium mb-2">{t('table.er.wip')}</p>
+                <p className="text-xs">{t('table.er.wipDetail')}</p>
+                <p className="text-xs mt-1">{t('table.er.wipDetail2')}</p>
               </div>
             </div>
           </div>
@@ -1680,7 +1682,7 @@ export default function TableDataViewer({
           columns={columnNames}
           rows={positionalRows}
           sourceName={tableName}
-          scopeNote={`导出的是当前第 ${currentPage} 页的 ${tableData.length} 行；整表共 ${totalRows} 行。`}
+          scopeNote={t('export.scopeCurrentPage', { page: currentPage, rows: tableData.length, total: totalRows })}
           onClose={() => setShowExport(false)}
         />
       )}

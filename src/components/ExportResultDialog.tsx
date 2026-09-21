@@ -14,6 +14,8 @@ import {
   type ExportOptions
 } from '../utils/exportResult';
 import { describeError } from '../utils/describeError';
+import { useLanguageStore } from '../stores/languageStore';
+import type { TranslationKey } from '../i18n/translate';
 
 interface ExportResultDialogProps {
   columns: readonly string[];
@@ -27,14 +29,16 @@ interface ExportResultDialogProps {
   onClose: () => void;
 }
 
-const DELIMITERS: Array<{ value: CsvDelimiter; label: string }> = [
-  { value: ',', label: '逗号' },
-  { value: ';', label: '分号' },
-  { value: '\t', label: '制表符' }
+/** 存文案键而不是文案：模块级常量用不了 hook，而标签要跟着语言走 */
+const DELIMITERS: Array<{ value: CsvDelimiter; labelKey: TranslationKey }> = [
+  { value: ',', labelKey: 'export.delimiter.comma' },
+  { value: ';', labelKey: 'export.delimiter.semicolon' },
+  { value: '\t', labelKey: 'export.delimiter.tab' }
 ];
 
-const NULL_TEXTS = [
-  { value: '', label: '空字段' },
+// `NULL` 与 `\N` 是写进文件里的字面量，不是界面文案，不翻译
+const NULL_TEXTS: Array<{ value: string; labelKey?: TranslationKey; label?: string }> = [
+  { value: '', labelKey: 'export.nullAs.empty' },
   { value: 'NULL', label: 'NULL' },
   { value: '\\N', label: '\\N' }
 ];
@@ -49,6 +53,7 @@ export function ExportResultDialog({
   scopeNote,
   onClose
 }: ExportResultDialogProps) {
+  const t = useLanguageStore((state) => state.t);
   const [options, setOptions] = useState<ExportOptions>(DEFAULT_EXPORT_OPTIONS);
   const [writing, setWriting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,7 +115,7 @@ export function ExportResultDialog({
       await invoke<number>('write_text_file', { path, contents });
       setWritten(path);
     } catch (err) {
-      setError(describeError(err, '导出失败'));
+      setError(describeError(err, t('export.failed')));
     } finally {
       setWriting(false);
     }
@@ -131,23 +136,23 @@ export function ExportResultDialog({
         <div className="flex items-center gap-2 border-b border-line px-5 py-3">
           <Download size={16} className="shrink-0 text-fg-muted" />
           <h2 id="export-dialog-title" className="text-sm font-medium text-fg">
-            导出结果
+            {t('export.title')}
           </h2>
           <span className="ml-auto text-xs text-fg-subtle">
-            {rows.length} 行 × {columns.length} 列
+            {t('export.shape', { rows: rows.length, columns: columns.length })}
           </span>
         </div>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-4">
           {(truncated || scopeNote) && (
             <p className="rounded-control border border-warning-line bg-warning-soft px-3 py-2 text-xs text-warning">
-              {truncated && '结果已被上限截断，导出的是截断后的这一份。'}
+              {truncated && t('export.truncated')}
               {truncated && scopeNote && ' '}
               {scopeNote}
             </p>
           )}
 
-          <Field label="格式">
+          <Field label={t('export.format')}>
             <SegmentedControl<ExportFormat>
               value={options.format}
               options={[
@@ -160,36 +165,42 @@ export function ExportResultDialog({
 
           {options.format === 'csv' && (
             <>
-              <Field label="分隔符">
+              <Field label={t('export.delimiter')}>
                 <SegmentedControl<CsvDelimiter>
                   value={options.delimiter}
-                  options={DELIMITERS}
+                  options={DELIMITERS.map(({ value, labelKey }) => ({
+                    value,
+                    label: t(labelKey)
+                  }))}
                   onChange={delimiter => update({ delimiter })}
                 />
               </Field>
 
-              <Field label="NULL 写成">
+              <Field label={t('export.nullAs')}>
                 <SegmentedControl<string>
                   value={options.nullText}
-                  options={NULL_TEXTS}
+                  options={NULL_TEXTS.map(({ value, labelKey, label }) => ({
+                    value,
+                    label: labelKey ? t(labelKey) : label ?? value
+                  }))}
                   onChange={nullText => update({ nullText })}
                 />
               </Field>
 
-              <Field label="表头">
+              <Field label={t('export.header')}>
                 <Checkbox
                   checked={options.includeHeader}
                   onChange={includeHeader => update({ includeHeader })}
-                  label="第一行写列名"
+                  label={t('export.header.writeNames')}
                 />
               </Field>
 
-              <Field label="编码">
+              <Field label={t('export.encoding')}>
                 <Checkbox
                   checked={options.byteOrderMark}
                   onChange={byteOrderMark => update({ byteOrderMark })}
-                  label="UTF-8 加 BOM"
-                  hint="Excel 不认没有 BOM 的 UTF-8，中文会读成乱码"
+                  label={t('export.encoding.bom')}
+                  hint={t('export.encoding.bomHint')}
                 />
               </Field>
             </>
@@ -197,12 +208,15 @@ export function ExportResultDialog({
 
           <div>
             <p className="mb-1 text-xs text-fg-subtle">
-              预览（{options.format === 'json'
-                ? '第 1 行'
-                : `前 ${Math.min(PREVIEW_ROWS, rows.length)} 行`}，文件里是全部 {rows.length} 行）
+              {options.format === 'json'
+                ? t('export.previewJson', { total: rows.length })
+                : t('export.previewCsv', {
+                    shown: Math.min(PREVIEW_ROWS, rows.length),
+                    total: rows.length
+                  })}
             </p>
             <pre className="max-h-36 overflow-auto rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg select-text whitespace-pre">
-              {preview || '（无数据）'}
+              {preview || t('export.previewEmpty')}
             </pre>
           </div>
         </div>
@@ -211,7 +225,7 @@ export function ExportResultDialog({
           <div className="min-w-0 flex-1 text-xs">
             {error && <span className="break-words text-danger">{error}</span>}
             {!error && written && (
-              <span className="break-all text-success">已导出到 {written}</span>
+              <span className="break-all text-success">{t('export.written', { path: written })}</span>
             )}
           </div>
           <button
@@ -221,7 +235,7 @@ export function ExportResultDialog({
             disabled={writing}
             className="shrink-0 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover disabled:opacity-50"
           >
-            {written ? '完成' : '取消'}
+            {written ? t('common.done') : t('common.cancel')}
           </button>
           <button
             type="button"
@@ -230,7 +244,7 @@ export function ExportResultDialog({
             className="flex shrink-0 items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:opacity-90 disabled:opacity-50"
           >
             {writing && <Loader2 size={14} className="animate-spin" />}
-            {writing ? '写入中…' : '选择位置并导出'}
+            {writing ? t('export.writing') : t('export.choosePath')}
           </button>
         </div>
       </div>

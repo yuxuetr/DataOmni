@@ -68,8 +68,16 @@ export function resolveLanguage(
   return preference === 'system' ? systemLanguage : preference;
 }
 
-/** 写到 <html lang>：影响字体回退、断行规则和读屏软件的发音 */
+/**
+ * 写到 <html lang>：影响字体回退、断行规则和读屏软件的发音。
+ *
+ * 没有 DOM 时安静跳过：store 在模块加载时就会调用这里，而它会被没有 DOM 的
+ * 单元测试间接引入——一个只为写属性的副作用不该让整个测试文件加载失败。
+ */
 export function applyLanguage(language: ResolvedLanguage): void {
+  if (typeof document === 'undefined') {
+    return;
+  }
   document.documentElement.lang = language === 'zh' ? 'zh-Hans' : 'en';
 }
 

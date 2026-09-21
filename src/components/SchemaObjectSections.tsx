@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useLanguageStore } from '../stores/languageStore';
 import { AlertCircle, Check, Copy } from 'lucide-react';
 import { describeError } from '../utils/describeError';
 import clsx from 'clsx';
@@ -35,9 +36,10 @@ export function SchemaObjectSections({
   objects: SchemaObjects | null;
   dbType: ConnectionProfile['db_type'];
 }) {
+  const t = useLanguageStore((state) => state.t);
   if (!objects) {
     return (
-      <p className="px-4 py-3 text-xs text-fg-subtle">正在读取索引与约束…</p>
+      <p className="px-4 py-3 text-xs text-fg-subtle">{t('schema.loadingObjects')}</p>
     );
   }
 
@@ -54,21 +56,29 @@ export function SchemaObjectSections({
 
   return (
     <div className="divide-y divide-line border-t border-line">
-      <SchemaSection title="索引" count={objects.indexes.length} emptyText="没有索引">
+      <SchemaSection
+        title={t('schema.indexes')}
+        count={objects.indexes.length}
+        emptyText={t('schema.indexes.empty')}
+      >
         {objects.indexes.map(index => (
           <li key={index.name} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 py-2">
             <span className="font-mono text-xs text-fg">{index.name}</span>
             <span className="font-mono text-xs text-fg-muted">
               ({index.columns.join(', ')})
             </span>
-            {index.isPrimary && <Pill tone="accent">主键</Pill>}
-            {index.isUnique && !index.isPrimary && <Pill tone="accent">唯一</Pill>}
+            {index.isPrimary && <Pill tone="accent">{t('schema.primaryKey')}</Pill>}
+            {index.isUnique && !index.isPrimary && <Pill tone="accent">{t('schema.unique')}</Pill>}
             {index.method && <span className="text-xs text-fg-subtle">{index.method}</span>}
           </li>
         ))}
       </SchemaSection>
 
-      <SchemaSection title="外键" count={objects.foreignKeys.length} emptyText="没有外键">
+      <SchemaSection
+        title={t('schema.foreignKeys')}
+        count={objects.foreignKeys.length}
+        emptyText={t('schema.foreignKeys.empty')}
+      >
         {objects.foreignKeys.map(foreignKey => (
           <li key={foreignKey.name} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 py-2">
             <span className="font-mono text-xs text-fg">{foreignKey.name}</span>
@@ -78,32 +88,36 @@ export function SchemaObjectSections({
               {foreignKey.referencedTable}
               {/* SQLite 允许省略被引用列，默认指向父表主键；不伪造一个列名 */}
               {foreignKey.referencedColumns.every(column => column === null)
-                ? ' (主键)'
+                ? ` (${t('schema.referencesPrimaryKey')})`
                 : ` (${foreignKey.referencedColumns.map(column => column ?? '?').join(', ')})`}
             </span>
             {foreignKey.onDelete && foreignKey.onDelete !== 'NO ACTION' && (
-              <span className="text-xs text-fg-subtle">删除时 {foreignKey.onDelete}</span>
+              <span className="text-xs text-fg-subtle">
+                {t('schema.onDelete', { action: foreignKey.onDelete })}
+              </span>
             )}
             {foreignKey.onUpdate && foreignKey.onUpdate !== 'NO ACTION' && (
-              <span className="text-xs text-fg-subtle">更新时 {foreignKey.onUpdate}</span>
+              <span className="text-xs text-fg-subtle">
+                {t('schema.onUpdate', { action: foreignKey.onUpdate })}
+              </span>
             )}
           </li>
         ))}
       </SchemaSection>
 
       {objects.checkConstraints === null ? (
-        <SchemaSection title="检查约束" count={null} emptyText="">
+        <SchemaSection title={t('schema.checks')} count={null} emptyText="">
           <li className="px-4 py-2 text-xs text-fg-subtle">
             {dbType === 'sqlite'
-              ? 'SQLite 不提供检查约束目录，只能从建表语句原文里看'
-              : '当前数据库类型不提供检查约束目录'}
+              ? t('schema.checks.noCatalogSqlite')
+              : t('schema.checks.noCatalog')}
           </li>
         </SchemaSection>
       ) : (
         <SchemaSection
-          title="检查约束"
+          title={t('schema.checks')}
           count={objects.checkConstraints.length}
-          emptyText="没有检查约束"
+          emptyText={t('schema.checks.empty')}
         >
           {objects.checkConstraints.map(constraint => (
             <li key={constraint.name} className="flex flex-wrap items-baseline gap-x-2 px-4 py-2">
@@ -116,7 +130,11 @@ export function SchemaObjectSections({
         </SchemaSection>
       )}
 
-      <SchemaSection title="触发器" count={objects.triggers.length} emptyText="没有触发器">
+      <SchemaSection
+        title={t('schema.triggers')}
+        count={objects.triggers.length}
+        emptyText={t('schema.triggers.empty')}
+      >
         {objects.triggers.map(trigger => (
           <li key={trigger.name} className="px-4 py-2">
             <div className="flex flex-wrap items-baseline gap-x-2">
@@ -147,6 +165,7 @@ export function SchemaObjectSections({
  * 照着重建却不等价的 DDL——比没有更糟，因为没人会去核对它。
  */
 function DdlSection({ ddl, dbType }: { ddl: string | null; dbType: ConnectionProfile['db_type'] }) {
+  const t = useLanguageStore((state) => state.t);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
 
@@ -161,14 +180,14 @@ function DdlSection({ ddl, dbType }: { ddl: string | null; dbType: ConnectionPro
       window.setTimeout(() => setCopied(false), 1500);
     } catch (cause) {
       // 剪贴板可能被权限或非安全上下文拒绝；静默失败会让人以为复制成功了
-      setCopyError(describeError(cause, '复制到剪贴板失败'));
+      setCopyError(describeError(cause, t('common.copyFailed')));
     }
   };
 
   return (
     <section>
       <h3 className="flex items-center gap-2 bg-surface-sunken px-4 py-2 text-xs font-medium text-fg-muted">
-        定义
+        {t('schema.definition')}
         {ddl && (
           <button
             type="button"
@@ -176,7 +195,7 @@ function DdlSection({ ddl, dbType }: { ddl: string | null; dbType: ConnectionPro
             className="ml-auto flex items-center gap-1 rounded-control border border-line-strong px-2 py-0.5 text-xs text-fg hover:bg-surface-hover"
           >
             {copied ? <Check size={12} className="text-success" /> : <Copy size={12} />}
-            {copied ? '已复制' : '复制'}
+            {copied ? t('common.copied') : t('common.copy')}
           </button>
         )}
       </h3>
@@ -190,9 +209,8 @@ function DdlSection({ ddl, dbType }: { ddl: string | null; dbType: ConnectionPro
       ) : (
         <p className="px-4 py-2 text-xs text-fg-subtle">
           {dbType === DatabaseType.PostgreSQL
-            ? 'PostgreSQL 不提供表的建表语句（视图则有）。从目录重建的 DDL 无法保证与原表等价，'
-              + '这里不生成——上面的列、索引、外键、检查约束与触发器都是权威的。'
-            : '数据库没有返回定义。'}
+            ? t('schema.definition.noCreateTable')
+            : t('schema.definition.empty')}
         </p>
       )}
     </section>

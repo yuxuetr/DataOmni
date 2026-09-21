@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  EXPRESSION_COLUMN_PLACEHOLDER,
+  DEFAULT_EXPRESSION_COLUMN_PLACEHOLDER,
   groupForeignKeyRows,
   groupIndexRows,
   extractDdlStatements,
@@ -39,7 +39,15 @@ describe('groupIndexRows', () => {
   });
 
   it('占位符自己不带括号——外层渲染已经包了一层，否则是 ((表达式))', () => {
-    expect(EXPRESSION_COLUMN_PLACEHOLDER.startsWith('(')).toBe(false);
+    expect(DEFAULT_EXPRESSION_COLUMN_PLACEHOLDER.startsWith('(')).toBe(false);
+  });
+
+  it('占位符可以由调用方替换，用于按界面语言显示', () => {
+    const [index] = groupIndexRows(
+      [{ index_name: 'ix', column_name: '', ordinal: 1, is_unique: 0, is_primary: 0 }],
+      '<表达式>'
+    );
+    expect(index.columns).toEqual(['<表达式>']);
   });
 
   it('列名为空的表达式索引显示成占位符，不是空白格', () => {
@@ -47,14 +55,14 @@ describe('groupIndexRows', () => {
     const [index] = groupIndexRows([
       { index_name: 'ix_expr', column_name: '', ordinal: 1, is_unique: 0, is_primary: 0 }
     ]);
-    expect(index.columns).toEqual([EXPRESSION_COLUMN_PLACEHOLDER]);
+    expect(index.columns).toEqual([DEFAULT_EXPRESSION_COLUMN_PLACEHOLDER]);
   });
 
   it('列名为 null 时同样用占位符', () => {
     const [index] = groupIndexRows([
       { index_name: 'ix_expr', column_name: null, ordinal: 1, is_unique: 0, is_primary: 0 }
     ]);
-    expect(index.columns).toEqual([EXPRESSION_COLUMN_PLACEHOLDER]);
+    expect(index.columns).toEqual([DEFAULT_EXPRESSION_COLUMN_PLACEHOLDER]);
   });
 
   it('主键排最前，其次唯一索引，同类按名字', () => {

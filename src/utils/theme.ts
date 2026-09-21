@@ -45,8 +45,16 @@ export function resolveTheme(preference: ThemePreference, systemPrefersDark: boo
   return preference;
 }
 
-/** 写到 <html data-theme>，index.css 的变量按这个属性切换 */
+/**
+ * 写到 <html data-theme>，index.css 的变量按这个属性切换。
+ *
+ * 与 applyLanguage 同样的理由：没有 DOM 时安静跳过，
+ * themeStore 在模块加载时就会调用这里。
+ */
 export function applyTheme(theme: ResolvedTheme): void {
+  if (typeof document === 'undefined') {
+    return;
+  }
   document.documentElement.dataset.theme = theme;
 }
 

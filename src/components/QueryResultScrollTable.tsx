@@ -19,6 +19,7 @@ import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { ColumnSortButton } from './ColumnSortButton';
 import { nextColumnSort, sortRowsByColumn, type ColumnSort } from '../utils/resultSorting';
 import { useCellSelection } from '../hooks/useCellSelection';
+import { useLanguageStore } from '../stores/languageStore';
 import { ExportResultDialog } from './ExportResultDialog';
 
 interface QueryResultScrollTableProps {
@@ -32,6 +33,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   statementId, 
   formatExecutionTime 
 }) => {
+  const t = useLanguageStore((state) => state.t);
   const { updateRowData, deleteRowData, insertRowData } = useQueryStore();
   
   // 分页状态
@@ -114,7 +116,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   const deleteRow = async (rowIndex: number) => {
     if (!canEdit) return;
     
-    if (confirm('确定要删除这行数据吗？此操作不可恢复。')) {
+    if (confirm(t('result.deleteRowConfirm'))) {
       await deleteRowData(statementId, rowIndex + startIndex);
     }
   };
@@ -198,18 +200,22 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
       {/* 头部信息栏 */}
       <div className="px-4 py-3 bg-surface-sunken border-b flex items-center justify-between">
         <div className="flex items-center space-x-4 text-sm text-fg-muted">
-          <span>共 {totalRows} 行</span>
+          <span>{t('result.rowCount', { count: totalRows })}</span>
           {result.truncated && (
             <span className="text-warning">
               {result.truncation_reason === 'byte_limit'
-                ? `已达到 ${Math.round((result.byte_limit ?? 0) / 1024 / 1024)} MiB 内存上限，结果已截断`
-                : `已达到 ${result.row_limit?.toLocaleString()} 行上限，结果已截断`}
+                ? t('result.truncatedByBytes', {
+                    limit: Math.round((result.byte_limit ?? 0) / 1024 / 1024)
+                  })
+                : t('result.truncatedByRows', {
+                    limit: result.row_limit?.toLocaleString() ?? ''
+                  })}
             </span>
           )}
-          <span>影响行数: {result.affected_rows}</span>
-          <span>执行时间: {formatExecutionTime(result.execution_time)}</span>
-          {canEdit && <span className="text-fg-subtle">双击单元格编辑</span>}
-          <span className="text-fg-subtle">点选单元格后 ⌘C 复制</span>
+          <span>{t('result.affectedRows', { count: result.affected_rows })}</span>
+          <span>{t('result.executionTime', { time: formatExecutionTime(result.execution_time) })}</span>
+          {canEdit && <span className="text-fg-subtle">{t('result.doubleClickToEdit')}</span>}
+          <span className="text-fg-subtle">{t('result.copyHint')}</span>
         </div>
         
         <div className="flex items-center gap-2">
@@ -219,17 +225,17 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
               className="flex items-center space-x-1 px-3 py-1.5 text-sm text-success border border-success-line rounded-control hover:bg-success-soft"
             >
               <Edit size={14} />
-              <span>新增</span>
+              <span>{t('result.addRow')}</span>
             </button>
           )}
           <button
             onClick={() => setShowExport(true)}
             disabled={totalRows === 0}
             className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover disabled:opacity-50"
-            title="导出当前结果"
+            title={t('result.exportCurrent')}
           >
             <Download size={14} />
-            <span>导出</span>
+            <span>{t('result.export')}</span>
           </button>
         </div>
       </div>
@@ -239,7 +245,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
         <ExportResultDialog
           columns={result.columns}
           rows={sortedRows}
-          sourceName={result.table_name ?? '查询结果'}
+          sourceName={result.table_name ?? t('result.queryResult')}
           truncated={result.truncated}
           onClose={() => setShowExport(false)}
         />
@@ -247,7 +253,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
       
       {cells.copyError && (
         <div className="border-b border-danger-line bg-danger-soft px-3 py-1.5 text-xs text-danger">
-          复制失败：{cells.copyError}
+          {t('result.copyFailed', { reason: cells.copyError })}
         </div>
       )}
 
@@ -297,14 +303,14 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                             className="truncate text-[10px] font-normal text-fg-subtle"
                             title={`${result.column_metadata[index].database_type} · ${
                               result.column_metadata[index].nullable === null
-                                ? 'NULL 未知'
+                                ? t('result.nullUnknown')
                                 : result.column_metadata[index].nullable ? 'NULL' : 'NOT NULL'
                             }`}
                           >
                             {result.column_metadata[index].database_type}
                             {' · '}
                             {result.column_metadata[index].nullable === null
-                              ? 'NULL 未知'
+                              ? t('result.nullUnknown')
                               : result.column_metadata[index].nullable
                                 ? 'NULL'
                                 : 'NOT NULL'}
@@ -312,7 +318,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                         )}
                       </div>
                       {result.primary_key === column && (
-                        <span className="shrink-0 text-warning" title="主键">🔑</span>
+                        <span className="shrink-0 text-warning" title={t('schema.primaryKey')}>🔑</span>
                       )}
                     </div>
                     <ColumnResizeHandle
@@ -323,7 +329,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                   </th>
                 ))}
                 {canEdit && (
-                  <th className="px-2 py-1 text-left text-xs font-medium text-fg">操作</th>
+                  <th className="px-2 py-1 text-left text-xs font-medium text-fg">{t('result.actions')}</th>
                 )}
               </tr>
             </thead>
@@ -338,7 +344,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                       className="border-r border-line px-2 py-1"
                     >
                       {column === result.primary_key ? (
-                        <span className="text-fg-subtle italic text-xs">自动生成</span>
+                        <span className="text-fg-subtle italic text-xs">{t('result.autoGenerated')}</span>
                       ) : isTimeField(column) ? (
                         <div className="flex items-center space-x-1">
                           <input
@@ -360,7 +366,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                           type="text"
                           value={newRowData[column] || ''}
                           onChange={(e) => updateNewRowData(column, e.target.value)}
-                          placeholder={`输入${column}`}
+                          placeholder={t('result.enterValue', { column })}
                           className="w-full px-2 py-1 text-sm border border-success-line rounded-control"
                         />
                       )}
@@ -455,7 +461,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
         <div className="px-4 py-3 bg-surface-sunken border-t flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <span className="text-sm text-fg">
-              显示 {startIndex + 1}-{endIndex} 行，共 {totalRows} 行
+              {t('result.range', { from: startIndex + 1, to: endIndex, total: totalRows })}
             </span>
             <select
               value={pageSize}
@@ -466,7 +472,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
               className="text-sm border border-line-strong rounded-control px-2 py-1"
             >
               {GRID_PAGE_SIZE_OPTIONS.map((option) => (
-                <option key={option} value={option}>{option} 条/页</option>
+                <option key={option} value={option}>{t('result.pageSizeOption', { size: option })}</option>
               ))}
             </select>
           </div>
@@ -487,7 +493,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
               <ChevronLeft size={16} />
             </button>
             <span className="px-3 py-1 text-sm text-fg">
-              第 {currentPage} 页，共 {totalPages} 页
+              {t('result.pageOf', { page: currentPage, total: totalPages })}
             </span>
             <button
               onClick={() => setCurrentPage(currentPage + 1)}

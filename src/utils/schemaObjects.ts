@@ -6,8 +6,13 @@
  * 三列外键指向了三个错的列，页面上却是一行整齐的 `(a, b, c) → (x, y, z)`。
  */
 
-/** 数据库给不出列名时的占位。SQLite 的表达式索引既没有列名也没有表达式原文。 */
-export const EXPRESSION_COLUMN_PLACEHOLDER = '<表达式>';
+/**
+ * 数据库给不出列名时的占位。SQLite 的表达式索引既没有列名也没有表达式原文。
+ *
+ * 这里不写死文案：`groupIndexRows` 是纯函数，翻译由调用方传进来，
+ * 免得为了一个占位符让它依赖当前语言。
+ */
+export const DEFAULT_EXPRESSION_COLUMN_PLACEHOLDER = '<expression>';
 
 export interface IndexInfo {
   name: string;
@@ -36,7 +41,10 @@ export interface CheckConstraintInfo {
 
 type MetadataRow = Record<string, unknown>;
 
-export function groupIndexRows(rows: readonly MetadataRow[]): IndexInfo[] {
+export function groupIndexRows(
+  rows: readonly MetadataRow[],
+  expressionPlaceholder: string = DEFAULT_EXPRESSION_COLUMN_PLACEHOLDER
+): IndexInfo[] {
   const byName = new Map<string, { row: MetadataRow; columns: Array<{ ordinal: number; name: string }> }>();
 
   for (const row of rows) {
@@ -48,7 +56,7 @@ export function groupIndexRows(rows: readonly MetadataRow[]): IndexInfo[] {
     const group = byName.get(name) ?? { row, columns: [] };
     group.columns.push({
       ordinal: number(row.ordinal),
-      name: text(row.column_name) || EXPRESSION_COLUMN_PLACEHOLDER
+      name: text(row.column_name) || expressionPlaceholder
     });
     byName.set(name, group);
   }
