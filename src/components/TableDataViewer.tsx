@@ -29,7 +29,8 @@ import {
   Check,
   ChevronsLeft,
   ChevronsRight,
-  Download
+  Download,
+  Lock
 } from 'lucide-react';
 import clsx from 'clsx';
 import type {
@@ -62,6 +63,7 @@ import {
 import { SchemaObjectSections, type SchemaObjects } from './SchemaObjectSections';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { requireDatabase } from '../utils/requireDatabase';
+import { describeTableEditability } from '../utils/tableEditability';
 
 // 编辑模式类型
 type EditMode = 'view' | 'edit' | 'add';
@@ -469,6 +471,11 @@ export default function TableDataViewer({
   const ACTION_COLUMN_WIDTH = 72;
   const columnNames = React.useMemo(
     () => tableSchema?.columns.map((column) => column.name) ?? [],
+    [tableSchema]
+  );
+  // 表结构还没到之前一律当只读：此时拿不出主键，亮着的写入按钮会拼出错误的条件
+  const editability = React.useMemo(
+    () => describeTableEditability(tableSchema?.columns ?? []),
     [tableSchema]
   );
   const positionalRows = React.useMemo(
@@ -1286,16 +1293,9 @@ export default function TableDataViewer({
                 <p className="text-xs text-fg-muted mt-1">
                   {t('table.rowCount', { count: totalRows })}
                 </p>
-                {paginationOrder && (
-                  <p
-                    className={clsx(
-                      'text-xs mt-1',
-                      paginationOrder.stableAcrossChanges ? 'text-success' : 'text-warning'
-                    )}
-                  >
-                    {paginationOrder.strategy === 'primary-key'
-                      ? t('table.stablePagination', { columns: paginationOrder.columns.join(', ') })
-                      : t('table.unstablePagination')}
+                {paginationOrder?.strategy === 'primary-key' && (
+                  <p className="text-xs mt-1 text-success">
+                    {t('table.stablePagination', { columns: paginationOrder.columns.join(', ') })}
                   </p>
                 )}
               </div>
@@ -1304,6 +1304,7 @@ export default function TableDataViewer({
                 {/* 编辑操作按钮 */}
                 {editState.mode === 'view' && (
                   <>
+                    {editability.editable && (
                     <button
                       onClick={startAddRow}
                       className="flex items-center space-x-1 px-3 py-1.5 text-sm text-success border border-success-line rounded-control hover:bg-success-soft transition-colors"
@@ -1311,6 +1312,7 @@ export default function TableDataViewer({
                       <Plus size={14} />
                       <span>{t('table.add')}</span>
                     </button>
+                    )}
 
                     <button
                       onClick={() => setShowExport(true)}
@@ -1370,6 +1372,21 @@ export default function TableDataViewer({
                 <div className="flex items-center space-x-2">
                   <AlertCircle className="text-danger" size={14} />
                   <span className="text-danger text-sm">{editingError}</span>
+                </div>
+              </div>
+            )}
+
+            {/* 不能改就说清为什么。把按钮藏起来却不解释，用户只会以为界面坏了 */}
+            {tableSchema && editability.reason && (
+              <div className="flex items-start gap-2 border-b border-warning-line bg-warning-soft px-4 py-2">
+                <Lock className="mt-0.5 shrink-0 text-warning" size={14} />
+                <div className="text-xs text-warning">
+                  <span className="mr-1 font-medium">{t('table.readOnly.badge')}</span>
+                  {editability.reason === 'no-unique-key'
+                    ? t('table.readOnly.noUniqueKey')
+                    : t('table.readOnly.compositeKey', {
+                        columns: editability.keyColumns.join(', ')
+                      })}
                 </div>
               </div>
             )}
@@ -1546,6 +1563,7 @@ export default function TableDataViewer({
                               {/* 操作列 */}
                               <td className="border-l border-line px-2 py-1 text-sm">
                                 {editState.mode === 'view' ? (
+                                  editability.editable ? (
                                   <div className="flex items-center space-x-1">
                                     <button
                                       onClick={() => startEditRow(rowIndex)}
@@ -1562,6 +1580,11 @@ export default function TableDataViewer({
                                       <Trash2 size={14} />
                                     </button>
                                   </div>
+                                  ) : (
+                                    <span className="text-fg-subtle" title={t('table.readOnly.badge')}>
+                                      <Lock size={14} />
+                                    </span>
+                                  )
                                 ) : editState.mode === 'edit' && editState.rowIndex === rowIndex ? (
                                   <div className="flex items-center space-x-1">
                                     <button

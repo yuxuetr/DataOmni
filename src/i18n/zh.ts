@@ -232,7 +232,6 @@ export const zh = {
   'table.rowCount': '共 {count} 行数据',
   'table.rowCount.one': '共 {count} 行数据',
   'table.stablePagination': '按主键 {columns} 稳定分页',
-  'table.unstablePagination': '表没有主键，正在使用数据库回退顺序；数据变更时页边界可能移动',
   'table.add': '添加',
   'table.save': '保存',
   'table.edit': '编辑',
@@ -245,6 +244,9 @@ export const zh = {
   'table.notNull': '非空',
   'table.loading': '加载中...',
   'table.empty': '暂无数据',
+  'table.readOnly.badge': '只读',
+  'table.readOnly.noUniqueKey': '这张表没有主键，网格里不能改数据：UPDATE 和 DELETE 的条件无法锁定到唯一一行。分页也只能用数据库的回退顺序，数据变更时页边界可能移动。要改请在 SQL 编辑器里写明条件。',
+  'table.readOnly.compositeKey': '这张表的主键是 {columns} 这几列的组合，网格编辑暂不支持复合主键——按单列拼出的条件会命中多行。要改请在 SQL 编辑器里写明完整条件。',
 
   // SQL 编辑器
   'editor.saveToFile': '另存为 .sql',
