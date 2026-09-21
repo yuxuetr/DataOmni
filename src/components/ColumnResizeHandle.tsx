@@ -1,4 +1,5 @@
 import { clsx } from 'clsx';
+import { useLanguageStore } from '../stores/languageStore';
 
 interface ColumnResizeHandleProps {
   active: boolean;
@@ -16,12 +17,13 @@ export function ColumnResizeHandle({
   onPointerDown,
   onDoubleClick
 }: ColumnResizeHandleProps) {
+  const t = useLanguageStore((state) => state.t);
   return (
     <span
       role="separator"
       aria-orientation="vertical"
-      aria-label="调整列宽"
-      title="拖动调整列宽，双击恢复自适应"
+      aria-label={t('grid.resizeColumn')}
+      title={t('grid.resizeColumnTitle')}
       onPointerDown={onPointerDown}
       onDoubleClick={onDoubleClick}
       onClick={(event) => event.stopPropagation()}

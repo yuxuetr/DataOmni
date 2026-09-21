@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import type { ConnectionProfile } from '../contracts';
 import type { DatabaseSession } from '../contracts/session';
+import { useLanguageStore } from '../stores/languageStore';
 
 interface ConnectionInfoDialogProps {
   connection: ConnectionProfile;
@@ -28,6 +29,8 @@ function Row({ label, value }: { label: string; value: string }) {
  * 排查问题时需要它们，日常使用时它们只是噪音。
  */
 export function ConnectionInfoDialog({ connection, session, onClose }: ConnectionInfoDialogProps) {
+  const t = useLanguageStore((state) => state.t);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -53,12 +56,12 @@ export function ConnectionInfoDialog({ connection, session, onClose }: Connectio
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-line">
           <h2 id="connection-info-title" className="text-base font-medium text-fg">
-            连接信息
+            {t('info.title')}
           </h2>
           <button
             type="button"
             onClick={onClose}
-            aria-label="关闭"
+            aria-label={t('info.close')}
             className="p-1 rounded-control text-fg-subtle hover:bg-surface-hover hover:text-fg"
           >
             <X size={16} />
@@ -67,25 +70,28 @@ export function ConnectionInfoDialog({ connection, session, onClose }: Connectio
 
         <div className="px-5 py-3 divide-y divide-line">
           <div className="pb-2">
-            <Row label="名称" value={connection.name} />
-            <Row label="类型" value={connection.db_type} />
-            <Row label="地址" value={`${connection.host}:${connection.port}`} />
-            <Row label="数据库" value={connection.database || '未指定'} />
-            <Row label="用户" value={connection.username || '未指定'} />
+            <Row label={t('info.name')} value={connection.name} />
+            <Row label={t('info.type')} value={connection.db_type} />
+            <Row label={t('info.address')} value={`${connection.host}:${connection.port}`} />
+            <Row label={t('info.database')} value={connection.database || t('info.unspecified')} />
+            <Row label={t('info.user')} value={connection.username || t('info.unspecified')} />
           </div>
 
           <div className="py-2">
-            <Row label="环境" value={connection.environment} />
+            <Row label={t('info.environment')} value={connection.environment} />
             <Row
               label="TLS"
-              value={connection.tls_mode ?? (connection.ssl ? '启用（未指定模式）' : '禁用')}
+              value={connection.tls_mode ?? (connection.ssl ? t('info.tlsEnabledUnspecified') : t('info.tlsDisabled'))}
             />
-            <Row label="保存密码" value={connection.save_password ? '是' : '否（每次连接时输入）'} />
+            <Row
+          label={t('info.savePassword')}
+          value={connection.save_password ? t('info.savePasswordYes') : t('info.savePasswordNo')}
+        />
           </div>
 
           <div className="pt-2">
-            <Row label="配置 ID" value={connection.id} />
-            <Row label="Session" value={session?.id ?? '未建立'} />
+            <Row label={t('info.profileId')} value={connection.id} />
+            <Row label={t('info.session')} value={session?.id ?? t('info.noSession')} />
           </div>
         </div>
       </div>

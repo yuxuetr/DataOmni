@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Copy, Pin, PinOff, X } from 'lucide-react';
 import type { WorkspaceTab } from '../contracts/workspace';
+import { useLanguageStore } from '../stores/languageStore';
 
 interface WorkspaceTabMenuProps {
   tab: WorkspaceTab;
@@ -20,6 +21,7 @@ export function WorkspaceTabMenu({
   onClose,
   onDismiss
 }: WorkspaceTabMenuProps) {
+  const t = useLanguageStore((state) => state.t);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -57,13 +59,13 @@ export function WorkspaceTabMenu({
     >
       <button type="button" role="menuitem" className={itemClass} onClick={onTogglePinned}>
         {tab.pinned ? <PinOff size={14} /> : <Pin size={14} />}
-        <span>{tab.pinned ? '取消固定' : '固定标签'}</span>
+        <span>{tab.pinned ? t('tab.unpin') : t('tab.pin')}</span>
       </button>
 
       {onDuplicate && (
         <button type="button" role="menuitem" className={itemClass} onClick={onDuplicate}>
           <Copy size={14} />
-          <span>复制标签</span>
+          <span>{t('tab.duplicateAction')}</span>
         </button>
       )}
 
@@ -71,7 +73,7 @@ export function WorkspaceTabMenu({
 
       <button type="button" role="menuitem" className={itemClass} onClick={onClose}>
         <X size={14} />
-        <span>关闭标签</span>
+        <span>{t('tab.closeAction')}</span>
       </button>
     </div>
   );

@@ -3,7 +3,7 @@ import { AlertTriangle } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { ConnectionEnvironment } from '../contracts';
 import { environmentBadge } from '../contracts/environment';
-import { describeStatementRisk, type StatementRisk } from '../utils/statementRisk';
+import { RISK_DESCRIPTION_KEYS, type StatementRisk } from '../utils/statementRisk';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
 
@@ -76,18 +76,18 @@ export function DestructiveStatementPrompt({
           />
           <div className="min-w-0 flex-1">
             <h2 id="destructive-prompt-title" className="text-base font-medium text-fg">
-              执行前确认：{describeStatementRisk(risk)}
+              {t('risk.confirmTitle', { risk: t(RISK_DESCRIPTION_KEYS[risk]) })}
             </h2>
 
             <p className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-fg-muted">
-              <span>目标连接</span>
+              <span>{t('risk.targetConnection')}</span>
               <span className="font-medium text-fg">{connectionName}</span>
               <EnvironmentBadgeTag environment={environment} />
             </p>
 
             {statementCount > 1 && (
               <p className="mt-1 text-sm text-fg-muted">
-                本次共执行 {statementCount} 条语句，下面是其中风险最高的一条。
+                {t('risk.batchNote', { count: statementCount })}
               </p>
             )}
 
@@ -108,7 +108,7 @@ export function DestructiveStatementPrompt({
             onClick={onCancel}
             className="rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -120,7 +120,7 @@ export function DestructiveStatementPrompt({
                 : 'bg-warning text-fg-on-solid hover:opacity-90'
             )}
           >
-            仍然执行
+            {t('risk.runAnyway')}
           </button>
         </div>
       </div>

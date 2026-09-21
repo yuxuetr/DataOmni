@@ -1,5 +1,6 @@
 import type { ConnectionEnvironment } from '../contracts';
 import { topLevelKeywords } from './sqlStatements';
+import type { TranslationKey } from '../i18n/translate';
 
 /**
  * 一条语句的破坏性等级。
@@ -87,21 +88,19 @@ export function requiresConfirmation(
   return environment === 'production';
 }
 
-/** 给人看的一句话说明，用在确认框标题里 */
-export function describeStatementRisk(risk: StatementRisk): string {
-  switch (risk) {
-    case 'destructive':
-      return '删除表或清空数据';
-    case 'bulk-write':
-      return '没有 WHERE 条件，将影响整张表';
-    case 'scoped-write':
-      return '会修改数据';
-    case 'append':
-      return '会新增数据';
-    case 'read':
-      return '只读';
-  }
-}
+/**
+ * 风险等级对应的文案键，用在确认框标题里。
+ *
+ * 返回键不返回文案：这个模块是纯的、被单测直接调用，不该依赖当前语言。
+ * 写成完整的 Record，新增风险等级时这里编译不过。
+ */
+export const RISK_DESCRIPTION_KEYS: Record<StatementRisk, TranslationKey> = {
+  destructive: 'risk.destructive',
+  'bulk-write': 'risk.bulk-write',
+  'scoped-write': 'risk.scoped-write',
+  append: 'risk.append',
+  read: 'risk.read'
+};
 
 /** 一批语句里最危险的那个等级；没有需要确认的就返回 null */
 export function highestRiskNeedingConfirmation(

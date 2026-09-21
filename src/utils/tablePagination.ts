@@ -2,6 +2,7 @@ import type { ColumnInfo } from '../contracts';
 import type { ColumnSort } from './resultSorting';
 import type { SqlIdentifierDialect } from './sqlIdentifiers';
 import { quoteSqlIdentifier } from './sqlIdentifiers';
+import { translateNow } from '../stores/languageStore';
 
 export type TablePaginationOrderStrategy =
   | 'primary-key'
@@ -77,7 +78,7 @@ function createOrder(
   stableAcrossChanges: boolean
 ): TablePaginationOrder {
   if (columns.length === 0) {
-    throw new Error('无法为没有列的表生成分页排序');
+    throw new Error(translateNow('error.paginationNoColumns'));
   }
 
   return {

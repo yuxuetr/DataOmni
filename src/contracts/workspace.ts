@@ -126,7 +126,9 @@ export function createSqlWorkspaceTab(
   const sql = options.sql ?? '';
 
   return {
-    // 没给标题时带上文案键，让「新建查询」也跟着语言走
+    // 没给标题时带上文案键，让「新建查询」也跟着语言走。
+    // 这里的中文只是 `title` 字段的回落值：有 titleKey 时渲染不会用到它，
+    // 只有 i18n 之前存下的旧快照才会落到它上面。
     ...createTabBase('sql', profileId, options.title ?? '新建查询', {
       ...options,
       titleKey: options.titleKey ?? (options.title ? undefined : 'tab.newQuery')

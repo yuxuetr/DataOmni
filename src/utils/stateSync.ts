@@ -15,6 +15,7 @@ import {
   type ConnectionLifecycleState
 } from '../contracts/connectionLifecycle';
 import { describeError } from './describeError';
+import { translateNow } from '../stores/languageStore';
 
 /**
  * 数据库会话管理器
@@ -275,7 +276,7 @@ export class SessionManager {
       await new Promise(resolve => setTimeout(resolve, delay));
     }
 
-    throw new Error('数据库连接对象超时未就绪');
+    throw new Error(translateNow('error.connectionNotReady'));
   }
 
   private transition(
@@ -286,7 +287,7 @@ export class SessionManager {
 
   private assertCanConnect(): void {
     if (this.shutdownPromise) {
-      throw new Error('应用正在关闭，无法建立新的数据库会话');
+      throw new Error(translateNow('error.appClosing'));
     }
   }
 

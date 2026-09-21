@@ -10,7 +10,7 @@ import { useAppStore } from '../stores/appStore';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { useProfileConnector } from '../hooks/useProfileConnector';
 import { describeError } from '../utils/describeError';
-import { useLanguageStore } from '../stores/languageStore';
+import { useLanguageStore, translateNow } from '../stores/languageStore';
 
 interface SidebarProps {
   activeConnectionId?: string | null;
@@ -37,11 +37,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
   } = useProfileConnector();
   const visibleError = connectError ?? connectionError;
 
-  // 初始化时加载连接列表
+  // 初始化时加载连接列表。
+  // 这里用 translateNow 而不是 t：把 t 放进依赖会让每次切换语言都重新拉一遍
+  // 连接列表，而这个回调是异步的、之后才触发，取当下的语言本来就更贴切。
   useEffect(() => {
     loadConnections().catch(err => {
       console.error('加载连接列表失败:', err);
-      setConnectionError(describeError(err, t('connection.loadListFailed')));
+      setConnectionError(describeError(err, translateNow('connection.loadListFailed')));
     });
   }, []);
 

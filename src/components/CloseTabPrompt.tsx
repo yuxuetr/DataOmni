@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { useLanguageStore } from '../stores/languageStore';
 
 export type CloseTabChoice = 'retain' | 'discard' | 'cancel';
 
@@ -15,6 +16,7 @@ interface CloseTabPromptProps {
  * 两个按钮，装不下「保留草稿」这个第三种结果。
  */
 export function CloseTabPrompt({ tabTitle, onChoose }: CloseTabPromptProps) {
+  const t = useLanguageStore((state) => state.t);
   const retainButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -50,14 +52,13 @@ export function CloseTabPrompt({ tabTitle, onChoose }: CloseTabPromptProps) {
           <AlertTriangle size={20} className="mt-0.5 shrink-0 text-warning" />
           <div className="min-w-0">
             <h2 id="close-tab-prompt-title" className="text-base font-medium text-fg">
-              关闭「{tabTitle}」
+              {t('tab.closeTitle', { title: tabTitle })}
             </h2>
             <p className="mt-2 text-sm text-fg-muted">
-              这个标签有尚未保存的 SQL 草稿。
+              {t('tab.unsavedDraft')}
             </p>
             <p className="mt-1 text-sm text-fg-muted">
-              选择「保留草稿」会关闭标签但把草稿留在「最近关闭」里，之后可以重新打开；
-              选择「丢弃」则永久删除。
+              {t('tab.keepDraftHint')}
             </p>
           </div>
         </div>
@@ -68,14 +69,14 @@ export function CloseTabPrompt({ tabTitle, onChoose }: CloseTabPromptProps) {
             onClick={() => onChoose('cancel')}
             className="px-3 py-1.5 text-sm text-fg bg-surface border border-line-strong rounded-control hover:bg-surface-hover"
           >
-            取消
+            {t('common.cancel')}
           </button>
           <button
             type="button"
             onClick={() => onChoose('discard')}
             className="px-3 py-1.5 text-sm text-danger bg-surface border border-danger-line rounded-control hover:bg-danger-soft"
           >
-            丢弃
+            {t('tab.discard')}
           </button>
           <button
             type="button"
@@ -83,7 +84,7 @@ export function CloseTabPrompt({ tabTitle, onChoose }: CloseTabPromptProps) {
             onClick={() => onChoose('retain')}
             className="px-3 py-1.5 text-sm text-fg-on-accent bg-accent rounded-control hover:bg-accent-hover"
           >
-            保留草稿
+            {t('tab.keepDraft')}
           </button>
         </div>
       </div>

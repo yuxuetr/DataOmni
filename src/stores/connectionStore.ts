@@ -7,6 +7,7 @@ import {
   type TlsMode
 } from '../contracts/connection';
 import { describeError } from '../utils/describeError';
+import { translateNow } from './languageStore';
 
 export {
   DatabaseType,
@@ -22,7 +23,11 @@ export interface ConnectionState {
   selectedConnectionId: string | null;
   isLoading: boolean;
   error: string | null;
-  testResult: string | null;
+  /**
+   * 测试结果。`ok` 是独立的布尔值——此前界面靠 `testResult.includes('成功')`
+   * 判断成败，那在翻译之后必然失效，而且失效的方式是「一直显示失败」。
+   */
+  testResult: { ok: boolean; message: string } | null;
 }
 
 // Store Actions
@@ -181,7 +186,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     } catch (error) {
       console.error('加载连接配置失败:', error);
       set({ 
-        error: describeError(error, '加载连接配置失败'), 
+        error: describeError(error, translateNow('error.loadProfilesFailed')), 
         isLoading: false 
       });
     }
@@ -206,7 +211,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     } catch (error) {
       console.error('创建连接失败:', error);
       set({ 
-        error: describeError(error, '创建连接失败'), 
+        error: describeError(error, translateNow('error.createProfileFailed')), 
         isLoading: false 
       });
       throw error;
@@ -224,7 +229,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     } catch (error) {
       console.error('更新连接失败:', error);
       set({ 
-        error: describeError(error, '更新连接失败'), 
+        error: describeError(error, translateNow('error.updateProfileFailed')), 
         isLoading: false 
       });
       throw error;
@@ -249,7 +254,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
     } catch (error) {
       console.error('删除连接失败:', error);
       set({ 
-        error: describeError(error, '删除连接失败'), 
+        error: describeError(error, translateNow('error.deleteProfileFailed')), 
         isLoading: false 
       });
       throw error;
@@ -264,18 +269,15 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
 
       // 前端预验证
       if (requiresNetworkPort && (config.port > 65535 || config.port < 1)) {
-        throw new Error(`端口号无效: ${config.port}。端口号必须在1-65535范围内。`);
+        throw new Error(translateNow('error.invalidPort', { port: config.port }));
       }
       
       // 检查网络数据库的Tauri SQL插件端口限制
       if (requiresNetworkPort && config.port > 32767) {
-        const errorMessage = `端口兼容性错误：端口 ${config.port} 超出了Tauri SQL插件支持的范围（最大32767）。这是由于底层驱动使用16位有符号整数的限制。
-
-解决方案：
-1. 联系数据库管理员使用标准端口范围（1-32767）
-2. 使用SSH端口转发：ssh -L 3306:${config.host}:${config.port} user@jump-server
-3. 使用本地代理服务（如socat）进行端口转发
-4. 请求数据库管理员配置负载均衡器或代理`;
+        const errorMessage = translateNow('error.portTooLargeDetail', {
+          port: config.port,
+          host: config.host
+        });
         
         console.error(`❌ ${errorMessage}`);
         throw new Error(errorMessage);
@@ -290,38 +292,44 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         const db = await Database.load(connectionString);
         await db.close();
         
-        set({ 
-          testResult: `连接测试成功！数据库连接正常`, 
-          isLoading: false 
+        set({
+          testResult: { ok: true, message: translateNow('connect.testSucceeded') },
+          isLoading: false
         });
         return connectionString;
       } catch (dbError) {
         console.error('数据库连接失败:', dbError);
-        const dbErrorMessage = describeError(dbError, '数据库连接失败');
+        const dbErrorMessage = describeError(dbError, translateNow('error.connectFailed'));
         
         // 特殊处理端口错误
         let finalErrorMessage = dbErrorMessage;
         if (dbErrorMessage.includes('invalid port number')) {
           if (config.port > 32767) {
-            finalErrorMessage = `端口号兼容性问题: ${config.port}。当前数据库驱动可能不支持大于32767的端口号。建议：1) 联系数据库管理员使用标准端口范围，2) 检查是否存在端口映射或代理服务。`;
+            finalErrorMessage = translateNow('error.portTooLargeShort', { port: config.port });
           } else {
-            finalErrorMessage = `端口号无效: ${config.port}。请检查：1) 端口是否在有效范围内(1-65535)，2) 端口是否被防火墙阻止，3) 数据库服务是否在此端口运行。`;
+            finalErrorMessage = translateNow('error.portOutOfRange', { port: config.port });
           }
         }
         
         set({ 
           error: finalErrorMessage,
-          testResult: `连接测试失败: ${finalErrorMessage}`,
+          testResult: {
+            ok: false,
+            message: translateNow('connect.testFailed', { reason: finalErrorMessage })
+          },
           isLoading: false 
         });
         throw new Error(finalErrorMessage);
       }
     } catch (error) {
       console.error('连接配置验证失败:', error);
-      const errorMessage = describeError(error, '连接配置验证失败');
+      const errorMessage = describeError(error, translateNow('error.validateConfigFailed'));
       set({ 
         error: errorMessage,
-        testResult: `连接测试失败: ${errorMessage}`,
+        testResult: {
+          ok: false,
+          message: translateNow('connect.testFailed', { reason: errorMessage })
+        },
         isLoading: false 
       });
       throw error;

@@ -14,6 +14,7 @@ import { useAppStore } from '../stores/appStore';
 import { SqlEditor } from './SqlEditor';
 import { ConnectionInfoDialog } from './ConnectionInfoDialog';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
+import { useLanguageStore } from '../stores/languageStore';
 
 interface SqlWorkbenchProps {
   connection: ConnectionConfig;
@@ -28,6 +29,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
   onReconnect,
   selectedTable
 }) => {
+  const t = useLanguageStore((state) => state.t);
   const {
     database,
     session,
@@ -100,28 +102,28 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
       case 'connecting':
         return {
           icon: <RefreshCw className="animate-spin text-accent" size={16} />,
-          text: '连接中',
+          text: t('workbench.connecting'),
           color: 'text-accent',
           bg: 'bg-accent-soft'
         };
       case 'connected':
         return {
           icon: <Wifi className="text-success" size={16} />,
-          text: '已连接',
+          text: t('workbench.connected'),
           color: 'text-success',
           bg: 'bg-success-soft'
         };
       case 'error':
         return {
           icon: <WifiOff className="text-danger" size={16} />,
-          text: '连接失败',
+          text: t('workbench.connectFailed'),
           color: 'text-danger',
           bg: 'bg-danger-soft'
         };
       default:
         return {
           icon: <WifiOff className="text-fg-muted" size={16} />,
-          text: '未连接',
+          text: t('workbench.disconnected'),
           color: 'text-fg-muted',
           bg: 'bg-surface-sunken'
         };
@@ -151,7 +153,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
             {connection.db_type} · {connection.host}:{connection.port}
             {connection.database
               ? ` / ${connection.database}`
-              : ' · 未指定数据库'}
+              : t('workbench.noDatabase')}
           </span>
           <span className={clsx('flex shrink-0 items-center gap-1 text-xs', statusDisplay.color)}>
             {statusDisplay.icon}
@@ -164,10 +166,10 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
           <button
             onClick={() => setShowConnectionInfo(true)}
             className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors"
-            title="连接信息"
+            title={t('workbench.connectionInfo')}
           >
             <Info size={14} />
-            <span>信息</span>
+            <span>{t('workbench.info')}</span>
           </button>
 
           {/* 重新连接按钮 */}
@@ -177,7 +179,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
               className="flex items-center space-x-1 px-3 py-1.5 text-sm text-accent border border-accent-line rounded-control hover:bg-accent-soft transition-colors"
             >
               <RefreshCw size={14} />
-              <span>重新连接</span>
+              <span>{t('workbench.reconnect')}</span>
             </button>
           )}
 
@@ -185,10 +187,10 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
           <button
             onClick={handleClose}
             className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors"
-            title="断开与该数据库的连接"
+            title={t('workbench.disconnectTitle')}
           >
             <X size={14} />
-            <span>断开连接</span>
+            <span>{t('workbench.disconnect')}</span>
           </button>
         </div>
       </div>
@@ -199,14 +201,14 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
           <div className="flex items-start space-x-2">
             <WifiOff className="text-danger mt-0.5" size={16} />
             <div className="flex-1">
-              <h4 className="text-sm font-medium text-danger mb-1">数据库连接失败</h4>
+              <h4 className="text-sm font-medium text-danger mb-1">{t('workbench.connectFailedTitle')}</h4>
               <p className="text-sm text-danger">{error}</p>
               <div className="mt-2">
                 <button
                   onClick={handleReconnect}
                   className="text-sm text-danger hover:text-danger underline"
                 >
-                  点击重试
+                  {t('workbench.clickToRetry')}
                 </button>
               </div>
             </div>

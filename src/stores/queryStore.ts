@@ -29,6 +29,7 @@ import {
 } from '../utils/queryStatements';
 import { quoteSqlIdentifier } from '../utils/sqlIdentifiers';
 import { executeSequentially } from '../utils/queryExecutionPolicy';
+import { translateNow } from './languageStore';
 
 export type { QueryResult, SqlStatement } from '../contracts/query';
 
@@ -306,7 +307,7 @@ export async function runReadQuery(
 ): Promise<Record<string, SerializedResultValue>[]> {
   const { connectionId, session, queryTimeoutMs, queryResultRowLimit } = useQueryStore.getState();
   if (!connectionId || !session) {
-    throw new Error('数据库会话不可用，请先重新连接');
+    throw new Error(translateNow('error.sessionUnavailable'));
   }
 
   const rows: Record<string, SerializedResultValue>[] = [];
@@ -323,13 +324,15 @@ export async function runReadQuery(
       return;
     }
     if (batch.offset !== rows.length) {
-      batchError = new Error(`查询结果批次顺序错误: 预期偏移 ${rows.length}，实际 ${batch.offset}`);
+      batchError = new Error(
+          translateNow('error.batchOutOfOrder', { expected: rows.length, actual: batch.offset })
+        );
       resolveBatches?.();
       return;
     }
     receivedBytes += new TextEncoder().encode(JSON.stringify(batch.rows)).byteLength;
     if (receivedBytes > QUERY_RESULT_FRONTEND_BYTE_LIMIT) {
-      batchError = new Error('查询结果超过前端 16 MiB 内存预算');
+      batchError = new Error(translateNow('error.memoryBudget'));
       resolveBatches?.();
       return;
     }
@@ -434,7 +437,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       if (portMatch) {
         const port = parseInt(portMatch[1]);
         if (port > 32767) {
-          throw new Error(`端口兼容性错误：端口 ${port} 超出了Tauri SQL插件支持的范围（最大32767）。请使用SSH端口转发或联系管理员使用标准端口范围。`);
+          throw new Error(translateNow('error.portTooLargeShort', { port }));
         }
       }
       
@@ -454,15 +457,15 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       console.error('❌ 数据库连接失败:', error);
       
       // 处理端口错误的特殊情况
-      let errorMessage = describeError(error, '数据库连接失败');
+      let errorMessage = describeError(error, translateNow('error.connectFailed'));
       if (errorMessage.includes('invalid port number')) {
         // 尝试从连接字符串中提取端口号
         const portMatch = connectionString.match(/:(\d+)\//);
         const port = portMatch ? parseInt(portMatch[1]) : 0;
         if (port > 32767) {
-          errorMessage = `端口号兼容性问题: ${port}。当前数据库驱动不支持大于32767的端口号。这是已知限制，建议联系数据库管理员使用标准端口范围内的端口，或检查是否有端口映射方案。`;
+          errorMessage = translateNow('error.portTooLargeShort', { port });
         } else {
-          errorMessage = `端口号无效: ${port || '未知'}。可能的原因：1) 端口超出有效范围(1-65535)，2) 端口被防火墙阻止，3) 数据库服务未在此端口运行。`;
+          errorMessage = translateNow('error.portOutOfRange', { port: port || '?' });
         }
       }
       
@@ -490,7 +493,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         }
         await currentState.database.close();
       } catch (error) {
-        const errorMessage = describeError(error, '关闭数据库连接失败');
+        const errorMessage = describeError(error, translateNow('error.closeConnectionFailed'));
         set({ error: errorMessage });
         throw new Error(errorMessage);
       }
@@ -603,7 +606,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
     const documentId = get().activeDocumentId;
     if (!documentId) {
-      set({ error: '没有活动的 SQL 标签' });
+      set({ error: translateNow('error.noActiveSqlTab') });
       return false;
     }
 
@@ -633,7 +636,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       queryResultRowLimit
     } = get();
     if (!database || !session || !connectionId) {
-      set({ error: '数据库未连接' });
+      set({ error: translateNow('error.notConnected') });
       return false;
     }
 
@@ -641,7 +644,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     // SQL 标签时，结果仍然落在发起这次执行的标签里。
     const documentId = get().activeDocumentId;
     if (!documentId) {
-      set({ error: '没有活动的 SQL 标签' });
+      set({ error: translateNow('error.noActiveSqlTab') });
       return false;
     }
 
@@ -693,14 +696,14 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         }
         if (batch.offset !== streamedRows.length) {
           batchError = new Error(
-            `查询结果批次顺序错误: 预期偏移 ${streamedRows.length}，实际 ${batch.offset}`
+            translateNow('error.batchOutOfOrder', { expected: streamedRows.length, actual: batch.offset })
           );
           resolveBatches?.();
           return;
         }
         receivedBytes += new TextEncoder().encode(JSON.stringify(batch.rows)).byteLength;
         if (receivedBytes > QUERY_RESULT_FRONTEND_BYTE_LIMIT) {
-          batchError = new Error('查询结果超过前端 16 MiB 内存预算');
+          batchError = new Error(translateNow('error.memoryBudget'));
           resolveBatches?.();
           return;
         }
@@ -733,7 +736,10 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         }
         if (streamedRows.length !== driverResult.row_count) {
           throw new Error(
-            `查询结果批次数量不完整: 预期 ${driverResult.row_count} 行，实际 ${streamedRows.length} 行`
+            translateNow('error.batchIncomplete', {
+            expected: driverResult.row_count,
+            actual: streamedRows.length
+          })
           );
         }
         const rows = streamedRows.map((row) =>
@@ -802,9 +808,9 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       const timedOut = rawErrorMessage.startsWith('QUERY_TIMEOUT:');
       const cancelled = rawErrorMessage.startsWith('QUERY_CANCELLED:');
       const errorMessage = cancelled
-        ? '查询已取消'
+        ? translateNow('error.queryCancelled')
         : timedOut
-          ? `查询已超时（${formatExecutionTime(queryTimeoutMs)}）`
+          ? translateNow('error.queryTimedOut', { duration: formatExecutionTime(queryTimeoutMs) })
           : rawErrorMessage;
       
       // 更新错误状态
@@ -929,12 +935,12 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   updateRowData: async (statementId: string, rowIndex: number, columnName: string, newValue: any) => {
     const documentId = get().activeDocumentId;
     if (!documentId) {
-      throw new Error('没有活动的 SQL 标签');
+      throw new Error(translateNow('error.noActiveSqlTab'));
     }
     const { database, connectionString } = get();
     const { statements } = readSqlDocument(get(), documentId);
     if (!database) {
-      set({ error: '数据库未连接' });
+      set({ error: translateNow('error.notConnected') });
       return;
     }
 
@@ -943,7 +949,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
     const result = statement.result;
     if (!result.table_name || !result.primary_key) {
-      set({ error: '无法更新数据：缺少表名或主键信息' });
+      set({ error: translateNow('error.cannotUpdateNoKey') });
       return;
     }
 
@@ -951,7 +957,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       // 获取主键值
       const primaryKeyIndex = result.columns.indexOf(result.primary_key);
       if (primaryKeyIndex === -1) {
-        throw new Error('找不到主键列');
+        throw new Error(translateNow('error.noPrimaryKeyColumn'));
       }
       const primaryKeyValue = result.rows[rowIndex][primaryKeyIndex];
 
@@ -977,7 +983,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       
       // 执行更新
       const updateResult = await database.execute(updateSql, params);
-      assertSingleRowAffected(updateResult, '更新');
+      assertSingleRowAffected(updateResult, translateNow('table.operation.update'));
 
       // 更新本地数据
       const columnIndex = result.columns.indexOf(columnName);
@@ -1004,7 +1010,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       console.log('✅ 数据更新成功');
     } catch (error) {
       console.error('❌ 数据更新失败:', error);
-      const errorMessage = describeError(error, '数据更新失败');
+      const errorMessage = describeError(error, translateNow('error.updateFailed'));
       set({ error: errorMessage });
     }
   },
@@ -1012,12 +1018,12 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   deleteRowData: async (statementId: string, rowIndex: number) => {
     const documentId = get().activeDocumentId;
     if (!documentId) {
-      throw new Error('没有活动的 SQL 标签');
+      throw new Error(translateNow('error.noActiveSqlTab'));
     }
     const { database, connectionString } = get();
     const { statements } = readSqlDocument(get(), documentId);
     if (!database) {
-      set({ error: '数据库未连接' });
+      set({ error: translateNow('error.notConnected') });
       return;
     }
 
@@ -1026,7 +1032,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
     const result = statement.result;
     if (!result.table_name || !result.primary_key) {
-      set({ error: '无法删除数据：缺少表名或主键信息' });
+      set({ error: translateNow('error.cannotDeleteNoKey') });
       return;
     }
 
@@ -1034,7 +1040,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       // 获取主键值
       const primaryKeyIndex = result.columns.indexOf(result.primary_key);
       if (primaryKeyIndex === -1) {
-        throw new Error('找不到主键列');
+        throw new Error(translateNow('error.noPrimaryKeyColumn'));
       }
       const primaryKeyValue = result.rows[rowIndex][primaryKeyIndex];
 
@@ -1059,7 +1065,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       
       // 执行删除
       const deleteResult = await database.execute(deleteSql, params);
-      assertSingleRowAffected(deleteResult, '删除');
+      assertSingleRowAffected(deleteResult, translateNow('table.operation.delete'));
 
       // 更新本地数据
       const updatedRows = result.rows.filter((_, index) => index !== rowIndex);
@@ -1082,7 +1088,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       console.log('✅ 数据删除成功');
     } catch (error) {
       console.error('❌ 数据删除失败:', error);
-      const errorMessage = describeError(error, '数据删除失败');
+      const errorMessage = describeError(error, translateNow('error.deleteFailed'));
       set({ error: errorMessage });
     }
   },
@@ -1090,12 +1096,12 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   insertRowData: async (statementId: string, newRowData: Record<string, any>) => {
     const documentId = get().activeDocumentId;
     if (!documentId) {
-      throw new Error('没有活动的 SQL 标签');
+      throw new Error(translateNow('error.noActiveSqlTab'));
     }
     const { database, connectionString } = get();
     const { statements } = readSqlDocument(get(), documentId);
     if (!database) {
-      set({ error: '数据库未连接' });
+      set({ error: translateNow('error.notConnected') });
       return;
     }
 
@@ -1104,7 +1110,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
     const result = statement.result;
     if (!result.table_name) {
-      set({ error: '无法新增数据：缺少表名信息' });
+      set({ error: translateNow('error.cannotInsertNoTable') });
       return;
     }
 
@@ -1264,7 +1270,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       console.log('✅ 数据新增成功');
     } catch (error) {
       console.error('❌ 数据新增失败:', error);
-      const errorMessage = describeError(error, '数据新增失败');
+      const errorMessage = describeError(error, translateNow('error.insertFailed'));
       set({ error: errorMessage });
     }
   },

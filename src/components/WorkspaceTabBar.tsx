@@ -97,7 +97,7 @@ export function WorkspaceTabBar({
             {(tab.dirty || unsavedTabIds.has(tab.id)) && (
               <span
                 className="w-1.5 h-1.5 rounded-full bg-warning shrink-0"
-                title="有未保存的更改"
+                title={t('tab.unsaved')}
               />
             )}
             <button
@@ -118,8 +118,8 @@ export function WorkspaceTabBar({
         <button
           type="button"
           onClick={onNewSqlTab}
-          title="新建查询标签"
-          aria-label="新建查询标签"
+          title={t('tab.newQueryTab')}
+          aria-label={t('tab.newQueryTab')}
           className="flex items-center px-3 text-fg-muted hover:bg-surface-hover hover:text-fg"
         >
           <Plus size={16} />
@@ -129,8 +129,8 @@ export function WorkspaceTabBar({
         <button
           type="button"
           onClick={onReopenClosedTab}
-          title={`重新打开最近关闭的标签（还有 ${closedTabCount} 个，⌘⇧T）`}
-          aria-label="重新打开最近关闭的标签"
+          title={t('tab.reopenClosedTitle', { count: closedTabCount })}
+          aria-label={t('tab.reopenClosed')}
           className="flex items-center gap-1 px-3 text-fg-muted hover:bg-surface-hover hover:text-fg"
         >
           <History size={16} />

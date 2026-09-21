@@ -9,6 +9,7 @@ import { useSessionManager } from '../utils/stateSync';
 import { recordConnectionUse } from '../utils/connectionRecency';
 import { withTimeout } from '../utils/withTimeout';
 import { describeError } from '../utils/describeError';
+import { useLanguageStore } from '../stores/languageStore';
 
 /**
  * 连接的等待上限。
@@ -45,6 +46,7 @@ export interface ProfileConnector {
 }
 
 export function useProfileConnector(): ProfileConnector {
+  const t = useLanguageStore((state) => state.t);
   const sessionManager = useSessionManager();
   const openConnectionForm = useAppStore((state) => state.openConnectionForm);
   const [connectingProfileId, setConnectingProfileId] = useState<string | null>(null);
@@ -59,13 +61,15 @@ export function useProfileConnector(): ProfileConnector {
       const connectionString = await withTimeout(
         invoke<string>('test_connection', { config: profile }),
         CONNECT_TIMEOUT_MS,
-        `连接 ${profile.host || profile.database} 超过 ${CONNECT_TIMEOUT_MS / 1000} 秒没有响应。`
-          + '端口可能通但握手未完成，请检查账号密码、TLS 设置与防火墙。'
+        t('connect.timeout', {
+          target: profile.host || profile.database || '',
+          seconds: CONNECT_TIMEOUT_MS / 1000
+        })
       );
       await withTimeout(
         sessionManager.switchConnection(profile, connectionString),
         CONNECT_TIMEOUT_MS,
-        `建立会话超过 ${CONNECT_TIMEOUT_MS / 1000} 秒没有完成，请重试或检查数据库状态。`
+        t('connect.sessionTimeout', { seconds: CONNECT_TIMEOUT_MS / 1000 })
       );
       recordConnectionUse(profile.id);
       return 'connected';
@@ -73,17 +77,17 @@ export function useProfileConnector(): ProfileConnector {
       const message = describeError(cause);
 
       if (message.includes('SESSION_PASSWORD_REQUIRED')) {
-        setError('该连接未保存密码，请输入本次会话密码。');
+        setError(t('connect.passwordRequired'));
         openConnectionForm(profile);
         return 'password-required';
       }
 
-      setError(message || '数据库连接失败');
+      setError(message || t('error.connectFailed'));
       return 'failed';
     } finally {
       setConnectingProfileId(null);
     }
-  }, [sessionManager, openConnectionForm]);
+  }, [sessionManager, openConnectionForm, t]);
 
   const openSqliteFile = useCallback(async () => {
     setError(null);
@@ -91,7 +95,7 @@ export function useProfileConnector(): ProfileConnector {
     const selected = await open({
       multiple: false,
       directory: false,
-      filters: [{ name: 'SQLite 数据库', extensions: ['db', 'sqlite', 'sqlite3', 'db3'] }]
+      filters: [{ name: t('form.sqliteFilter'), extensions: ['db', 'sqlite', 'sqlite3', 'db3'] }]
     });
 
     if (typeof selected !== 'string') {
@@ -124,7 +128,7 @@ export function useProfileConnector(): ProfileConnector {
       );
 
       if (!created) {
-        setError('连接已创建，但没能在列表中找到它，请从左侧手动选择。');
+        setError(t('connect.createdButNotFound'));
         return;
       }
 
@@ -132,7 +136,7 @@ export function useProfileConnector(): ProfileConnector {
     } catch (cause) {
       setError(describeError(cause));
     }
-  }, [connect]);
+  }, [connect, t]);
 
   return {
     connect,

@@ -29,6 +29,7 @@ import {
   findSqlStatementAtOffset,
   splitSqlStatements
 } from '../utils/sqlStatements';
+import { useLanguageStore, translateNow } from '../stores/languageStore';
 
 // SQL关键字列表
 const SQL_KEYWORDS = [
@@ -59,17 +60,17 @@ const sqlCompletions = (context: CompletionContext) => {
     ...SQL_KEYWORDS.map(keyword => ({
       label: keyword,
       type: 'keyword',
-      info: `SQL 关键字: ${keyword}`
+      info: translateNow('editor.completion.keyword', { name: keyword })
     })),
     ...COMMON_TABLE_NAMES.map(table => ({
       label: table,
       type: 'variable',
-      info: `表名: ${table}`
+      info: translateNow('editor.completion.table', { name: table })
     })),
     ...COMMON_COLUMN_NAMES.map(column => ({
       label: column,
       type: 'property',
-      info: `列名: ${column}`
+      info: translateNow('editor.completion.column', { name: column })
     }))
   ];
 
@@ -87,6 +88,7 @@ interface SqlEditorProps {
 }
 
 export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environment }) => {
+  const t = useLanguageStore((state) => state.t);
   // 文档随活动 SQL 标签切换，单独订阅
   const { sqlInput, statements, latestExecutionIdByStatement } =
     useQueryStore(selectActiveSqlDocument);
@@ -271,41 +273,43 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environmen
         <div className="flex shrink-0 items-center">
           {/* 不再用「SQL编辑器」大标题：标签栏已经标明这是查询标签 */}
           <span className="text-xs text-fg-subtle">
-            {statements.length > 0 ? `${statements.length} 条语句` : '未解析出语句'}
+            {statements.length > 0
+              ? t('editor.statementCount', { count: statements.length })
+              : t('editor.noStatements')}
           </span>
         </div>
         
         <div className="flex items-center space-x-2">
           <label className="flex items-center space-x-2 text-sm text-fg-muted">
-            <span>结果上限</span>
+            <span>{t('editor.rowLimit')}</span>
             <select
               value={queryResultRowLimit}
               onChange={(event) => setQueryResultRowLimit(Number(event.target.value))}
               className="px-2 py-1.5 border border-line-strong rounded-control bg-surface text-sm"
-              aria-label="查询结果行数上限"
+              aria-label={t('editor.rowLimitLabel')}
             >
-              <option value={100}>100 行</option>
-              <option value={500}>500 行</option>
-              <option value={1000}>1,000 行</option>
-              <option value={5000}>5,000 行</option>
-              <option value={10000}>10,000 行</option>
+              <option value={100}>{t('editor.rowsOption', { count: 100 })}</option>
+              <option value={500}>{t('editor.rowsOption', { count: 500 })}</option>
+              <option value={1000}>{t('editor.rowsOption', { count: '1,000' })}</option>
+              <option value={5000}>{t('editor.rowsOption', { count: '5,000' })}</option>
+              <option value={10000}>{t('editor.rowsOption', { count: '10,000' })}</option>
             </select>
           </label>
 
           <label className="flex items-center space-x-2 text-sm text-fg-muted">
-            <span>超时</span>
+            <span>{t('editor.timeout')}</span>
             <select
               value={queryTimeoutMs}
               onChange={(event) => setQueryTimeoutMs(Number(event.target.value))}
               className="px-2 py-1.5 border border-line-strong rounded-control bg-surface text-sm"
-              aria-label="查询超时时间"
+              aria-label={t('editor.timeoutLabel')}
             >
-              <option value={5000}>5 秒</option>
-              <option value={15000}>15 秒</option>
-              <option value={30000}>30 秒</option>
-              <option value={60000}>1 分钟</option>
-              <option value={120000}>2 分钟</option>
-              <option value={300000}>5 分钟</option>
+              <option value={5000}>{t('editor.seconds', { count: 5 })}</option>
+              <option value={15000}>{t('editor.seconds', { count: 15 })}</option>
+              <option value={30000}>{t('editor.seconds', { count: 30 })}</option>
+              <option value={60000}>{t('editor.minutes', { count: 1 })}</option>
+              <option value={120000}>{t('editor.minutes', { count: 2 })}</option>
+              <option value={300000}>{t('editor.minutes', { count: 5 })}</option>
             </select>
           </label>
 
@@ -317,7 +321,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environmen
               onChange={(e) => setAutoParseEnabled(e.target.checked)}
               className="h-4 w-4 text-accent focus:ring-accent border-line-strong rounded-control"
             />
-            <span>自动解析</span>
+            <span>{t('editor.autoParse')}</span>
           </label>
 
           {/* 手动解析按钮 */}
@@ -327,7 +331,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environmen
               className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors"
             >
               <RotateCcw size={14} />
-              <span>解析</span>
+              <span>{t('editor.parse')}</span>
             </button>
           )}
 
@@ -343,27 +347,27 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environmen
             )}
           >
             <Trash2 size={14} />
-            <span>清除结果</span>
+            <span>{t('editor.clearResults')}</span>
           </button>
 
           <button
             onClick={executeSelectedSql}
             disabled={!hasSelection || isConnecting}
             className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors disabled:text-fg-subtle disabled:border-line disabled:cursor-not-allowed"
-            title="执行选中内容"
+            title={t('editor.runSelectionTitle')}
           >
             <Play size={14} />
-            <span>执行选中</span>
+            <span>{t('editor.runSelection')}</span>
           </button>
 
           <button
             onClick={executeCurrentStatement}
             disabled={statements.length === 0 || isConnecting}
             className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors disabled:text-fg-subtle disabled:border-line disabled:cursor-not-allowed"
-            title="执行光标所在语句 (Cmd/Ctrl+Enter)"
+            title={t('editor.runCurrentTitle')}
           >
             <Play size={14} />
-            <span>执行当前</span>
+            <span>{t('editor.runCurrent')}</span>
           </button>
 
           {/* 执行所有语句 */}
@@ -372,7 +376,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environmen
           <button
             onClick={runAllGuarded}
             disabled={statements.length === 0 || isConnecting}
-            title="按顺序执行所有语句，遇到失败、超时或取消即停止（⌘⇧⏎）"
+            title={t('editor.runAllTitle')}
             className={clsx(
               "flex items-center space-x-2 px-4 py-1.5 text-sm rounded-control transition-colors",
               statements.length === 0 || isConnecting
@@ -381,7 +385,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environmen
             )}
           >
             <PlayCircle size={16} />
-            <span>{isConnecting ? '连接中...' : '执行全部'}</span>
+            <span>{isConnecting ? t('editor.connecting') : t('editor.runAll')}</span>
           </button>
         </div>
       </div>
@@ -419,7 +423,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environmen
             onKeyDown={handleEditorKeyDown}
             theme={theme}
             extensions={extensions}
-            placeholder="在此输入SQL语句... 多个语句请用分号(;)分隔"
+            placeholder={t('editor.placeholder')}
             basicSetup={{
               lineNumbers: true,
               foldGutter: true,
@@ -444,7 +448,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environmen
         active={editorPanel.isResizing}
         onPointerDown={editorPanel.startResize}
         onDoubleClick={editorPanel.resetSize}
-        label="调整编辑器高度"
+        label={t('editor.resizeHeight')}
       />
 
       {/* SQL语句列表和结果 */}
@@ -453,7 +457,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connectionName, environmen
           /* 空状态：保持安静。编辑器占位文字已经说明了怎么写，
              结果区在有结果之前不需要占据视线 */
           <div className="px-4 py-3 text-sm text-fg-subtle">
-            执行后在此显示结果
+            {t('editor.resultsPlaceholder')}
           </div>
         ) : (
           /* 语句列表 */
@@ -509,6 +513,8 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
   onRemove,
   formatExecutionTime
 }) => {
+  const t = useLanguageStore((state) => state.t);
+
   return (
     <div className="border border-line rounded-panel overflow-hidden">
       {/* 语句头部 */}
@@ -558,19 +564,19 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
             {statement.isExecuting ? <Square size={14} /> : <Play size={14} />}
             <span>
               {execution?.status === 'cancel-requested'
-                ? '取消请求中'
+                ? t('editor.cancelling')
                 : statement.isExecuting
-                  ? '停止'
+                  ? t('editor.stop')
                   : execution?.status === 'cancelled'
-                    ? '重新执行'
-                    : '执行'}
+                    ? t('editor.rerun')
+                    : t('editor.run')}
             </span>
           </button>
           
           <button
             onClick={onRemove}
             className="p-1 text-fg-subtle hover:text-danger transition-colors"
-            title="删除语句"
+            title={t('editor.deleteStatement')}
           >
             <Trash2 size={14} />
           </button>
@@ -582,7 +588,7 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
         <>
           {statement.resultSql && statement.resultSql !== statement.sql && (
             <div className="px-3 py-2 text-xs text-warning bg-warning-soft border-t border-warning-line">
-              当前结果来自上一次执行，编辑后的 SQL 尚未执行。
+              {t('editor.staleResult')}
             </div>
           )}
           <QueryResultScrollTable
@@ -599,7 +605,7 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
           <div className="flex items-start space-x-2">
             <AlertCircle className="text-danger mt-0.5" size={16} />
             <div>
-              <h4 className="text-sm font-medium text-danger mb-1">执行错误</h4>
+              <h4 className="text-sm font-medium text-danger mb-1">{t('editor.executionError')}</h4>
               <p className="text-sm text-danger">{statement.error}</p>
             </div>
           </div>

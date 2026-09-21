@@ -1,4 +1,5 @@
 import { clsx } from 'clsx';
+import { useLanguageStore } from '../stores/languageStore';
 
 interface PanelResizeHandleProps {
   axis: 'x' | 'y';
@@ -20,12 +21,13 @@ export function PanelResizeHandle({
   onDoubleClick,
   label
 }: PanelResizeHandleProps) {
+  const t = useLanguageStore((state) => state.t);
   return (
     <div
       role="separator"
       aria-orientation={axis === 'x' ? 'vertical' : 'horizontal'}
       aria-label={label}
-      title={`${label}（双击恢复默认）`}
+      title={t('panel.resetHint', { label })}
       onPointerDown={onPointerDown}
       onDoubleClick={onDoubleClick}
       className={clsx(

@@ -1,3 +1,4 @@
+import { translateNow } from '../stores/languageStore';
 /**
  * 把任意 catch 到的东西变成一句能看的消息。
  *
@@ -7,7 +8,7 @@
  * 会把后端说的每一句话都换成占位文案——「测试连接」失败时后端说的其实是
  * `missing field 'id'`，界面上却只有「连接配置验证失败」。
  */
-export function describeError(error: unknown, fallback = '未知错误'): string {
+export function describeError(error: unknown, fallback = translateNow('error.unknown')): string {
   if (typeof error === 'string') {
     return error.trim() || fallback;
   }

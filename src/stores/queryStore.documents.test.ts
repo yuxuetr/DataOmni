@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { translateNow } from './languageStore';
 
 /**
  * executeStatement 走 Tauri 的 invoke + Channel，这里把它们换成可控的替身，
@@ -195,7 +196,8 @@ describe('SQL 文档分片', () => {
     useQueryStore.setState({ activeDocumentId: null });
 
     await expect(useQueryStore.getState().executeSql('SELECT 1;')).resolves.toBe(false);
-    expect(useQueryStore.getState().error).toBe('没有活动的 SQL 标签');
+    // 文案走 i18n，测试不该跟某一种语言绑死；断言的是「报了这条错」
+    expect(useQueryStore.getState().error).toBe(translateNow('error.noActiveSqlTab'));
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });

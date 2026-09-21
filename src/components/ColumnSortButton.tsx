@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { SortDirection } from '../utils/resultSorting';
+import { useLanguageStore } from '../stores/languageStore';
 
 interface ColumnSortButtonProps {
   /** 该列当前的排序方向；未按此列排序时为 null */
@@ -16,11 +17,12 @@ interface ColumnSortButtonProps {
  * 触控板用户完全发现不了。
  */
 export function ColumnSortButton({ direction, onToggle, columnLabel }: ColumnSortButtonProps) {
+  const t = useLanguageStore((state) => state.t);
   const label = direction === 'asc'
-    ? `${columnLabel}：当前升序，点击改为降序`
+    ? t('grid.sortAscHint', { column: columnLabel })
     : direction === 'desc'
-      ? `${columnLabel}：当前降序，点击取消排序`
-      : `${columnLabel}：点击按此列升序`;
+      ? t('grid.sortDescHint', { column: columnLabel })
+      : t('grid.sortNoneHint', { column: columnLabel });
 
   return (
     <button

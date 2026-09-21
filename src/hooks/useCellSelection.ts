@@ -9,6 +9,7 @@ import {
   type CellSelection
 } from '../utils/cellSelection';
 import { describeError } from '../utils/describeError';
+import { translateNow } from '../stores/languageStore';
 
 export interface CellSelectionController {
   selection: CellSelection | null;
@@ -60,7 +61,7 @@ export function useCellSelection(
       setCopyError(null);
     } catch (cause) {
       // 剪贴板可能被权限或非安全上下文拒绝；静默失败会让人以为复制成功了
-      setCopyError(describeError(cause, '复制到剪贴板失败'));
+      setCopyError(describeError(cause, translateNow('common.copyFailed')));
     }
   }, []);
 
