@@ -174,4 +174,18 @@ describe('单复数', () => {
       expect(KEYS, `${key} 是「{count} 复数名词」但没有 ${key}.one`).toContain(`${key}.one`);
     }
   });
+  it('两份目录里没有被编码弄坏的文案', () => {
+    // 真的发生过：一次批量改文案把 UTF-8 当 latin-1 解了一遍，
+    // 「—」变成「â€"」写进了 en.ts。typecheck、lint、i18n 的其余检查
+    // 全绿，只有把界面渲染出来才看得见——这条门把它变成一次编译期失败。
+    //
+    // U+FFFD 是解码失败留下的替换字符；`Â` 与 `â€` 是 UTF-8 被按 latin-1
+    // 读了一遍之后必然出现的两个前缀。
+    const MOJIBAKE = /\uFFFD|\u00C2[\u00A0-\u00BF]|\u00E2\u20AC/;
+    for (const catalog of [zh, en]) {
+      for (const key of Object.keys(catalog) as Array<keyof typeof zh>) {
+        expect(MOJIBAKE.test(catalog[key]), `${key}: ${catalog[key]}`).toBe(false);
+      }
+    }
+  });
 });

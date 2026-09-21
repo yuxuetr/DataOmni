@@ -81,23 +81,37 @@ export function willWrite(input: CellInput): boolean {
  */
 export function missingRequiredColumns(
   inputs: Readonly<Record<string, CellInput>>,
-  columns: readonly {
-    name: string;
-    is_nullable: boolean;
-    default_value?: string;
-    is_generated?: boolean;
-  }[]
+  columns: readonly RequirableColumn[]
 ): string[] {
   return columns
     .filter((column) => {
-      // 自增与计算列由数据库填，点名要求用户填反而会让整张表插不进行
-      if (column.is_nullable || column.default_value != null || column.is_generated) {
+      if (!isRequiredColumn(column)) {
         return false;
       }
       const input = inputs[column.name];
       return !input || input.kind === 'unset' || input.kind === 'default';
     })
     .map((column) => column.name);
+}
+
+export interface RequirableColumn {
+  name: string;
+  is_nullable: boolean;
+  default_value?: string;
+  is_generated?: boolean;
+}
+
+/**
+ * 不给值就插不进去的列。
+ *
+ * 自增与计算列由数据库填，点名要求用户填反而会让整张表一行都插不进去——
+ * `GENERATED ALWAYS AS IDENTITY` 与 `AUTO_INCREMENT` 的默认值都是 null，
+ * 同时又是非空列，单看前两个条件它们全都像必填项。
+ *
+ * 新增行与 CSV 导入问的是同一个问题，所以规则只有这一处。
+ */
+export function isRequiredColumn(column: RequirableColumn): boolean {
+  return !column.is_nullable && column.default_value == null && !column.is_generated;
 }
 
 /**

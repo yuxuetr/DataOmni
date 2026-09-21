@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
-import { clsx } from 'clsx';
 import { save } from '@tauri-apps/plugin-dialog';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import type { SerializedResultValue } from '../contracts/resultSet';
@@ -14,6 +13,7 @@ import {
   type ExportOptions
 } from '../utils/exportResult';
 import { describeError } from '../utils/describeError';
+import { Checkbox, Field, SegmentedControl } from './FormControls';
 import { useLanguageStore } from '../stores/languageStore';
 import type { TranslationKey } from '../i18n/translate';
 
@@ -442,70 +442,4 @@ function formatBytes(bytes: number): string {
     return `${(bytes / 1024).toFixed(1)} KB`;
   }
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-start gap-3">
-      <span className="w-20 shrink-0 pt-1 text-xs text-fg-muted">{label}</span>
-      <div className="min-w-0 flex-1">{children}</div>
-    </div>
-  );
-}
-
-function SegmentedControl<T extends string>({
-  value,
-  options,
-  onChange
-}: {
-  value: T;
-  options: Array<{ value: T; label: string }>;
-  onChange: (value: T) => void;
-}) {
-  return (
-    <div className="inline-flex rounded-control border border-line p-0.5">
-      {options.map(option => (
-        <button
-          key={option.value}
-          type="button"
-          onClick={() => onChange(option.value)}
-          className={clsx(
-            'rounded-[0.25rem] px-2.5 py-1 text-xs transition-colors',
-            option.value === value
-              ? 'bg-accent text-fg-on-accent'
-              : 'text-fg-muted hover:bg-surface-hover'
-          )}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function Checkbox({
-  checked,
-  onChange,
-  label,
-  hint
-}: {
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-  label: string;
-  hint?: string;
-}) {
-  return (
-    <label className="flex cursor-pointer items-start gap-2">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={event => onChange(event.target.checked)}
-        className="mt-0.5 accent-accent"
-      />
-      <span className="min-w-0">
-        <span className="text-xs text-fg">{label}</span>
-        {hint && <span className="block text-xs text-fg-subtle">{hint}</span>}
-      </span>
-    </label>
-  );
 }

@@ -23,6 +23,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Download,
+  Upload,
   Lock,
   Filter,
   Columns3,
@@ -45,6 +46,7 @@ import { toPositionalRows } from '../utils/columnWidths';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { ExportResultDialog, type ExportScope } from './ExportResultDialog';
+import { CsvImportDialog } from './CsvImportDialog';
 import {
   extractDdlStatements,
   groupForeignKeyRows,
@@ -167,6 +169,7 @@ export default function TableDataViewer({
   const appliedFiltersRef = useRef<ColumnFilter[]>([]);
   appliedFiltersRef.current = appliedFilters;
   const [showExport, setShowExport] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [schemaObjects, setSchemaObjects] = useState<SchemaObjects | null>(null);
   const sortRef = useRef<ColumnSort | null>(null);
   sortRef.current = sort;
@@ -1128,6 +1131,16 @@ export default function TableDataViewer({
                       <Download size={14} />
                       <span>{t('result.export')}</span>
                     </button>
+
+                    <button
+                      onClick={() => setShowImport(true)}
+                      disabled={!tableSchema}
+                      className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg border border-line-strong rounded-control hover:bg-surface-hover transition-colors disabled:opacity-50"
+                      title={t('import.open')}
+                    >
+                      <Upload size={14} />
+                      <span>{t('import.title')}</span>
+                    </button>
                   </>
                 )}
                 
@@ -1559,6 +1572,20 @@ export default function TableDataViewer({
           onRevertAll={revertAllChanges}
           onCommit={commitChanges}
           onClose={() => setShowChanges(false)}
+        />
+      )}
+
+      {showImport && tableSchema && (
+        <CsvImportDialog
+          connectionId={connection.id}
+          schema={schema ?? null}
+          table={tableName}
+          columns={tableSchema.columns}
+          onClose={() => setShowImport(false)}
+          onImported={() => {
+            // 导入写进去的行现在才存在，当前这一页看到的还是导入之前的样子
+            void loadTableData(currentPage);
+          }}
         />
       )}
 
