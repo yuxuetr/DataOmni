@@ -30,6 +30,14 @@ export interface ExportScope {
   /** 范围说明：是哪一页、少了哪些列、会不会重新执行一遍查询 */
   note?: string;
   sql?: string;
+  /**
+   * 这个范围自己的那份数据。不给就用对话框的 `columns` / `rows`。
+   *
+   * 「选中的部分」需要它：选区是个矩形，行和列都可能比屏幕上那份少，
+   * 而预览、行列数和最后写出去的文件都得是同一份。
+   */
+  columns?: readonly string[];
+  rows?: ReadonlyArray<readonly SerializedResultValue[]>;
 }
 
 interface ExportResultDialogProps {
@@ -108,6 +116,9 @@ export function ExportResultDialog({
 
   const scope = scopes?.find((candidate) => candidate.id === scopeId) ?? scopes?.[0];
   const streaming = Boolean(scope?.sql);
+  // 范围自带数据时一切都跟着它走：预览、右上角的行列数、写出去的内容
+  const activeColumns = scope?.columns ?? columns;
+  const activeRows = scope?.rows ?? rows;
 
   useEffect(() => {
     cancelRef.current?.focus();
@@ -129,10 +140,10 @@ export function ExportResultDialog({
   // 看一眼结果就知道。
   const preview = useMemo(() => {
     if (options.format === 'json') {
-      return serializeExport(columns, rows.slice(0, 1), { ...options, byteOrderMark: false });
+      return serializeExport(activeColumns, activeRows.slice(0, 1), { ...options, byteOrderMark: false });
     }
-    return toCsv(columns, rows.slice(0, PREVIEW_ROWS), options);
-  }, [columns, rows, options]);
+    return toCsv(activeColumns, activeRows.slice(0, PREVIEW_ROWS), options);
+  }, [activeColumns, activeRows, options]);
 
   const update = (patch: Partial<ExportOptions>) => {
     setOptions(current => ({ ...current, ...patch }));
@@ -163,9 +174,9 @@ export function ExportResultDialog({
       } else {
         // 这一份已经在内存里了，再让它绕一趟数据库只会导出**另一份**数据：
         // 客户端排序、隐藏列、以及这期间别人对表的改动都会对不上
-        const contents = serializeExport(columns, rows, options);
+        const contents = serializeExport(activeColumns, activeRows, options);
         const bytesWritten = await invoke<number>('write_text_file', { path, contents });
-        setWritten({ rowsWritten: rows.length, bytesWritten, path });
+        setWritten({ rowsWritten: activeRows.length, bytesWritten, path });
       }
     } catch (err) {
       if (isCancellation(err)) {
@@ -229,8 +240,8 @@ export function ExportResultDialog({
           <span className="ml-auto text-xs text-fg-subtle">
             {/* 流式导出时行数是**整个范围**的，不是下面这几行预览的，说「3 行」是假话 */}
             {streaming
-              ? t('export.shapeColumns', { count: columns.length })
-              : t('export.shape', { rows: rows.length, columns: columns.length })}
+              ? t('export.shapeColumns', { count: activeColumns.length })
+              : t('export.shape', { rows: activeRows.length, columns: activeColumns.length })}
           </span>
         </div>
 
@@ -320,13 +331,13 @@ export function ExportResultDialog({
             <p className="mb-1 text-xs text-fg-subtle">
               {streaming
                 ? t('export.previewStreamed', {
-                    count: options.format === 'json' ? 1 : Math.min(PREVIEW_ROWS, rows.length)
+                    count: options.format === 'json' ? 1 : Math.min(PREVIEW_ROWS, activeRows.length)
                   })
                 : options.format === 'json'
-                  ? t('export.previewJson', { total: rows.length })
+                  ? t('export.previewJson', { total: activeRows.length })
                   : t('export.previewCsv', {
-                      shown: Math.min(PREVIEW_ROWS, rows.length),
-                      total: rows.length
+                      shown: Math.min(PREVIEW_ROWS, activeRows.length),
+                      total: activeRows.length
                     })}
             </p>
             <pre className="max-h-36 overflow-auto rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg select-text whitespace-pre">

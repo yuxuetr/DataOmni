@@ -254,3 +254,38 @@ export function selectionToClipboardText(
 
   return lines.join('\n');
 }
+
+/**
+ * 选区里的那一块数据，连同对应的列名。
+ *
+ * 选区是个矩形，所以导出选中部分导出的是**这个矩形**，不是「这些行的全部列」。
+ * 两者在整行选择时一样，在框选几列时不一样——而后者按整行导出会把用户没选的
+ * 列也写进文件，那正是导出对话框里最该说清楚的事。
+ */
+export function selectionSubset(
+  rows: readonly (readonly SerializedResultValue[])[],
+  columns: readonly string[],
+  selection: CellSelection
+): { columns: string[]; rows: SerializedResultValue[][] } {
+  const rect = selectionRect(selection);
+  const picked: string[] = [];
+  for (let column = rect.left; column <= rect.right; column += 1) {
+    picked.push(columns[column] ?? '');
+  }
+
+  const picks: SerializedResultValue[][] = [];
+  for (let row = rect.top; row <= rect.bottom; row += 1) {
+    const source = rows[row];
+    // 越界的行整行丢掉，而不是补一排 null——后者会在文件里留下看不出来的空行
+    if (!source) {
+      continue;
+    }
+    const cells: SerializedResultValue[] = [];
+    for (let column = rect.left; column <= rect.right; column += 1) {
+      cells.push(source[column] ?? null);
+    }
+    picks.push(cells);
+  }
+
+  return { columns: picked, rows: picks };
+}

@@ -40,10 +40,11 @@ import { buildTableExportQuery } from '../utils/tableExportQuery';
 import { nextColumnSort, type ColumnSort } from '../utils/resultSorting';
 import { ColumnSortButton } from './ColumnSortButton';
 import { useCellSelection } from '../hooks/useCellSelection';
+import { selectionSubset } from '../utils/cellSelection';
 import { toPositionalRows } from '../utils/columnWidths';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
-import { ExportResultDialog } from './ExportResultDialog';
+import { ExportResultDialog, type ExportScope } from './ExportResultDialog';
 import {
   extractDdlStatements,
   groupForeignKeyRows,
@@ -570,6 +571,54 @@ export default function TableDataViewer({
     pageSize
   ].join('|');
   const cells = useCellSelection(visibleRows, visibleColumnNames, datasetKey);
+
+  // 选中的部分排在最前面：框选之后再点导出，想导的就是它
+  const exportScopes = React.useMemo(() => {
+    const list: ExportScope[] = [
+      {
+        id: 'page',
+        label: t('export.scope.currentPage'),
+        note:
+          t('export.scopeCurrentPage', {
+            page: currentPage,
+            rows: tableData.length,
+            total: totalRows
+          }) + hiddenColumnsNote
+      }
+    ];
+    if (wholeTableExportSql) {
+      list.push({
+        id: 'table',
+        label: t('export.scope.wholeTable'),
+        note: t('export.scope.wholeTableNote', { count: totalRows }) + hiddenColumnsNote,
+        sql: wholeTableExportSql
+      });
+    }
+    if (cells.selection) {
+      const subset = selectionSubset(visibleRows, visibleColumnNames, cells.selection);
+      list.unshift({
+        id: 'selection',
+        label: t('export.scope.selection'),
+        note: t('export.scope.selectionNote', {
+          rows: subset.rows.length,
+          columns: subset.columns.length
+        }),
+        columns: subset.columns,
+        rows: subset.rows
+      });
+    }
+    return list;
+  }, [
+    cells.selection,
+    currentPage,
+    hiddenColumnsNote,
+    t,
+    tableData.length,
+    totalRows,
+    visibleColumnNames,
+    visibleRows,
+    wholeTableExportSql
+  ]);
 
 
   // 处理标签页切换
@@ -1521,29 +1570,7 @@ export default function TableDataViewer({
           connectionId={connection.id}
           // 导出跟着可见列走，否则藏起来的列会在文件里冒出来。两个范围各自把
           // 话说全：少了哪几列、是这一页还是整张表，用户不该打开文件才发现
-          scopes={[
-            {
-              id: 'page',
-              label: t('export.scope.currentPage'),
-              note:
-                t('export.scopeCurrentPage', {
-                  page: currentPage,
-                  rows: tableData.length,
-                  total: totalRows
-                }) + hiddenColumnsNote
-            },
-            ...(wholeTableExportSql
-              ? [
-                  {
-                    id: 'table',
-                    label: t('export.scope.wholeTable'),
-                    note:
-                      t('export.scope.wholeTableNote', { count: totalRows }) + hiddenColumnsNote,
-                    sql: wholeTableExportSql
-                  }
-                ]
-              : [])
-          ]}
+          scopes={exportScopes}
           onClose={() => setShowExport(false)}
         />
       )}

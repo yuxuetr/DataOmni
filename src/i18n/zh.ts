@@ -279,6 +279,8 @@ export const zh = {
   'export.scope.wholeTable': '整张表',
   'export.scope.wholeTableNote': '导出整张表的 {count} 行，应用当前的筛选与排序；不分页，行直接从数据库写进文件。',
   'export.scope.wholeTableNote.one': '导出整张表的 {count} 行，应用当前的筛选与排序；不分页，行直接从数据库写进文件。',
+  'export.scope.selection': '选中的部分',
+  'export.scope.selectionNote': '只导出选中的那一块：{rows} 行 × {columns} 列。选区是个矩形，没框进去的列不会出现在文件里。',
   'export.scope.currentResult': '当前结果',
   'export.scope.fullResult': '完整结果',
   'export.scope.fullResultNote': '会重新执行一遍这条查询，导出不受行数上限截断的全部结果。表头上点出来的排序不参与——次序由 SQL 自己的 ORDER BY 决定。',

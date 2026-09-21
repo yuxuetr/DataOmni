@@ -263,6 +263,8 @@ export const en: Translations = {
   'export.scope.wholeTable': 'Whole table',
   'export.scope.wholeTableNote': 'Exports all {count} rows of the table with the current filters and sorting; no paging, rows go straight from the database into the file.',
   'export.scope.wholeTableNote.one': 'Exports the {count} row of the table with the current filters and sorting; no paging, rows go straight from the database into the file.',
+  'export.scope.selection': 'Selection',
+  'export.scope.selectionNote': 'Exports only the selected block: {rows} rows × {columns} columns. The selection is a rectangle — columns outside it are not written to the file.',
   'export.scope.currentResult': 'Current result',
   'export.scope.fullResult': 'Full result',
   'export.scope.fullResultNote': 'Runs this query again and exports every row, with no row limit. The sorting you clicked in the header does not apply — the order comes from the SQL\'s own ORDER BY.',

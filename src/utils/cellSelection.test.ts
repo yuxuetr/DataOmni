@@ -8,6 +8,7 @@ import {
   rowSelection,
   selectAllCells,
   selectionRect,
+  selectionSubset,
   selectionToClipboardText,
   type CellSelection
 } from './cellSelection';
@@ -255,5 +256,53 @@ describe('retainSelection', () => {
 
   it('本来就没有选区时返回 null', () => {
     expect(retainSelection(null, bounds, true)).toBeNull();
+  });
+});
+
+describe('selectionSubset', () => {
+  const columns = ['id', 'name', 'city'];
+  const rows = [
+    [1, 'a', '北京'],
+    [2, 'b', '上海'],
+    [3, 'c', '广州']
+  ];
+
+  it('取的是选区那个矩形，不是整行', () => {
+    // 框选了两列就导出两列——按整行导出会把用户没选的列也写进文件
+    const subset = selectionSubset(rows, columns, {
+      anchor: { row: 0, column: 1 },
+      focus: { row: 1, column: 2 }
+    });
+    expect(subset.columns).toEqual(['name', 'city']);
+    expect(subset.rows).toEqual([
+      ['a', '北京'],
+      ['b', '上海']
+    ]);
+  });
+
+  it('反向框选（从右下拖到左上）取到同一块', () => {
+    const subset = selectionSubset(rows, columns, {
+      anchor: { row: 2, column: 2 },
+      focus: { row: 2, column: 0 }
+    });
+    expect(subset.columns).toEqual(columns);
+    expect(subset.rows).toEqual([[3, 'c', '广州']]);
+  });
+
+  it('整行选区取到整行', () => {
+    const selection = rowSelection(1, { rowCount: 3, columnCount: 3 });
+    expect(selection).not.toBeNull();
+    const subset = selectionSubset(rows, columns, selection!);
+    expect(subset.columns).toEqual(columns);
+    expect(subset.rows).toEqual([[2, 'b', '上海']]);
+  });
+
+  it('越界的行整行丢掉，不补一排 null', () => {
+    // 补 null 会在导出的文件里留下看不出来的空行
+    const subset = selectionSubset(rows.slice(0, 1), columns, {
+      anchor: { row: 0, column: 0 },
+      focus: { row: 2, column: 0 }
+    });
+    expect(subset.rows).toEqual([[1]]);
   });
 });

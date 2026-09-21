@@ -40,8 +40,9 @@ import { GridContextMenu, type GridContextTarget } from './GridContextMenu';
 import { ColumnSortButton } from './ColumnSortButton';
 import { nextColumnSort, sortRowsByColumn, type ColumnSort } from '../utils/resultSorting';
 import { useCellSelection } from '../hooks/useCellSelection';
+import { selectionSubset } from '../utils/cellSelection';
 import { useLanguageStore } from '../stores/languageStore';
-import { ExportResultDialog } from './ExportResultDialog';
+import { ExportResultDialog, type ExportScope } from './ExportResultDialog';
 
 interface QueryResultScrollTableProps {
   result: QueryResult;
@@ -107,6 +108,34 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   const datasetKey = `${statementId}|${sort?.column ?? ''}:${sort?.direction ?? ''}|${currentPage}|${pageSize}`;
   const cells = useCellSelection(currentRows, result.columns, datasetKey);
   const [contextTarget, setContextTarget] = useState<GridContextTarget | null>(null);
+
+  // 选中的部分单独成一档。选区的行号是**当前页**里的行号，所以取数据要从
+  // currentRows 取，而不是导出对话框拿到的那份排过序的全部结果
+  const exportScopes = React.useMemo(() => {
+    const list: ExportScope[] = [{ id: 'current', label: t('export.scope.currentResult') }];
+    if (result.truncated && resultSql) {
+      list.push({
+        id: 'full',
+        label: t('export.scope.fullResult'),
+        note: t('export.scope.fullResultNote'),
+        sql: resultSql
+      });
+    }
+    if (cells.selection) {
+      const subset = selectionSubset(currentRows, result.columns, cells.selection);
+      list.unshift({
+        id: 'selection',
+        label: t('export.scope.selection'),
+        note: t('export.scope.selectionNote', {
+          rows: subset.rows.length,
+          columns: subset.columns.length
+        }),
+        columns: subset.columns,
+        rows: subset.rows
+      });
+    }
+    return list;
+  }, [cells.selection, currentRows, result.columns, result.truncated, resultSql, t]);
   
   // 能不能改由 `describeResultEditability` 证明过：认得出是单表 SELECT，
   // 键来自目录，且键列在投影里。这里只读结论，不再自己拼条件判断
@@ -366,19 +395,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
           connectionId={connectionId ?? undefined}
           // 只在结果真被截断时才给「完整结果」这一档。没截断时内存里的就是全部，
           // 再跑一遍数据库只是白付一次查询的代价。
-          scopes={
-            result.truncated && resultSql
-              ? [
-                  { id: 'current', label: t('export.scope.currentResult') },
-                  {
-                    id: 'full',
-                    label: t('export.scope.fullResult'),
-                    note: t('export.scope.fullResultNote'),
-                    sql: resultSql
-                  }
-                ]
-              : undefined
-          }
+          scopes={exportScopes}
           onClose={() => setShowExport(false)}
         />
       )}
