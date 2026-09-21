@@ -17,6 +17,7 @@ import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { GridCellValue } from './GridCellValue';
+import { GridContextMenu, type GridContextTarget } from './GridContextMenu';
 import { ColumnSortButton } from './ColumnSortButton';
 import { nextColumnSort, sortRowsByColumn, type ColumnSort } from '../utils/resultSorting';
 import { useCellSelection } from '../hooks/useCellSelection';
@@ -73,7 +74,8 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
     () => sortedRows.slice(startIndex, endIndex),
     [sortedRows, startIndex, endIndex]
   );
-  const cells = useCellSelection(currentRows, result.columns.length);
+  const cells = useCellSelection(currentRows, result.columns);
+  const [contextTarget, setContextTarget] = useState<GridContextTarget | null>(null);
   
   // 判断是否可以编辑
   const canEdit = Boolean(result.table_name && result.primary_key);
@@ -410,6 +412,19 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                           canEdit && !isEditing && 'cursor-pointer'
                         )}
                         onClick={(event) => cells.selectCell(rowIndex, cellIndex, event.shiftKey)}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          // 右击选区外的格子先选上它：菜单里那几条都作用于选区
+                          if (!cells.isSelected(rowIndex, cellIndex)) {
+                            cells.selectCell(rowIndex, cellIndex);
+                          }
+                          setContextTarget({
+                            row: rowIndex,
+                            column: cellIndex,
+                            x: event.clientX,
+                            y: event.clientY
+                          });
+                        }}
                         onDoubleClick={() => canEdit && !isEditing
                           && startEditing(rowIndex, cellIndex, cell)}
                       >
@@ -507,6 +522,16 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
             </button>
           </div>
         </div>
+      )}
+
+      {contextTarget && (
+        <GridContextMenu
+          target={contextTarget}
+          onCopy={(withHeaders) => cells.copy(withHeaders)}
+          onCopyRow={(row) => cells.copyRow(row)}
+          onCopyColumn={(column) => cells.copyColumn(column, true)}
+          onClose={() => setContextTarget(null)}
+        />
       )}
     </div>
   );

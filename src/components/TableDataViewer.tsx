@@ -64,6 +64,7 @@ import { describeTableEditability } from '../utils/tableEditability';
 import { GridCellValue } from './GridCellValue';
 import { TableFilterBar } from './TableFilterBar';
 import { GridColumnMenu } from './GridColumnMenu';
+import { GridContextMenu, type GridContextTarget } from './GridContextMenu';
 import {
   DENSITY_CELL_CLASS,
   frozenLeftOffsets,
@@ -146,6 +147,7 @@ export default function TableDataViewer({
   const [frozenCount, setFrozenCount] = useState(0);
   const [density, setDensity] = useState<GridDensity>('default');
   const [showColumnMenu, setShowColumnMenu] = useState(false);
+  const [contextTarget, setContextTarget] = useState<GridContextTarget | null>(null);
   // 与 sortRef 同理：loadTableData 的闭包里读不到刚 set 进去的新值
   const appliedFiltersRef = useRef<ColumnFilter[]>([]);
   appliedFiltersRef.current = appliedFilters;
@@ -560,7 +562,11 @@ export default function TableDataViewer({
   const gridWidth = visibleWidths.reduce((sum, width) => sum + width, 0) + ACTION_COLUMN_WIDTH;
   const densityClass = DENSITY_CELL_CLASS[density];
   // visibleRows 是 memo 过的稳定引用，符合 useCellSelection 的要求
-  const cells = useCellSelection(visibleRows, visibleIndexes.length);
+  const visibleColumnNames = React.useMemo(
+    () => visibleIndexes.map((index) => columnNames[index] ?? ''),
+    [visibleIndexes, columnNames]
+  );
+  const cells = useCellSelection(visibleRows, visibleColumnNames);
 
   // 处理标签页切换
   const handleTabChange = (tabId: TabType) => {
@@ -948,7 +954,8 @@ export default function TableDataViewer({
     lastFrozen = false,
     selected = false,
     focused = false,
-    onSelect
+    onSelect,
+    onContextMenu
   }: {
     value: any;
     field: string;
@@ -964,6 +971,7 @@ export default function TableDataViewer({
     selected?: boolean;
     focused?: boolean;
     onSelect?: (extend: boolean) => void;
+    onContextMenu?: (event: React.MouseEvent) => void;
   }) => {
     // 获取当前编辑的值
     const currentValue = isEditing && editState.editedData ? editState.editedData[field] : value;
@@ -980,6 +988,7 @@ export default function TableDataViewer({
       return (
         <td
           onClick={(event) => onSelect?.(event.shiftKey)}
+          onContextMenu={onContextMenu}
           style={frozenLeft === null ? undefined : { left: `${frozenLeft}px` }}
           className={clsx(
             'border-r border-line font-mono text-[13px] text-fg',
@@ -1716,6 +1725,20 @@ export default function TableDataViewer({
                                   selected={cells.isSelected(rowIndex, visiblePosition)}
                                   focused={cells.isFocused(rowIndex, visiblePosition)}
                                   onSelect={(extend) => cells.selectCell(rowIndex, visiblePosition, extend)}
+                                  onContextMenu={(event) => {
+                                    event.preventDefault();
+                                    // 右击一个不在选区里的格子先把它选上：菜单里那几条
+                                    // 都作用于选区，否则复制出来的是别处的内容
+                                    if (!cells.isSelected(rowIndex, visiblePosition)) {
+                                      cells.selectCell(rowIndex, visiblePosition);
+                                    }
+                                    setContextTarget({
+                                      row: rowIndex,
+                                      column: visiblePosition,
+                                      x: event.clientX,
+                                      y: event.clientY
+                                    });
+                                  }}
                                 />
                                 );
                               })}
@@ -1834,6 +1857,16 @@ export default function TableDataViewer({
       </div>
 
       {/* 表数据是服务端分页的，内存里只有当前这一页——导出必须如实说明范围 */}
+      {contextTarget && (
+        <GridContextMenu
+          target={contextTarget}
+          onCopy={(withHeaders) => cells.copy(withHeaders)}
+          onCopyRow={(row) => cells.copyRow(row)}
+          onCopyColumn={(column) => cells.copyColumn(column, true)}
+          onClose={() => setContextTarget(null)}
+        />
+      )}
+
       {showExport && (
         <ExportResultDialog
           columns={visibleIndexes.map((index) => columnNames[index] ?? '')}

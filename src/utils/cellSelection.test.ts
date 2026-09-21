@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  columnSelection,
   isCellMoveKey,
   isWithinSelection,
   moveSelection,
+  rowSelection,
   selectAllCells,
   selectionRect,
   selectionToClipboardText,
@@ -156,5 +158,71 @@ describe('复制文本', () => {
     const selection = { anchor: { row: 1, column: 1 }, focus: { row: 0, column: 0 } };
     expect(selectionToClipboardText(rows, selection))
       .toBe('alice\t9223372036854775807\nbob\t1.50');
+  });
+});
+
+describe('rowSelection / columnSelection', () => {
+  const bounds = { rowCount: 3, columnCount: 4 };
+
+  it('整行覆盖所有列，整列覆盖所有行', () => {
+    expect(rowSelection(1, bounds)).toEqual({
+      anchor: { row: 1, column: 0 },
+      focus: { row: 1, column: 3 }
+    });
+    expect(columnSelection(2, bounds)).toEqual({
+      anchor: { row: 0, column: 2 },
+      focus: { row: 2, column: 2 }
+    });
+  });
+
+  it('越界和空网格都返回 null', () => {
+    // 返回一个夹紧过的选区会让用户以为自己选中了别的东西
+    expect(rowSelection(3, bounds)).toBeNull();
+    expect(rowSelection(-1, bounds)).toBeNull();
+    expect(columnSelection(4, bounds)).toBeNull();
+    expect(rowSelection(0, { rowCount: 0, columnCount: 0 })).toBeNull();
+  });
+});
+
+describe('selectionToClipboardText 的表头', () => {
+  const rows = [
+    ['a', 1],
+    ['b', 2]
+  ] as const;
+
+  it('只取选中那几列的表头', () => {
+    const text = selectionToClipboardText(
+      rows,
+      { anchor: { row: 0, column: 1 }, focus: { row: 1, column: 1 } },
+      { headers: ['name', 'qty'] }
+    );
+    expect(text).toBe('qty\n1\n2');
+  });
+
+  it('带表头时单格也按表格转义，不再原样复制', () => {
+    // 已经是两行了，此时还按「单格原样」处理会写出一段串列的文本
+    const text = selectionToClipboardText(
+      [['a\tb']],
+      { anchor: { row: 0, column: 0 }, focus: { row: 0, column: 0 } },
+      { headers: ['note'] }
+    );
+    expect(text).toBe('note\n"a\tb"');
+  });
+
+  it('不给表头时行为不变', () => {
+    const text = selectionToClipboardText(
+      [['a\tb']],
+      { anchor: { row: 0, column: 0 }, focus: { row: 0, column: 0 } }
+    );
+    expect(text).toBe('a\tb');
+  });
+
+  it('表头本身含制表符也要转义', () => {
+    const text = selectionToClipboardText(
+      [['x']],
+      { anchor: { row: 0, column: 0 }, focus: { row: 0, column: 0 } },
+      { headers: ['a\tb'] }
+    );
+    expect(text).toBe('"a\tb"\nx');
   });
 });

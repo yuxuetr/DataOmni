@@ -229,6 +229,12 @@ export const en: Translations = {
   'table.loading': 'Loading…',
   'table.empty': 'No data',
 
+  // Grid context menu
+  'grid.copySelection': 'Copy selection',
+  'grid.copyWithHeaders': 'Copy with column names',
+  'grid.copyRow': 'Copy row',
+  'grid.copyColumn': 'Copy column with its name',
+
   // Column control: show/hide, freeze, density (width comes from drag and double-click autofit)
   'columns.title': 'Columns',
   'columns.showAll': 'Show all',

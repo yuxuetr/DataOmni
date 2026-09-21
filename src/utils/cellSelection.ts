@@ -132,6 +132,26 @@ export function moveSelection(
   };
 }
 
+/**
+ * 整行 / 整列选区。
+ *
+ * 靠框选去选一整行，在几十列的表上要横拖过整个屏幕；而用户想做的事——
+ * 「把这一行复制出去」——本身是一次点击的量。
+ */
+export function rowSelection(row: number, bounds: GridBounds): CellSelection | null {
+  if (bounds.rowCount <= 0 || bounds.columnCount <= 0 || row < 0 || row >= bounds.rowCount) {
+    return null;
+  }
+  return { anchor: { row, column: 0 }, focus: { row, column: bounds.columnCount - 1 } };
+}
+
+export function columnSelection(column: number, bounds: GridBounds): CellSelection | null {
+  if (bounds.rowCount <= 0 || bounds.columnCount <= 0 || column < 0 || column >= bounds.columnCount) {
+    return null;
+  }
+  return { anchor: { row: 0, column }, focus: { row: bounds.rowCount - 1, column } };
+}
+
 export function selectAllCells(bounds: GridBounds): CellSelection | null {
   if (bounds.rowCount <= 0 || bounds.columnCount <= 0) {
     return null;
@@ -163,14 +183,33 @@ function escapeForTsv(text: string): string {
  *
  * NULL 一律写成 `NULL` 而不是空串：空串和「空字符串」这个真实值分不开。
  */
+export interface ClipboardOptions {
+  /**
+   * 列名。给了就在最前面加一行表头。
+   *
+   * 整列复制出来只有一串值，贴到别处已经认不出是哪一列了——表头是复制
+   * 一整列时唯一能保住语义的东西。
+   */
+  headers?: readonly string[];
+}
+
 export function selectionToClipboardText(
   rows: readonly (readonly SerializedResultValue[])[],
-  selection: CellSelection
+  selection: CellSelection,
+  options: ClipboardOptions = {}
 ): string {
   const rect = selectionRect(selection);
-  const singleCell = rect.top === rect.bottom && rect.left === rect.right;
+  // 带上表头之后这一段就是一张表了，单格那条「原样复制」的规矩不再适用
+  const singleCell = rect.top === rect.bottom && rect.left === rect.right && !options.headers;
 
   const lines: string[] = [];
+  if (options.headers) {
+    const cells: string[] = [];
+    for (let column = rect.left; column <= rect.right; column += 1) {
+      cells.push(escapeForTsv(options.headers[column] ?? ''));
+    }
+    lines.push(cells.join('\t'));
+  }
   for (let row = rect.top; row <= rect.bottom; row += 1) {
     const cells: string[] = [];
     for (let column = rect.left; column <= rect.right; column += 1) {

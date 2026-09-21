@@ -247,6 +247,12 @@ export const zh = {
   'table.loading': '加载中...',
   'table.empty': '暂无数据',
 
+  // 网格右键菜单
+  'grid.copySelection': '复制选区',
+  'grid.copyWithHeaders': '复制（含列名）',
+  'grid.copyRow': '复制整行',
+  'grid.copyColumn': '复制整列（含列名）',
+
   // 列控制：显示/隐藏、冻结、密度（列宽由拖拽与双击自适应完成）
   'columns.title': '列',
   'columns.showAll': '全部显示',
