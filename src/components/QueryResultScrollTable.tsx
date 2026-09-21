@@ -12,10 +12,11 @@ import {
 import { clsx } from 'clsx';
 import type { QueryResult } from '../contracts/query';
 import { useQueryStore } from '../stores/queryStore';
-import { formatResultValue, formatResultValueOneLine } from '../utils/resultValues';
+import { formatResultValue } from '../utils/resultValues';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
+import { GridCellValue } from './GridCellValue';
 import { ColumnSortButton } from './ColumnSortButton';
 import { nextColumnSort, sortRowsByColumn, type ColumnSort } from '../utils/resultSorting';
 import { useCellSelection } from '../hooks/useCellSelection';
@@ -398,7 +399,6 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                 <tr key={startIndex + rowIndex} className="hover:bg-surface-hover">
                   {row.map((cell, cellIndex) => {
                     const isEditing = editingCell?.rowIndex === rowIndex && editingCell?.columnIndex === cellIndex;
-                    const displayValue = formatResultValueOneLine(cell);
                     return (
                       <td
                         key={cellIndex}
@@ -423,14 +423,10 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                             className="w-full rounded-control border border-accent-line px-1 py-0.5 text-sm"
                             autoFocus
                           />
-                        ) : cell === null ? (
-                          <span className="italic text-fg-subtle">NULL</span>
                         ) : (
                           // 每格再挂一个类型标签是重复——表头已经写了 BIGINT · NOT NULL，
                           // 而且标签会占掉列宽，让本来放得下的值反而被截断
-                          <span className="block truncate" title={formatResultValue(cell)}>
-                            {displayValue}
-                          </span>
+                          <GridCellValue value={cell} />
                         )}
                       </td>
                     );

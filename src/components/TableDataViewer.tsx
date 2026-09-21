@@ -2,12 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useLanguageStore } from '../stores/languageStore';
 import { runReadQuery, useQueryStore } from '../stores/queryStore';
-import {
-  formatResultValue,
-  formatResultValueOneLine,
-  isTaggedResultValue,
-  unwrapResultValue
-} from '../utils/resultValues';
+import { isTaggedResultValue, unwrapResultValue } from '../utils/resultValues';
 import { describeError } from '../utils/describeError';
 import type { SerializedResultValue } from '../contracts/resultSet';
 import {
@@ -64,6 +59,7 @@ import { SchemaObjectSections, type SchemaObjects } from './SchemaObjectSections
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { requireDatabase } from '../utils/requireDatabase';
 import { describeTableEditability } from '../utils/tableEditability';
+import { GridCellValue } from './GridCellValue';
 
 // 编辑模式类型
 type EditMode = 'view' | 'edit' | 'add';
@@ -901,8 +897,6 @@ export default function TableDataViewer({
       // 非编辑状态或主键列，显示只读
       // 自建执行器把 BigInt / Decimal / 二进制等包成 tagged value 以保住精度，
       // 显示时统一交给 formatResultValue 还原成人能读的形式
-      const isNull = currentValue === null || currentValue === undefined;
-
       return (
         <td
           onClick={(event) => onSelect?.(event.shiftKey)}
@@ -913,17 +907,9 @@ export default function TableDataViewer({
             focused && 'outline outline-1 -outline-offset-1 outline-accent'
           )}
         >
-          {isNull
-            ? <span className="italic text-fg-subtle">NULL</span>
-            : (
-              // 单行形态：JSON 展开成多行会把这一行撑高，整张表行高参差不齐
-              <span
-                className="block truncate"
-                title={formatResultValue(currentValue as SerializedResultValue)}
-              >
-                {formatResultValueOneLine(currentValue as SerializedResultValue)}
-              </span>
-            )}
+          {/* 单行形态、NULL / 空串 / 空白 / 二进制的区分都在 GridCellValue 里，
+              与 SQL 结果表共用同一套约定 */}
+          <GridCellValue value={(currentValue ?? null) as SerializedResultValue} />
         </td>
       );
     }

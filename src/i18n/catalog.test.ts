@@ -105,7 +105,8 @@ describe('单复数', () => {
 
   it('英文里每个带 {count} 的复数文案都有单数形式', () => {
     // 漏掉一个不会报错，只会在界面上显示「1 rows」
-    const PLURAL_NOUN = /\{count\}[^{]*\b(rows|entries|statements|tabs|items|matches|days|files|columns|tables)\b/;
+    const PLURAL_NOUN =
+      /\{count\}[^{]*\b(rows|entries|statements|tabs|items|matches|days|files|columns|tables|bytes|characters)\b/;
     // 调用点用 `statementCount > 1` 守着，count 永远不会是 1。补一个单数形式
     // 只会多出一条永远取不到的文案，而下一个人读到它会以为它在用
     const NEVER_ONE = ['risk.batchNote'];

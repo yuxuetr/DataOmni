@@ -226,6 +226,14 @@ export const en: Translations = {
   'table.notNull': 'NOT NULL',
   'table.loading': 'Loading…',
   'table.empty': 'No data',
+
+  // Values that all look like an empty cell but mean different things
+  'cell.null': 'NULL (no value)',
+  'cell.empty': 'Empty string, length 0',
+  'cell.blank': 'Whitespace only, {count} characters',
+  'cell.blank.one': 'Whitespace only, {count} character',
+  'cell.binary': 'Binary, {count} bytes',
+  'cell.binary.one': 'Binary, {count} byte',
   'table.readOnly.badge': 'Read-only',
   'table.readOnly.noUniqueKey': 'This table has no primary key, so the grid cannot edit it: no WHERE clause can pin down a single row. Paging also falls back to the database default order, so page boundaries can shift as rows change. Edit it from the SQL editor with an explicit condition.',
   'table.readOnly.compositeKey': 'This table is keyed on {columns} together. Grid editing does not handle composite keys yet — a condition built from one column would match several rows. Edit it from the SQL editor with the full condition.',

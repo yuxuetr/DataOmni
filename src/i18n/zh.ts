@@ -244,6 +244,14 @@ export const zh = {
   'table.notNull': '非空',
   'table.loading': '加载中...',
   'table.empty': '暂无数据',
+
+  // 单元格里「看不见的值」——三者在网格里长得一样，含义却完全不同
+  'cell.null': '空值 NULL',
+  'cell.empty': '空字符串，长度为 0',
+  'cell.blank': '只有空白字符，共 {count} 个',
+  'cell.blank.one': '只有空白字符，共 {count} 个',
+  'cell.binary': '二进制，{count} 字节',
+  'cell.binary.one': '二进制，{count} 字节',
   'table.readOnly.badge': '只读',
   'table.readOnly.noUniqueKey': '这张表没有主键，网格里不能改数据：UPDATE 和 DELETE 的条件无法锁定到唯一一行。分页也只能用数据库的回退顺序，数据变更时页边界可能移动。要改请在 SQL 编辑器里写明条件。',
   'table.readOnly.compositeKey': '这张表的主键是 {columns} 这几列的组合，网格编辑暂不支持复合主键——按单列拼出的条件会命中多行。要改请在 SQL 编辑器里写明完整条件。',
