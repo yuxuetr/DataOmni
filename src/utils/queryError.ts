@@ -3,6 +3,13 @@ import { describeError } from './describeError';
 
 export const QUERY_TIMEOUT_CODE = 'QUERY_TIMEOUT';
 export const QUERY_CANCELLED_CODE = 'QUERY_CANCELLED';
+/**
+ * 一条语句没有影响到预期的行数。
+ *
+ * 不是数据库报的错——是 `execute_write_batch` 在事务里自己发现并回滚的，
+ * 所以前端要按码识别它并换一句说得清原因的话（那一行被别人改了或删了）。
+ */
+export const ROW_COUNT_MISMATCH_CODE = 'ROW_COUNT_MISMATCH';
 
 /**
  * 把 `invoke` reject 出来的东西变成结构化错误。

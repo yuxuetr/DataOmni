@@ -50,8 +50,8 @@ export function cellInputFromValue(value: BoundValue): CellInput {
  * 这次编辑相对原值有没有变化。
  *
  * 没变就不该进 SET：MySQL 对「新值等于旧值」的 UPDATE 返回 0 affected rows，
- * 而 0 正是「一行都没匹配上」的信号，`assertSingleRowAffected` 会把一次
- * 什么都没做的保存报成失败。
+ * 而 0 正是「一行都没匹配上」的信号——提交时那一条会被当成并发冲突，
+ * 整批跟着回滚，而用户其实什么也没改。
  *
  * `default` 与 `expression` 一律算变化——它们的结果由数据库决定，这里算不出来。
  */
@@ -92,4 +92,33 @@ export function missingRequiredColumns(
       return !input || input.kind === 'unset' || input.kind === 'default';
     })
     .map((column) => column.name);
+}
+
+/**
+ * 差异预览里怎么写一个待写入的值。
+ *
+ * 空字符串写成 `''` 而不是一片空白：差异预览的整个用处就是在按下提交之前
+ * 看清楚要写什么，而「空白」在这里同时可能是空串、NULL 和没填。
+ */
+export function describeCellInput(input: CellInput): string {
+  switch (input.kind) {
+    case 'null':
+      return 'NULL';
+    case 'default':
+      return 'DEFAULT';
+    case 'expression':
+      return input.sql;
+    case 'unset':
+      return '—';
+    default:
+      return input.value === '' ? "''" : String(input.value);
+  }
+}
+
+/** 同上，用于原值 */
+export function describeBoundValue(value: BoundValue): string {
+  if (value === null) {
+    return 'NULL';
+  }
+  return value === '' ? "''" : String(value);
 }

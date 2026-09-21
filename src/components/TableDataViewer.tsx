@@ -25,11 +25,11 @@ import {
   Download,
   Lock,
   Filter,
-  Columns3
+  Columns3,
+  Undo2
 } from 'lucide-react';
 import clsx from 'clsx';
 import type { ConnectionProfile, TableSchema } from '../contracts';
-import { assertSingleRowAffected } from '../utils/executeResult';
 import { quoteQualifiedSqlIdentifier } from '../utils/sqlIdentifiers';
 import {
   createSortedOrderClause,
@@ -56,21 +56,27 @@ import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { requireDatabase } from '../utils/requireDatabase';
 import { tableColumnsQuery, toColumnInfo } from '../utils/tableMetadata';
 import { describeRowIdentity, type IndexMetadata } from '../utils/rowIdentity';
-import {
-  buildDeleteStatement,
-  buildInsertStatement,
-  buildUpdateStatement,
-  type RowKey,
-  type TableTarget
-} from '../utils/rowStatements';
+import type { RowKey, TableTarget } from '../utils/rowStatements';
 import {
   cellInputFromValue,
-  isUnchangedInput,
   missingRequiredColumns,
   type BoundValue,
   type CellInput
 } from '../utils/cellInput';
 import { CellInputEditor } from './CellInputEditor';
+import { PendingChangesBar } from './PendingChangesBar';
+import { ChangeDiffDialog, type CommitFailure } from './ChangeDiffDialog';
+import {
+  pendingForRow,
+  pendingStatements,
+  revertChange,
+  rowIdOf,
+  stageDelete,
+  stageInsert,
+  stageUpdate,
+  type PendingChange
+} from '../utils/pendingChanges';
+import { ROW_COUNT_MISMATCH_CODE, toQueryExecutionError } from '../utils/queryError';
 import { GridCellValue } from './GridCellValue';
 import { TableFilterBar } from './TableFilterBar';
 import { GridColumnMenu } from './GridColumnMenu';
@@ -168,6 +174,11 @@ export default function TableDataViewer({
   const [editState, setEditState] = useState<EditState>({ mode: 'view' });
   const [editingLoading, setEditingLoading] = useState(false);
   const [editingError, setEditingError] = useState<string | null>(null);
+  /** 待提交的变更。改动不再一改一提交，全部先落在这里 */
+  const [changes, setChanges] = useState<PendingChange[]>([]);
+  const [showChanges, setShowChanges] = useState(false);
+  const [commitFailure, setCommitFailure] = useState<CommitFailure | null>(null);
+  const [commitNotice, setCommitNotice] = useState<string | null>(null);
   
   const { database, connectionId } = useQueryStore();
   const currentTableKey = `${connection.id}:${schema ?? ''}:${tableName}`;
@@ -435,6 +446,11 @@ export default function TableDataViewer({
     // 列偏好同理：隐藏集里存的是列名，换表后指的是另一张表的列
     setHiddenColumns(new Set());
     setFrozenCount(0);
+    // 待提交的变更也清掉：它们的键指着另一张表的行，发出去会改错东西。
+    // 这里没法征求同意（换表已经发生了），所以关标签页那一步会先问一次
+    setChanges([]);
+    setCommitFailure(null);
+    setCommitNotice(null);
   }, [currentTableKey]);
 
   // 计算总页数
@@ -603,82 +619,6 @@ export default function TableDataViewer({
   };
 
   // 保存编辑
-  const saveEdit = async () => {
-    if (!editState.editedData) return;
-    
-    setEditingLoading(true);
-    setEditingError(null);
-    
-    try {
-      if (editState.mode === 'add') {
-        await insertRow(editState.editedData);
-        // 新增改变了表的基数，就地编辑不会，因此只在这里失效计数缓存
-        rowCountCacheRef.current = null;
-      } else if (editState.mode === 'edit' && editState.rowIndex !== undefined) {
-        await updateRow(editState.rowIndex, editState.editedData);
-      }
-      
-      setEditState({ mode: 'view' });
-      // 重新加载当前页数据
-      await loadTableData(currentPage);
-    } catch (error) {
-      console.error('保存失败:', error);
-      setEditingError(describeError(error, t('table.saveFailed')));
-    } finally {
-      setEditingLoading(false);
-    }
-  };
-
-  // 删除行
-  const deleteRow = async (rowIndex: number) => {
-    if (!confirm(t('table.deleteRowConfirm'))) {
-      return;
-    }
-    
-    setEditingLoading(true);
-    setEditingError(null);
-    
-    try {
-      await removeRow(rowIndex);
-      rowCountCacheRef.current = null;
-      // 重新加载当前页数据
-      await loadTableData(currentPage);
-    } catch (error) {
-      console.error('删除失败:', error);
-      setEditingError(describeError(error, t('table.deleteFailed')));
-    } finally {
-      setEditingLoading(false);
-    }
-  };
-
-  // 更新编辑数据
-  const updateEditData = (field: string, value: CellInput) => {
-    if (editState.editedData) {
-      setEditState({
-        ...editState,
-        editedData: { ...editState.editedData, [field]: value }
-      });
-    }
-  };
-
-  // 数据库操作函数
-  
-  // 插入新行
-  const insertRow = async (rowData: Record<string, CellInput>) => {
-    if (!database || !tableSchema) return;
-
-    const missing = missingRequiredColumns(rowData, tableSchema.columns);
-    if (missing.length > 0) {
-      throw new Error(t('cellInput.requiredMissing', {
-        columns: missing.join(', '),
-        count: missing.length
-      }));
-    }
-
-    const statement = buildInsertStatement(writeTarget(), rowData);
-    await database.execute(statement.sql, statement.params);
-  };
-
   /**
    * 写入目标：表名、方言和全表列元数据。
    *
@@ -709,42 +649,128 @@ export default function TableDataViewer({
     };
   };
 
-  // 更新行
-  const updateRow = async (_rowIndex: number, rowData: Record<string, CellInput>) => {
-    if (!database || !tableSchema || !editState.originalData) return;
-
-    const key = rowKeyFrom(editState.originalData);
-    const keySet = new Set(key.columns);
-
-    const assignments: Record<string, CellInput> = {};
-    for (const column of Object.keys(rowData)) {
-      // 键列不进 SET：改键等于换一行的身份，那是删一行加一行，不是更新
-      if (keySet.has(column)) {
-        continue;
-      }
-      // 没变的列不进 SET：MySQL 对「新值等于旧值」的 UPDATE 返回 0 affected rows，
-      // 而 0 正是「一行都没匹配上」的信号
-      if (!isUnchangedInput(rowData[column], editState.originalData[column] ?? null)) {
-        assignments[column] = rowData[column];
-      }
-    }
-
-    if (Object.keys(assignments).length === 0) {
+  /**
+   * 一次提交整批，在**一个事务**里。
+   *
+   * 失败时数据库里什么都没变，`changes` 原样留着——用户改一处再提交一次就行，
+   * 而不是去猜前面几条到底落库了没有。
+   */
+  const commitChanges = async () => {
+    if (changes.length === 0 || !rowIdentity.identity) {
       return;
     }
+    setEditingLoading(true);
+    setEditingError(null);
+    setCommitFailure(null);
 
-    const statement = buildUpdateStatement(writeTarget(), key, assignments);
-    const updateResult = await database.execute(statement.sql, statement.params);
-    assertSingleRowAffected(updateResult, t('table.operation.update'));
+    try {
+      const statements = pendingStatements(changes, writeTarget());
+      await invoke<number[]>('execute_write_batch', {
+        connectionId: connection.id,
+        statements
+      });
+      const committed = changes.length;
+      setChanges([]);
+      setShowChanges(false);
+      setEditingError(null);
+      // 新增与删除改变了表的基数，就地编辑不会——一律失效，简单且不会算错
+      rowCountCacheRef.current = null;
+      // 重新读：自增键、默认值和表达式的结果只有数据库算得出来
+      await loadTableData(currentPage);
+      setCommitNotice(t('changes.committed', { count: committed }));
+    } catch (error) {
+      const failure = toQueryExecutionError(error);
+      const index = typeof (error as { statement_index?: unknown })?.statement_index === 'number'
+        ? (error as { statement_index: number }).statement_index
+        : 0;
+      setCommitFailure({ index, error: failure });
+      setEditingError(
+        failure.code === ROW_COUNT_MISMATCH_CODE
+          ? t('changes.conflict', { index: index + 1 })
+          : failure.message
+      );
+      // 失败时不关预览：出错的那一条就标在里面
+      setShowChanges(true);
+    } finally {
+      setEditingLoading(false);
+    }
   };
 
-  // 删除行
-  const removeRow = async (rowIndex: number) => {
-    if (!database || !tableSchema) return;
+  // 更新编辑数据
+  const updateEditData = (field: string, value: CellInput) => {
+    setCommitNotice(null);
+    if (editState.editedData) {
+      setEditState({
+        ...editState,
+        editedData: { ...editState.editedData, [field]: value }
+      });
+    }
+  };
 
-    const statement = buildDeleteStatement(writeTarget(), rowKeyFrom(tableData[rowIndex] ?? {}));
-    const deleteResult = await database.execute(statement.sql, statement.params);
-    assertSingleRowAffected(deleteResult, t('table.operation.delete'));
+  /** 这一行上有没有排队中的改动 */
+  const pendingFor = (row: Record<string, unknown>) => {
+    if (!rowIdentity.identity) {
+      return undefined;
+    }
+    return pendingForRow(changes, rowIdOf(rowKeyFrom(row)));
+  };
+
+  const revertAllChanges = () => {
+    setChanges([]);
+    setCommitFailure(null);
+    setEditingError(null);
+    setShowChanges(false);
+  };
+
+  /** 保存 = 把这次编辑放进待提交队列，不发语句 */
+  const saveEdit = () => {
+    if (!editState.editedData) return;
+    setEditingError(null);
+
+    try {
+      if (editState.mode === 'add') {
+        const missing = missingRequiredColumns(editState.editedData, tableSchema?.columns ?? []);
+        if (missing.length > 0) {
+          setEditingError(t('cellInput.requiredMissing', {
+            columns: missing.join(', '),
+            count: missing.length
+          }));
+          return;
+        }
+        const values = editState.editedData;
+        setChanges((current) => stageInsert(current, values));
+      } else if (editState.mode === 'edit' && editState.originalData) {
+        const original = editState.originalData;
+        const key = rowKeyFrom(original);
+        const keySet = new Set(key.columns);
+        // 键列不进 SET：改键等于换一行的身份，那是删一行加一行，不是更新
+        const assignments = Object.fromEntries(
+          Object.entries(editState.editedData).filter(([column]) => !keySet.has(column))
+        );
+        setChanges((current) => stageUpdate(current, key, original, assignments));
+      }
+      setEditState({ mode: 'view' });
+    } catch (error) {
+      setEditingError(describeError(error, t('table.saveFailed')));
+    }
+  };
+
+  /** 删除同样只是排队。确认对话框因此不在这里——此刻还什么都没发生 */
+  const deleteRow = (rowIndex: number) => {
+    const row = tableData[rowIndex];
+    if (!row) return;
+    setEditingError(null);
+    const original = Object.fromEntries(
+      Object.entries(row).map(([column, value]) => [
+        column,
+        unwrapResultValue(value as SerializedResultValue)
+      ])
+    );
+    try {
+      setChanges((current) => stageDelete(current, rowKeyFrom(original), original));
+    } catch (error) {
+      setEditingError(describeError(error, t('table.deleteFailed')));
+    }
   };
 
   // 可编辑单元格组件
@@ -875,7 +901,14 @@ export default function TableDataViewer({
             
             {onClose && (
               <button
-                onClick={onClose}
+                onClick={() => {
+                  // 待提交的变更只活在这个组件里，关掉就没了
+                  if (changes.length > 0
+                    && !confirm(t('changes.discardConfirm', { count: changes.length }))) {
+                    return;
+                  }
+                  onClose();
+                }}
                 className="px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors"
               >
                 {t('table.close')}
@@ -1149,6 +1182,21 @@ export default function TableDataViewer({
               </div>
             )}
 
+            <PendingChangesBar
+              count={changes.length}
+              committing={editingLoading}
+              error={editingError}
+              onPreview={() => setShowChanges(true)}
+              onRevertAll={revertAllChanges}
+              onCommit={commitChanges}
+            />
+
+            {commitNotice && changes.length === 0 && (
+              <div className="border-b border-success-line bg-success-soft px-4 py-2 text-xs text-success">
+                {commitNotice}
+              </div>
+            )}
+
             {/* 不能改就说清为什么。把按钮藏起来却不解释，用户只会以为界面坏了。
                 `metadata-pending` 不进这里：它在同一次加载里就会有结论，
                 先闪一条警告再收回去，比什么都不说更让人不安 */}
@@ -1306,8 +1354,19 @@ export default function TableDataViewer({
                         </thead>
                         
                         <tbody className="bg-surface divide-y divide-line">
-                          {tableData.map((row, rowIndex) => (
-                            <tr key={rowIndex} className="hover:bg-surface-hover">
+                          {tableData.map((row, rowIndex) => {
+                            const pending = pendingFor(row);
+                            return (
+                            <tr
+                              key={rowIndex}
+                              className={clsx(
+                                'hover:bg-surface-hover',
+                                // 排了队的行要看得见：否则「待提交 3 项」和网格上
+                                // 这几行毫无关系，用户只能靠预览去对
+                                pending?.kind === 'delete' && 'bg-danger-soft line-through opacity-70',
+                                pending?.kind === 'update' && 'bg-accent-soft'
+                              )}
+                            >
                               {visibleIndexes.map((colIndex, visiblePosition) => {
                                 const column = tableSchema?.columns[colIndex];
                                 if (!column) {
@@ -1348,7 +1407,17 @@ export default function TableDataViewer({
                               {/* 操作列 */}
                               <td className="border-l border-line px-2 py-1 text-sm">
                                 {editState.mode === 'view' ? (
-                                  editable ? (
+                                  pending ? (
+                                    // 已经排了队的行只给一个撤销：再编辑一次要么
+                                    // 覆盖刚才那次，要么和待删除打架，两种都不好解释
+                                    <button
+                                      onClick={() => setChanges((current) => revertChange(current, pending.id))}
+                                      className="flex items-center gap-1 rounded-control border border-line-strong px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
+                                    >
+                                      <Undo2 size={11} />
+                                      {t('changes.revert')}
+                                    </button>
+                                  ) : editable ? (
                                   <div className="flex items-center space-x-1">
                                     <button
                                       onClick={() => startEditRow(rowIndex)}
@@ -1396,7 +1465,8 @@ export default function TableDataViewer({
                                 ) : null}
                               </td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -1463,6 +1533,19 @@ export default function TableDataViewer({
           onCopyRow={(row) => cells.copyRow(row)}
           onCopyColumn={(column) => cells.copyColumn(column, true)}
           onClose={() => setContextTarget(null)}
+        />
+      )}
+
+      {showChanges && (
+        <ChangeDiffDialog
+          changes={changes}
+          target={writeTarget()}
+          committing={editingLoading}
+          failure={commitFailure}
+          onRevert={(id) => setChanges((current) => revertChange(current, id))}
+          onRevertAll={revertAllChanges}
+          onCommit={commitChanges}
+          onClose={() => setShowChanges(false)}
         />
       )}
 

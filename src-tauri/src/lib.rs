@@ -105,6 +105,7 @@ pub fn run() {
       get_database_metadata_query,
       get_table_quick_view_query,
       execute_query,
+      execute_write_batch,
       cancel_query,
       release_database_session,
       validate_query,

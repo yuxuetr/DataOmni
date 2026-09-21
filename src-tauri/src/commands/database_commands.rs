@@ -1,7 +1,7 @@
 use crate::commands::connection_commands::ConnectionServiceState;
 use crate::services::{
-  QueryExecutionSummary, QueryResultBatch, QuerySessionState, StreamingQueryOptions,
-  DEFAULT_QUERY_BATCH_SIZE,
+  write_batch, QueryExecutionSummary, QueryResultBatch, QuerySessionState, StreamingQueryOptions,
+  WriteBatchError, WriteStatement, DEFAULT_QUERY_BATCH_SIZE,
 };
 // use crate::services::{ConnectionService, DatabaseService};
 use serde::Deserialize;
@@ -115,6 +115,38 @@ pub async fn execute_query(
   };
   cancellation_state.finish(&request.execution_id).await;
   result
+}
+
+/// 一次提交，要么全成要么全不成。
+///
+/// 不走 `execute_query`：那条命令是流式读，按一条语句设计，而且是自动提交的。
+/// 网格里的一批变更必须共用一个事务，否则中途失败会把数据停在一个用户没打算
+/// 要的中间状态。
+#[tauri::command]
+pub async fn execute_write_batch(
+  connection_id: String,
+  statements: Vec<WriteStatement>,
+  connection_service_state: State<'_, ConnectionServiceState>,
+  database_instances: State<'_, DbInstances>,
+) -> Result<Vec<u64>, WriteBatchError> {
+  let connection_string = {
+    let connection_service_guard = connection_service_state
+      .lock()
+      .map_err(|e| batch_error(format!("获取连接服务状态失败: {e}")))?;
+    let service =
+      connection_service_guard.as_ref().ok_or_else(|| batch_error("连接服务未初始化"))?;
+    service.resolve_connection_string(&connection_id).map_err(batch_error)?
+  };
+
+  let instances = database_instances.0.read().await;
+  let pool = instances.get(&connection_string).ok_or_else(|| batch_error("数据库会话未连接"))?;
+  write_batch::execute_write_batch(pool, &statements).await
+}
+
+/// 还没轮到任何一条语句就失败了，序号记在第 0 条上——界面会把整批标成失败，
+/// 而不是指着某一条说它有问题
+fn batch_error(message: impl Into<String>) -> WriteBatchError {
+  WriteBatchError { statement_index: 0, error: QueryError::message(message) }
 }
 
 #[tauri::command]

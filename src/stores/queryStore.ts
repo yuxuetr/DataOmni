@@ -25,7 +25,6 @@ import type {
   SqlStatement
 } from '../contracts/query';
 import type { SerializedResultValue } from '../contracts/resultSet';
-import { assertSingleRowAffected } from '../utils/executeResult';
 import {
   clearSqlStatementResult,
   completeSqlStatement,
@@ -34,15 +33,7 @@ import {
 } from '../utils/queryStatements';
 import { describeResultEditability, parseSingleTableSelect } from '../utils/resultEditability';
 import { loadTableMetadata } from '../utils/tableMetadata';
-import {
-  buildDeleteStatement,
-  buildInsertStatement,
-  buildUpdateStatement,
-  type RowKey,
-  type TableTarget
-} from '../utils/rowStatements';
-import type { CellInput } from '../utils/cellInput';
-import { unwrapResultValue } from '../utils/resultValues';
+import type { WriteStatementPayload } from '../utils/pendingChanges';
 import { executeSequentially } from '../utils/queryExecutionPolicy';
 import { translateNow } from './languageStore';
 import { changesSchema } from '../utils/schemaChanges';
@@ -126,9 +117,10 @@ interface QueryActions {
   setError: (error: string | null) => void;
 
   // 数据操作
-  updateRowData: (statementId: string, rowIndex: number, columnName: string, newValue: CellInput) => Promise<void>;
-  deleteRowData: (statementId: string, rowIndex: number) => Promise<void>;
-  insertRowData: (statementId: string, newRowData: Record<string, CellInput>) => Promise<void>;
+  commitRowChanges: (
+    statementId: string,
+    statements: readonly WriteStatementPayload[]
+  ) => Promise<void>;
 }
 
 // 完整的Store类型
@@ -212,83 +204,6 @@ function recordHistory(execution: QueryExecution, rowsAffected: number | null): 
   useHistoryStore
     .getState()
     .record(execution, { connectionName: connection?.name ?? profileId, rowsAffected });
-}
-
-interface ResultWriteContext {
-  database: Database;
-  result: QueryResult;
-  target: TableTarget;
-  key: RowKey;
-  rowIndex: number;
-}
-
-/**
- * 三个行操作共有的前置检查：找到语句、确认这份结果可改、按键列取出这一行的键值。
- *
- * 键值要从 tagged 包装里拆出来。此前这里直接把 `result.rows[i][pkIndex]` 绑进
- * WHERE，而 BigInt / Decimal / 时间列拿到的是 `{type, value}` 对象——绑进去是
- * 一段 JSON，条件永远匹配不上，报出来的是「没有影响任何行」。
- */
-async function writeToResultRow(
-  get: () => QueryStore,
-  set: (partial: Partial<QueryState>) => void,
-  statementId: string,
-  write: (context: ResultWriteContext) => Promise<QueryResult>,
-  rowIndex: number,
-  failureKey: 'error.updateFailed' | 'error.deleteFailed'
-): Promise<void> {
-  const documentId = get().activeDocumentId;
-  if (!documentId) {
-    throw new Error(translateNow('error.noActiveSqlTab'));
-  }
-  const { database, connectionString } = get();
-  if (!database) {
-    set({ error: translateNow('error.notConnected') });
-    return;
-  }
-
-  const { statements } = readSqlDocument(get(), documentId);
-  const statement = statements.find(s => s.id === statementId);
-  const result = statement?.result;
-  if (!result) {
-    return;
-  }
-
-  const editability = result.editability;
-  if (!editability?.editable) {
-    set({ error: translateNow('error.cannotUpdateNoKey') });
-    return;
-  }
-
-  const row = result.rows[rowIndex];
-  if (!row) {
-    return;
-  }
-
-  try {
-    const target: TableTarget = {
-      schema: editability.schema,
-      table: editability.table,
-      columns: result.tableColumns ?? [],
-      dialect: getSqlDialect(connectionString)
-    };
-    const key: RowKey = {
-      columns: editability.keyColumns,
-      values: Object.fromEntries(editability.keyColumns.map((name) => {
-        const index = result.columns.indexOf(name);
-        return [name, index === -1 ? null : unwrapResultValue(row[index])];
-      }))
-    };
-
-    const updated = await write({ database, result, target, key, rowIndex });
-    useQueryStore.setState((state) => writeSqlDocument(state, documentId, (document) => ({
-      statements: document.statements.map(s =>
-        s.id === statementId ? { ...s, result: updated } : s
-      )
-    })));
-  } catch (error) {
-    set({ error: describeError(error, translateNow(failureKey)) });
-  }
 }
 
 export const selectActiveSqlDocument = (state: QueryState): SqlDocument =>
@@ -961,79 +876,19 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
   // 数据操作方法
 
-  updateRowData: async (statementId: string, rowIndex: number, columnName: string, newValue: CellInput) => {
-    await writeToResultRow(get, set, statementId, async (context) => {
-      const { result, target, key, rowIndex: row } = context;
-      const statement = buildUpdateStatement(target, key, { [columnName]: newValue });
-      const updateResult = await context.database.execute(statement.sql, statement.params);
-      assertSingleRowAffected(updateResult, translateNow('table.operation.update'));
-
-      const columnIndex = result.columns.indexOf(columnName);
-      // `default` 与 `expression` 的结果由数据库决定，本地算不出来；
-      // 显示成 NULL 会是一句假话，所以重跑这条查询把真值读回来
-      if (columnIndex === -1 || newValue.kind === 'default' || newValue.kind === 'expression') {
-        void get().executeStatement(statementId);
-        return result;
-      }
-      const rows = [...result.rows];
-      rows[row] = [...rows[row]];
-      rows[row][columnIndex] = newValue.kind === 'value' ? newValue.value : null;
-      return { ...result, rows };
-    }, rowIndex, 'error.updateFailed');
-  },
-
-  deleteRowData: async (statementId: string, rowIndex: number) => {
-    await writeToResultRow(get, set, statementId, async (context) => {
-      const { result, target, key, rowIndex: row } = context;
-      const statement = buildDeleteStatement(target, key);
-      const deleteResult = await context.database.execute(statement.sql, statement.params);
-      assertSingleRowAffected(deleteResult, translateNow('table.operation.delete'));
-
-      return {
-        ...result,
-        rows: result.rows.filter((_, index) => index !== row),
-        affected_rows: result.affected_rows - 1
-      };
-    }, rowIndex, 'error.deleteFailed');
-  },
-
-  insertRowData: async (statementId: string, newRowData: Record<string, CellInput>) => {
-    const documentId = get().activeDocumentId;
-    if (!documentId) {
-      throw new Error(translateNow('error.noActiveSqlTab'));
+  /**
+   * 一批变更，一个事务。
+   *
+   * 三个「改一行就提交一次」的动作合并成这一个：中途失败时数据库里什么都没变，
+   * 调用方手上那批待提交的改动原样留着。成功之后重跑原来那条查询——自增键、
+   * 默认值和表达式的结果只有数据库算得出来。
+   */
+  commitRowChanges: async (statementId: string, statements: readonly WriteStatementPayload[]) => {
+    const { connectionId } = get();
+    if (!connectionId) {
+      throw new Error(translateNow('error.notConnected'));
     }
-    const { database, connectionString } = get();
-    if (!database) {
-      set({ error: translateNow('error.notConnected') });
-      return;
-    }
-
-    const statement = readSqlDocument(get(), documentId).statements.find(s => s.id === statementId);
-    const editability = statement?.result?.editability;
-    if (!editability?.editable) {
-      set({ error: translateNow('error.cannotInsertNoTable') });
-      return;
-    }
-
-    try {
-      // 值原样交给数据库按目标列的类型解析。此前这里按**列名**猜类型
-      // （名字里带 time 就当时间），并把看起来像数字的字符串过一遍 Number()——
-      // 一个叫 `timeout_ms` 的整数列会被当成时间戳，而大整数会丢精度
-      const statement = buildInsertStatement({
-        schema: editability.schema,
-        table: editability.table,
-        columns: get().documents[documentId]?.statements
-          .find(s => s.id === statementId)?.result?.tableColumns ?? [],
-        dialect: getSqlDialect(connectionString)
-      }, newRowData);
-      await database.execute(statement.sql, statement.params);
-
-      // 重新跑一遍原来那条查询，而不是 `SELECT * FROM 表`：后者会把结果集换成
-      // 整张表（没有 WHERE、没有 LIMIT），在大表上直接把界面拖死，而且用户
-      // 原来筛的条件也没了
-      await get().executeStatement(statementId);
-    } catch (error) {
-      set({ error: describeError(error, translateNow('error.insertFailed')) });
-    }
+    await invoke<number[]>('execute_write_batch', { connectionId, statements });
+    await get().executeStatement(statementId);
   },
 })); 

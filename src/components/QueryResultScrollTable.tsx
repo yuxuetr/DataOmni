@@ -8,7 +8,8 @@ import {
   Trash2,
   Edit,
   Download,
-  Lock
+  Lock,
+  Undo2
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { QueryResult } from '../contracts/query';
@@ -16,6 +17,20 @@ import { selectSqlDialect, useQueryStore } from '../stores/queryStore';
 import { unwrapResultValue } from '../utils/resultValues';
 import type { SerializedResultValue } from '../contracts/resultSet';
 import { cellInputFromValue, type CellInput } from '../utils/cellInput';
+import {
+  pendingForRow,
+  pendingStatements,
+  revertChange,
+  rowIdOf,
+  stageDelete,
+  stageInsert,
+  stageUpdate,
+  type PendingChange
+} from '../utils/pendingChanges';
+import type { TableTarget } from '../utils/rowStatements';
+import { ROW_COUNT_MISMATCH_CODE, toQueryExecutionError } from '../utils/queryError';
+import { PendingChangesBar } from './PendingChangesBar';
+import { ChangeDiffDialog, type CommitFailure } from './ChangeDiffDialog';
 import { CellInputEditor } from './CellInputEditor';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
@@ -40,7 +55,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   formatExecutionTime 
 }) => {
   const t = useLanguageStore((state) => state.t);
-  const { updateRowData, deleteRowData, insertRowData } = useQueryStore();
+  const commitRowChanges = useQueryStore((state) => state.commitRowChanges);
   const dialect = useQueryStore(selectSqlDialect);
   
   // 分页状态
@@ -59,6 +74,12 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   const [showAddForm, setShowAddForm] = useState(false);
   const [newRowData, setNewRowData] = useState<Record<string, CellInput>>({});
   const [showExport, setShowExport] = useState(false);
+  /** 待提交的变更。这张表和表数据视图共用同一套模型与同一个事务命令 */
+  const [changes, setChanges] = useState<PendingChange[]>([]);
+  const [showChanges, setShowChanges] = useState(false);
+  const [committing, setCommitting] = useState(false);
+  const [commitFailure, setCommitFailure] = useState<CommitFailure | null>(null);
+  const [commitError, setCommitError] = useState<string | null>(null);
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   
@@ -135,21 +156,49 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
     setEditValue({ kind: 'unset' });
   };
   
-  const saveEdit = async () => {
+  /** 这一行的键与原值。键值要从 tagged 包装里拆出来才能进 WHERE */
+  const rowContext = (rowIndex: number) => {
+    if (!editability?.editable) {
+      return null;
+    }
+    const row = sortedRows[rowIndex + startIndex];
+    if (!row) {
+      return null;
+    }
+    const original = Object.fromEntries(
+      result.columns.map((column, index) => [column, unwrapResultValue(row[index])])
+    );
+    return {
+      key: {
+        columns: editability.keyColumns,
+        values: Object.fromEntries(
+          editability.keyColumns.map((column) => [column, original[column] ?? null])
+        )
+      },
+      original
+    };
+  };
+
+  /** 保存 = 排队，不发语句 */
+  const saveEdit = () => {
     if (!editingCell || !canEdit) return;
-    
-    const columnName = result.columns[editingCell.columnIndex];
-    await updateRowData(statementId, editingCell.rowIndex + startIndex, columnName, editValue);
+    const context = rowContext(editingCell.rowIndex);
+    if (context) {
+      const columnName = result.columns[editingCell.columnIndex];
+      setChanges((current) =>
+        stageUpdate(current, context.key, context.original, { [columnName]: editValue }));
+    }
     cancelEditing();
   };
-  
-  const deleteRow = async (rowIndex: number) => {
+
+  const deleteRow = (rowIndex: number) => {
     if (!canEdit) return;
-    
-    if (confirm(t('result.deleteRowConfirm'))) {
-      await deleteRowData(statementId, rowIndex + startIndex);
+    const context = rowContext(rowIndex);
+    if (context) {
+      setChanges((current) => stageDelete(current, context.key, context.original));
     }
   };
+
   
   // 新增行相关函数
   const showAddRowForm = () => {
@@ -172,16 +221,56 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
     setNewRowData({});
   };
   
-  const saveNewRow = async () => {
+  const saveNewRow = () => {
     if (!canEdit) return;
+    setChanges((current) => stageInsert(current, newRowData));
+    cancelAddRow();
+  };
 
+  /** 这一行上有没有排队中的改动 */
+  const pendingFor = (rowIndex: number) => {
+    const context = rowContext(rowIndex);
+    return context ? pendingForRow(changes, rowIdOf(context.key)) : undefined;
+  };
+
+  const revertAllChanges = () => {
+    setChanges([]);
+    setCommitFailure(null);
+    setCommitError(null);
+    setShowChanges(false);
+  };
+
+  const writeTarget = (): TableTarget => ({
+    schema: editability?.editable ? editability.schema : null,
+    table: editability?.editable ? editability.table : '',
+    columns: result.tableColumns ?? [],
+    dialect
+  });
+
+  const commitChanges = async () => {
+    if (changes.length === 0) return;
+    setCommitting(true);
+    setCommitError(null);
+    setCommitFailure(null);
     try {
-      // 值原样交给数据库按目标列的类型解析。此前这里按**列名**猜类型，
-      // 并把看起来像数字的字符串过一遍 Number()
-      await insertRowData(statementId, newRowData);
-      cancelAddRow();
+      await commitRowChanges(statementId, pendingStatements(changes, writeTarget()));
+      setChanges([]);
+      setShowChanges(false);
     } catch (error) {
-      console.error('保存新行失败:', error);
+      const failure = toQueryExecutionError(error);
+      const index = typeof (error as { statement_index?: unknown })?.statement_index === 'number'
+        ? (error as { statement_index: number }).statement_index
+        : 0;
+      setCommitFailure({ index, error: failure });
+      setCommitError(
+        failure.code === ROW_COUNT_MISMATCH_CODE
+          ? t('changes.conflict', { index: index + 1 })
+          : failure.message
+      );
+      // 失败时把预览打开：出错的那一条就标在里面
+      setShowChanges(true);
+    } finally {
+      setCommitting(false);
     }
   };
 
@@ -240,6 +329,28 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
           </button>
         </div>
       </div>
+
+      <PendingChangesBar
+        count={changes.length}
+        committing={committing}
+        error={commitError}
+        onPreview={() => setShowChanges(true)}
+        onRevertAll={revertAllChanges}
+        onCommit={commitChanges}
+      />
+
+      {showChanges && (
+        <ChangeDiffDialog
+          changes={changes}
+          target={writeTarget()}
+          committing={committing}
+          failure={commitFailure}
+          onRevert={(id) => setChanges((current) => revertChange(current, id))}
+          onRevertAll={revertAllChanges}
+          onCommit={commitChanges}
+          onClose={() => setShowChanges(false)}
+        />
+      )}
 
       {/* 导出的是排序后的整份结果，不是当前这一页——用户看到的次序就是文件里的次序 */}
       {showExport && (
@@ -378,8 +489,17 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
               )}
               
               {/* 数据行 */}
-              {currentRows.map((row, rowIndex) => (
-                <tr key={startIndex + rowIndex} className="hover:bg-surface-hover">
+              {currentRows.map((row, rowIndex) => {
+                const pending = pendingFor(rowIndex);
+                return (
+                <tr
+                  key={startIndex + rowIndex}
+                  className={clsx(
+                    'hover:bg-surface-hover',
+                    pending?.kind === 'delete' && 'bg-danger-soft line-through opacity-70',
+                    pending?.kind === 'update' && 'bg-accent-soft'
+                  )}
+                >
                   {row.map((cell, cellIndex) => {
                     const isEditing = editingCell?.rowIndex === rowIndex && editingCell?.columnIndex === cellIndex;
                     return (
@@ -431,16 +551,29 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                   })}
                   {canEdit && (
                     <td className="px-2 py-1">
-                      <button
-                        onClick={() => deleteRow(rowIndex)}
-                        className="p-1 text-danger hover:bg-danger-soft rounded-control"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      {pending ? (
+                        // 排了队的行只给一个撤销：再改一次要么覆盖刚才那次，
+                        // 要么和待删除打架，两种都不好解释
+                        <button
+                          onClick={() => setChanges((current) => revertChange(current, pending.id))}
+                          className="flex items-center gap-1 rounded-control border border-line-strong px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
+                        >
+                          <Undo2 size={11} />
+                          {t('changes.revert')}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => deleteRow(rowIndex)}
+                          className="p-1 text-danger hover:bg-danger-soft rounded-control"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </td>
                   )}
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
