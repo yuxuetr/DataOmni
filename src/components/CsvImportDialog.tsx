@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Loader2, Pause, Play, Upload, X } from 'lucide-react';
+import { Loader2, Upload } from 'lucide-react';
 import { clsx } from 'clsx';
 import { open } from '@tauri-apps/plugin-dialog';
-import { Channel, invoke } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import type { ColumnInfo } from '../contracts/databaseMetadata';
 import {
   autoMapColumns,
@@ -15,7 +15,9 @@ import {
   type ImportIssue
 } from '../utils/csvImport';
 import { describeError } from '../utils/describeError';
+import { formatBytes } from '../utils/formatBytes';
 import { useLanguageStore } from '../stores/languageStore';
+import { useTaskStore } from '../stores/taskStore';
 import type { TranslationKey } from '../i18n/translate';
 import { Checkbox, Field, SegmentedControl } from './FormControls';
 
@@ -25,33 +27,19 @@ interface CsvImportDialogProps {
   table: string;
   columns: readonly ColumnInfo[];
   onClose: () => void;
-  /** 导入真的写进去了行，调用方该重新读一遍数据 */
-  onImported: () => void;
+  /**
+   * 导入已经交给后台任务，这是它的 id。
+   *
+   * 导入不再在这个对话框里跑完——它可能要几分钟，而把一个模态框钉在屏幕上
+   * 几分钟意味着这期间什么都干不了。调用方拿这个 id 盯着任务，结束了再重读数据。
+   */
+  onStarted: (taskId: string) => void;
 }
 
 type Step = 'source' | 'mapping' | 'run';
 type DelimiterChoice = 'auto' | ',' | ';' | '\t' | '|';
 type Strategy = 'single-transaction' | 'per-batch';
 type OnError = 'abort' | 'skip';
-
-interface ImportProgress {
-  rowsRead: number;
-  rowsInserted: number;
-  rowsFailed: number;
-}
-
-interface ImportRowError {
-  line: number;
-  message: string;
-  values: string[];
-}
-
-interface ImportSummary extends ImportProgress {
-  errors: ImportRowError[];
-  errorsTruncated: boolean;
-  rolledBack: boolean;
-  cancelled: boolean;
-}
 
 const DELIMITERS: Array<{ value: DelimiterChoice; labelKey: TranslationKey }> = [
   { value: 'auto', labelKey: 'import.delimiter.auto' },
@@ -75,12 +63,6 @@ const STEPS: Array<{ id: Step; labelKey: TranslationKey }> = [
   { id: 'run', labelKey: 'import.step.run' }
 ];
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 function fileNameOf(path: string): string {
   return path.split(/[/\\]/).pop() ?? path;
 }
@@ -91,7 +73,7 @@ export function CsvImportDialog({
   table,
   columns,
   onClose,
-  onImported
+  onStarted
 }: CsvImportDialogProps) {
   const t = useLanguageStore((state) => state.t);
   const [step, setStep] = useState<Step>('source');
@@ -109,13 +91,7 @@ export function CsvImportDialog({
   const [strategy, setStrategy] = useState<Strategy>('single-transaction');
   const [onError, setOnError] = useState<OnError>('abort');
 
-  const [running, setRunning] = useState(false);
-  const [paused, setPaused] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
-  const [progress, setProgress] = useState<ImportProgress | null>(null);
-  const [summary, setSummary] = useState<ImportSummary | null>(null);
-  const [runError, setRunError] = useState<string | null>(null);
-  const importIdRef = useRef<string | null>(null);
+  const startTask = useTaskStore((state) => state.start);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -124,14 +100,14 @@ export function CsvImportDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !running) {
+      if (event.key === 'Escape') {
         event.preventDefault();
         onClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, running]);
+  }, [onClose]);
 
   const loadPreview = async (target: string, header: boolean, choice: DelimiterChoice) => {
     setPreviewing(true);
@@ -167,7 +143,6 @@ export function CsvImportDialog({
       return;
     }
     setPath(chosen);
-    setSummary(null);
     await loadPreview(chosen, hasHeader, delimiter);
   };
 
@@ -177,74 +152,27 @@ export function CsvImportDialog({
   );
   const blocking = issues.filter((issue) => issue.level === 'error');
 
-  const runImport = async () => {
+  const runImport = () => {
     if (!path || !preview) {
       return;
     }
-    const importId = crypto.randomUUID();
-    importIdRef.current = importId;
-    setRunning(true);
-    setPaused(false);
-    setCancelling(false);
-    setRunError(null);
-    setSummary(null);
-    setProgress({ rowsRead: 0, rowsInserted: 0, rowsFailed: 0 });
-
-    try {
-      const onProgress = new Channel<ImportProgress>((update) => setProgress(update));
-      const result = await invoke<ImportSummary>('import_csv_file', {
-        onProgress,
-        request: {
-          connectionId,
-          importId,
-          path,
-          schema,
-          table,
-          csv: { delimiter: preview.delimiter, hasHeader, nullText },
-          columns: importColumns(mappings, columns),
-          batchSize,
-          strategy,
-          onError
-        }
-      });
-      setSummary(result);
-      if (result.rowsInserted > 0) {
-        onImported();
+    const taskId = startTask({
+      kind: 'import',
+      title: t('task.title.import', { table: schema ? `${schema}.${table}` : table }),
+      payload: {
+        connectionId,
+        schema,
+        table,
+        path,
+        csv: { delimiter: preview.delimiter, hasHeader, nullText },
+        columns: importColumns(mappings, columns),
+        batchSize,
+        strategy,
+        onError
       }
-    } catch (error) {
-      setRunError(describeError(error, t('import.failed')));
-    } finally {
-      importIdRef.current = null;
-      setRunning(false);
-      setPaused(false);
-      setCancelling(false);
-    }
-  };
-
-  const togglePause = async () => {
-    const importId = importIdRef.current;
-    if (!importId) {
-      return;
-    }
-    const next = !paused;
-    // 以后端的回答为准：它才知道这个任务还在不在
-    const applied = await invoke<boolean>('set_import_paused', { importId, paused: next })
-      .catch(() => next);
-    setPaused(applied);
-  };
-
-  const cancelImport = async () => {
-    const importId = importIdRef.current;
-    if (!importId) {
-      return;
-    }
-    setCancelling(true);
-    // 暂停着的任务收不到取消——它正卡在等待里，先放开再取消
-    if (paused) {
-      await invoke('set_import_paused', { importId, paused: false }).catch(() => undefined);
-      setPaused(false);
-    }
-    await invoke<boolean>('cancel_import', { importId }).catch(() => undefined);
+    });
+    onStarted(taskId);
+    onClose();
   };
 
   const canAdvance = step === 'source' ? Boolean(preview) : true;
@@ -255,7 +183,7 @@ export function CsvImportDialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby="csv-import-title"
-      onClick={() => !running && onClose()}
+      onClick={onClose}
     >
       <div
         className="flex max-h-[calc(100vh-4rem)] w-[720px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-panel bg-surface-raised shadow-xl"
@@ -333,22 +261,13 @@ export function CsvImportDialog({
               batchSize={batchSize}
               strategy={strategy}
               onErrorPolicy={onError}
-              running={running}
-              paused={paused}
-              cancelling={cancelling}
-              progress={progress}
-              summary={summary}
-              error={runError}
               onBatchSizeChange={setBatchSize}
               onStrategyChange={setStrategy}
               onErrorPolicyChange={setOnError}
             />
           )}
 
-          {/* 跑起来之后这些提醒已经用不上了：此刻唯一要盯的是进度 */}
-          {step !== 'source' && issues.length > 0 && !summary && !running && (
-            <IssueList issues={issues} />
-          )}
+          {step !== 'source' && issues.length > 0 && <IssueList issues={issues} />}
         </div>
 
         <div className="flex items-center justify-between gap-3 border-t border-line bg-surface-sunken px-5 py-3">
@@ -356,56 +275,32 @@ export function CsvImportDialog({
             {preview && `${fileNameOf(path ?? '')} · ${formatBytes(preview.totalBytes)}`}
           </div>
           <div className="flex shrink-0 gap-2">
-            {running ? (
-              <>
-                <button
-                  type="button"
-                  onClick={togglePause}
-                  className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover"
-                >
-                  {paused ? <Play size={14} /> : <Pause size={14} />}
-                  {paused ? t('import.resume') : t('import.pause')}
-                </button>
-                <button
-                  type="button"
-                  onClick={cancelImport}
-                  disabled={cancelling}
-                  className="flex items-center gap-1 rounded-control border border-danger-line px-3 py-1.5 text-sm text-danger hover:bg-danger-soft disabled:opacity-50"
-                >
-                  <X size={14} />
-                  {t('common.cancel')}
-                </button>
-              </>
+            <button
+              type="button"
+              ref={closeRef}
+              onClick={onClose}
+              className="rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover"
+            >
+              {t('common.close')}
+            </button>
+            {step !== 'run' ? (
+              <button
+                type="button"
+                disabled={!canAdvance}
+                onClick={() => setStep(step === 'source' ? 'mapping' : 'run')}
+                className="rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:opacity-90 disabled:opacity-50"
+              >
+                {t('import.next')}
+              </button>
             ) : (
-              <>
-                <button
-                  type="button"
-                  ref={closeRef}
-                  onClick={onClose}
-                  className="rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover"
-                >
-                  {t('common.close')}
-                </button>
-                {step !== 'run' ? (
-                  <button
-                    type="button"
-                    disabled={!canAdvance}
-                    onClick={() => setStep(step === 'source' ? 'mapping' : 'run')}
-                    className="rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:opacity-90 disabled:opacity-50"
-                  >
-                    {t('import.next')}
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={blocking.length > 0 || !preview}
-                    onClick={runImport}
-                    className="rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:opacity-90 disabled:opacity-50"
-                  >
-                    {t('import.run')}
-                  </button>
-                )}
-              </>
+              <button
+                type="button"
+                disabled={blocking.length > 0 || !preview}
+                onClick={runImport}
+                className="rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:opacity-90 disabled:opacity-50"
+              >
+                {t('import.run')}
+              </button>
             )}
           </div>
         </div>
@@ -675,12 +570,6 @@ function RunStep({
   batchSize,
   strategy,
   onErrorPolicy,
-  running,
-  paused,
-  cancelling,
-  progress,
-  summary,
-  error,
   onBatchSizeChange,
   onStrategyChange,
   onErrorPolicyChange
@@ -688,12 +577,6 @@ function RunStep({
   batchSize: number;
   strategy: Strategy;
   onErrorPolicy: OnError;
-  running: boolean;
-  paused: boolean;
-  cancelling: boolean;
-  progress: ImportProgress | null;
-  summary: ImportSummary | null;
-  error: string | null;
   onBatchSizeChange: (value: number) => void;
   onStrategyChange: (value: Strategy) => void;
   onErrorPolicyChange: (value: OnError) => void;
@@ -708,7 +591,6 @@ function RunStep({
             value={String(batchSize)}
             options={BATCH_SIZES.map((size) => ({ value: String(size), label: String(size) }))}
             onChange={(value) => onBatchSizeChange(Number(value))}
-            disabled={running}
           />
           <p className="text-xs text-fg-subtle">{t('import.batchSizeNote')}</p>
         </div>
@@ -723,7 +605,6 @@ function RunStep({
               { value: 'per-batch', label: t('import.strategy.per-batch') }
             ]}
             onChange={onStrategyChange}
-            disabled={running}
           />
           <p className="text-xs text-fg-subtle">{t(`import.strategy.${strategy}Note`)}</p>
         </div>
@@ -738,111 +619,15 @@ function RunStep({
               { value: 'skip', label: t('import.onError.skip') }
             ]}
             onChange={onErrorPolicyChange}
-            disabled={running}
           />
           <p className="text-xs text-fg-subtle">{t(`import.onError.${onErrorPolicy}Note`)}</p>
         </div>
       </Field>
 
-      {running && (
-        <div className="rounded-control border border-line bg-surface-sunken px-3 py-2">
-          <p className="flex items-center gap-2 text-xs text-fg">
-            {paused ? (
-              <Pause size={14} className="text-warning" />
-            ) : (
-              <Loader2 size={14} className="animate-spin text-accent" />
-            )}
-            {paused ? t('import.paused') : t('import.running')}
-            {cancelling && ` · ${t('common.cancel')}…`}
-          </p>
-          {progress && (
-            <p className="mt-1 font-mono text-xs text-fg-muted">
-              {t('import.progress', {
-                read: progress.rowsRead,
-                inserted: progress.rowsInserted,
-                failed: progress.rowsFailed
-              })}
-            </p>
-          )}
-          <p className="mt-1 text-xs text-fg-subtle">
-            {paused && strategy === 'single-transaction'
-              ? t('import.pausedHoldsTransaction')
-              : t('import.pauseBetweenBatches')}
-          </p>
-        </div>
-      )}
-
-      {error && (
-        <p className="rounded-control border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
-          {error}
-        </p>
-      )}
-
-      {summary && <SummaryPanel summary={summary} strategy={strategy} />}
-    </div>
-  );
-}
-
-function SummaryPanel({ summary, strategy }: { summary: ImportSummary; strategy: Strategy }) {
-  const t = useLanguageStore((state) => state.t);
-  const clean = summary.rowsFailed === 0 && !summary.rolledBack && !summary.cancelled;
-
-  return (
-    <div className="space-y-2">
-      <div
-        className={clsx(
-          'flex items-start gap-2 rounded-control border px-3 py-2 text-xs',
-          clean
-            ? 'border-success-line bg-success-soft text-success'
-            : 'border-warning-line bg-warning-soft text-warning'
-        )}
-      >
-        {clean ? (
-          <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
-        ) : (
-          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-        )}
-        <div className="min-w-0">
-          <p>
-            {t('import.summary', {
-              read: summary.rowsRead,
-              inserted: summary.rowsInserted,
-              failed: summary.rowsFailed
-            })}
-          </p>
-          {summary.cancelled && <p>{t('import.cancelled')}</p>}
-          {summary.rolledBack && <p>{t('import.rolledBack')}</p>}
-          {/* 分批提交下「失败了」并不等于「什么都没发生」，这句话不能省 */}
-          {!summary.rolledBack && strategy === 'per-batch' && summary.rowsFailed > 0 && (
-            <p>{t('import.partiallyKept')}</p>
-          )}
-        </div>
-      </div>
-
-      {summary.errors.length > 0 && (
-        <div>
-          <p className="mb-1 text-xs text-fg-subtle">
-            {t('import.errors')}
-            {summary.errorsTruncated
-              && ` · ${t('import.errorsTruncated', { count: summary.errors.length })}`}
-          </p>
-          <ul className="max-h-40 space-y-1 overflow-auto rounded-control border border-line bg-surface-sunken px-3 py-2">
-            {summary.errors.map((rowError, index) => (
-              <li key={`${rowError.line}-${index}`} className="text-xs">
-                <span className="font-medium text-fg">
-                  {t('import.errorLine', { line: rowError.line })}
-                </span>
-                <span className="ml-1 text-fg-muted">{rowError.message}</span>
-                {rowError.values.length > 0 && (
-                  <span className="ml-1 block truncate font-mono text-fg-subtle">
-                    {rowError.values.join(', ')}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {/* 按下之后这个框就关了，进度与失败的行都去后台任务里看 */}
+      <p className="rounded-control border border-line bg-surface-sunken px-3 py-2 text-xs text-fg-subtle">
+        {t('import.runsInBackground')}
+      </p>
     </div>
   );
 }

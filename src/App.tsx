@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Sidebar } from './components/Sidebar';
+import { TaskCenter } from './components/TaskCenter';
 import { SqlWorkbench } from './components/SqlWorkbench';
 import TableDataViewer from './components/TableDataViewer';
 import { ErDiagramView } from './components/ErDiagramView';
@@ -685,6 +686,8 @@ function App() {
           {renderActiveTab()}
         </div>
       </div>
+
+      <TaskCenter />
 
       {menuTab && tabMenu && (
         <WorkspaceTabMenu

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
 import { save } from '@tauri-apps/plugin-dialog';
-import { Channel, invoke } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import type { SerializedResultValue } from '../contracts/resultSet';
 import {
   DEFAULT_EXPORT_OPTIONS,
@@ -13,8 +13,10 @@ import {
   type ExportOptions
 } from '../utils/exportResult';
 import { describeError } from '../utils/describeError';
+import { formatBytes } from '../utils/formatBytes';
 import { Checkbox, Field, SegmentedControl } from './FormControls';
 import { useLanguageStore } from '../stores/languageStore';
+import { useTaskStore } from '../stores/taskStore';
 import type { TranslationKey } from '../i18n/translate';
 
 /**
@@ -56,19 +58,11 @@ interface ExportResultDialogProps {
   onClose: () => void;
 }
 
-interface ExportProgress {
-  rowsWritten: number;
-  bytesWritten: number;
-}
-
 interface ExportSummary {
   rowsWritten: number;
   bytesWritten: number;
   path: string;
 }
-
-/** 后端在取消时给的错误码，界面上不该当成失败 */
-const EXPORT_CANCELLED_CODE = 'EXPORT_CANCELLED';
 
 /** 存文案键而不是文案：模块级常量用不了 hook，而标签要跟着语言走 */
 const DELIMITERS: Array<{ value: CsvDelimiter; labelKey: TranslationKey }> = [
@@ -100,18 +94,14 @@ export function ExportResultDialog({
   const [options, setOptions] = useState<ExportOptions>(DEFAULT_EXPORT_OPTIONS);
   const [scopeId, setScopeId] = useState(scopes?.[0]?.id ?? '');
   const [writing, setWriting] = useState(false);
-  const [progress, setProgress] = useState<ExportProgress | null>(null);
-  const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** 取消是用户自己按的，不是出了错——红字会让人以为哪里坏了 */
-  const [cancelled, setCancelled] = useState(false);
   const [written, setWritten] = useState<ExportSummary | null>(null);
   /**
    * 上一次尝试用的路径。失败后「重试」就是拿它再跑一遍——不再弹一次保存
    * 对话框，因为用户已经选过了，让他重选一次只会让人怀疑是不是选错了。
    */
   const [lastPath, setLastPath] = useState<string | null>(null);
-  const exportIdRef = useRef<string | null>(null);
+  const startTask = useTaskStore((state) => state.start);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   const scope = scopes?.find((candidate) => candidate.id === scopeId) ?? scopes?.[0];
@@ -149,28 +139,25 @@ export function ExportResultDialog({
     setOptions(current => ({ ...current, ...patch }));
     setWritten(null);
     setError(null);
-    setCancelled(false);
   };
 
   const runExport = async (path: string) => {
     setError(null);
-    setCancelled(false);
     setWritten(null);
-    setProgress(null);
-    setCancelling(false);
     setWriting(true);
     setLastPath(path);
 
     try {
       if (scope?.sql) {
-        const exportId = crypto.randomUUID();
-        exportIdRef.current = exportId;
-        const onProgress = new Channel<ExportProgress>((update) => setProgress(update));
-        const summary = await invoke<ExportSummary>('export_query_to_file', {
-          onProgress,
-          request: { connectionId, exportId, sql: scope.sql, path, options }
+        // 整个范围的导出可能要跑几分钟，交给后台任务：进度、取消与重试都在那边，
+        // 这个框关掉也不会打断它
+        startTask({
+          kind: 'export',
+          title: t('task.title.export', { name: sourceName }),
+          payload: { connectionId: connectionId ?? '', sql: scope.sql, path, options }
         });
-        setWritten(summary);
+        onClose();
+        return;
       } else {
         // 这一份已经在内存里了，再让它绕一趟数据库只会导出**另一份**数据：
         // 客户端排序、隐藏列、以及这期间别人对表的改动都会对不上
@@ -179,15 +166,9 @@ export function ExportResultDialog({
         setWritten({ rowsWritten: activeRows.length, bytesWritten, path });
       }
     } catch (err) {
-      if (isCancellation(err)) {
-        setCancelled(true);
-      } else {
-        setError(describeError(err, t('export.failed')));
-      }
+      setError(describeError(err, t('export.failed')));
     } finally {
-      exportIdRef.current = null;
       setWriting(false);
-      setCancelling(false);
     }
   };
 
@@ -209,15 +190,6 @@ export function ExportResultDialog({
       return;
     }
     await runExport(path);
-  };
-
-  const handleCancel = async () => {
-    const exportId = exportIdRef.current;
-    if (!exportId) {
-      return;
-    }
-    setCancelling(true);
-    await invoke<boolean>('cancel_export', { exportId }).catch(() => undefined);
   };
 
   return (
@@ -266,8 +238,6 @@ export function ExportResultDialog({
                   setScopeId(id);
                   setWritten(null);
                   setError(null);
-                  setCancelled(false);
-                  setProgress(null);
                 }}
               />
             </Field>
@@ -348,21 +318,9 @@ export function ExportResultDialog({
 
         <div className="flex items-center gap-3 border-t border-line bg-surface-sunken px-5 py-3">
           <div className="min-w-0 flex-1 text-xs">
-            {writing && (
-              <span className="text-fg-muted">
-                {progress
-                  ? t('export.progress', {
-                      count: progress.rowsWritten,
-                      size: formatBytes(progress.bytesWritten)
-                    })
-                  : t('export.writing')}
-              </span>
-            )}
+            {writing && <span className="text-fg-muted">{t('export.writing')}</span>}
             {!writing && error && <span className="break-words text-danger">{error}</span>}
-            {!writing && !error && cancelled && (
-              <span className="text-fg-muted">{t('export.cancelled')}</span>
-            )}
-            {!writing && !error && !cancelled && written && (
+            {!writing && !error && written && (
               <span className="break-all text-success">
                 {t('export.writtenRows', {
                   count: written.rowsWritten,
@@ -374,16 +332,6 @@ export function ExportResultDialog({
           </div>
 
           {/* 导出中：关闭按钮换成取消。留着「关闭」会让人以为关掉就停了，而它不停 */}
-          {writing && streaming && (
-            <button
-              type="button"
-              onClick={handleCancel}
-              disabled={cancelling}
-              className="shrink-0 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover disabled:opacity-50"
-            >
-              {cancelling ? t('export.cancelling') : t('common.cancel')}
-            </button>
-          )}
           {!writing && (
             <button
               type="button"
@@ -396,7 +344,7 @@ export function ExportResultDialog({
           )}
 
           {/* 失败后重试用的是同一个路径与同一份选项，不再让用户重选一次 */}
-          {!writing && (error || cancelled) && lastPath && (
+          {!writing && error && lastPath && (
             <button
               type="button"
               onClick={() => void runExport(lastPath)}
@@ -421,25 +369,3 @@ export function ExportResultDialog({
   );
 }
 
-/**
- * 取消回来的是一个错误，但它不是失败——界面上要说「已取消」，不是红字报错。
- * 认码而不是认文案：文案会跟着语言变。
- */
-function isCancellation(error: unknown): boolean {
-  return Boolean(
-    error
-      && typeof error === 'object'
-      && (error as { code?: unknown }).code === EXPORT_CANCELLED_CODE
-  );
-}
-
-/** 进度里的字节数给人看，不是给机器看：几百万行时 8777798 读不出量级 */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}

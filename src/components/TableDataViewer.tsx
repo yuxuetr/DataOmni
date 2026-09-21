@@ -47,6 +47,7 @@ import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { ExportResultDialog, type ExportScope } from './ExportResultDialog';
 import { CsvImportDialog } from './CsvImportDialog';
+import { useTaskStore } from '../stores/taskStore';
 import {
   extractDdlStatements,
   groupForeignKeyRows,
@@ -170,6 +171,7 @@ export default function TableDataViewer({
   appliedFiltersRef.current = appliedFilters;
   const [showExport, setShowExport] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [importTaskId, setImportTaskId] = useState<string | null>(null);
   const [schemaObjects, setSchemaObjects] = useState<SchemaObjects | null>(null);
   const sortRef = useRef<ColumnSort | null>(null);
   sortRef.current = sort;
@@ -574,6 +576,21 @@ export default function TableDataViewer({
     pageSize
   ].join('|');
   const cells = useCellSelection(visibleRows, visibleColumnNames, datasetKey);
+
+  // 导入在后台跑，结束之后这一页看到的还是导入之前的样子。盯着那个任务
+  // 而不是在向导关闭时就刷新——那一刻一行都还没写进去
+  const importTask = useTaskStore((state) =>
+    importTaskId ? state.tasks.find((task) => task.id === importTaskId) : undefined
+  );
+  const importFinishedAt = importTask?.finishedAt ?? null;
+  useEffect(() => {
+    if (importFinishedAt === null) {
+      return;
+    }
+    setImportTaskId(null);
+    void loadTableData(currentPage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importFinishedAt]);
 
   // 选中的部分排在最前面：框选之后再点导出，想导的就是它
   const exportScopes = React.useMemo(() => {
@@ -1582,10 +1599,7 @@ export default function TableDataViewer({
           table={tableName}
           columns={tableSchema.columns}
           onClose={() => setShowImport(false)}
-          onImported={() => {
-            // 导入写进去的行现在才存在，当前这一页看到的还是导入之前的样子
-            void loadTableData(currentPage);
-          }}
+          onStarted={setImportTaskId}
         />
       )}
 
