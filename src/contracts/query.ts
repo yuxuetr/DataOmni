@@ -69,10 +69,3 @@ export interface SqlStatement {
   errorDetails?: QueryExecutionError;
   executedAt?: string;
 }
-
-export interface SqlHistory {
-  connectionId: string;
-  sqlInput: string;
-  statements: SqlStatement[];
-  lastUpdated: string;
-}

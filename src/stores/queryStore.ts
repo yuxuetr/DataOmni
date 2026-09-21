@@ -37,6 +37,8 @@ import { executeSequentially } from '../utils/queryExecutionPolicy';
 import { translateNow } from './languageStore';
 import { changesSchema } from '../utils/schemaChanges';
 import { useAppStore } from './appStore';
+import { useConnectionStore } from './connectionStore';
+import { useHistoryStore } from './historyStore';
 
 export type { QueryResult, SqlStatement } from '../contracts/query';
 
@@ -289,6 +291,22 @@ function writeSqlDocument(
 }
 
 /** 供组件订阅当前活动文档 */
+/**
+ * 把一次已结束的执行记进历史。
+ *
+ * 连接名在这里现取并**存成快照**：连接之后会被改名、会被删掉，而历史要说得出
+ * 当时连的是哪个。取不到名字时退回 profileId，总比空着强。
+ */
+function recordHistory(execution: QueryExecution, rowsAffected: number | null): void {
+  const profileId = execution.session.profileId;
+  const connection = useConnectionStore
+    .getState()
+    .connections.find((candidate) => candidate.id === profileId);
+  useHistoryStore
+    .getState()
+    .record(execution, { connectionName: connection?.name ?? profileId, rowsAffected });
+}
+
 export const selectActiveSqlDocument = (state: QueryState): SqlDocument =>
   readSqlDocument(state, state.activeDocumentId);
 
@@ -783,6 +801,14 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         };
       }
 
+      // 从 state 里取这次执行的**最新**状态再收尾：期间用户可能按过取消，
+      // 那条 requestedAt 记在 state 里而不在最初的 execution 上
+      const pending = get().executions.find((candidate) => candidate.id === execution.id) ?? execution;
+      const finished = completeQueryExecution(
+        pending,
+        driverResult.kind === 'rows' ? [`result:${execution.id}`] : []
+      );
+
       // 更新结果
       set((state) => ({
         ...writeSqlDocument(state, documentId, (document) => ({
@@ -798,14 +824,10 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           )
         })),
         executions: state.executions.map((candidate) =>
-          candidate.id === execution.id
-            ? completeQueryExecution(
-                candidate,
-                driverResult.kind === 'rows' ? [`result:${execution.id}`] : []
-              )
-            : candidate
+          candidate.id === execution.id ? finished : candidate
         )
       }));
+      recordHistory(finished, queryResult.affected_rows);
 
       console.log(`✅ SQL执行成功，耗时: ${formatExecutionTime(queryResult.execution_time)}`);
 
@@ -831,6 +853,20 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       // 超时与取消是我们自己造的错，数据库没说过话，不该带上任何结构
       const errorDetails = timedOut || cancelled ? undefined : queryError;
       
+      const pending = get().executions.find((candidate) => candidate.id === execution.id) ?? execution;
+      const finished = cancelled
+        ? cancelQueryExecution(
+            pending.status === 'cancel-requested'
+              ? pending
+              : requestQueryExecutionCancellation(pending)
+          )
+        : failQueryExecution(
+            pending,
+            { ...queryError, message: errorMessage },
+            undefined,
+            timedOut ? 'timed-out' : 'failed'
+          );
+
       // 更新错误状态
       set((state) => ({
         ...writeSqlDocument(state, documentId, (document) => ({
@@ -843,22 +879,12 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           )
         })),
         executions: state.executions.map((candidate) =>
-          candidate.id === execution.id
-            ? cancelled
-              ? cancelQueryExecution(
-                  candidate.status === 'cancel-requested'
-                    ? candidate
-                    : requestQueryExecutionCancellation(candidate)
-                )
-              : failQueryExecution(
-                candidate,
-                { ...queryError, message: errorMessage },
-                undefined,
-                timedOut ? 'timed-out' : 'failed'
-              )
-            : candidate
+          candidate.id === execution.id ? finished : candidate
         )
       }));
+      // 失败、取消、超时一样要记：「那条跑崩的语句到底是什么」正是事后最想
+      // 翻出来的一条，只记成功等于历史里永远没有出问题的那次
+      recordHistory(finished, null);
       return false;
     }
   },
