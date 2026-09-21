@@ -25,7 +25,8 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Download,
-  Lock
+  Lock,
+  Filter
 } from 'lucide-react';
 import clsx from 'clsx';
 import type {
@@ -60,6 +61,8 @@ import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { requireDatabase } from '../utils/requireDatabase';
 import { describeTableEditability } from '../utils/tableEditability';
 import { GridCellValue } from './GridCellValue';
+import { TableFilterBar } from './TableFilterBar';
+import { buildFilterClause, isCompleteFilter, type ColumnFilter } from '../utils/tableFilters';
 
 // 编辑模式类型
 type EditMode = 'view' | 'edit' | 'add';
@@ -126,6 +129,13 @@ export default function TableDataViewer({
   const [pageSize, setPageSize] = useState(50);
   // 排序在数据库里做：只排当前页得到的是「这一页内部的次序」
   const [sort, setSort] = useState<ColumnSort | null>(null);
+  // 草稿与已应用分开：每敲一个字符就查一次库，在大表上等于连续的全表扫描
+  const [filters, setFilters] = useState<ColumnFilter[]>([]);
+  const [appliedFilters, setAppliedFilters] = useState<ColumnFilter[]>([]);
+  const [showFilters, setShowFilters] = useState(false);
+  // 与 sortRef 同理：loadTableData 的闭包里读不到刚 set 进去的新值
+  const appliedFiltersRef = useRef<ColumnFilter[]>([]);
+  appliedFiltersRef.current = appliedFilters;
   const [showExport, setShowExport] = useState(false);
   const [schemaObjects, setSchemaObjects] = useState<SchemaObjects | null>(null);
   const sortRef = useRef<ColumnSort | null>(null);
@@ -366,20 +376,27 @@ export default function TableDataViewer({
       const order = createTablePaginationOrder(loadedSchema.columns, dialect);
       setPaginationOrder(order);
 
+      // 筛选在数据库里做：只筛当前页得到的是「这一页里恰好符合的行」，
+      // 而用户问的是「整张表里符合的行」——两者在第二页就会分道扬镳
+      const whereClause = buildFilterClause(appliedFiltersRef.current, loadedSchema.columns, dialect);
+      // 行数缓存按「数据集身份」缓存，而筛选条件正是身份的一部分：
+      // 漏掉它，加完条件后分页控件还按全表行数算，末几页会是空的
+      const dataSetKey = `${currentTableKey}|${whereClause}`;
+
       // 获取总行数：仅在数据集身份变化或缓存被显式失效时重新统计
       const cachedRowCount = rowCountCacheRef.current;
       let total: number;
-      if (cachedRowCount && cachedRowCount.key === currentTableKey) {
+      if (cachedRowCount && cachedRowCount.key === dataSetKey) {
         total = cachedRowCount.total;
       } else {
-        const countQuery = `SELECT COUNT(*) as total FROM ${tableReference}`;
+        const countQuery = `SELECT COUNT(*) as total FROM ${tableReference} ${whereClause}`;
         const countResult = await runReadQuery(countQuery);
         // COUNT(*) 由自建执行器返回为 tagged bigint，取出字面值再转数
         const rawTotal = countResult[0]?.total ?? 0;
         total = Number(
           isTaggedResultValue(rawTotal) ? rawTotal.value : rawTotal
         ) || 0;
-        rowCountCacheRef.current = { key: currentTableKey, total };
+        rowCountCacheRef.current = { key: dataSetKey, total };
       }
 
       setTotalRows(total);
@@ -396,7 +413,8 @@ export default function TableDataViewer({
       // 没有决胜条件翻页会重复或漏行
       const orderClause = createSortedOrderClause(order, sortRef.current, dialect);
       const dataQuery =
-        `SELECT * FROM ${tableReference} ${orderClause} LIMIT ${limitValue} OFFSET ${offsetValue}`;
+        `SELECT * FROM ${tableReference} ${whereClause} ${orderClause} `
+        + `LIMIT ${limitValue} OFFSET ${offsetValue}`;
 
       const dataResult = await runReadQuery(dataQuery);
 
@@ -458,6 +476,28 @@ export default function TableDataViewer({
     setCurrentPage(1);
     loadTableData(1, newPageSize);
   };
+
+  // 只比「填完了的」条件：草稿里多出一行还没填值的空条件不该让「未应用」亮起来
+  const filterSignature = (list: readonly ColumnFilter[]) => JSON.stringify(
+    list.filter(isCompleteFilter).map((filter) => [filter.column, filter.operator, filter.value])
+  );
+  const appliedFilterCount = appliedFilters.filter(isCompleteFilter).length;
+  const filtersPending = filterSignature(filters) !== filterSignature(appliedFilters);
+
+  const applyFilters = (next: ColumnFilter[] = filters) => {
+    setAppliedFilters(next);
+    appliedFiltersRef.current = next;
+    setCurrentPage(1);
+    void loadTableData(1);
+  };
+
+  // 换表时草稿必须清掉：旧条件指着另一张表的列，buildFilterClause 会把它们丢掉，
+  // 于是筛选栏上明明列着条件而结果却没有被筛过
+  useEffect(() => {
+    setFilters([]);
+    setAppliedFilters([]);
+    appliedFiltersRef.current = [];
+  }, [currentTableKey]);
 
   // 计算总页数
   const totalPages = Math.ceil(totalRows / pageSize);
@@ -1301,6 +1341,20 @@ export default function TableDataViewer({
                     )}
 
                     <button
+                      onClick={() => setShowFilters((open) => !open)}
+                      className={clsx(
+                        'flex items-center space-x-1 rounded-control border px-3 py-1.5 text-sm transition-colors',
+                        appliedFilterCount > 0
+                          ? 'border-accent-line bg-accent-soft text-accent'
+                          : 'border-line-strong text-fg hover:bg-surface-hover'
+                      )}
+                    >
+                      <Filter size={14} />
+                      <span>{t('filter.title')}</span>
+                      {appliedFilterCount > 0 && <span>({appliedFilterCount})</span>}
+                    </button>
+
+                    <button
                       onClick={() => setShowExport(true)}
                       disabled={tableData.length === 0}
                       className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg border border-line-strong rounded-control hover:bg-surface-hover transition-colors disabled:opacity-50"
@@ -1352,6 +1406,18 @@ export default function TableDataViewer({
               </div>
             </div>
 
+            {(showFilters || filters.length > 0) && tableSchema && (
+              <TableFilterBar
+                columns={tableSchema.columns}
+                filters={filters}
+                onChange={setFilters}
+                onApply={applyFilters}
+                pending={filtersPending}
+                activeCount={appliedFilterCount}
+                disabled={loading}
+              />
+            )}
+
             {/* 编辑错误提示 */}
             {editingError && (
               <div className="p-3 bg-danger-soft border-b border-danger-line">
@@ -1367,7 +1433,10 @@ export default function TableDataViewer({
               <div className="flex items-start gap-2 border-b border-warning-line bg-warning-soft px-4 py-2">
                 <Lock className="mt-0.5 shrink-0 text-warning" size={14} />
                 <div className="text-xs text-warning">
-                  <span className="mr-1 font-medium">{t('table.readOnly.badge')}</span>
+                  {/* 做成有边框的小标签：贴着后面那句话的裸文字会被读成同一句的开头 */}
+                  <span className="mr-1.5 rounded-control border border-warning-line px-1 py-0.5 font-medium">
+                    {t('table.readOnly.badge')}
+                  </span>
                   {editability.reason === 'no-unique-key'
                     ? t('table.readOnly.noUniqueKey')
                     : t('table.readOnly.compositeKey', {
