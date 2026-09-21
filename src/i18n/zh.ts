@@ -36,6 +36,12 @@ export const zh = {
 
   // 环境标识
   'environment.production': '生产',
+  // 环境全名。上面的 environment.* 是徽标用的短标签（预发 / 生产），
+  // 在设置里同时出现会变成「预发 [预发]」
+  'environment.name.development': '开发环境',
+  'environment.name.testing': '测试环境',
+  'environment.name.staging': '预发环境',
+  'environment.name.production': '生产环境',
   'environment.staging': '预发',
 
   // 对象浏览器
@@ -241,6 +247,18 @@ export const zh = {
   'editor.formatTitle': '格式化 SQL（有选区时只排选区）⌘⇧F',
   'editor.formatFailed': '格式化失败，编辑器内容未改动',
 
+  'settings.title': '设置',
+  'settings.open': '设置',
+  'settings.confirmation.title': '危险语句确认',
+  'settings.confirmation.description': '按连接所在环境分别设定：风险达到这一级及以上的语句，执行前先确认。确认只是给你一次停下来的机会，不能代替数据库权限——真正该只读的账号要在数据库里配。',
+  'settings.confirmation.environment': '环境',
+  'settings.confirmation.threshold': '从这一级开始确认',
+  'settings.threshold.never': '从不确认',
+  'settings.threshold.destructive': '仅 DROP / TRUNCATE',
+  'settings.threshold.bulk-write': '不带 WHERE 的写入及以上',
+  'settings.threshold.scoped-write': '所有写入及以上',
+  'settings.threshold.append': '包括 INSERT 在内的所有写入',
+
   'queryError.code': '错误码',
   'queryError.position': '位置',
   'queryError.positionAt': '第 {line} 行第 {column} 列',
@@ -321,6 +339,8 @@ export const zh = {
   'workbench.clickToRetry': '点击重试',
 
   // 语句风险
+  'prompt.configurable': '可在「设置 → 危险语句确认」里调整什么时候弹出这个框。',
+
   'risk.destructive': '删除表或清空数据',
   'risk.bulk-write': '没有 WHERE 条件，将影响整张表',
   'risk.scoped-write': '会修改数据',

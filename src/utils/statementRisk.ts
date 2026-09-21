@@ -1,4 +1,8 @@
 import type { ConnectionEnvironment } from '../contracts';
+import {
+  DEFAULT_CONFIRMATION_POLICY,
+  type ConfirmationPolicy
+} from './confirmationPolicy';
 import { topLevelKeywords } from './sqlStatements';
 import type { TranslationKey } from '../i18n/translate';
 
@@ -66,26 +70,39 @@ export function classifyStatementRisk(sql: string): StatementRisk {
   return 'scoped-write';
 }
 
+/** 由轻到重。阈值比较和「一批里最危险的那条」都按这个次序。 */
+export const RISK_ORDER: readonly StatementRisk[] = [
+  'read',
+  'append',
+  'scoped-write',
+  'bulk-write',
+  'destructive'
+];
+
 /**
  * 要不要拦一道。
  *
- * 「拦不拦」只看语句本身，「说得多重」才看环境——见下面的文案。
- * 有界的写入只在生产上拦：预发和开发上每改一行都弹窗，弹到第三次就没人看了，
- * 真正危险的那次也会被顺手点掉。
+ * 判据是「这条语句的风险有没有达到该环境设定的门槛」。门槛可配置，默认值
+ * 就是可配置之前的固定行为：有界的写入只在生产上拦，批量与破坏性到哪都拦。
+ *
+ * 读永远不拦：给每条 SELECT 弹一次确认，弹到第三次就没人看了，真正危险的
+ * 那次也会被顺手点掉——那正是这道闸要避免的事。
  */
 export function requiresConfirmation(
   risk: StatementRisk,
-  environment: ConnectionEnvironment
+  environment: ConnectionEnvironment,
+  policy: ConfirmationPolicy = DEFAULT_CONFIRMATION_POLICY
 ): boolean {
-  if (risk === 'read' || risk === 'append') {
+  if (risk === 'read') {
     return false;
   }
 
-  if (risk === 'bulk-write' || risk === 'destructive') {
-    return true;
+  const threshold = policy[environment];
+  if (threshold === 'never') {
+    return false;
   }
 
-  return environment === 'production';
+  return RISK_ORDER.indexOf(risk) >= RISK_ORDER.indexOf(threshold);
 }
 
 /**
@@ -105,17 +122,17 @@ export const RISK_DESCRIPTION_KEYS: Record<StatementRisk, TranslationKey> = {
 /** 一批语句里最危险的那个等级；没有需要确认的就返回 null */
 export function highestRiskNeedingConfirmation(
   statements: readonly string[],
-  environment: ConnectionEnvironment
+  environment: ConnectionEnvironment,
+  policy?: ConfirmationPolicy
 ): { sql: string; risk: StatementRisk } | null {
-  const order: StatementRisk[] = ['read', 'append', 'scoped-write', 'bulk-write', 'destructive'];
   let worst: { sql: string; risk: StatementRisk } | null = null;
 
   for (const sql of statements) {
     const risk = classifyStatementRisk(sql);
-    if (!requiresConfirmation(risk, environment)) {
+    if (!requiresConfirmation(risk, environment, policy)) {
       continue;
     }
-    if (!worst || order.indexOf(risk) > order.indexOf(worst.risk)) {
+    if (!worst || RISK_ORDER.indexOf(risk) > RISK_ORDER.indexOf(worst.risk)) {
       worst = { sql, risk };
     }
   }

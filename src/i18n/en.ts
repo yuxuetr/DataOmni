@@ -29,6 +29,10 @@ export const en: Translations = {
   'connection.dismissError': 'Dismiss',
 
   'environment.production': 'PROD',
+  'environment.name.development': 'Development',
+  'environment.name.testing': 'Testing',
+  'environment.name.staging': 'Staging',
+  'environment.name.production': 'Production',
   'environment.staging': 'STAGING',
 
   'explorer.title': 'Database',
@@ -224,6 +228,18 @@ export const en: Translations = {
   'editor.formatTitle': 'Format SQL (the selection only, when there is one) \u2318\u21e7F',
   'editor.formatFailed': 'Formatting failed; the editor was left unchanged',
 
+  'settings.title': 'Settings',
+  'settings.open': 'Settings',
+  'settings.confirmation.title': 'Confirm risky statements',
+  'settings.confirmation.description': 'Set this per environment: statements at or above the chosen risk level ask for confirmation first. A confirmation only gives you a chance to stop — it is not a substitute for database permissions. An account that should be read-only has to be configured that way in the database.',
+  'settings.confirmation.environment': 'Environment',
+  'settings.confirmation.threshold': 'Confirm from',
+  'settings.threshold.never': 'Never confirm',
+  'settings.threshold.destructive': 'DROP / TRUNCATE only',
+  'settings.threshold.bulk-write': 'Writes without WHERE and above',
+  'settings.threshold.scoped-write': 'All writes and above',
+  'settings.threshold.append': 'All writes, including INSERT',
+
   'queryError.code': 'Code',
   'queryError.position': 'Position',
   'queryError.positionAt': 'line {line}, column {column}',
@@ -301,6 +317,8 @@ export const en: Translations = {
   'workbench.disconnectTitle': 'Disconnect from this database',
   'workbench.connectFailedTitle': 'Could not connect to the database',
   'workbench.clickToRetry': 'Click to retry',
+
+  'prompt.configurable': 'You can change when this dialog appears under Settings \u2192 Confirm risky statements.',
 
   'risk.destructive': 'drops a table or empties its data',
   'risk.bulk-write': 'has no WHERE clause and will affect the whole table',

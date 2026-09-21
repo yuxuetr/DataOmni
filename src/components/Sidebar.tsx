@@ -1,10 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Database, ChevronDown, Edit, Trash2, AlertCircle, X } from 'lucide-react';
+import {
+  Plus,
+  Database,
+  ChevronDown,
+  Edit,
+  Trash2,
+  AlertCircle,
+  X,
+  SlidersHorizontal
+} from 'lucide-react';
 import { ConnectionConfig, useConnectionStore } from '../stores/connectionStore';
 import DatabaseExplorer from './DatabaseExplorer';
 import { ConnectionForm } from './ConnectionForm';
 import { ThemeToggle } from './ThemeToggle';
 import { LanguageToggle } from './LanguageToggle';
+import { SettingsDialog } from './SettingsDialog';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useAppStore } from '../stores/appStore';
 import { confirm } from '@tauri-apps/plugin-dialog';
@@ -31,6 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [showConnectionMenu, setShowConnectionMenu] = useState(false);
   // 只装本组件自己产生的错误（加载列表、删除连接）；连接过程的错误由 connector 持有
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
   const {
     connect,
     connectingProfileId,
@@ -236,7 +247,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="text-xs text-fg-subtle">{t('app.language')}</span>
           <LanguageToggle />
         </div>
+        <button
+          type="button"
+          onClick={() => setShowSettings(true)}
+          className="flex w-full items-center gap-2 rounded-control px-1 py-1 text-xs text-fg-subtle hover:bg-surface-hover hover:text-fg"
+        >
+          <SlidersHorizontal size={13} />
+          {t('settings.open')}
+        </button>
       </div>
+
+      {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
 
       {/* 连接表单弹窗 */}
       {connectionForm && (

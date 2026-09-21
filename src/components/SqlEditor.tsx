@@ -26,6 +26,7 @@ import { useResizablePanel } from '../hooks/useResizablePanel';
 import { PanelResizeHandle } from './PanelResizeHandle';
 import { DestructiveStatementPrompt } from './DestructiveStatementPrompt';
 import { highestRiskNeedingConfirmation, type StatementRisk } from '../utils/statementRisk';
+import { useSettingsStore } from '../stores/settingsStore';
 import type { ConnectionProfile } from '../contracts';
 import {
   findSqlStatementAtOffset,
@@ -51,6 +52,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
   const t = useLanguageStore((state) => state.t);
   const environment = connection.environment;
   const { relations, error: catalogError } = useCompletionCatalog(connection);
+  // 确认门槛按环境可配，默认等于可配置之前的固定行为
+  const confirmationPolicy = useSettingsStore((state) => state.confirmationPolicy);
   // 文档随活动 SQL 标签切换，单独订阅
   const { sqlInput, statements, latestExecutionIdByStatement } =
     useQueryStore(selectActiveSqlDocument);
@@ -84,7 +87,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
    * 不需要确认时直接执行，不额外加一次点击。
    */
   const runGuarded = (candidates: string[], run: () => void) => {
-    const worst = highestRiskNeedingConfirmation(candidates, environment);
+    const worst = highestRiskNeedingConfirmation(candidates, environment, confirmationPolicy);
     if (!worst) {
       run();
       return;

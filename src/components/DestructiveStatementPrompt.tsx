@@ -101,7 +101,10 @@ export function DestructiveStatementPrompt({
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-line bg-surface-sunken px-5 py-3">
+        <div className="flex items-center justify-between gap-3 border-t border-line bg-surface-sunken px-5 py-3">
+          {/* 被打断的这一刻，正是最想知道「这东西能不能关掉」的时候 */}
+          <p className="min-w-0 text-xs text-fg-subtle">{t('prompt.configurable')}</p>
+          <div className="flex shrink-0 justify-end gap-2">
           <button
             type="button"
             ref={cancelRef}
@@ -122,6 +125,7 @@ export function DestructiveStatementPrompt({
           >
             {t('risk.runAnyway')}
           </button>
+          </div>
         </div>
       </div>
     </div>
