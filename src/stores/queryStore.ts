@@ -12,6 +12,11 @@ import {
   type SqlDialect
 } from '../contracts/queryExecution';
 import { describeError } from '../utils/describeError';
+import {
+  QUERY_CANCELLED_CODE,
+  QUERY_TIMEOUT_CODE,
+  toQueryExecutionError
+} from '../utils/queryError';
 import { DatabaseSession } from '../contracts/session';
 import type {
   DriverQueryResult,
@@ -813,14 +818,18 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       return true;
     } catch (error) {
       console.error('❌ SQL执行失败:', error);
-      const rawErrorMessage = describeError(error);
-      const timedOut = rawErrorMessage.startsWith('QUERY_TIMEOUT:');
-      const cancelled = rawErrorMessage.startsWith('QUERY_CANCELLED:');
+      const queryError = toQueryExecutionError(error);
+      // 按 code 判断而不是按消息前缀：消息要跟着语言变，按前缀匹配等于把
+      // 「这是超时」的判断绑在某一种语言上
+      const timedOut = queryError.code === QUERY_TIMEOUT_CODE;
+      const cancelled = queryError.code === QUERY_CANCELLED_CODE;
       const errorMessage = cancelled
         ? translateNow('error.queryCancelled')
         : timedOut
           ? translateNow('error.queryTimedOut', { duration: formatExecutionTime(queryTimeoutMs) })
-          : rawErrorMessage;
+          : queryError.message;
+      // 超时与取消是我们自己造的错，数据库没说过话，不该带上任何结构
+      const errorDetails = timedOut || cancelled ? undefined : queryError;
       
       // 更新错误状态
       set((state) => ({
@@ -828,8 +837,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           statements: document.statements.map(s =>
             s.id === statementId
               ? cancelled
-                ? { ...s, isExecuting: false, error: undefined }
-                : failSqlStatement(s, errorMessage)
+                ? { ...s, isExecuting: false, error: undefined, errorDetails: undefined }
+                : failSqlStatement(s, errorMessage, errorDetails)
               : s
           )
         })),
@@ -843,11 +852,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
                 )
               : failQueryExecution(
                 candidate,
-                {
-                  message: errorMessage,
-                  code: timedOut ? 'QUERY_TIMEOUT' : undefined,
-                  details: rawErrorMessage
-                },
+                { ...queryError, message: errorMessage },
                 undefined,
                 timedOut ? 'timed-out' : 'failed'
               )

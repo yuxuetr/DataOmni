@@ -19,6 +19,7 @@ import { EditorState } from '@codemirror/state';
 import { sql } from '@codemirror/lang-sql';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { QueryResultScrollTable } from './QueryResultScrollTable';
+import { QueryErrorPanel } from './QueryErrorPanel';
 import type { EditorView } from '@codemirror/view';
 import { useThemeStore } from '../stores/themeStore';
 import { useResizablePanel } from '../hooks/useResizablePanel';
@@ -28,6 +29,7 @@ import { highestRiskNeedingConfirmation, type StatementRisk } from '../utils/sta
 import type { ConnectionProfile } from '../contracts';
 import {
   findSqlStatementAtOffset,
+  getSqlStatementRanges,
   splitSqlStatements
 } from '../utils/sqlStatements';
 import { planFormat, sqlFormatterLanguage } from '../utils/formatSql';
@@ -131,6 +133,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
 
   // 编辑器跟随应用主题。此前这里有个只管 CodeMirror 的「深色模式」勾选框，
   // 勾上以后只有代码框变深、其余界面仍是浅色——它表达的不是用户想要的那件事。
+  // 语句在文档里的位置。出错位置是相对语句的，要加上它才能跳
+  const statementRanges = useMemo(() => getSqlStatementRanges(sqlInput), [sqlInput]);
+
   const resolvedTheme = useThemeStore((state) => state.resolved);
   const theme = resolvedTheme === 'dark' ? oneDark : undefined;
 
@@ -259,6 +264,20 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
       changes: { from: plan.from, to: plan.to, insert: plan.insert },
       selection: { anchor: plan.anchor, head: plan.head }
     });
+  };
+
+  /** 把光标移到出错处并滚过去。选中一个字符，让它在编辑器里看得见 */
+  const jumpToOffset = (offset: number) => {
+    const view = editorViewRef.current;
+    if (!view) {
+      return;
+    }
+    const target = Math.max(0, Math.min(offset, view.state.doc.length));
+    view.dispatch({
+      selection: { anchor: target },
+      scrollIntoView: true
+    });
+    view.focus();
   };
 
   // 格式化执行时间
@@ -528,6 +547,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
           <div className="space-y-2 p-3">
             {statements.map((statement, index) => {
               const executionId = latestExecutionIdByStatement[statement.id];
+              // 卡片上的位置是相对这条语句的；跳转要的是整份文档里的位置
+              const statementOffset = statementRanges[index]?.from;
               const execution = executions.find(
                 (candidate) => candidate.id === executionId
               );
@@ -544,6 +565,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
                   onCancel={() => execution && cancelExecution(execution.id)}
                   onRemove={() => removeStatement(statement.id)}
                   formatExecutionTime={formatExecutionTime}
+                  statementOffset={statementOffset}
+                  onJumpToError={jumpToOffset}
                 />
               );
             })}
@@ -564,6 +587,9 @@ interface SqlStatementCardProps {
   onCancel: () => void;
   onRemove: () => void;
   formatExecutionTime: (ms: number) => string;
+  /** 这条语句在整份文档里的起始偏移，用来把数据库给的相对位置换成可跳转的位置 */
+  statementOffset?: number;
+  onJumpToError?: (offset: number) => void;
 }
 
 // 查询结果表格组件已移至单独的文件 QueryResultScrollTable.tsx
@@ -575,7 +601,9 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
   onExecute,
   onCancel,
   onRemove,
-  formatExecutionTime
+  formatExecutionTime,
+  statementOffset,
+  onJumpToError
 }) => {
   const t = useLanguageStore((state) => state.t);
 
@@ -665,15 +693,13 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
 
       {/* 错误信息 */}
       {statement.error && (
-        <div className="p-3 bg-danger-soft border-t border-danger-line">
-          <div className="flex items-start space-x-2">
-            <AlertCircle className="text-danger mt-0.5" size={16} />
-            <div>
-              <h4 className="text-sm font-medium text-danger mb-1">{t('editor.executionError')}</h4>
-              <p className="text-sm text-danger">{statement.error}</p>
-            </div>
-          </div>
-        </div>
+        <QueryErrorPanel
+          message={statement.error}
+          details={statement.errorDetails}
+          sql={statement.sql}
+          statementOffset={statementOffset}
+          onJumpToError={onJumpToError}
+        />
       )}
     </div>
   );

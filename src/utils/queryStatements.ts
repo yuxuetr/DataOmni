@@ -1,3 +1,4 @@
+import type { QueryExecutionError } from '../contracts/queryExecution';
 import type { QueryResult, SqlStatement } from '../contracts/query';
 import { splitSqlStatements } from './sqlStatements';
 
@@ -70,12 +71,14 @@ export function completeSqlStatement(
 
 export function failSqlStatement(
   statement: SqlStatement,
-  error: string
+  error: string,
+  errorDetails?: QueryExecutionError
 ): SqlStatement {
   return {
     ...statement,
     isExecuting: false,
-    error
+    error,
+    errorDetails
   };
 }
 

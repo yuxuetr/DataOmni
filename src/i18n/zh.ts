@@ -241,6 +241,18 @@ export const zh = {
   'editor.formatTitle': '格式化 SQL（有选区时只排选区）⌘⇧F',
   'editor.formatFailed': '格式化失败，编辑器内容未改动',
 
+  'queryError.code': '错误码',
+  'queryError.position': '位置',
+  'queryError.positionAt': '第 {line} 行第 {column} 列',
+  'queryError.jump': '跳到出错位置',
+  'queryError.detail': '详情',
+  'queryError.hint': '提示',
+  'queryError.constraint': '约束',
+  'queryError.table': '表',
+  'queryError.message': '错误',
+  'queryError.sql': '语句',
+  'queryError.copyAll': '复制完整详情',
+
   'workbench.readOnly': '只读',
   'workbench.readOnlyHint': '服务端报告这个连接只读（只读副本，或 SQLite 打开了 query_only），写入会被拒绝',
 

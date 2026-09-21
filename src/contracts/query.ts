@@ -1,3 +1,4 @@
+import type { QueryExecutionError } from './queryExecution';
 import type { SerializedResultValue } from './resultSet';
 
 export interface QueryResult {
@@ -64,6 +65,8 @@ export interface SqlStatement {
   result?: QueryResult;
   resultSql?: string;
   error?: string;
+  /** 数据库给的结构化错误，用来显示 SQLSTATE、位置与 DETAIL */
+  errorDetails?: QueryExecutionError;
   executedAt?: string;
 }
 

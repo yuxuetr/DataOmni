@@ -17,10 +17,23 @@ export interface QueryExecutionSessionSnapshot {
   readonly database: string | null;
 }
 
+/**
+ * 数据库说的那一套，原样带上来。
+ *
+ * `code` 之外的几项只有部分数据库会给：位置只有 PostgreSQL 有，MySQL 与
+ * SQLite 不给——界面据此决定显不显示「跳到出错位置」，而不是凭空算一个。
+ */
 export interface QueryExecutionError {
   message: string;
+  /** PostgreSQL 的 SQLSTATE、MySQL 的错误号、SQLite 的扩展结果码；
+   *  超时与取消用 `QUERY_TIMEOUT` / `QUERY_CANCELLED` */
   code?: string;
-  details?: string;
+  /** 出错处在**这条语句**里的字符位置，从 1 开始。只有 PostgreSQL 给 */
+  position?: number;
+  detail?: string;
+  hint?: string;
+  constraint?: string;
+  table?: string;
 }
 
 export interface QueryExecutionCancellation {

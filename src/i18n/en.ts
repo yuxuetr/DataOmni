@@ -224,6 +224,18 @@ export const en: Translations = {
   'editor.formatTitle': 'Format SQL (the selection only, when there is one) \u2318\u21e7F',
   'editor.formatFailed': 'Formatting failed; the editor was left unchanged',
 
+  'queryError.code': 'Code',
+  'queryError.position': 'Position',
+  'queryError.positionAt': 'line {line}, column {column}',
+  'queryError.jump': 'Jump to the error',
+  'queryError.detail': 'Detail',
+  'queryError.hint': 'Hint',
+  'queryError.constraint': 'Constraint',
+  'queryError.table': 'Table',
+  'queryError.message': 'Error',
+  'queryError.sql': 'Statement',
+  'queryError.copyAll': 'Copy full details',
+
   'workbench.readOnly': 'read-only',
   'workbench.readOnlyHint': 'The server reports this connection as read-only (a read-only replica, or SQLite query_only); writes will be rejected',
 
