@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Loader2, Maximize2, Minus, Plus } from 'lucide-react';
+import { AlertCircle, Loader2, Maximize2, Minus, Plus, RefreshCw, Search } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useQueryStore } from '../stores/queryStore';
+import { useAppStore } from '../stores/appStore';
 import { useLanguageStore } from '../stores/languageStore';
 import { describeError } from '../utils/describeError';
 import {
   DEFAULT_ER_METRICS,
   columnAnchor,
   layoutErDiagram,
+  matchErTables,
   tableKey,
   toErLinks,
   toErTables,
+  truncateLabel,
   type ErLayoutResult,
   type ErLink,
   type ErNode
@@ -30,6 +33,14 @@ interface ErDiagramViewProps {
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 2;
 const METRICS = DEFAULT_ER_METRICS;
+/**
+ * 一行里列名与类型各能放多少个字符宽。
+ *
+ * 232px 的框去掉两侧 10px 内边距还剩 212px；11px 的无衬线字体一个字符
+ * 约 6px，10px 的约 5.4px。留一点空隙，分成 20 / 16 两份。
+ */
+const NAME_BUDGET = 20;
+const TYPE_BUDGET = 16;
 
 /**
  * 整库的 ER 关系图。
@@ -41,10 +52,13 @@ const METRICS = DEFAULT_ER_METRICS;
 export function ErDiagramView({ connection }: ErDiagramViewProps) {
   const { database } = useQueryStore();
   const t = useLanguageStore((state) => state.t);
+  // 我们自己执行过 DDL 就会 +1，图跟着重拉。外部改动靠刷新按钮。
+  const schemaVersion = useAppStore((state) => state.schemaVersion);
 
   const [layout, setLayout] = useState<ErLayoutResult | null>(null);
   const [links, setLinks] = useState<ErLink[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,7 +103,7 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [connection, database, t]);
+  }, [connection, database, t, schemaVersion, reloadToken]);
 
   if (error) {
     return (
@@ -113,7 +127,13 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
     return <p className="px-4 py-3 text-xs text-fg-subtle">{t('er.empty')}</p>;
   }
 
-  return <ErDiagramCanvas layout={layout} links={links} />;
+  return (
+    <ErDiagramCanvas
+      layout={layout}
+      links={links}
+      onRefresh={() => setReloadToken(token => token + 1)}
+    />
+  );
 }
 
 /**
@@ -122,20 +142,27 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
  */
 export function ErDiagramCanvas({
   layout,
-  links
+  links,
+  onRefresh
 }: {
   layout: ErLayoutResult;
   links: ErLink[];
+  /** 外部改了结构时用：数据库不会推送这件事，只能主动再查一遍 */
+  onRefresh?: () => void;
 }) {
   const t = useLanguageStore((state) => state.t);
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [query, setQuery] = useState('');
   const viewportRef = useRef<HTMLDivElement>(null);
 
   const nodesByKey = useMemo(
     () => new Map(layout.nodes.map(node => [node.key, node])),
     [layout]
   );
+
+  // null = 没在搜索，全亮；空集合 = 搜了但一个都没命中，全暗
+  const matches = useMemo(() => matchErTables(layout.nodes, query), [layout, query]);
 
   const fit = useCallback(() => {
     const viewport = viewportRef.current;
@@ -190,7 +217,24 @@ export function ErDiagramCanvas({
         {unlinked > 0 && (
           <span className="text-xs text-fg-subtle">{t('er.unlinkedNote', { count: unlinked })}</span>
         )}
-        <span className="ml-auto text-xs text-fg-subtle">{t('er.panHint')}</span>
+        <div className="relative ml-auto">
+          <Search
+            size={12}
+            className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-fg-subtle"
+          />
+          <input
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            placeholder={t('er.searchPlaceholder')}
+            aria-label={t('er.searchPlaceholder')}
+            className="w-52 rounded-control border border-line bg-surface py-1 pl-6 pr-2 text-xs text-fg placeholder:text-fg-subtle focus:border-accent focus:outline-none"
+          />
+        </div>
+        {matches && (
+          <span className="text-xs text-fg-subtle">
+            {t('er.matchCount', { count: matches.size })}
+          </span>
+        )}
         <div className="flex items-center gap-1">
           <ToolButton label={t('er.zoomOut')} onClick={() => zoomBy(1 / 1.2)}>
             <Minus size={13} />
@@ -204,6 +248,11 @@ export function ErDiagramCanvas({
           <ToolButton label={t('er.fit')} onClick={fit}>
             <Maximize2 size={13} />
           </ToolButton>
+          {onRefresh && (
+            <ToolButton label={t('er.refresh')} onClick={onRefresh}>
+              <RefreshCw size={13} />
+            </ToolButton>
+          )}
         </div>
       </div>
 
@@ -230,7 +279,12 @@ export function ErDiagramCanvas({
             ))}
           </g>
           {layout.nodes.map(node => (
-            <TableBox key={node.key} node={node} />
+            <TableBox
+              key={node.key}
+              node={node}
+              query={query}
+              dimmed={matches !== null && !matches.has(node.key)}
+            />
           ))}
         </svg>
       </div>
@@ -260,9 +314,21 @@ function ToolButton({
   );
 }
 
-function TableBox({ node }: { node: ErNode }) {
+function TableBox({
+  node,
+  query,
+  dimmed
+}: {
+  node: ErNode;
+  query: string;
+  dimmed: boolean;
+}) {
+  const needle = query.trim().toLowerCase();
+
   return (
-    <g>
+    // 没命中的表压暗而不是隐藏：藏起来会让图的形状跟着变，
+    // 反而认不出剩下的是哪几张表
+    <g opacity={dimmed ? 0.22 : 1}>
       <rect
         x={node.x}
         y={node.y}
@@ -315,23 +381,40 @@ function TableBox({ node }: { node: ErNode }) {
       )}
 
       {node.table.columns.map((column, index) => {
-        const y = node.y + METRICS.headerHeight + index * METRICS.rowHeight;
+        const y = node.y + METRICS.rowHeight / 2 + 3.5 + METRICS.headerHeight + index * METRICS.rowHeight;
+        // 列名优先，类型拿剩下的。不截断的话长 enum 会直接压在列名上。
+        const name = truncateLabel(column.name, NAME_BUDGET);
+        const type = truncateLabel(column.dataType, TYPE_BUDGET);
+        const hit = needle.length > 0 && column.name.toLowerCase().includes(needle);
         return (
           <g key={column.name}>
+            {hit && (
+              <rect
+                x={node.x + 1}
+                y={y - METRICS.rowHeight / 2 - 3.5}
+                width={node.width - 2}
+                height={METRICS.rowHeight}
+                className="fill-accent-soft"
+              />
+            )}
             <text
               x={node.x + 10}
-              y={y + METRICS.rowHeight / 2 + 3.5}
-              className={column.isPrimaryKey ? 'fill-accent text-[11px] font-medium' : 'fill-fg text-[11px]'}
+              y={y}
+              className={
+                column.isPrimaryKey ? 'fill-accent text-[11px] font-medium' : 'fill-fg text-[11px]'
+              }
             >
-              {column.isPrimaryKey ? `🔑 ${column.name}` : column.name}
+              {column.isPrimaryKey ? `🔑 ${name}` : name}
+              <title>{column.name}</title>
             </text>
             <text
               x={node.x + node.width - 10}
-              y={y + METRICS.rowHeight / 2 + 3.5}
+              y={y}
               textAnchor="end"
               className="fill-fg-subtle text-[10px]"
             >
-              {column.dataType}
+              {type}
+              <title>{column.dataType}</title>
             </text>
           </g>
         );
@@ -364,6 +447,26 @@ function LinkPath({
   const to = columnAnchor(toNode, link.to.column, METRICS);
   if (!from || !to) {
     return null;
+  }
+
+  // 自引用：两个锚点在同一个框上，按「哪边更近」算会得到一条从右边缘绕到
+  // 左边缘、横穿整张图的线。改成从右侧出去、再从右侧回来的一个环。
+  if (fromNode === toNode) {
+    const x = fromNode.x + fromNode.width;
+    const bulge = 44;
+    return (
+      <g className="text-accent">
+        <path
+          d={`M ${x} ${from.y} C ${x + bulge} ${from.y}, ${x + bulge} ${to.y}, ${x} ${to.y}`}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.25}
+          strokeOpacity={0.7}
+        />
+        <circle cx={x} cy={from.y} r={2.5} fill="currentColor" />
+        <circle cx={x} cy={to.y} r={2.5} fill="currentColor" />
+      </g>
+    );
   }
 
   const fromRight = fromNode.x + fromNode.width / 2 <= toNode.x + toNode.width / 2;

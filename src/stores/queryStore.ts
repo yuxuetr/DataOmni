@@ -30,6 +30,8 @@ import {
 import { quoteSqlIdentifier } from '../utils/sqlIdentifiers';
 import { executeSequentially } from '../utils/queryExecutionPolicy';
 import { translateNow } from './languageStore';
+import { changesSchema } from '../utils/schemaChanges';
+import { useAppStore } from './appStore';
 
 export type { QueryResult, SqlStatement } from '../contracts/query';
 
@@ -801,6 +803,13 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       }));
 
       console.log(`✅ SQL执行成功，耗时: ${formatExecutionTime(queryResult.execution_time)}`);
+
+      // 改过结构就通知对象树与 ER 图重新拉取。只在**成功之后**加一次：
+      // 一条失败的 CREATE TABLE 什么也没改，刷新只是白跑一趟往返。
+      if (changesSchema(statement.sql)) {
+        useAppStore.getState().markSchemaChanged();
+      }
+
       return true;
     } catch (error) {
       console.error('❌ SQL执行失败:', error);

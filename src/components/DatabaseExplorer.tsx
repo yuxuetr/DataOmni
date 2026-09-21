@@ -53,10 +53,11 @@ export default function DatabaseExplorer({
 }: DatabaseExplorerProps) {
   const { connections } = useConnectionStore();
   const { database } = useQueryStore();
-  const { 
-    databaseMetadata, 
-    setDatabaseMetadata, 
-    connectionReady
+  const {
+    databaseMetadata,
+    setDatabaseMetadata,
+    connectionReady,
+    schemaVersion
   } = useAppStore();
   
   const [loading, setLoading] = useState(false);
@@ -146,7 +147,8 @@ export default function DatabaseExplorer({
       
       return () => clearTimeout(timeoutId);
     }
-  }, [connectionId, connectionReady]); // 监听连接ID和连接状态变化
+    // schemaVersion：我们自己执行过 DDL 之后重新拉一遍，新建的表立刻出现在树里
+  }, [connectionId, connectionReady, schemaVersion]);
   
   // 添加额外的连接ID变化监听，确保连接切换时清理旧状态
   useEffect(() => {

@@ -29,6 +29,16 @@ export interface AppState {
   
   // 连接状态监听
   connectionReady: boolean;
+
+  /**
+   * 库结构的版本号。每执行一条改结构的语句就 +1。
+   *
+   * 数据库不会推送「结构变了」这件事（PostgreSQL 的 LISTEN/NOTIFY 要自己
+   * 装事件触发器，MySQL 干脆没有），所以做不到真正的推送式实时。能做到的是：
+   * **我们自己执行的 DDL** 立刻反映出来——这也是绝大多数场景。
+   * 外部改动靠刷新按钮或重新激活标签页时重新拉取。
+   */
+  schemaVersion: number;
 }
 
 // 应用操作接口
@@ -47,6 +57,9 @@ export interface AppActions {
   
   // 连接状态管理
   setConnectionReady: (ready: boolean) => void;
+
+  /** 执行过改结构的语句后调用，订阅了 schemaVersion 的视图会重新拉取 */
+  markSchemaChanged: () => void;
 }
 
 // 应用Store类型
@@ -60,6 +73,7 @@ export const useAppStore = create<AppStore>((set) => ({
   connectionForm: null,
   databaseMetadata: {},
   connectionReady: false,
+  schemaVersion: 0,
 
   openConnectionForm: (connection?: ConnectionProfile) => {
     // 只认真正的配置对象。把这个动作直接挂到 onClick 上时，React 传进来的是
@@ -120,5 +134,9 @@ export const useAppStore = create<AppStore>((set) => ({
   setConnectionReady: (ready: boolean) => {
     console.log('🔄 设置连接状态:', ready ? '已准备就绪' : '未准备就绪');
     set({ connectionReady: ready });
+  },
+
+  markSchemaChanged: () => {
+    set((state) => ({ schemaVersion: state.schemaVersion + 1 }));
   }
 })); 

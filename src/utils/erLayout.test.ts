@@ -3,8 +3,10 @@ import {
   DEFAULT_ER_METRICS,
   columnAnchor,
   layoutErDiagram,
+  matchErTables,
   toErLinks,
   toErTables,
+  truncateLabel,
   type ErLink,
   type ErTable
 } from './erLayout';
@@ -255,5 +257,64 @@ describe('toErLinks', () => {
     expect(toErLinks([
       { table_name: 'child', column_name: 'a', referenced_table: 'parent', referenced_column: null }
     ])).toEqual([]);
+  });
+});
+
+describe('truncateLabel', () => {
+  it('放得下就原样返回', () => {
+    expect(truncateLabel('id', 10)).toBe('id');
+  });
+
+  it('放不下时截断并加省略号，总长不超过上限', () => {
+    // SVG 的文本不会自动截断：不处理的话长类型会直接压在列名上
+    const result = truncateLabel('enum(\'draft\',\'paid\',\'shipped\')', 10);
+    expect(result).toHaveLength(10);
+    expect(result.endsWith('…')).toBe(true);
+  });
+
+  it('CJK 按两个字符宽算', () => {
+    // 「用户表」占 6 个字符宽，不是 3
+    expect(truncateLabel('用户表名称', 6)).toBe('用户…');
+  });
+
+  it('上限小到放不下省略号时直接截断', () => {
+    expect(truncateLabel('abcdef', 1)).toBe('a');
+  });
+
+  it('上限为 0 或负数时返回空串，不抛', () => {
+    expect(truncateLabel('abc', 0)).toBe('');
+    expect(truncateLabel('abc', -1)).toBe('');
+  });
+});
+
+describe('matchErTables', () => {
+  const nodes = [
+    { key: 'orders', table: table('orders', 'id', 'customer_id', 'total') },
+    { key: 'customers', table: table('customers', 'id', 'name') },
+    { key: 'audit_log', table: table('audit_log', 'id', 'message') }
+  ];
+
+  it('按表名匹配', () => {
+    expect([...matchErTables(nodes, 'order')!]).toEqual(['orders']);
+  });
+
+  it('按列名匹配——找一张表常常是从「哪张表有这一列」开始的', () => {
+    expect([...matchErTables(nodes, 'customer_id')!]).toEqual(['orders']);
+  });
+
+  it('大小写不敏感', () => {
+    expect([...matchErTables(nodes, 'ORDERS')!]).toEqual(['orders']);
+  });
+
+  it('空查询返回 null——「不过滤」和「一个都没命中」是两件事', () => {
+    expect(matchErTables(nodes, '')).toBeNull();
+    expect(matchErTables(nodes, '   ')).toBeNull();
+  });
+
+  it('一个都没命中时返回空集合，不是 null', () => {
+    // 返回 null 的话整张图会恢复成全亮，用户以为搜索没生效
+    const result = matchErTables(nodes, 'zzz');
+    expect(result).not.toBeNull();
+    expect(result!.size).toBe(0);
   });
 });

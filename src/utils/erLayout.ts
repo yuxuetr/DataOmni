@@ -386,3 +386,81 @@ function layoutIsolated(
 
   return nodes;
 }
+
+/**
+ * 把文本截到给定的显示宽度。
+ *
+ * SVG 的 `<text>` 不会自动截断也不会换行：长类型名会直接压在列名上。
+ * 宽度按显示宽度算，CJK 占两格——按字符数算的话，一行中文会溢出一倍。
+ */
+export function truncateLabel(text: string, maxWidth: number): string {
+  if (maxWidth <= 0) {
+    return '';
+  }
+  if (displayWidth(text) <= maxWidth) {
+    return text;
+  }
+
+  // 放不下省略号时就别加了，不然截出来只剩一个「…」
+  const budget = maxWidth > 1 ? maxWidth - 1 : maxWidth;
+  let width = 0;
+  let cut = '';
+  for (const character of text) {
+    const next = width + (isWide(character) ? 2 : 1);
+    if (next > budget) {
+      break;
+    }
+    width = next;
+    cut += character;
+  }
+
+  return maxWidth > 1 ? `${cut}…` : cut;
+}
+
+function displayWidth(text: string): number {
+  let width = 0;
+  for (const character of text) {
+    width += isWide(character) ? 2 : 1;
+  }
+  return width;
+}
+
+function isWide(character: string): boolean {
+  const code = character.codePointAt(0) ?? 0;
+  return (code >= 0x1100 && code <= 0x115f)
+    || (code >= 0x2e80 && code <= 0xa4cf)
+    || (code >= 0xac00 && code <= 0xd7a3)
+    || (code >= 0xf900 && code <= 0xfaff)
+    || (code >= 0xfe30 && code <= 0xfe6f)
+    || (code >= 0xff00 && code <= 0xff60)
+    || (code >= 0xffe0 && code <= 0xffe6)
+    || (code >= 0x20000 && code <= 0x3fffd);
+}
+
+/**
+ * 搜索命中的表。
+ *
+ * 表名与列名都参与匹配：找一张表常常是从「哪张表有 customer_id 这一列」
+ * 开始的，只匹配表名会让这条路走不通。
+ *
+ * 返回命中的 key 集合；空查询返回 `null` 表示「不过滤」，
+ * 与「一个都没命中」（空集合）是两件事——后者该让整张图暗下来。
+ */
+export function matchErTables(
+  nodes: ReadonlyArray<{ key: string; table: ErTable }>,
+  query: string
+): Set<string> | null {
+  const needle = query.trim().toLowerCase();
+  if (!needle) {
+    return null;
+  }
+
+  return new Set(
+    nodes
+      .filter(({ key, table }) =>
+        key.toLowerCase().includes(needle)
+        || table.columns.some(column => column.name.toLowerCase().includes(needle))
+      )
+      .map(({ key }) => key)
+  );
+}
