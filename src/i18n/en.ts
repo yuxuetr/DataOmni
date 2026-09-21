@@ -429,6 +429,7 @@ export const en: Translations = {
   'er.export': 'Export',
   'er.exportSvg': 'SVG (vector)',
   'er.exportPng': 'PNG (bitmap)',
+  'er.exportPdf': 'PDF (bitmap page)',
   'er.exported': 'Exported to {path}',
   'er.exportFailed': 'Export failed',
   'er.resetPositions': 'Reset card positions',

@@ -12,10 +12,12 @@ import {
 } from 'lucide-react';
 import { save } from '@tauri-apps/plugin-dialog';
 import {
+  rasterizeSvgToJpegBytes,
   rasterizeSvgToPngBase64,
   readCssColor,
   serializeSvgWithInlineStyles
 } from '../utils/svgExport';
+import { buildSingleImagePdf, bytesToBase64 } from '../utils/pdfExport';
 import { invoke } from '@tauri-apps/api/core';
 import { useQueryStore } from '../stores/queryStore';
 import { useAppStore } from '../stores/appStore';
@@ -35,6 +37,7 @@ import {
   type ErNode
 } from '../utils/erLayout';
 import type { ConnectionProfile } from '../contracts';
+import type { TranslationKey } from '../i18n/translate';
 import { requireDatabase } from '../utils/requireDatabase';
 
 interface ErDiagramQueries {
@@ -56,6 +59,15 @@ const METRICS = DEFAULT_ER_METRICS;
  * 232px 的框去掉两侧 10px 内边距还剩 212px；11px 的无衬线字体一个字符
  * 约 6px，10px 的约 5.4px。留一点空隙，分成 20 / 16 两份。
  */
+type ExportFormat = 'svg' | 'png' | 'pdf';
+
+/** 矢量在前：需要放进文档再排版的场景，SVG 才是对的那个 */
+const EXPORT_FORMATS: Array<{ format: ExportFormat; labelKey: TranslationKey }> = [
+  { format: 'svg', labelKey: 'er.exportSvg' },
+  { format: 'png', labelKey: 'er.exportPng' },
+  { format: 'pdf', labelKey: 'er.exportPdf' }
+];
+
 const NAME_BUDGET = 20;
 const TYPE_BUDGET = 16;
 
@@ -256,7 +268,7 @@ export function ErDiagramCanvas({
 
   const resetPositions = () => setDragOffsets({});
 
-  const exportDiagram = async (format: 'svg' | 'png') => {
+  const exportDiagram = async (format: ExportFormat) => {
     const svg = svgRef.current;
     if (!svg) {
       return;
@@ -284,13 +296,26 @@ export function ErDiagramCanvas({
 
       if (format === 'svg') {
         await invoke('write_text_file', { path, contents: markup });
-      } else {
+      } else if (format === 'png') {
         const contentsBase64 = await rasterizeSvgToPngBase64(
           markup,
           canvas.width,
           canvas.height
         );
         await invoke('write_binary_file', { path, contentsBase64 });
+      } else {
+        const image = await rasterizeSvgToJpegBytes(markup, canvas.width, canvas.height);
+        const pdf = buildSingleImagePdf({
+          image: image.bytes,
+          filter: 'DCTDecode',
+          imageWidth: image.width,
+          imageHeight: image.height,
+          // 1 像素 = 1 点：页面尺寸就是图的尺寸，不去凑 A4，
+          // 关系图的比例远不是纸张比例，硬塞进去只会留下大片空白
+          pageWidth: canvas.width,
+          pageHeight: canvas.height
+        });
+        await invoke('write_binary_file', { path, contentsBase64: bytesToBase64(pdf) });
       }
 
       setExported(path);
@@ -407,14 +432,14 @@ export function ErDiagramCanvas({
                 {/* 点空白处收起来。不铺这一层的话菜单只能靠再点一次按钮关掉 */}
                 <div className="fixed inset-0 z-10" onClick={() => setExportMenuOpen(false)} />
                 <div className="absolute right-0 top-full z-20 mt-1 w-32 overflow-hidden rounded-control border border-line bg-surface-raised shadow-lg">
-                  {(['svg', 'png'] as const).map(format => (
+                  {EXPORT_FORMATS.map(({ format, labelKey }) => (
                     <button
                       key={format}
                       type="button"
                       onClick={() => void exportDiagram(format)}
                       className="block w-full px-3 py-1.5 text-left text-xs text-fg hover:bg-surface-hover"
                     >
-                      {t(format === 'svg' ? 'er.exportSvg' : 'er.exportPng')}
+                      {t(labelKey)}
                     </button>
                   ))}
                 </div>

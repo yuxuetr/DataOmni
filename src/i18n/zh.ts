@@ -456,6 +456,7 @@ export const zh = {
   'er.export': '导出',
   'er.exportSvg': 'SVG（矢量）',
   'er.exportPng': 'PNG（位图）',
+  'er.exportPdf': 'PDF（位图页）',
   'er.exported': '已导出到 {path}',
   'er.exportFailed': '导出失败',
   'er.resetPositions': '复位所有卡片',

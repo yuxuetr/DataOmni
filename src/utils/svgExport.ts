@@ -108,6 +108,43 @@ export async function rasterizeSvgToPngBase64(
   height: number,
   scale: number = PNG_SCALE
 ): Promise<string> {
+  return dataUrlToBase64(await rasterizeSvg(svg, width, height, scale, 'image/png'));
+}
+
+/**
+ * PDF 内嵌用 JPEG：`/DCTDecode` 可以把 JPEG 字节**原样**放进去，不需要在
+ * 浏览器里做 zlib 压缩。原始 RGB 走 `/FlateDecode` 虽然无损，但要依赖
+ * `CompressionStream`，而它在较旧的 WebKit 上没有——退化成不压缩的话，
+ * 一张图就是十几 MB。
+ */
+export async function rasterizeSvgToJpegBytes(
+  svg: string,
+  width: number,
+  height: number,
+  scale: number = PNG_SCALE,
+  quality = 0.95
+): Promise<{ bytes: Uint8Array; width: number; height: number }> {
+  const dataUrl = await rasterizeSvg(svg, width, height, scale, 'image/jpeg', quality);
+  const binary = atob(dataUrlToBase64(dataUrl));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return {
+    bytes,
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale))
+  };
+}
+
+async function rasterizeSvg(
+  svg: string,
+  width: number,
+  height: number,
+  scale: number,
+  type: 'image/png' | 'image/jpeg',
+  quality?: number
+): Promise<string> {
   const image = new Image();
   image.src = svgToDataUrl(svg);
 
@@ -126,7 +163,13 @@ export async function rasterizeSvgToPngBase64(
   if (!context) {
     throw new Error('CANVAS_UNAVAILABLE');
   }
+  // JPEG 不支持透明，未画背景的部分会变黑。导出的 SVG 自带背景矩形，
+  // 但缩放取整可能在边缘留下一两个像素的空白，先铺一层底色兜住。
+  if (type === 'image/jpeg') {
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+  }
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-  return dataUrlToBase64(canvas.toDataURL('image/png'));
+  return canvas.toDataURL(type, quality);
 }
