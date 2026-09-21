@@ -1,7 +1,8 @@
 use dataomni_lib::services::{
   execute_query, execute_query_with_limit, execute_query_with_limits, execute_query_with_timeout,
-  QueryError, QueryExecutionResult, QueryExecutionSummary, QuerySessionState,
-  QueryTruncationReason, StreamingQueryOptions, QUERY_TIMEOUT_CODE,
+  export_query, ExportFormat, ExportOptions, ExportSummary, QueryError, QueryExecutionResult,
+  QueryExecutionSummary, QuerySessionState, QueryTruncationReason, StreamingQueryOptions,
+  QUERY_TIMEOUT_CODE,
 };
 use sqlx::{
   mysql::MySqlPoolOptions, postgres::PgPoolOptions, sqlite::SqlitePoolOptions, Column, Row,
@@ -2106,4 +2107,176 @@ async fn sqlite_error_carries_its_result_code() {
   assert!(error.code.is_some(), "SQLite 的扩展结果码要带上来: {error:?}");
   assert!(error.position().is_none());
   assert!(error.message.contains("no_such_table"));
+}
+
+/// 导出要证明的是「一行不少地落进文件」，而这只有拿真库跑才算数：
+/// 新的 `describe_columns` 在三种驱动上各有一套实现，SQLite 的单测证明不了
+/// MySQL 或 PostgreSQL。行数刻意超过默认 1000 行的结果上限——导出走的是
+/// 另一条不设限的路，走错了会在第 1000 行戛然而止。
+const EXPORT_ROW_COUNT: usize = 2_500;
+
+#[tokio::test]
+async fn postgres_exports_every_row_and_refuses_a_non_query() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool = PgPoolOptions::new()
+    .max_connections(2)
+    .connect(&url)
+    .await
+    .expect("connect to PostgreSQL smoke database");
+
+  // 不能用 TEMP TABLE：导出另开一条连接，而临时表是连接私有的。真表就得自己
+  // 收拾干净——测试库是共享的，一次断言失败留下的表会一直攒在那里，所以开头
+  // 先清掉所有同名前缀的残留，而不是只清这一次要用的那张
+  let leftovers: Vec<String> = sqlx::query_scalar(
+    "SELECT tablename::text FROM pg_tables WHERE tablename LIKE 'export_smoke\\_%'",
+  )
+  .fetch_all(&pool)
+  .await
+  .expect("list leftovers");
+  for leftover in leftovers {
+    sqlx::query(&format!("DROP TABLE IF EXISTS \"{leftover}\""))
+      .execute(&pool)
+      .await
+      .expect("drop");
+  }
+  let table = format!("export_smoke_{}", std::process::id());
+  sqlx::query(&format!(
+    "CREATE TABLE {table} (id BIGINT PRIMARY KEY, label TEXT, blob_value BYTEA, nothing TEXT)"
+  ))
+  .execute(&pool)
+  .await
+  .expect("create export table");
+  sqlx::query(&format!(
+    "INSERT INTO {table} (id, label, blob_value, nothing)
+     SELECT i, 'row,' || i, '\\xdeadbeef'::bytea, NULL FROM generate_series(1, {EXPORT_ROW_COUNT}) AS i"
+  ))
+  .execute(&pool)
+  .await
+  .expect("seed export table");
+
+  let (contents, summary) = export_to_string(
+    &DbPool::Postgres(pool.clone()),
+    &format!("SELECT * FROM {table} ORDER BY id"),
+  )
+  .await;
+
+  assert_eq!(summary.rows_written, EXPORT_ROW_COUNT as u64);
+  let lines = contents.lines().collect::<Vec<_>>();
+  assert_eq!(lines.len(), EXPORT_ROW_COUNT + 1, "表头一行加上每行数据一行");
+  assert_eq!(lines[0], "id,label,blob_value,nothing");
+  // 逗号在值里要被引号包起来；bytea 按 0x 十六进制写；NULL 是空字段
+  assert_eq!(lines[1], "1,\"row,1\",0xdeadbeef,");
+  assert_eq!(
+    lines[EXPORT_ROW_COUNT],
+    format!("{EXPORT_ROW_COUNT},\"row,{EXPORT_ROW_COUNT}\",0xdeadbeef,")
+  );
+
+  // 点「导出」不该让一条 DELETE 真把数据删掉
+  let error = export_error(&DbPool::Postgres(pool.clone()), &format!("DELETE FROM {table}")).await;
+  assert!(error.message.contains("不返回结果集"), "错误要说清原因: {}", error.message);
+  let remaining: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+  assert_eq!(remaining, EXPORT_ROW_COUNT as i64, "被拒绝的语句一行也不该执行");
+
+  sqlx::query(&format!("DROP TABLE {table}")).execute(&pool).await.expect("drop");
+}
+
+#[tokio::test]
+async fn mysql_exports_every_row_and_refuses_a_non_query() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool = MySqlPoolOptions::new()
+    .max_connections(2)
+    .connect(&url)
+    .await
+    .expect("connect to MySQL smoke database");
+
+  let leftovers: Vec<String> = sqlx::query_scalar(
+    // MySQL 8 的 information_schema 列是 VARBINARY，直接取 String 会解码失败
+    "SELECT CAST(table_name AS CHAR) FROM information_schema.tables
+     WHERE table_schema = DATABASE() AND table_name LIKE 'export\\_smoke\\_%'",
+  )
+  .fetch_all(&pool)
+  .await
+  .expect("list leftovers");
+  for leftover in leftovers {
+    sqlx::query(&format!("DROP TABLE IF EXISTS `{leftover}`")).execute(&pool).await.expect("drop");
+  }
+  let table = format!("export_smoke_{}", std::process::id());
+  sqlx::query(&format!(
+    "CREATE TABLE `{table}` (id BIGINT PRIMARY KEY, label TEXT, blob_value VARBINARY(8), nothing TEXT)"
+  ))
+  .execute(&pool)
+  .await
+  .expect("create export table");
+  // 不用递归 CTE 造行：MySQL 的 cte_max_recursion_depth 默认就是 1000，
+  // 而这条测试要的恰恰是超过 1000 行
+  let values = (1..=EXPORT_ROW_COUNT)
+    .map(|i| format!("({i}, 'row,{i}', X'deadbeef', NULL)"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  sqlx::query(&format!("INSERT INTO `{table}` (id, label, blob_value, nothing) VALUES {values}"))
+    .execute(&pool)
+    .await
+    .expect("seed export table");
+
+  let (contents, summary) =
+    export_to_string(&DbPool::MySql(pool.clone()), &format!("SELECT * FROM `{table}` ORDER BY id"))
+      .await;
+
+  assert_eq!(summary.rows_written, EXPORT_ROW_COUNT as u64);
+  let lines = contents.lines().collect::<Vec<_>>();
+  assert_eq!(lines.len(), EXPORT_ROW_COUNT + 1);
+  assert_eq!(lines[0], "id,label,blob_value,nothing");
+  assert_eq!(lines[1], "1,\"row,1\",0xdeadbeef,");
+
+  let error = export_error(&DbPool::MySql(pool.clone()), &format!("DELETE FROM `{table}`")).await;
+  assert!(error.message.contains("不返回结果集"), "错误要说清原因: {}", error.message);
+  let remaining: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM `{table}`"))
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+  assert_eq!(remaining, EXPORT_ROW_COUNT as i64, "被拒绝的语句一行也不该执行");
+
+  sqlx::query(&format!("DROP TABLE `{table}`")).execute(&pool).await.expect("drop");
+}
+
+fn csv_export_options() -> ExportOptions {
+  ExportOptions {
+    format: ExportFormat::Csv,
+    delimiter: ",".to_string(),
+    include_header: true,
+    null_text: String::new(),
+    byte_order_mark: false,
+  }
+}
+
+fn export_target(tag: &str) -> std::path::PathBuf {
+  let dir = std::env::temp_dir().join(format!("dataomni-smoke-{}-{tag}", std::process::id()));
+  std::fs::create_dir_all(&dir).expect("temp dir");
+  dir.join("export.csv")
+}
+
+async fn export_to_string(pool: &DbPool, sql: &str) -> (String, ExportSummary) {
+  let target = export_target("ok");
+  let summary = export_query(pool, sql, &target, csv_export_options(), &mut |_| {}, &mut || false)
+    .await
+    .expect("export");
+  let contents = std::fs::read_to_string(&target).expect("read back");
+  std::fs::remove_file(&target).ok();
+  (contents, summary)
+}
+
+async fn export_error(pool: &DbPool, sql: &str) -> QueryError {
+  let target = export_target("refused");
+  let error = export_query(pool, sql, &target, csv_export_options(), &mut |_| {}, &mut || false)
+    .await
+    .expect_err("should refuse");
+  assert!(!target.exists(), "拒绝时不该留下文件");
+  error
 }
