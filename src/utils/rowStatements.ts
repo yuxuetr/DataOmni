@@ -1,5 +1,5 @@
 import type { ColumnInfo } from '../contracts';
-import { isNumericColumnType, NUMERIC_LITERAL } from './columnTypes';
+import { isConcurrencyComparable, isNumericColumnType, NUMERIC_LITERAL } from './columnTypes';
 import type { BoundValue, CellInput } from './cellInput';
 import { translateNow } from '../stores/languageStore';
 import {
@@ -142,10 +142,65 @@ function assignmentTerm(
   }
 }
 
+/**
+ * 并发冲突的守卫：这几列在我们读到它之后有没有被别人改过。
+ *
+ * 条件拼进同一条 WHERE 里，配合后端「必须恰好影响一行」的核对，一次往返就
+ * 既定位了行又验证了前提。分两步做（先 SELECT 回来比一遍再 UPDATE）之间
+ * 仍然有窗口，而且多一次往返。
+ *
+ * 只比**认得出且比得准**的列，见 `isConcurrencyComparable`。
+ */
+export interface RowGuard {
+  /** 列 → 这一行加载时的值 */
+  values: Readonly<Record<string, BoundValue>>;
+  /** 只比这几列；不给就比 `values` 里所有比得准的列 */
+  columns?: readonly string[];
+}
+
+function guardConditions(
+  target: TableTarget,
+  key: RowKey,
+  guard: RowGuard | undefined,
+  placeholder: () => string,
+  params: BoundValue[]
+): string[] {
+  if (!guard) {
+    return [];
+  }
+  const byName = new Map(target.columns.map((column) => [column.name, column]));
+  const keyColumns = new Set(key.columns);
+  const candidates = guard.columns ?? Object.keys(guard.values);
+
+  return candidates.flatMap((name) => {
+    // 键列已经在前面的条件里了，再比一遍只是把语句拉长
+    if (keyColumns.has(name)) {
+      return [];
+    }
+    const column = byName.get(name);
+    if (!column || !isConcurrencyComparable(column.data_type)) {
+      return [];
+    }
+    const quoted = quoteSqlIdentifier(name, target.dialect);
+    const value = guard.values[name];
+    if (value === null || value === undefined) {
+      // `= NULL` 恒为未知，一行也匹配不上
+      return [`${quoted} IS NULL`];
+    }
+    const literal = inlineComparisonLiteral(column, value);
+    if (literal !== null) {
+      return [`${quoted} = ${literal}`];
+    }
+    params.push(value);
+    return [`${quoted} = ${placeholder()}`];
+  });
+}
+
 export function buildUpdateStatement(
   target: TableTarget,
   key: RowKey,
-  assignments: Readonly<Record<string, CellInput>>
+  assignments: Readonly<Record<string, CellInput>>,
+  guard?: RowGuard
 ): BoundStatement {
   const columns = Object.keys(assignments).filter((name) => assignments[name].kind !== 'unset');
   if (columns.length === 0) {
@@ -164,8 +219,17 @@ export function buildUpdateStatement(
     })
     .join(', ');
 
-  const where = keyCondition(target, key, placeholder, params);
-  return { sql: `UPDATE ${tableReference(target)} SET ${setClause} WHERE ${where}`, params };
+  // 只比**正在写的那几列**：另一个人改了同一行的别的列（比如某个
+  // last_seen 时间戳）不该让这次保存失败，而「我正要覆盖的值已经不是我读到
+  // 的那个」正是丢失更新
+  const conditions = [
+    keyCondition(target, key, placeholder, params),
+    ...guardConditions(target, key, guard && { ...guard, columns }, placeholder, params)
+  ];
+  return {
+    sql: `UPDATE ${tableReference(target)} SET ${setClause} WHERE ${conditions.join(' AND ')}`,
+    params
+  };
 }
 
 /**
@@ -199,11 +263,28 @@ export function buildInsertStatement(
   };
 }
 
-export function buildDeleteStatement(target: TableTarget, key: RowKey): BoundStatement {
+/**
+ * 删除比整行。
+ *
+ * 与更新不对称，是有意的：更新只承诺「我覆盖的那个值还是我读到的那个」，
+ * 而删除是不可逆的，它承诺的是「我要删掉的这一行还是我看到的那一行」——
+ * 别的列被改过，说明我看到的已经不是现在这一行了。
+ */
+export function buildDeleteStatement(
+  target: TableTarget,
+  key: RowKey,
+  guard?: RowGuard
+): BoundStatement {
   const placeholder = createPlaceholderAllocator(target.dialect);
   const params: BoundValue[] = [];
-  const where = keyCondition(target, key, placeholder, params);
-  return { sql: `DELETE FROM ${tableReference(target)} WHERE ${where}`, params };
+  const conditions = [
+    keyCondition(target, key, placeholder, params),
+    ...guardConditions(target, key, guard, placeholder, params)
+  ];
+  return {
+    sql: `DELETE FROM ${tableReference(target)} WHERE ${conditions.join(' AND ')}`,
+    params
+  };
 }
 
 /**

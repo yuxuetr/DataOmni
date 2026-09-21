@@ -208,3 +208,67 @@ describe('更新时的几种写入方式', () => {
       .toThrow();
   });
 });
+
+describe('并发冲突守卫', () => {
+  const GUARDED = [
+    column('id', 'int'),
+    column('name', 'varchar(32)'),
+    column('score', 'real'),
+    column('avatar', 'bytea'),
+    column('meta', 'jsonb'),
+    column('shape', 'point')
+  ];
+  const guardTarget: TableTarget = {
+    schema: null, table: 'u', columns: GUARDED, dialect: 'postgresql'
+  };
+  const idKey: RowKey = { columns: ['id'], values: { id: 1 } };
+  const original = { id: 1, name: 'a', score: 1.1, avatar: 'deadbeef', meta: '{}', shape: '(1,2)' };
+
+  it('把原值拼进同一条 WHERE，而不是先 SELECT 回来比一遍', () => {
+    // 分两步之间仍然有窗口，而且多一次往返
+    const statement = buildUpdateStatement(
+      guardTarget, idKey, { name: value('b') }, { values: original }
+    );
+    expect(statement.sql).toBe(
+      'UPDATE "u" SET "name" = $1 WHERE "id" = 1 AND "name" = $2'
+    );
+    expect(statement.params).toEqual(['b', 'a']);
+  });
+
+  it('只比正在写的那几列', () => {
+    // 别人改了同一行的另一列（比如某个 last_seen）不该让这次保存失败
+    const statement = buildUpdateStatement(
+      guardTarget, idKey, { name: value('b') }, { values: original }
+    );
+    expect(statement.sql).not.toContain('"score"');
+  });
+
+  it('原值是 NULL 时用 IS NULL——`= NULL` 一行也匹配不上', () => {
+    const statement = buildUpdateStatement(
+      guardTarget, idKey, { name: value('b') }, { values: { ...original, name: null } }
+    );
+    expect(statement.sql).toContain('"name" IS NULL');
+  });
+
+  it.each([
+    ['二进制', 'avatar'],
+    ['近似浮点', 'score'],
+    ['JSON', 'meta'],
+    ['认不出的类型', 'shape']
+  ])('%s 不参与比较——比不准的结果不是多报一次冲突，而是每次都报', (_label, columnName) => {
+    const statement = buildUpdateStatement(
+      guardTarget, idKey, { [columnName]: value('x') }, { values: original }
+    );
+    // WHERE 里只剩主键，那一列没有被拿去比
+    expect(statement.sql.split(' WHERE ')[1]).toBe('"id" = 1');
+  });
+
+  it('删除比整行，跳过键列', () => {
+    const statement = buildDeleteStatement(guardTarget, idKey, { values: original });
+    expect(statement.sql).toBe('DELETE FROM "u" WHERE "id" = 1 AND "name" = $1');
+  });
+
+  it('不给守卫时就只按键定位，和以前一样', () => {
+    expect(buildDeleteStatement(guardTarget, idKey).sql).toBe('DELETE FROM "u" WHERE "id" = 1');
+  });
+});

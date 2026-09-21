@@ -116,21 +116,29 @@ describe('pendingForRow', () => {
 });
 
 describe('pendingStatements', () => {
-  it('按staged 的次序生成语句，每条都要求恰好影响一行', () => {
+  it('按 staged 的次序生成语句，每条都要求恰好影响一行', () => {
     const changes: PendingChange[] = stageDelete(
       stageUpdate(
         stageInsert([], { name: value('n') }, 'i1'),
         key(1), ORIGINAL, { name: value('b') }, 'c1'
       ),
-      key(2), { id: 2 }, 'd1'
+      key(2), { id: 2, name: 'z', note: null }, 'd1'
     );
 
     const statements = pendingStatements(changes, TARGET);
     expect(statements.map((statement) => statement.sql)).toEqual([
       'INSERT INTO "t" ("name") VALUES (?)',
-      'UPDATE "t" SET "name" = ? WHERE "id" = 1',
-      'DELETE FROM "t" WHERE "id" = 2'
+      // 更新只比正在写的那一列
+      'UPDATE "t" SET "name" = ? WHERE "id" = 1 AND "name" = ?',
+      // 删除比整行——它不可逆，承诺的是「要删的还是我看到的那一行」
+      'DELETE FROM "t" WHERE "id" = 2 AND "name" = ? AND "note" IS NULL'
     ]);
     expect(statements.every((statement) => statement.expectRows === 1)).toBe(true);
+  });
+
+  it('原值用的是加载时那一份，不是改完之后的', () => {
+    // 比错了等于没比：拿新值去比，条件永远成立，丢失更新照样发生
+    const changes = stageUpdate([], key(1), ORIGINAL, { name: value('b') }, 'c1');
+    expect(pendingStatements(changes, TARGET)[0].params).toEqual(['b', 'a']);
   });
 });

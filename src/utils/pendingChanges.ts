@@ -177,11 +177,13 @@ export function pendingStatements(
   target: TableTarget
 ): WriteStatementPayload[] {
   return changes.map((change) => {
+    // 原值一并进 WHERE：键定位到行，原值确认这一行还是我们读到的那一行。
+    // 两者配合后端「必须恰好影响一行」的核对，一次往返就把并发冲突挡在事务里
     const statement = change.kind === 'insert'
       ? buildInsertStatement(target, change.values)
       : change.kind === 'update'
-        ? buildUpdateStatement(target, change.key, change.values)
-        : buildDeleteStatement(target, change.key);
+        ? buildUpdateStatement(target, change.key, change.values, { values: change.original })
+        : buildDeleteStatement(target, change.key, { values: change.original });
     return { sql: statement.sql, params: statement.params, expectRows: 1 };
   });
 }
