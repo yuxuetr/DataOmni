@@ -68,13 +68,14 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   const totalPages = Math.ceil(totalRows / pageSize);
   const startIndex = (currentPage - 1) * pageSize;
   const endIndex = Math.min(startIndex + pageSize, totalRows);
-  // 必须是稳定引用：useCellSelection 靠引用变化判断「换了一份数据」，
-  // 每次渲染现 slice 一个新数组会让选区刚选中就被清掉
   const currentRows = React.useMemo(
     () => sortedRows.slice(startIndex, endIndex),
     [sortedRows, startIndex, endIndex]
   );
-  const cells = useCellSelection(currentRows, result.columns);
+  // 翻页、改排序、换一条语句的结果都换了数据集，选区必须跟着清掉；
+  // 同一页重新渲染则留着
+  const datasetKey = `${statementId}|${sort?.column ?? ''}:${sort?.direction ?? ''}|${currentPage}|${pageSize}`;
+  const cells = useCellSelection(currentRows, result.columns, datasetKey);
   const [contextTarget, setContextTarget] = useState<GridContextTarget | null>(null);
   
   // 判断是否可以编辑

@@ -453,7 +453,9 @@ export default function TableDataViewer({
           if (activeTab === 'schema') {
             loadTableSchema();
           } else if (activeTab === 'data') {
-            loadTableData(1);
+            // 回到当前页而不是第一页：去结构页看一眼再回来，不该把翻了半天的
+            // 位置丢掉。首次挂载时 currentPage 本来就是 1
+            loadTableData(currentPage);
           }
         }
       }
@@ -566,7 +568,16 @@ export default function TableDataViewer({
     () => visibleIndexes.map((index) => columnNames[index] ?? ''),
     [visibleIndexes, columnNames]
   );
-  const cells = useCellSelection(visibleRows, visibleColumnNames);
+  // 刷新是「同一份数据再取一遍」，选区要留着；翻页 / 改排序 / 改筛选 / 换表
+  // 是换了一份数据，同一个坐标指的是另一行。两者的区别只有这里知道
+  const datasetKey = [
+    currentTableKey,
+    filterSignature(appliedFilters),
+    `${sort?.column ?? ''}:${sort?.direction ?? ''}`,
+    currentPage,
+    pageSize
+  ].join('|');
+  const cells = useCellSelection(visibleRows, visibleColumnNames, datasetKey);
 
   // 处理标签页切换
   const handleTabChange = (tabId: TabType) => {
@@ -576,7 +587,7 @@ export default function TableDataViewer({
     if (tabId === 'schema' && !tableSchema) {
       loadTableSchema();
     } else if (tabId === 'data' && tableData.length === 0) {
-      loadTableData(1);
+      loadTableData(currentPage);
     }
   };
 
@@ -1616,13 +1627,30 @@ export default function TableDataViewer({
 
             {/* 滚动表格容器 */}
             <div className="flex-1 overflow-hidden">
-              {loading ? (
-                <div className="flex items-center justify-center h-full">
-                  <RefreshCw className="animate-spin text-fg-subtle" size={20} />
-                  <span className="ml-2 text-fg-muted">{t('table.loading')}</span>
-                </div>
-              ) : tableData.length > 0 ? (
-                <div className="h-full flex flex-col">
+              {tableData.length === 0 ? (
+                loading ? (
+                  <div className="flex items-center justify-center h-full">
+                    <RefreshCw className="animate-spin text-fg-subtle" size={20} />
+                    <span className="ml-2 text-fg-muted">{t('table.loading')}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center h-full text-fg-muted">
+                    {t('table.empty')}
+                  </div>
+                )
+              ) : (
+                <div className="relative h-full flex flex-col">
+                  {/* 加载时不把表格拆掉，只盖一层。拆掉的话滚动容器随之销毁，
+                      刷新后横竖滚动都回到原点——而用户按刷新正是想看**这几行**
+                      的最新值 */}
+                  {loading && (
+                    <div className="absolute inset-0 z-40 flex items-start justify-center bg-surface/60 pt-8">
+                      <span className="flex items-center gap-2 rounded-control border border-line bg-surface px-3 py-1.5 text-sm text-fg-muted shadow">
+                        <RefreshCw className="animate-spin text-fg-subtle" size={16} />
+                        {t('table.loading')}
+                      </span>
+                    </div>
+                  )}
                   {/* 列宽跟着内容走之后横向滚动是常态，不再用提示条解释它 */}
                   {cells.copyError && (
                     <div className="border-b border-danger-line bg-danger-soft px-3 py-1.5 text-xs text-danger">
@@ -1843,10 +1871,6 @@ export default function TableDataViewer({
                       </div>
                     </div>
                   )}
-                </div>
-              ) : (
-                <div className="flex items-center justify-center h-full text-fg-muted">
-                  {t('table.empty')}
                 </div>
               )}
             </div>

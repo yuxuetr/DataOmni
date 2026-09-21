@@ -5,6 +5,7 @@ import {
   isCellMoveKey,
   isWithinSelection,
   moveSelection,
+  retainSelection,
   rowSelection,
   selectAllCells,
   selectionToClipboardText,
@@ -48,9 +49,14 @@ export interface CellSelectionController {
  * 因此调用方必须传一个**稳定的**数组引用（useMemo 或 state），不能每次渲染
  * 现 slice 一个新数组——那样选区会在每次渲染时被清掉，根本选不中。
  */
+/**
+ * @param datasetKey 标识「这是哪一份数据」。刷新时保持不变，翻页 / 改排序 /
+ *   改筛选 / 换表时必须变——选区的去留全看它，见 `retainSelection`
+ */
 export function useCellSelection(
   rows: readonly (readonly SerializedResultValue[])[],
-  columns: readonly string[]
+  columns: readonly string[],
+  datasetKey: string
 ): CellSelectionController {
   const columnCount = columns.length;
   const [selection, setSelection] = useState<CellSelection | null>(null);
@@ -58,10 +64,12 @@ export function useCellSelection(
 
   const rowCount = rows.length;
 
-  // 数据换了就丢掉选区
+  const datasetKeyRef = useRef(datasetKey);
   useEffect(() => {
-    setSelection(null);
-  }, [rows, columnCount]);
+    const sameDataset = datasetKeyRef.current === datasetKey;
+    datasetKeyRef.current = datasetKey;
+    setSelection((current) => retainSelection(current, { rowCount, columnCount }, sameDataset));
+  }, [datasetKey, rows, rowCount, columnCount]);
 
   const rowsRef = useRef(rows);
   rowsRef.current = rows;

@@ -4,6 +4,7 @@ import {
   isCellMoveKey,
   isWithinSelection,
   moveSelection,
+  retainSelection,
   rowSelection,
   selectAllCells,
   selectionRect,
@@ -224,5 +225,35 @@ describe('selectionToClipboardText 的表头', () => {
       { headers: ['a\tb'] }
     );
     expect(text).toBe('"a\tb"\nx');
+  });
+});
+
+describe('retainSelection', () => {
+  const bounds = { rowCount: 3, columnCount: 4 };
+  const selection = { anchor: { row: 1, column: 1 }, focus: { row: 2, column: 2 } };
+
+  it('刷新时留着', () => {
+    // 按一次刷新就要重新框一遍选区，是这个网格最烦人的一种手感
+    expect(retainSelection(selection, bounds, true)).toBe(selection);
+  });
+
+  it('换了数据集就丢掉', () => {
+    // 翻页后同一个坐标指的是完全不同的一行
+    expect(retainSelection(selection, bounds, false)).toBeNull();
+  });
+
+  it('刷新后行变少了，越界的选区也要丢掉', () => {
+    // 复制出来会是一段空白，而屏幕上什么都没提示
+    expect(retainSelection(selection, { rowCount: 2, columnCount: 4 }, true)).toBeNull();
+    expect(retainSelection(selection, { rowCount: 3, columnCount: 2 }, true)).toBeNull();
+  });
+
+  it('刚好落在边界上的选区留着', () => {
+    // 差一位的错会让最后一行永远选不住
+    expect(retainSelection(selection, { rowCount: 3, columnCount: 3 }, true)).toBe(selection);
+  });
+
+  it('本来就没有选区时返回 null', () => {
+    expect(retainSelection(null, bounds, true)).toBeNull();
   });
 });

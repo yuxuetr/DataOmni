@@ -152,6 +152,38 @@ export function columnSelection(column: number, bounds: GridBounds): CellSelecti
   return { anchor: { row: 0, column }, focus: { row: bounds.rowCount - 1, column } };
 }
 
+/**
+ * 数据换过之后，这个选区还留不留。
+ *
+ * 分两种情况，而它们看起来一模一样——都是「rows 这个数组换了」：
+ *
+ * - **刷新**：同一份数据集重新取了一遍。用户按刷新就是想看这几行的最新值，
+ *   把选区清掉等于每刷一次就要重新框一遍。
+ * - **换了数据集**：翻页、改排序、改筛选、换表。此时同一个坐标指的是完全
+ *   不同的一行，留着选区会让人以为自己还选着刚才那个值。
+ *
+ * 两者的区别只有调用方知道，所以由调用方给出 `sameDataset`。
+ *
+ * 另外，即使是刷新，行也可能变少（别人删了几行）。越界的选区要丢掉——
+ * 复制出来会是一段空白，而屏幕上什么都没提示。
+ */
+export function retainSelection(
+  selection: CellSelection | null,
+  bounds: GridBounds,
+  sameDataset: boolean
+): CellSelection | null {
+  if (!selection || !sameDataset) {
+    return null;
+  }
+
+  const rect = selectionRect(selection);
+  if (rect.bottom >= bounds.rowCount || rect.right >= bounds.columnCount) {
+    return null;
+  }
+
+  return selection;
+}
+
 export function selectAllCells(bounds: GridBounds): CellSelection | null {
   if (bounds.rowCount <= 0 || bounds.columnCount <= 0) {
     return null;
