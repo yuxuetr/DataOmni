@@ -60,8 +60,14 @@ import {
 import { SchemaObjectSections, type SchemaObjects } from './SchemaObjectSections';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { requireDatabase } from '../utils/requireDatabase';
-import { describeTableEditability } from '../utils/tableEditability';
 import { describeRowIdentity, type IndexMetadata } from '../utils/rowIdentity';
+import {
+  buildDeleteStatement,
+  buildUpdateStatement,
+  type BoundValue,
+  type RowKey,
+  type TableTarget
+} from '../utils/rowStatements';
 import { GridCellValue } from './GridCellValue';
 import { TableFilterBar } from './TableFilterBar';
 import { GridColumnMenu } from './GridColumnMenu';
@@ -545,16 +551,21 @@ export default function TableDataViewer({
     () => describeRowIdentity(tableSchema?.columns ?? [], indexMetadata),
     [tableSchema, indexMetadata]
   );
-  const editability = React.useMemo(() => describeTableEditability(rowIdentity), [rowIdentity]);
+  // 键列不可改：改它等于换一行的身份，那是删一行加一行，不是更新
+  const keyColumnSet = React.useMemo(
+    () => new Set(rowIdentity.identity?.columns ?? []),
+    [rowIdentity]
+  );
+  const editable = rowIdentity.identity !== null;
   const readOnlyMessage = (() => {
-    switch (editability.reason) {
+    switch (rowIdentity.absence) {
       case 'no-unique-key':
         return t('table.readOnly.noUniqueKey');
       case 'metadata-unavailable':
         return t('table.readOnly.metadataUnavailable');
-      case 'composite-key':
-        return t('table.readOnly.compositeKey', { columns: editability.keyColumns.join(', ') });
       default:
+        // metadata-pending 不说：它在同一次加载里就有结论，先闪一条警告再收回去
+        // 比什么都不说更让人不安
         return null;
     }
   })();
@@ -828,151 +839,91 @@ export default function TableDataViewer({
     await database.execute(insertQuery, values);
   };
 
+  /**
+   * 写入目标：表名、方言和全表列元数据。
+   *
+   * 列元数据是给 `rowStatements` 查类型用的——数值列上的比较要内联成不带引号
+   * 的字面量，否则 MySQL 会把两边都转成 DOUBLE，超过 2^53 的 BIGINT 主键
+   * 会定位到邻近的另一行。
+   */
+  const writeTarget = (): TableTarget => ({
+    schema: schema ?? null,
+    table: tableName,
+    columns: tableSchema?.columns ?? [],
+    dialect
+  });
+
+  /**
+   * 取这一行的键值。
+   *
+   * 键列由 `describeRowIdentity` 给出——全部键列，不是第一列。原值要从 tagged
+   * 包装里拆出来：包装只服务于展示，绑进 SQL 的必须是字面量。
+   */
+  const rowKeyFrom = (values: Record<string, unknown>): RowKey => {
+    const keyColumns = rowIdentity.identity?.columns ?? [];
+    return {
+      columns: keyColumns,
+      values: Object.fromEntries(
+        keyColumns.map((name) => [name, unwrapResultValue(values[name] as SerializedResultValue)])
+      )
+    };
+  };
+
+  /**
+   * 编辑框里的值转成可绑定的值。
+   *
+   * 不按列类型做 `Number()` / `Boolean()` 转换：`Number()` 会让超过 2^53 的
+   * BIGINT 丢精度，而 `Boolean('false')` 是 true。原样交给数据库去转换，
+   * 三种方言在赋值时都会按目标列的类型精确解析。
+   *
+   * 空串仍然写成 NULL——把「清空」和「写空字符串」分开是 2.5 的另一条，
+   * 需要界面上先有那个区分，这里不擅自改语义。
+   */
+  const toBoundValue = (value: unknown): BoundValue => {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') {
+      return value;
+    }
+    return unwrapResultValue(value as SerializedResultValue);
+  };
+
   // 更新行
   const updateRow = async (_rowIndex: number, rowData: any) => {
     if (!database || !tableSchema || !editState.originalData) return;
-    
-    // 找到主键列
-    const primaryKeyColumn = tableSchema.columns.find(col => col.is_primary_key);
-    if (!primaryKeyColumn) {
-      throw new Error(t('table.noPrimaryKeyForUpdate'));
+
+    const key = rowKeyFrom(editState.originalData);
+    const keySet = new Set(key.columns);
+
+    const assignments: Record<string, BoundValue> = {};
+    for (const column of Object.keys(rowData)) {
+      // 键列不进 SET：改键等于换一行的身份，那是删一行加一行，不是更新
+      if (keySet.has(column)) {
+        continue;
+      }
+      const next = toBoundValue(rowData[column]);
+      const previous = toBoundValue(editState.originalData[column]);
+      if (next !== previous) {
+        assignments[column] = next;
+      }
     }
-    
-    const pkValue = editState.originalData[primaryKeyColumn.name];
-    const pkColumn = primaryKeyColumn.name;
-    
-    // 构建更新语句
-    const updateColumns = Object.keys(rowData).filter(key => {
-      if (key === pkColumn) return false; // 跳过主键列
-      
-      const newValue = rowData[key];
-      const oldValue = editState.originalData![key];
-      
-      // 检查值是否真的发生了变化
-      if (newValue === oldValue) return false;
-      
-      // 处理 null 值的比较
-      if (newValue === null && oldValue === null) return false;
-      if (newValue === '' && oldValue === null) return false;
-      if (newValue === null && oldValue === '') return false;
-      
-      return true;
-    });
-    
-    if (updateColumns.length === 0) {
-      // 没有变化，直接返回
+
+    if (Object.keys(assignments).length === 0) {
       return;
     }
-    
-    const setClause = updateColumns.map((col, index) => {
-      const quotedColumn = quoteSqlIdentifier(col, dialect);
-      switch (connection.db_type) {
-        case 'postgresql':
-          return `${quotedColumn} = $${index + 1}`;
-        case 'mysql':
-        case 'sqlite':
-          return `${quotedColumn} = ?`;
-        default:
-          return `${quotedColumn} = ?`;
-      }
-    }).join(', ');
-    
-    const quotedPrimaryKey = quoteSqlIdentifier(pkColumn, dialect);
-    const whereClause = connection.db_type === 'postgresql' 
-      ? `${quotedPrimaryKey} = $${updateColumns.length + 1}`
-      : `${quotedPrimaryKey} = ?`;
-    
-    const tableNameWithSchema = quoteQualifiedSqlIdentifier(
-      schema ? [schema, tableName] : [tableName],
-      dialect
-    );
-    const updateQuery = `UPDATE ${tableNameWithSchema} SET ${setClause} WHERE ${whereClause}`;
-    
-    // 转换数据类型
-    const values = updateColumns.map(col => {
-      const value = rowData[col];
-      const column = tableSchema.columns.find(c => c.name === col);
-      
-      if (value === null || value === '' || value === undefined) {
-        return null;
-      }
-      
-      if (column?.data_type.includes('int') || column?.data_type.includes('bigint')) {
-        return Number(value);
-      } else if (column?.data_type.includes('float') || column?.data_type.includes('decimal') || column?.data_type.includes('numeric')) {
-        return Number(value);
-      } else if (column?.data_type.includes('bool')) {
-        return Boolean(value);
-      } else if (column?.data_type.includes('date') || column?.data_type.includes('time') || column?.data_type.includes('timestamp')) {
-        // 处理日期时间格式
-        if (value === 'CURRENT_TIMESTAMP' || value === 'NOW') {
-          return 'CURRENT_TIMESTAMP';
-        } else if (typeof value === 'string' && value.trim() !== '') {
-          // 确保日期时间格式正确
-          return value;
-        } else {
-          return null;
-        }
-      } else {
-        return String(value);
-      }
-    });
-    
-    // 添加主键值
-    values.push(pkValue);
-    
-    console.log('更新查询:', updateQuery);
-    console.log('更新值:', values);
-    
-    const updateResult = await database.execute(updateQuery, values);
+
+    const statement = buildUpdateStatement(writeTarget(), key, assignments);
+    const updateResult = await database.execute(statement.sql, statement.params);
     assertSingleRowAffected(updateResult, t('table.operation.update'));
   };
 
   // 删除行
   const removeRow = async (rowIndex: number) => {
     if (!database || !tableSchema) return;
-    
-    const rowData = tableData[rowIndex];
-    
-    // 找到主键列
-    const primaryKeyColumn = tableSchema.columns.find(col => col.is_primary_key);
-    if (!primaryKeyColumn) {
-      throw new Error(t('table.noPrimaryKeyForDelete'));
-    }
-    
-    // 同 startEditRow：主键原值要进 WHERE，必须先从 tagged 包装里拆出来
-    const pkValue = unwrapResultValue(rowData[primaryKeyColumn.name] as SerializedResultValue);
-    const pkColumn = primaryKeyColumn.name;
-    
-    const tableNameWithSchema = quoteQualifiedSqlIdentifier(
-      schema ? [schema, tableName] : [tableName],
-      dialect
-    );
-    const quotedPrimaryKey = quoteSqlIdentifier(pkColumn, dialect);
-    
-    // 根据数据库类型构建不同的DELETE语句
-    let deleteQuery: string;
-    let values: any[];
-    
-    switch (connection.db_type) {
-      case 'postgresql':
-        deleteQuery = `DELETE FROM ${tableNameWithSchema} WHERE ${quotedPrimaryKey} = $1`;
-        values = [pkValue];
-        break;
-      case 'mysql':
-      case 'sqlite':
-        deleteQuery = `DELETE FROM ${tableNameWithSchema} WHERE ${quotedPrimaryKey} = ?`;
-        values = [pkValue];
-        break;
-      default:
-        deleteQuery = `DELETE FROM ${tableNameWithSchema} WHERE ${quotedPrimaryKey} = ?`;
-        values = [pkValue];
-    }
-    
-    console.log('删除查询:', deleteQuery);
-    console.log('删除值:', values);
-    
-    const deleteResult = await database.execute(deleteQuery, values);
+
+    const statement = buildDeleteStatement(writeTarget(), rowKeyFrom(tableData[rowIndex] ?? {}));
+    const deleteResult = await database.execute(statement.sql, statement.params);
     assertSingleRowAffected(deleteResult, t('table.operation.delete'));
   };
 
@@ -981,7 +932,7 @@ export default function TableDataViewer({
     value,
     field,
     isEditing,
-    isPrimaryKey = false,
+    isKeyColumn = false,
     dataType = 'text',
     align = 'left',
     densityClass = 'px-2 py-1',
@@ -995,7 +946,8 @@ export default function TableDataViewer({
     value: any;
     field: string;
     isEditing: boolean;
-    isPrimaryKey?: boolean;
+    /** 这一列参与定位行：改它等于换一行的身份，所以不让改 */
+    isKeyColumn?: boolean;
     dataType?: string;
     align?: 'left' | 'right';
     densityClass?: string;
@@ -1016,8 +968,8 @@ export default function TableDataViewer({
                            dataType.includes('time') || 
                            dataType.includes('timestamp');
     
-    if (!isEditing || isPrimaryKey) {
-      // 非编辑状态或主键列，显示只读
+    if (!isEditing || isKeyColumn) {
+      // 非编辑状态或键列，显示只读
       // 自建执行器把 BigInt / Decimal / 二进制等包成 tagged value 以保住精度，
       // 显示时统一交给 formatResultValue 还原成人能读的形式
       return (
@@ -1421,7 +1373,7 @@ export default function TableDataViewer({
                 {/* 编辑操作按钮 */}
                 {editState.mode === 'view' && (
                   <>
-                    {editability.editable && (
+                    {editable && (
                     <button
                       onClick={startAddRow}
                       className="flex items-center space-x-1 px-3 py-1.5 text-sm text-success border border-success-line rounded-control hover:bg-success-soft transition-colors"
@@ -1766,7 +1718,7 @@ export default function TableDataViewer({
                                   value={row[column.name]}
                                   field={column.name}
                                   isEditing={editState.mode === 'edit' && editState.rowIndex === rowIndex}
-                                  isPrimaryKey={column.is_primary_key}
+                                  isKeyColumn={keyColumnSet.has(column.name)}
                                   dataType={column.data_type}
                                   align={alignments[colIndex]}
                                   densityClass={densityClass}
@@ -1795,7 +1747,7 @@ export default function TableDataViewer({
                               {/* 操作列 */}
                               <td className="border-l border-line px-2 py-1 text-sm">
                                 {editState.mode === 'view' ? (
-                                  editability.editable ? (
+                                  editable ? (
                                   <div className="flex items-center space-x-1">
                                     <button
                                       onClick={() => startEditRow(rowIndex)}

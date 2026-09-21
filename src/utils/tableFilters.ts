@@ -1,6 +1,7 @@
 import type { ColumnInfo } from '../contracts';
 import { quoteSqlIdentifier, type SqlIdentifierDialect } from './sqlIdentifiers';
 import { escapeLikePattern, LIKE_ESCAPE_CHAR, quoteSqlStringLiteral } from './sqlLiterals';
+import { isNumericColumnType, NUMERIC_LITERAL } from './columnTypes';
 
 export type FilterOperator =
   | 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte'
@@ -47,25 +48,6 @@ export function isCompleteFilter(filter: ColumnFilter): boolean {
   }
   return !operatorNeedsValue(filter.operator) || filter.value !== '';
 }
-
-const NUMERIC_TYPE_TOKENS = new Set([
-  'tinyint', 'smallint', 'mediumint', 'int', 'integer', 'int2', 'int4', 'int8', 'bigint',
-  'serial', 'serial2', 'serial4', 'serial8', 'smallserial', 'bigserial',
-  'decimal', 'dec', 'numeric', 'fixed', 'real', 'double', 'float', 'float4', 'float8',
-  'money', 'number'
-]);
-
-/**
- * 只看类型名的第一个词。`numeric(10,2)` 取 numeric，`double precision` 取 double，
- * `bigint unsigned` 取 bigint；而 `interval` 和 `point` 不会因为含有 "int"
- * 被误判成数值——按子串匹配的写法在这两个类型上一定会错。
- */
-function isNumericColumnType(dataType: string): boolean {
-  const token = dataType.toLowerCase().replace(/\(.*$/, '').trim().split(/\s+/)[0] ?? '';
-  return NUMERIC_TYPE_TOKENS.has(token);
-}
-
-const NUMERIC_LITERAL = /^[+-]?\d+(?:\.\d+)?$/;
 
 /**
  * 比较用的字面量。
