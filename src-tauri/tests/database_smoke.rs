@@ -1492,3 +1492,216 @@ async fn sqlite_lists_tables_and_views_without_internal_objects() {
     "SQLite 内部对象不该出现在树里: {objects:?}"
   );
 }
+
+// ---------------------------------------------------------------------------
+// 整库 ER 图数据
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn postgres_er_diagram_covers_all_tables_and_their_links() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+
+  let fixture = MetaFixture::new("pger");
+  // 一张与谁都没关系的表：用户明确要求孤立的表也要出现在图里
+  let lonely = format!("{}_lonely", fixture.child);
+  sqlx::query(&format!("DROP TABLE IF EXISTS {lonely}")).execute(&pool).await.ok();
+  for statement in fixture.ddl("postgres") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare PostgreSQL fixture");
+  }
+  sqlx::query(&format!("CREATE TABLE {lonely} (note VARCHAR(16))"))
+    .execute(&pool)
+    .await
+    .expect("create lonely table");
+
+  let queries =
+    dataomni_lib::services::er_diagram_queries(&dataomni_lib::models::DatabaseType::PostgreSQL)
+      .expect("supported");
+
+  let column_rows = sqlx::query(queries.columns).fetch_all(&pool).await.expect("list columns");
+  let columns: Vec<(String, String, String, bool)> = column_rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("table_name"),
+        row.get::<String, _>("column_name"),
+        row.get::<String, _>("data_type"),
+        row.get::<bool, _>("is_primary_key"),
+      )
+    })
+    .collect();
+
+  // 孤立的表必须在列清单里——图上要画出它，即便一条线也没有
+  assert!(
+    columns.iter().any(|(table, column, ..)| table == &lonely && column == "note"),
+    "没有外键的表也要出现"
+  );
+  // 类型要带长度：丢掉 (32) 等于丢掉一半信息
+  let label = columns
+    .iter()
+    .find(|(table, column, ..)| table == &fixture.child && column == "label")
+    .map(|(.., data_type, _)| data_type.clone());
+  assert_eq!(label.as_deref(), Some("character varying(32)"), "类型要带长度");
+  assert!(
+    columns.iter().any(|(table, column, _, pk)| table == &fixture.child && column == "id" && *pk),
+    "主键要标出来: {columns:?}"
+  );
+
+  let fk_rows =
+    sqlx::query(queries.foreign_keys).fetch_all(&pool).await.expect("list foreign keys");
+  let links: Vec<(String, String, String, String)> = fk_rows
+    .iter()
+    .filter(|row| row.get::<String, _>("table_name") == fixture.child)
+    .map(|row| {
+      (
+        row.get::<String, _>("table_name"),
+        row.get::<String, _>("column_name"),
+        row.get::<String, _>("referenced_table"),
+        row.get::<String, _>("referenced_column"),
+      )
+    })
+    .collect();
+  assert_eq!(
+    links,
+    vec![
+      (fixture.child.clone(), "ref_a".into(), fixture.parent.clone(), "x".into()),
+      (fixture.child.clone(), "ref_b".into(), fixture.parent.clone(), "y".into()),
+    ],
+    "复合外键的两条连线必须各自连到对的列上"
+  );
+
+  sqlx::query(&format!("DROP TABLE IF EXISTS {lonely}")).execute(&pool).await.ok();
+  for table in [&fixture.child, &fixture.parent] {
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  }
+}
+
+#[tokio::test]
+async fn mysql_er_diagram_reports_column_types_with_length() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+
+  let fixture = MetaFixture::new("myer");
+  let view = format!("{}_v", fixture.child);
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  for statement in fixture.ddl("mysql") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
+  }
+  sqlx::query(&format!("CREATE VIEW {view} AS SELECT id FROM {}", fixture.child))
+    .execute(&pool)
+    .await
+    .expect("create view");
+
+  let database: String =
+    sqlx::query_scalar("SELECT DATABASE()").fetch_one(&pool).await.expect("current database");
+  let queries =
+    dataomni_lib::services::er_diagram_queries(&dataomni_lib::models::DatabaseType::MySQL)
+      .expect("supported");
+
+  let column_rows =
+    sqlx::query(queries.columns).bind(&database).fetch_all(&pool).await.expect("list columns");
+  let columns: Vec<(String, String, String)> = column_rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("table_name"),
+        row.get::<String, _>("column_name"),
+        row.get::<String, _>("data_type"),
+      )
+    })
+    .collect();
+
+  assert_eq!(
+    columns
+      .iter()
+      .find(|(table, column, _)| table == &fixture.child && column == "label")
+      .map(|(.., data_type)| data_type.as_str()),
+    Some("varchar(32)"),
+    "DATA_TYPE 只给 varchar；图上要显示的是完整类型"
+  );
+  // ER 图画的是表之间的外键，视图没有外键，混进来只会多出一堆孤立的框
+  assert!(!columns.iter().any(|(table, ..)| table == &view), "视图不该出现在 ER 图里: {columns:?}");
+
+  let fk_rows = sqlx::query(queries.foreign_keys)
+    .bind(&database)
+    .fetch_all(&pool)
+    .await
+    .expect("list foreign keys");
+  let links: Vec<(String, String)> = fk_rows
+    .iter()
+    .filter(|row| row.get::<String, _>("table_name") == fixture.child)
+    .map(|row| (row.get::<String, _>("column_name"), row.get::<String, _>("referenced_column")))
+    .collect();
+  assert_eq!(links, vec![("ref_a".into(), "x".into()), ("ref_b".into(), "y".into())]);
+
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  for table in [&fixture.child, &fixture.parent] {
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  }
+}
+
+#[tokio::test]
+async fn sqlite_er_diagram_reads_every_table_in_one_round_trip() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("connect to in-memory SQLite");
+
+  let fixture = MetaFixture::new("liteer");
+  for statement in fixture.ddl("sqlite") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare SQLite fixture");
+  }
+  sqlx::query("CREATE TABLE lonely_note (note TEXT)").execute(&pool).await.expect("lonely");
+
+  let queries =
+    dataomni_lib::services::er_diagram_queries(&dataomni_lib::models::DatabaseType::SQLite)
+      .expect("supported");
+
+  let column_rows = sqlx::query(queries.columns).fetch_all(&pool).await.expect("list columns");
+  let columns: Vec<(String, String, i64)> = column_rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("table_name"),
+        row.get::<String, _>("column_name"),
+        row.get::<i64, _>("is_primary_key"),
+      )
+    })
+    .collect();
+
+  // 一次查完所有表：按表逐个跑 PRAGMA 在几十张表的库上就是几十次往返
+  assert!(columns.iter().any(|(table, ..)| table == &fixture.parent));
+  assert!(columns.iter().any(|(table, ..)| table == &fixture.child));
+  assert!(columns.iter().any(|(table, column, _)| table == "lonely_note" && column == "note"));
+  assert!(
+    columns.iter().any(|(table, column, pk)| table == &fixture.child && column == "id" && *pk == 1),
+    "主键要标出来: {columns:?}"
+  );
+
+  let fk_rows =
+    sqlx::query(queries.foreign_keys).fetch_all(&pool).await.expect("list foreign keys");
+  let links: Vec<(String, String, String)> = fk_rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("column_name"),
+        row.get::<String, _>("referenced_table"),
+        row.get::<String, _>("referenced_column"),
+      )
+    })
+    .collect();
+  assert_eq!(
+    links,
+    vec![
+      ("ref_a".into(), fixture.parent.clone(), "x".into()),
+      ("ref_b".into(), fixture.parent.clone(), "y".into()),
+    ]
+  );
+}

@@ -1,4 +1,5 @@
-import { FileText, History, Pin, Plus, Table, X } from 'lucide-react';
+import {
+  GitBranch, FileText, History, Pin, Plus, Table, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { orderWorkspaceTabs, type WorkspaceTab, type WorkspaceTabKind } from '../contracts/workspace';
 import type { ConnectionEnvironment } from '../contracts';
@@ -31,7 +32,8 @@ interface WorkspaceTabBarProps {
 const TAB_ICONS: Record<WorkspaceTabKind, typeof Table> = {
   sql: FileText,
   'table-data': Table,
-  'table-structure': FileText
+  'table-structure': FileText,
+  'er-diagram': GitBranch
 };
 
 export function WorkspaceTabBar({

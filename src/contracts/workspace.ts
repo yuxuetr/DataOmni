@@ -1,4 +1,4 @@
-export type WorkspaceTabKind = 'sql' | 'table-data' | 'table-structure';
+export type WorkspaceTabKind = 'sql' | 'table-data' | 'table-structure' | 'er-diagram';
 
 export interface WorkspaceTabBinding {
   readonly profileId: string;
@@ -44,7 +44,15 @@ export interface TableWorkspaceTab extends WorkspaceTabBase {
   };
 }
 
-export type WorkspaceTab = SqlWorkspaceTab | TableWorkspaceTab;
+/**
+ * ER 关系图。是**库级**的，不挂在某一张表下面——它画的正是整个库里表与表的
+ * 关系，放进某张表的标签页里等于说「这是这张表的关系图」，而它不是。
+ */
+export interface ErDiagramWorkspaceTab extends WorkspaceTabBase {
+  kind: 'er-diagram';
+}
+
+export type WorkspaceTab = SqlWorkspaceTab | TableWorkspaceTab | ErDiagramWorkspaceTab;
 
 /** 关闭时要求保留的标签，连同它当时的草稿一起留待重新打开 */
 export interface ClosedWorkspaceTab {
@@ -190,5 +198,15 @@ export function markWorkspaceTabProfileDeleted(
       profileId: tab.binding.profileId,
       sessionId: null
     }
+  };
+}
+
+export function createErDiagramWorkspaceTab(
+  profileId: string,
+  options: WorkspaceTabOptions = {}
+): ErDiagramWorkspaceTab {
+  return {
+    ...createTabBase('er-diagram', profileId, 'ER', { ...options, titleKey: 'er.title' }),
+    kind: 'er-diagram'
   };
 }

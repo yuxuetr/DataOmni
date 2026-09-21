@@ -3,6 +3,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Sidebar } from './components/Sidebar';
 import { SqlWorkbench } from './components/SqlWorkbench';
 import TableDataViewer from './components/TableDataViewer';
+import { ErDiagramView } from './components/ErDiagramView';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { CloseTabPrompt, type CloseTabChoice } from './components/CloseTabPrompt';
 import { OfflineTabView } from './components/OfflineTabView';
@@ -16,6 +17,7 @@ import { useConnectionStore } from './stores/connectionStore';
 import { selectSqlDocumentHasUnsavedContent, useQueryStore } from './stores/queryStore';
 import { useWorkspaceStore } from './stores/workspaceStore';
 import {
+  createErDiagramWorkspaceTab,
   createSqlWorkspaceTab,
   createTableWorkspaceTab,
   workspaceTabId
@@ -289,6 +291,17 @@ function App() {
     );
   };
 
+  /** ER 图是库级的，一个连接一个标签；重复打开只是激活已有的那个 */
+  const openErDiagramTab = () => {
+    if (!activeConnection) {
+      return;
+    }
+    const profileId = activeConnection.config.id;
+    registerTab(
+      createErDiagramWorkspaceTab(profileId, { id: workspaceTabId(profileId, 'er-diagram') })
+    );
+  };
+
   const openTableTab = (tableName: string, schema?: string) => {
     if (!activeConnection) {
       return;
@@ -375,6 +388,12 @@ function App() {
         title: t('palette.action.openSqlite'),
         group: t('palette.group.action'),
         run: () => void openSqliteFile()
+      },
+      {
+        id: 'action:er-diagram',
+        title: t('er.open'),
+        group: t('palette.group.action'),
+        run: () => openErDiagramTab()
       },
       {
         id: 'action:reopen-tab',
@@ -468,6 +487,10 @@ function App() {
       return null;
     }
 
+    if (activeTab.kind === 'er-diagram') {
+      return <ErDiagramView key={activeTab.id} connection={activeConnection.config} />;
+    }
+
     return (
       <TableDataViewer
         key={activeTab.id}
@@ -491,6 +514,7 @@ function App() {
           activeConnectionId={activeConnection?.config.id}
           onConnectionDeleted={(connectionId) => sessionManager.handleConnectionDeleted(connectionId)}
           onTableSelect={openTableTab}
+          onOpenErDiagram={openErDiagramTab}
         />
       </div>
 

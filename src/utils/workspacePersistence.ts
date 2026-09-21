@@ -38,7 +38,12 @@ function isWorkspaceTab(value: unknown): value is WorkspaceTab {
   if (typeof tab.id !== 'string' || tab.id.length === 0) {
     return false;
   }
-  if (tab.kind !== 'sql' && tab.kind !== 'table-data' && tab.kind !== 'table-structure') {
+  if (
+    tab.kind !== 'sql'
+    && tab.kind !== 'table-data'
+    && tab.kind !== 'table-structure'
+    && tab.kind !== 'er-diagram'
+  ) {
     return false;
   }
   if (typeof tab.title !== 'string') {
@@ -51,8 +56,9 @@ function isWorkspaceTab(value: unknown): value is WorkspaceTab {
     return false;
   }
 
-  // 表标签必须带得回它指向的对象，否则恢复出来是个打不开的空壳
-  if (tab.kind !== 'sql') {
+  // 表标签必须带得回它指向的对象，否则恢复出来是个打不开的空壳。
+  // SQL 与 ER 图没有绑定对象：前者带草稿，后者画的是整个库。
+  if (tab.kind === 'table-data' || tab.kind === 'table-structure') {
     const object = (tab as { object?: { table?: unknown } }).object;
     if (typeof object !== 'object' || object === null || typeof object.table !== 'string') {
       return false;

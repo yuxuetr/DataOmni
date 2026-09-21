@@ -187,8 +187,6 @@ export const zh = {
   'table.tab.schema.desc': '表结构信息',
   'table.tab.data': '数据',
   'table.tab.data.desc': '表数据内容',
-  'table.tab.er': 'ER 图',
-  'table.tab.er.desc': '数据库关系图',
   'table.sessionUnavailable': '数据库会话不可用，请先重新连接',
   'table.connectionInactive': '此标签绑定的连接「{name}」当前未激活，请在左侧重新选择该连接后再操作',
   'table.schemaLoadFailedStopped': '无法加载表结构，已停止不稳定的分页查询',
@@ -235,11 +233,6 @@ export const zh = {
   'table.notNull': '非空',
   'table.loading': '加载中...',
   'table.empty': '暂无数据',
-  'table.er.title': '数据库关系图 (ER 图)',
-  'table.er.subtitle': '显示数据库中所有表的关系结构',
-  'table.er.wip': 'ER 图功能开发中',
-  'table.er.wipDetail': '该功能将展示数据库中所有表的关系结构',
-  'table.er.wipDetail2': '包括外键关系、表间连线等',
 
   // SQL 编辑器
   'editor.completion.keyword': 'SQL 关键字: {name}',
@@ -330,6 +323,7 @@ export const zh = {
   'offline.draftKept': '下面是保留下来的草稿，可以选中复制走。',
   'offline.draftReadonly': '下面是这个标签的草稿，只读。在左侧重新选择该连接即可继续执行，标签不会改到当前连接上执行。',
   'offline.emptyDraft': '这个查询标签还没有写过内容。',
+  'offline.erNeedsConnection': 'ER 关系图需要连接后才能读取。',
   'offline.tableNeedsConnection': '表「{table}」的数据需要连接后才能读取。',
 
   // 连接表单
@@ -448,6 +442,22 @@ export const zh = {
   'connect.sessionTimeout': '建立会话超过 {seconds} 秒没有完成，请重试或检查数据库状态。',
   'connect.passwordRequired': '该连接未保存密码，请输入本次会话密码。',
   'connect.createdButNotFound': '连接已创建，但没能在列表中找到它，请从左侧手动选择。',
+
+  // ER 关系图
+  'er.title': 'ER 关系图',
+  'er.open': '打开 ER 关系图',
+  'er.loading': '正在读取表结构与外键…',
+  'er.loadFailed': '读取 ER 关系图数据失败',
+  'er.empty': '这个库里没有表',
+  'er.summary': '{tables} 张表 · {links} 条关联',
+  'er.unlinkedNote': '其中 {count} 张表没有外键关联',
+  'er.zoomIn': '放大',
+  'er.zoomOut': '缩小',
+  'er.fit': '适应窗口',
+  'er.resetZoom': '实际大小',
+  'er.panHint': '拖动空白处平移，双指或滚轮缩放',
+  'er.unsupported': '当前数据库类型不支持 ER 关系图',
+  'er.noDatabaseName': '该连接没有指定数据库名，无法读取 ER 关系图。',
 
   // 命令面板
   'palette.placeholder': '搜索连接、表或命令…',

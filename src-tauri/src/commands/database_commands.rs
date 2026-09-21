@@ -499,3 +499,12 @@ pub fn get_object_catalog_queries(
   crate::services::object_catalog_queries(&db_type)
     .ok_or_else(|| format!("{:?} 尚未支持对象浏览", db_type))
 }
+
+/// 取该方言的整库 ER 图查询。与另外两个目录命令一样只回 SQL 文本。
+#[tauri::command]
+pub fn get_er_diagram_queries(
+  db_type: crate::models::DatabaseType,
+) -> Result<crate::services::ErDiagramQueries, String> {
+  crate::services::er_diagram_queries(&db_type)
+    .ok_or_else(|| format!("{:?} 尚未支持 ER 关系图", db_type))
+}

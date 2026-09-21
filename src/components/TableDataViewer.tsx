@@ -17,7 +17,6 @@ import {
   ChevronRight,
   FileText,
   Table,
-  GitBranch,
   Calendar,
   Clock,
   RefreshCw,
@@ -30,7 +29,6 @@ import {
   Check,
   ChevronsLeft,
   ChevronsRight,
-  BarChart3,
   Download
 } from 'lucide-react';
 import clsx from 'clsx';
@@ -91,7 +89,7 @@ interface TableDataViewerProps {
 }
 
 // 标签页类型
-type TabType = 'schema' | 'data' | 'er';
+type TabType = 'schema' | 'data';
 
 /** `get_schema_metadata_queries` 的返回；字段名按 Rust 侧的 snake_case */
 interface SchemaMetadataQueries {
@@ -177,12 +175,6 @@ export default function TableDataViewer({
       label: t('table.tab.data'),
       icon: <Table size={16} />,
       description: t('table.tab.data.desc')
-    },
-    {
-      id: 'er' as TabType,
-      label: t('table.tab.er'),
-      icon: <GitBranch size={16} />,
-      description: t('table.tab.er.desc')
     }
   ];
 
@@ -1656,24 +1648,6 @@ export default function TableDataViewer({
         )}
 
         {/* ER 图标签页 */}
-        {activeTab === 'er' && (
-          <div className="h-full flex flex-col">
-            <div className="p-4 border-b bg-surface-sunken">
-              <h2 className="text-sm font-semibold text-fg">{t('table.er.title')}</h2>
-              <p className="text-xs text-fg-muted mt-1">
-                {t('table.er.subtitle')}
-              </p>
-            </div>
-            <div className="flex-1 flex items-center justify-center bg-surface-sunken">
-              <div className="text-center text-fg-muted">
-                <BarChart3 size={48} className="mx-auto mb-4 text-fg-subtle" />
-                <p className="text-sm font-medium mb-2">{t('table.er.wip')}</p>
-                <p className="text-xs">{t('table.er.wipDetail')}</p>
-                <p className="text-xs mt-1">{t('table.er.wipDetail2')}</p>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* 表数据是服务端分页的，内存里只有当前这一页——导出必须如实说明范围 */}

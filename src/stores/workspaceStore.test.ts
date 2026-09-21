@@ -125,7 +125,7 @@ describe('workspace store', () => {
     openTable('profile-a', 'users', 'public');
 
     const state = useWorkspaceStore.getState();
-    expect(state.tabs.map((tab) => (tab.kind === 'sql' ? null : tab.object.table)))
+    expect(state.tabs.map((tab) => ('object' in tab ? tab.object.table : null)))
       .toEqual(['users', 'orders']);
     expect(state.activeTabId).toBe(workspaceTabId('profile-a', 'table-data', {
       schema: 'public',

@@ -6,6 +6,7 @@ import {
   Table,
   View,
   FunctionSquare,
+  GitBranch,
   Hash,
   RefreshCw,
   Loader,
@@ -34,6 +35,7 @@ import { validateDatabaseConnection } from '../utils/stateSync';
 interface DatabaseExplorerProps {
   connectionId: string;
   onTableSelect?: (tableName: string, schema?: string) => void;
+  onOpenErDiagram?: () => void;
 }
 
 /** `get_object_catalog_queries` 的返回；字段名按 Rust 侧的 snake_case */
@@ -44,7 +46,11 @@ export interface ObjectCatalogQueries {
   object_parameter_count: number;
 }
 
-export default function DatabaseExplorer({ connectionId, onTableSelect }: DatabaseExplorerProps) {
+export default function DatabaseExplorer({
+  connectionId,
+  onTableSelect,
+  onOpenErDiagram
+}: DatabaseExplorerProps) {
   const { connections } = useConnectionStore();
   const { database } = useQueryStore();
   const { 
@@ -219,14 +225,26 @@ export default function DatabaseExplorer({ connectionId, onTableSelect }: Databa
           )}
         </div>
         
-        <button
-          onClick={() => loadDatabaseMetadata(true)}
-          disabled={loading}
-          className="p-1 text-fg-muted hover:text-accent transition-colors"
-          title={t('explorer.refresh')}
-        >
-          <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-        </button>
+        <div className="flex items-center gap-1">
+          {onOpenErDiagram && (
+            <button
+              onClick={onOpenErDiagram}
+              className="p-1 text-fg-muted hover:text-accent transition-colors"
+              title={t('er.open')}
+              aria-label={t('er.open')}
+            >
+              <GitBranch size={14} />
+            </button>
+          )}
+          <button
+            onClick={() => loadDatabaseMetadata(true)}
+            disabled={loading}
+            className="p-1 text-fg-muted hover:text-accent transition-colors"
+            title={t('explorer.refresh')}
+          >
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          </button>
+        </div>
       </div>
 
       {/* 错误提示 */}

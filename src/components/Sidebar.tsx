@@ -16,12 +16,14 @@ interface SidebarProps {
   activeConnectionId?: string | null;
   onConnectionDeleted?: (deletedConnectionId: string) => Promise<void>;
   onTableSelect?: (tableName: string, schema?: string) => void;
+  onOpenErDiagram?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeConnectionId,
   onConnectionDeleted,
-  onTableSelect
+  onTableSelect,
+  onOpenErDiagram
 }) => {
   const t = useLanguageStore((state) => state.t);
   const { connections, loadConnections, deleteConnection } = useConnectionStore();
@@ -212,9 +214,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="flex-1 overflow-hidden">
         {activeConnectionId ? (
           // 显示数据库浏览器
-          <DatabaseExplorer 
+          <DatabaseExplorer
             connectionId={activeConnectionId}
             onTableSelect={handleTableSelect}
+            onOpenErDiagram={onOpenErDiagram}
           />
         ) : (
           // 右侧启动面板已经在说「选一个连接」，这里不再用 48px 图标加三行

@@ -57,15 +57,17 @@ export function OfflineTabView({ tab, profileName, draft }: OfflineTabViewProps)
               )
               : <p className="text-sm text-fg-muted">{t('offline.emptyDraft')}</p>
           )
-          : (
-            <p className="text-sm text-fg-muted">
-              {t('offline.tableNeedsConnection', {
-                table: tab.object.schema
-                  ? `${tab.object.schema}.${tab.object.table}`
-                  : tab.object.table
-              })}
-            </p>
-          )}
+          : tab.kind === 'er-diagram'
+            ? <p className="text-sm text-fg-muted">{t('offline.erNeedsConnection')}</p>
+            : (
+              <p className="text-sm text-fg-muted">
+                {t('offline.tableNeedsConnection', {
+                  table: tab.object.schema
+                    ? `${tab.object.schema}.${tab.object.table}`
+                    : tab.object.table
+                })}
+              </p>
+            )}
       </div>
     </div>
   );
