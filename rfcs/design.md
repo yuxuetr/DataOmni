@@ -1,5 +1,15 @@
 # DataOmni 数据库连接工具设计文档
 
+> **这是 2025-06 的立项设计，写在实现之前，此后没有跟着代码走。**
+>
+> 它记录的是当初的需求分析与架构意图，可以当立项记录读；**不要当作当前系统的
+> 描述**。实现走到哪里、为什么这么选、哪些明确不做，以 `TODOs.md` 为准；
+> 对外能力说明以 `README.md` 为准。
+>
+> 已知与现状不符的地方：§6 API 设计（已移除，见该节）、§12 分析型数据库
+> （DuckDB / ClickHouse 在 `TODOs.md` 里仍是「评估并接入」，尚未动工）、
+> §15 项目里程碑（已由 P0–P5 取代）。
+
 ## 1. 项目概述
 
 DataOmni 是一个基于 Tauri 架构的跨平台数据库连接工具，支持多种主流数据库的连接、管理和操作。采用 React + TailwindCSS 4 + Zustand 构建前端界面，Rust 构建后端核心功能。
@@ -501,65 +511,16 @@ pub struct QueryResult {
 
 ## 6. API 设计
 
-### 6.1 Tauri 命令接口
-
-```rust
-// 连接管理命令
-#[tauri::command]
-async fn create_connection(config: ConnectionConfig) -> Result<String, String>;
-
-#[tauri::command]
-async fn update_connection(id: String, config: ConnectionConfig) -> Result<(), String>;
-
-#[tauri::command]
-async fn delete_connection(id: String) -> Result<(), String>;
-
-#[tauri::command]
-async fn test_connection(config: ConnectionConfig) -> Result<bool, String>;
-
-#[tauri::command]
-async fn get_connections() -> Result<Vec<ConnectionConfig>, String>;
-
-// 数据库操作命令
-#[tauri::command]
-async fn get_databases(connection_id: String) -> Result<Vec<String>, String>;
-
-#[tauri::command]
-async fn get_tables(connection_id: String, database: String) -> Result<Vec<TableInfo>, String>;
-
-#[tauri::command]
-async fn execute_query(connection_id: String, query: String) -> Result<QueryResult, String>;
-
-// 文档管理命令
-#[tauri::command]
-async fn create_document(document: Document) -> Result<String, String>;
-
-#[tauri::command]
-async fn update_document(id: String, document: Document) -> Result<(), String>;
-
-#[tauri::command]
-async fn get_documents() -> Result<Vec<Document>, String>;
-```
-
-### 6.2 前端服务接口
-
-```typescript
-// connectionService.ts
-export class ConnectionService {
-  async createConnection(connection: DatabaseConnection): Promise<string>;
-  async updateConnection(id: string, connection: DatabaseConnection): Promise<void>;
-  async deleteConnection(id: string): Promise<void>;
-  async testConnection(connection: DatabaseConnection): Promise<boolean>;
-  async getConnections(): Promise<DatabaseConnection[]>;
-}
-
-// databaseService.ts
-export class DatabaseService {
-  async getDatabases(connectionId: string): Promise<string[]>;
-  async getTables(connectionId: string, database: string): Promise<TableInfo[]>;
-  async executeQuery(connectionId: string, query: string): Promise<QueryResult>;
-}
-```
+> **本节已移除。** 它列过 11 条 Tauri 命令与两个前端 service 类，而其中
+> `get_databases`、`get_tables`、`create_document`、`update_document`、
+> `get_documents` 从未实现，`execute_query` 的签名已完全不同（现在是一个
+> request 结构加一个 Channel，带行数与字节上限），`ConnectionService` /
+> `DatabaseService` 两个类所在的 `src/services/` 目录根本不存在。
+>
+> 照着一份写着不存在的函数的文档写代码，要到编译期才发现——留着比删掉更糟。
+>
+> 命令的权威清单是 `src-tauri/src/lib.rs` 里 `invoke_handler` 的那一段
+> （当前 28 条）；每条的签名在 `src-tauri/src/commands/` 下。
 
 ## 7. 界面设计
 
@@ -859,34 +820,7 @@ impl ClickHouseConnection {
 }
 ```
 
-### 12.4 QuestDB - 时序数据专家  
-
-#### 12.4.1 时序数据特化功能
-
-```rust
-impl QuestDBConnection {
-    pub async fn insert_time_series(&self, table: &str, data: &TimeSeriesData) -> Result<()> {
-        // 支持高性能时序数据插入
-        let query = format!(
-            "INSERT INTO {} VALUES ('{}', {}, {})",
-            table, data.timestamp, data.value, data.tags
-        );
-        self.execute_query(&query).await?;
-        Ok(())
-    }
-    
-    pub async fn sample_by_time(&self, table: &str, interval: &str) -> Result<QueryResult> {
-        // 时序采样查询
-        let query = format!(
-            "SELECT ts, avg(value) FROM {} SAMPLE BY {} ALIGN TO CALENDAR",
-            table, interval
-        );
-        self.execute_query(&query).await
-    }
-}
-```
-
-### 12.5 前端界面适配
+### 12.4 前端界面适配
 
 #### 12.5.1 分析型数据库连接表单
 
@@ -945,7 +879,7 @@ const analyticalQueryTemplates = {
 };
 ```
 
-### 12.6 性能监控仪表板
+### 12.5 性能监控仪表板
 
 #### 12.6.1 分析型数据库性能指标
 
@@ -988,7 +922,7 @@ const PerformanceMonitor: React.FC<{connection: DatabaseConnection}> = ({ connec
 };
 ```
 
-### 12.7 集成优势总结
+### 12.6 集成优势总结
 
 通过支持这些分析型数据库，DataOmni 将成为：
 
@@ -1017,28 +951,6 @@ const PerformanceMonitor: React.FC<{connection: DatabaseConnection}> = ({ connec
 - 本地化配置
 - 右到左语言支持
 
-## 13. 开发规范
-
-### 13.1 代码规范
-
-- TypeScript 严格模式
-- ESLint + Prettier
-- Rust Clippy
-- Git Hooks 检查
-
-### 13.2 提交规范
-
-- Conventional Commits
-- 分支管理策略
-- PR 审查流程
-
-### 13.3 文档规范
-
-- README 维护
-- API 文档生成
-- 变更日志
-- 用户手册
-
 ## 14. 开发规范
 
 ### 14.1 代码规范
@@ -1063,33 +975,8 @@ const PerformanceMonitor: React.FC<{connection: DatabaseConnection}> = ({ connec
 
 ## 15. 项目里程碑
 
-### Phase 1: 基础功能 (4 周)
-
-- [ ] 项目架构搭建
-- [ ] 基础 UI 组件开发
-- [ ] 连接管理功能
-- [ ] MySQL/PostgreSQL 支持
-
-### Phase 2: 核心功能 (6 周)
-
-- [ ] 数据库浏览功能
-- [ ] 查询编辑器
-- [ ] 更多数据库支持
-- [ ] 基础文档功能
-
-### Phase 3: 高级功能 (4 周)
-
-- [ ] 高级查询功能
-- [ ] 性能监控
-- [ ] 数据导入导出
-- [ ] 协作功能
-
-### Phase 4: 优化和发布 (2 周)
-
-- [ ] 性能优化
-- [ ] 安全加固
-- [ ] 测试完善
-- [ ] 发布准备
+> 这一节原本是一份 16 周、四个 Phase 的计划。它已被 `TODOs.md` 的 P0–P5 与
+> 发布里程碑取代——那份是活的，每条都带取舍理由、判据与反向验证记录。
 
 ## 16. 总结
 
