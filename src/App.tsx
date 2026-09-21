@@ -27,6 +27,7 @@ import { saveWorkspaceSnapshot } from './utils/workspacePersistence';
 import { useResizablePanel } from './hooks/useResizablePanel';
 import { PanelResizeHandle } from './components/PanelResizeHandle';
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette';
+import { QueryHistoryDialog } from './components/QueryHistoryDialog';
 import { useProfileConnector } from './hooks/useProfileConnector';
 import { useThemeStore } from './stores/themeStore';
 import { environmentBadge } from './contracts/environment';
@@ -58,6 +59,7 @@ function App() {
   const setThemePreference = useThemeStore((state) => state.setPreference);
   const { connect, openSqliteFile } = useProfileConnector();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   const unsavedTabIds = useMemo(
     () => new Set(
@@ -273,7 +275,13 @@ function App() {
     }
   };
 
-  const openSqlTab = () => {
+  /**
+   * 开一个新的 SQL 标签，可带初始内容。
+   *
+   * 从历史里取回语句走的是「开新标签」而不是「写进当前标签」：后者会把用户
+   * 正在写的草稿覆盖掉，而那份草稿没有第二个地方存着。
+   */
+  const openSqlTab = (initialSql?: string) => {
     if (!activeConnection) {
       return;
     }
@@ -283,12 +291,17 @@ function App() {
       (tab) => tab.kind === 'sql' && tab.binding.profileId === profileId
     ).length;
 
-    registerTab(
-      createSqlWorkspaceTab(profileId, {
-        titleKey: 'tab.queryNumbered',
-        titleParams: { index: sqlTabCount + 1, connection: activeConnection.config.name }
-      })
-    );
+    const tab = createSqlWorkspaceTab(profileId, {
+      titleKey: 'tab.queryNumbered',
+      titleParams: { index: sqlTabCount + 1, connection: activeConnection.config.name }
+    });
+    registerTab(tab);
+
+    if (initialSql) {
+      // 先建文档再灌内容：openDocument 对新 id 会建一份空的
+      openDocument(tab.id);
+      setSqlInput(initialSql);
+    }
   };
 
   /** ER 图是库级的，一个连接一个标签；重复打开只是激活已有的那个 */
@@ -376,6 +389,12 @@ function App() {
         title: t('palette.action.newSql'),
         group: t('palette.group.action'),
         run: () => openSqlTab()
+      },
+      {
+        id: 'action:history',
+        title: t('history.open'),
+        group: t('palette.group.action'),
+        run: () => setShowHistory(true)
       },
       {
         id: 'action:new-connection',
@@ -515,6 +534,7 @@ function App() {
           onConnectionDeleted={(connectionId) => sessionManager.handleConnectionDeleted(connectionId)}
           onTableSelect={openTableTab}
           onOpenErDiagram={openErDiagramTab}
+          onOpenHistory={() => setShowHistory(true)}
         />
       </div>
 
@@ -538,7 +558,7 @@ function App() {
             environmentByProfileId={environmentByProfileId}
             onClose={closeWorkspaceTab}
             onContextMenu={(tabId, position) => setTabMenu({ tabId, position })}
-            onNewSqlTab={activeConnection ? openSqlTab : undefined}
+            onNewSqlTab={activeConnection ? () => openSqlTab() : undefined}
             onReopenClosedTab={closedTabs.length > 0 ? reopenClosedTab : undefined}
             closedTabCount={closedTabs.length}
           />
@@ -574,6 +594,13 @@ function App() {
         <CommandPalette
           commands={buildPaletteCommands()}
           onDismiss={() => setPaletteOpen(false)}
+        />
+      )}
+
+      {showHistory && (
+        <QueryHistoryDialog
+          onClose={() => setShowHistory(false)}
+          onOpenInNewTab={activeConnection ? (sql) => openSqlTab(sql) : undefined}
         />
       )}
 

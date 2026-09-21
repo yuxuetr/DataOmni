@@ -7,7 +7,8 @@ import {
   Trash2,
   AlertCircle,
   X,
-  SlidersHorizontal
+  SlidersHorizontal,
+  History
 } from 'lucide-react';
 import { ConnectionConfig, useConnectionStore } from '../stores/connectionStore';
 import DatabaseExplorer from './DatabaseExplorer';
@@ -27,13 +28,16 @@ interface SidebarProps {
   onConnectionDeleted?: (deletedConnectionId: string) => Promise<void>;
   onTableSelect?: (tableName: string, schema?: string) => void;
   onOpenErDiagram?: () => void;
+  /** 历史对话框由 App 渲染：它要能把一条语句开进新标签，而建标签是 App 的事 */
+  onOpenHistory?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeConnectionId,
   onConnectionDeleted,
   onTableSelect,
-  onOpenErDiagram
+  onOpenErDiagram,
+  onOpenHistory
 }) => {
   const t = useLanguageStore((state) => state.t);
   const { connections, loadConnections, deleteConnection } = useConnectionStore();
@@ -247,6 +251,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="text-xs text-fg-subtle">{t('app.language')}</span>
           <LanguageToggle />
         </div>
+        {onOpenHistory && (
+          <button
+            type="button"
+            onClick={onOpenHistory}
+            className="flex w-full items-center gap-2 rounded-control px-1 py-1 text-xs text-fg-subtle hover:bg-surface-hover hover:text-fg"
+          >
+            <History size={13} />
+            {t('history.open')}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setShowSettings(true)}
