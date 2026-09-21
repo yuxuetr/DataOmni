@@ -3,6 +3,7 @@ import type { ColumnSort } from './resultSorting';
 import type { SqlIdentifierDialect } from './sqlIdentifiers';
 import { quoteSqlIdentifier } from './sqlIdentifiers';
 import { translateNow } from '../stores/languageStore';
+import { primaryKeyColumns } from './rowIdentity';
 
 export type TablePaginationOrderStrategy =
   | 'primary-key'
@@ -21,17 +22,9 @@ export function createTablePaginationOrder(
   columns: ColumnInfo[],
   dialect: SqlIdentifierDialect
 ): TablePaginationOrder {
-  const primaryKeyColumns = columns
-    .map((column, index) => ({ column, index }))
-    .filter(({ column }) => column.is_primary_key)
-    .sort((left, right) => (
-      (left.column.primary_key_ordinal ?? left.index + 1)
-      - (right.column.primary_key_ordinal ?? right.index + 1)
-    ))
-    .map(({ column }) => column.name);
-
-  if (primaryKeyColumns.length > 0) {
-    return createOrder(primaryKeyColumns, dialect, 'primary-key', true);
+  const keyColumns = primaryKeyColumns(columns);
+  if (keyColumns.length > 0) {
+    return createOrder(keyColumns, dialect, 'primary-key', true);
   }
 
   if (dialect === 'sqlite') {

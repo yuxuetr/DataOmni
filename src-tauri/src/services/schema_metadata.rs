@@ -74,6 +74,12 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
 /// 列名用 `pg_get_indexdef(oid, colno, true)` 取而不是 join `pg_attribute`：
 /// 表达式索引在 `indkey` 里的位置是 0，join 不上任何列，那一列会凭空消失。
 /// `k.ord <= ix.indnkeyatts` 排掉 INCLUDE 的附加列——它们不参与键。
+///
+/// `is_partial` / `is_valid` 是给「拿哪个键定位一行」用的，不是给索引列表看的。
+/// 部分索引（`CREATE UNIQUE INDEX ... WHERE`）只在满足谓词的子集上唯一，
+/// 拿它拼 `WHERE u = ?` 会命中谓词外的重复行；`indisvalid = false` 的索引则是
+/// `CONCURRENTLY` 建失败留下的残骸，**它的唯一性从未在存量数据上验证过**。
+/// 两者都不能当行标识，但它们是两个不同的事实，合成一个布尔会让索引列表说谎。
 const POSTGRES_INDEXES: &str = r#"
 SELECT
   i.relname::text AS index_name,
@@ -81,6 +87,8 @@ SELECT
   k.ord::int AS ordinal,
   ix.indisunique AS is_unique,
   ix.indisprimary AS is_primary,
+  (ix.indpred IS NOT NULL) AS is_partial,
+  ix.indisvalid AS is_valid,
   am.amname::text AS method
 FROM pg_class t
 JOIN pg_namespace n ON n.oid = t.relnamespace
@@ -142,7 +150,9 @@ ORDER BY c.conname
 "#;
 
 /// MySQL 8 的函数索引 `COLUMN_NAME` 为 NULL、表达式在 `EXPRESSION` 里，
-/// 只读 COLUMN_NAME 会得到一列空值。
+/// 只读 COLUMN_NAME 会得到一列空值；那串表达式匹配不上任何列名，
+/// 选行标识时自然会被排掉。
+/// MySQL 没有部分索引，`is_partial` 恒假；也没有「未验证的索引」，`is_valid` 恒真。
 const MYSQL_INDEXES: &str = r#"
 SELECT
   CAST(s.INDEX_NAME AS CHAR) AS index_name,
@@ -150,6 +160,8 @@ SELECT
   s.SEQ_IN_INDEX AS ordinal,
   (s.NON_UNIQUE = 0) AS is_unique,
   (s.INDEX_NAME = 'PRIMARY') AS is_primary,
+  FALSE AS is_partial,
+  TRUE AS is_valid,
   CAST(s.INDEX_TYPE AS CHAR) AS method
 FROM INFORMATION_SCHEMA.STATISTICS s
 WHERE s.TABLE_NAME = ?
@@ -196,6 +208,11 @@ ORDER BY cc.CONSTRAINT_NAME
 ///
 /// 已知缺口：`INTEGER PRIMARY KEY`（rowid 别名）不产生索引，因而不会出现在
 /// index_list 里。那种主键在列表里已经标了「主键」，这里不重复。
+/// `il.partial` 同 PostgreSQL 的部分索引；SQLite 也支持 `CREATE INDEX ... WHERE`。
+/// `is_valid` 恒真：SQLite 没有「建到一半的索引」这种状态。
+///
+/// 这里查不到 `INTEGER PRIMARY KEY`——它是 rowid 的别名，没有独立索引对象。
+/// 主键因此始终从 `PRAGMA table_info` 的 `pk` 列拿，不从这里拿。
 const SQLITE_INDEXES: &str = r#"
 SELECT
   il.name AS index_name,
@@ -203,6 +220,8 @@ SELECT
   ii.seqno + 1 AS ordinal,
   il."unique" AS is_unique,
   (il.origin = 'pk') AS is_primary,
+  il.partial AS is_partial,
+  1 AS is_valid,
   NULL AS method
 FROM pragma_index_list(?1) il
 JOIN pragma_index_info(il.name) ii
@@ -356,6 +375,25 @@ mod tests {
       // sqlite_master.tbl_name 是字符串字面量，按标识符引用会查不到
       Some(DdlQuery::Bound { sql }) => assert!(sql.contains('?'), "绑定形态必须带占位符: {sql}"),
       other => panic!("SQLite 应走绑定参数: {other:?}"),
+    }
+  }
+
+  /// 少一列不会报错：前端读到 `undefined`，`is_valid` 会被当成 false，
+  /// 于是那个方言的唯一索引**全部**悄悄失去行标识资格，表变成只读，
+  /// 而没有任何一处会说这是为什么。
+  #[test]
+  fn every_index_query_reports_whether_the_index_can_identify_a_row() {
+    for db_type in [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite] {
+      let queries = schema_metadata_queries(&db_type).expect("supported");
+      for column in ["is_unique", "is_primary", "is_partial", "is_valid"] {
+        assert!(
+          queries.indexes.contains(column),
+          "{:?} 的索引查询缺少 {}: {}",
+          db_type,
+          column,
+          queries.indexes
+        );
+      }
     }
   }
 

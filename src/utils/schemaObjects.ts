@@ -19,6 +19,16 @@ export interface IndexInfo {
   columns: string[];
   isUnique: boolean;
   isPrimary: boolean;
+  /** 带谓词的部分索引：只在满足谓词的行上唯一，不能当行标识 */
+  isPartial: boolean;
+  /**
+   * 唯一性是否已在存量数据上验证过。
+   *
+   * 只有 PostgreSQL 会是 false——`CREATE INDEX CONCURRENTLY` 建失败会留下一个
+   * `indisvalid = false` 的索引。缺这一列时读到的是 `undefined`，按 false 处理：
+   * 宁可让表变成只读，也不要拿一个不保证唯一的键去定位行。
+   */
+  isValid: boolean;
   /** btree / hash 等；SQLite 没有 */
   method: string | null;
 }
@@ -66,6 +76,8 @@ export function groupIndexRows(
     columns: byOrdinal(group.columns).map(column => column.name),
     isUnique: boolean(group.row.is_unique),
     isPrimary: boolean(group.row.is_primary),
+    isPartial: boolean(group.row.is_partial),
+    isValid: boolean(group.row.is_valid),
     method: text(group.row.method) || null
   }));
 

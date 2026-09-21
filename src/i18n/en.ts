@@ -282,8 +282,9 @@ export const en: Translations = {
   'cell.binary': 'Binary, {count} bytes',
   'cell.binary.one': 'Binary, {count} byte',
   'table.readOnly.badge': 'Read-only',
-  'table.readOnly.noUniqueKey': 'This table has no primary key, so the grid cannot edit it: no WHERE clause can pin down a single row. Paging also falls back to the database default order, so page boundaries can shift as rows change. Edit it from the SQL editor with an explicit condition.',
+  'table.readOnly.noUniqueKey': 'This table has neither a primary key nor a unique index that is complete, not null and not partial, so the grid cannot edit it: no WHERE clause can pin down a single row. Paging also falls back to the database default order, so page boundaries can shift as rows change. Edit it from the SQL editor with an explicit condition.',
   'table.readOnly.compositeKey': 'This table is keyed on {columns} together. Grid editing does not handle composite keys yet — a condition built from one column would match several rows. Edit it from the SQL editor with the full condition.',
+  'table.readOnly.metadataUnavailable': 'The indexes and constraints for this table could not be read, so there is no way to tell which columns identify a single row. The grid will not write until that is known — a guessed key would change the wrong rows. Refresh to retry, or edit from the SQL editor with an explicit condition.',
 
   'editor.saveToFile': 'Save as .sql',
   'editor.saveToFileTitle': 'Save this tab\'s SQL to a .sql file ⌘S',

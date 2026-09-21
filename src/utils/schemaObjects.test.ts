@@ -13,13 +13,31 @@ describe('groupIndexRows', () => {
   it('把同名索引的多行合成一条，列按 ordinal 排序', () => {
     // 故意打乱送进来的行序：驱动不保证顺序，靠 ordinal 才可靠
     const indexes = groupIndexRows([
-      { index_name: 'uq_ab', column_name: 'b', ordinal: 2, is_unique: true, is_primary: false },
-      { index_name: 'uq_ab', column_name: 'a', ordinal: 1, is_unique: true, is_primary: false }
+      {
+        index_name: 'uq_ab', column_name: 'b', ordinal: 2,
+        is_unique: true, is_primary: false, is_partial: false, is_valid: true
+      },
+      {
+        index_name: 'uq_ab', column_name: 'a', ordinal: 1,
+        is_unique: true, is_primary: false, is_partial: false, is_valid: true
+      }
     ]);
 
     expect(indexes).toEqual([
-      { name: 'uq_ab', columns: ['a', 'b'], isUnique: true, isPrimary: false, method: null }
+      {
+        name: 'uq_ab', columns: ['a', 'b'], isUnique: true, isPrimary: false,
+        isPartial: false, isValid: true, method: null
+      }
     ]);
+  });
+
+  it('查询没给 is_valid 时按「不可用」算，不按「可用」算', () => {
+    // 少一列不该让一个没验证过唯一性的索引被拿去定位行。宁可让表变成只读
+    const [index] = groupIndexRows([
+      { index_name: 'uq', column_name: 'a', ordinal: 1, is_unique: 1, is_primary: 0 }
+    ]);
+    expect(index.isValid).toBe(false);
+    expect(index.isPartial).toBe(false);
   });
 
   it('MySQL / SQLite 的 1 与 0 也算布尔', () => {

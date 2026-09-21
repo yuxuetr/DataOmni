@@ -61,6 +61,7 @@ import { SchemaObjectSections, type SchemaObjects } from './SchemaObjectSections
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { requireDatabase } from '../utils/requireDatabase';
 import { describeTableEditability } from '../utils/tableEditability';
+import { describeRowIdentity, type IndexMetadata } from '../utils/rowIdentity';
 import { GridCellValue } from './GridCellValue';
 import { TableFilterBar } from './TableFilterBar';
 import { GridColumnMenu } from './GridColumnMenu';
@@ -529,11 +530,34 @@ export default function TableDataViewer({
     () => tableSchema?.columns.map((column) => column.name) ?? [],
     [tableSchema]
   );
-  // 表结构还没到之前一律当只读：此时拿不出主键，亮着的写入按钮会拼出错误的条件
-  const editability = React.useMemo(
-    () => describeTableEditability(tableSchema?.columns ?? []),
-    [tableSchema]
+  // 索引和列信息是两次查询，列先到。这中间「有没有唯一键」的答案是「还不知道」，
+  // 不是「没有」——后者会先给用户一句随后被推翻的断言
+  const indexMetadata = React.useMemo((): IndexMetadata => {
+    if (!schemaObjects) {
+      return { status: 'pending' };
+    }
+    if (schemaObjects.error) {
+      return { status: 'unavailable' };
+    }
+    return { status: 'loaded', indexes: schemaObjects.indexes };
+  }, [schemaObjects]);
+  const rowIdentity = React.useMemo(
+    () => describeRowIdentity(tableSchema?.columns ?? [], indexMetadata),
+    [tableSchema, indexMetadata]
   );
+  const editability = React.useMemo(() => describeTableEditability(rowIdentity), [rowIdentity]);
+  const readOnlyMessage = (() => {
+    switch (editability.reason) {
+      case 'no-unique-key':
+        return t('table.readOnly.noUniqueKey');
+      case 'metadata-unavailable':
+        return t('table.readOnly.metadataUnavailable');
+      case 'composite-key':
+        return t('table.readOnly.compositeKey', { columns: editability.keyColumns.join(', ') });
+      default:
+        return null;
+    }
+  })();
   const positionalRows = React.useMemo(
     () => toPositionalRows(columnNames, tableData),
     [columnNames, tableData]
@@ -1529,8 +1553,10 @@ export default function TableDataViewer({
               </div>
             )}
 
-            {/* 不能改就说清为什么。把按钮藏起来却不解释，用户只会以为界面坏了 */}
-            {tableSchema && editability.reason && (
+            {/* 不能改就说清为什么。把按钮藏起来却不解释，用户只会以为界面坏了。
+                `metadata-pending` 不进这里：它在同一次加载里就会有结论，
+                先闪一条警告再收回去，比什么都不说更让人不安 */}
+            {readOnlyMessage && (
               <div className="flex items-start gap-2 border-b border-warning-line bg-warning-soft px-4 py-2">
                 <Lock className="mt-0.5 shrink-0 text-warning" size={14} />
                 <div className="text-xs text-warning">
@@ -1538,11 +1564,7 @@ export default function TableDataViewer({
                   <span className="mr-1.5 rounded-control border border-warning-line px-1 py-0.5 font-medium">
                     {t('table.readOnly.badge')}
                   </span>
-                  {editability.reason === 'no-unique-key'
-                    ? t('table.readOnly.noUniqueKey')
-                    : t('table.readOnly.compositeKey', {
-                        columns: editability.keyColumns.join(', ')
-                      })}
+                  {readOnlyMessage}
                 </div>
               </div>
             )}
