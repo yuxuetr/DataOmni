@@ -20,7 +20,7 @@
 |---|---|---|
 | P0 | 建立质量基线并修复高风险缺陷 | [x] |
 | P1 | 建立可信的连接、会话与查询内核 | [x] |
-| P2 | 完成日常数据库工作闭环 | [ ] |
+| P2 | 完成日常数据库工作闭环 | [x] |
 | P3 | 补齐数据库管理与数据工程能力 | [ ] |
 | P4 | 扩展数据库与外围能力 | [ ] |
 | P5 | 完成统一桌面 UI 与交互设计 | [ ] |
@@ -813,9 +813,61 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     字面就叫 `Create Table`（带空格）、类型是 VARCHAR；
     `sqlite_returns_create_table_together_with_its_indexes` 钉住建表语句排在
     索引之前、自动约束索引不重复出现。
-- [ ] 新建和修改表结构
-- [ ] 所有 DDL 变更先生成预览 SQL
-- [ ] 危险 DDL 明确显示影响对象并二次确认
+- [-] 新建和修改表结构
+  - **修改**已完成（`2ba8ac6` / `4efbc3d` / `0d0a399`）：结构页的列表格可以直接
+    编辑——改列名、改类型、改可空、改默认值、加列、删列、改表名。**新建表**
+    还没做，另起一条。
+  - 前置：列目录此前会说假话。PostgreSQL 把 `text[]` 报成 `ARRAY`、
+    `varchar(32)` 报成 `character varying`；更严重的是自增主键——
+    `GENERATED ALWAYS AS IDENTITY`（已在 PG 16 上复现）与 `AUTO_INCREMENT` 的
+    `COLUMN_DEFAULT` 都是 NULL 且非空，于是新增行时被当成必填项点名，
+    **那两种表一行都插不进去**。加了 `is_generated`，三段 SQL 一并搬进
+    `services/schema_metadata.rs`——只有住在 Rust 侧才测得到。
+  - 三种方言不强求一致，差别全在**能不能只改被点名的那一项**：
+    PostgreSQL 有窄子命令，照着发；MySQL 只有 `MODIFY COLUMN <整段定义>`，
+    重述时把排序规则、注释、AUTO_INCREMENT、ON UPDATE 一起带上；
+    SQLite 的 ALTER TABLE 只有四种形态。
+  - **MySQL 一律合成一条 ALTER TABLE**：它的 DDL 会隐式提交，事务兜不住，
+    多条就不再是原子的。另两家的 DDL 在事务里，多条由 `execute_write_batch`
+    兜住。删列排在加列之前——删掉 `code` 再建一个同名的是合理编辑，
+    反过来的次序在三家里都会撞上「列已存在」。
+  - **当前版本明确不做**的两类，理由都写在界面上：
+    - SQLite 改类型 / 可空 / 默认值：要按官方步骤重建整张表，而重建脚本必须
+      连索引、触发器、视图和外键一起覆盖——与 PostgreSQL 建表 DDL 不做是同
+      一个理由。重估条件：哪天真的实现了那十二步并有真库测试覆盖索引与触发
+      器的保留。
+    - MySQL 上带表达式默认值或计算列的列改类型：目录里的表达式是归一化后的
+      形式（实测 `DEFAULT (UPPER('x'))` 存成 `upper(_utf8mb4\'x\')`），
+      重述出来的未必等价。重估条件：能从 `SHOW CREATE TABLE` 拿到该列定义的
+      权威原文并有真库测试证明重述前后等价。
+    - 主键、索引、约束的增删改：不在这一版，界面上直说「请到 SQL 编辑器」。
+  - 判据：`utils/tableDdl.test.ts` 23 条按方言钉住语句原文与次序；
+    `fixtures/ddl-conformance.json` 是两侧共用的语料，
+    `{postgres,mysql,sqlite}_runs_the_generated_ddl_from_the_shared_corpus`
+    拿真库建表、跑同样几条语句、再读一遍列目录核对结果，连语料里的 `origin`
+    也是断言而不是假设。已反向验证：去掉重述里的 COLLATE 并同步改掉语料里的
+    语句，前端全绿而真库那一侧精确变红（排序规则掉回了表默认值）；另有四次
+    针对列目录的注入（format_type 去掉 typmod、MySQL 换回 DATA_TYPE、
+    去掉 attidentity / EXTRA、SQLite 换回 table_info）。
+- [x] 所有 DDL 变更先生成预览 SQL
+  - 结构编辑器不给「保存」，只给「预览 SQL」：改数据错了还能再改回来，
+    一条 DROP COLUMN 没有对应的撤销。
+  - 预览框里三块内容各回答一个不同的问题，所以不合并：**会丢什么**（删掉的
+    列）、**会跑什么**（语句原文）、**哪几项做不到**（方言限制，带理由）。
+    只给一段 SQL 的话，第一件事要靠读语句自己看出来，第三件事根本看不出来
+    ——用户会以为他勾掉的那个「可空」已经改了。
+  - 手写的 DDL 不进这条路径，也不需要：编辑器里的语句原文本来就是预览。
+- [x] 危险 DDL 明确显示影响对象并二次确认
+  - 复用 `DestructiveStatementPrompt`，新增可选的 `impacts`：删列时逐条列出
+    「删除列 X，这一列里的数据一并丢掉」。只给 SQL 原文不够——一条
+    `ALTER TABLE t DROP COLUMN a, DROP COLUMN b` 要从语句里数出来，
+    而这个框存在的理由正是让人**不必**现场读懂一条 SQL。
+  - 风险等级由计划算，不从语句文本再猜一遍：有删列就是 `destructive`，
+    否则 `scoped-write`，然后过已有的 `requiresConfirmation` 与环境阈值。
+    按文本猜会把 `ALTER COLUMN x DROP NOT NULL` 里的 DROP 也算成破坏性，
+    而多余的确认弹到第三次就没人看了。
+  - 顺带修正 `risk.destructive` 的文案：原文只说「删除表或清空数据」，
+    而 `ALTER … DROP` 一直也归在这一级。
 
 ### 3.2 事务控制
 
