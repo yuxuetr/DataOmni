@@ -753,6 +753,7 @@ export default function TableDataViewer({
     field,
     isEditing,
     isKeyColumn = false,
+    dataType = '',
     align = 'left',
     densityClass = 'px-2 py-1',
     frozenLeft = null,
@@ -767,6 +768,8 @@ export default function TableDataViewer({
     isEditing: boolean;
     /** 这一列参与定位行：改它等于换一行的身份，所以不让改 */
     isKeyColumn?: boolean;
+    /** 列的声明类型，决定编辑时用哪种控件 */
+    dataType?: string;
     align?: 'left' | 'right';
     densityClass?: string;
     /** 冻结列的左偏移；null 表示这一列跟着横向滚动 */
@@ -816,6 +819,8 @@ export default function TableDataViewer({
           onChange={(next) => updateEditData(field, next)}
           // SQLite 的 UPDATE 没有 `SET 列 = DEFAULT`，那一档在这里不给选
           allowDefault={dialect !== 'sqlite'}
+          dataType={dataType}
+          dialect={dialect}
           autoFocus
           onCommit={saveEdit}
           onCancel={cancelEdit}
@@ -1186,6 +1191,8 @@ export default function TableDataViewer({
                       <CellInputEditor
                         value={editState.editedData?.[column.name] ?? { kind: 'unset' }}
                         onChange={(next) => updateEditData(column.name, next)}
+                        dataType={column.data_type}
+                        dialect={dialect}
                       />
                     </div>
                   ))}
@@ -1313,6 +1320,7 @@ export default function TableDataViewer({
                                   field={column.name}
                                   isEditing={editState.mode === 'edit' && editState.rowIndex === rowIndex}
                                   isKeyColumn={keyColumnSet.has(column.name)}
+                                  dataType={column.data_type}
                                   align={alignments[colIndex]}
                                   densityClass={densityClass}
                                   frozenLeft={frozenOffsets[visiblePosition]}

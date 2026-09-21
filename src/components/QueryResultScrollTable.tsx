@@ -107,6 +107,15 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
     }
   })();
   
+  /**
+   * 列的声明类型。优先用驱动给的 `database_type`——它是这一次查询真正返回的
+   * 类型；目录里的列信息只有在认得出目标表时才有，而且列清单可能对不上
+   */
+  const columnType = (index: number): string =>
+    result.column_metadata?.[index]?.database_type
+      ?? result.tableColumns?.find(column => column.name === result.columns[index])?.data_type
+      ?? '';
+
   const ACTION_COLUMN_WIDTH = 72;
   // 列宽按当前页的内容估算，可拖动覆盖
   const { widths, alignments, totalWidth, startResize, autoFitColumn, resizingIndex } =
@@ -341,6 +350,8 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                         <CellInputEditor
                           value={newRowData[column] ?? { kind: 'unset' }}
                           onChange={(next) => updateNewRowData(column, next)}
+                          dataType={columnType(columnIndex)}
+                          dialect={dialect}
                         />
                       )}
                     </td>
@@ -404,6 +415,8 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                             onChange={setEditValue}
                             // SQLite 的 UPDATE 没有 `SET 列 = DEFAULT`
                             allowDefault={dialect !== 'sqlite'}
+                            dataType={columnType(cellIndex)}
+                            dialect={dialect}
                             autoFocus
                             onCommit={saveEdit}
                             onCancel={cancelEditing}

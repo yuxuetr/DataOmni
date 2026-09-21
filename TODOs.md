@@ -568,7 +568,25 @@ NULL、空字符串、纯空白与二进制在网格里互相区分得开；刷�
 - [x] BigInt、Decimal 保持精度，不转换为 JavaScript `Number`
 - [x] 时间类型保留时区和数据库语义
 - [ ] 为 JSON、二进制、布尔和日期提供专用编辑器
-- [ ] 区分 NULL、空字符串、默认值、表达式和未填写
+- [x] 区分 NULL、空字符串、默认值、表达式和未填写（193b797，先于「专用编辑器」做，
+  后者建在这个值模型上）
+  - 编辑框此前只给一个字符串、空串当 NULL，五件不同的事挤在同一个值里：空字符串写不出来；
+    「用默认值」写成 NULL 得到的是 NULL（自增列会被 0 覆盖掉序列该给的数）；
+    `CURRENT_TIMESTAMP` 当字面量绑定存下的是那串字符本身；「还没填」和「要写空字符串」
+    在空文本框里长得一模一样，而前者在非空无默认值的列上会被拒。
+  - `CellInput` 把五档写进类型，`value` 的载荷不允许是 null——否则
+    `{kind:'value',value:null}` 与 `{kind:'null'}` 会同时表示同一件事，两条路径迟早分叉。
+  - INSERT 把 `unset` 与 `default` 的列整列省掉，不写 `VALUES (DEFAULT, ...)`（SQLite 不认）；
+    UPDATE 的 `SET 列 = DEFAULT` 在 SQLite 里不存在，点名报错且界面上那一档不给选。
+  - 提交前用 `missingRequiredColumns` 点名非空、无默认值又没填的列，而不是让数据库去拒绝。
+  - 顺带删掉旧的日期选择器：它给 `<input type="datetime-local">` 喂
+    `2024-01-01 12:00:00`（合法值必须带 T），控件显示空白，保存就把那一列清掉了。
+  - 判据：`src/utils/cellInput.test.ts` 十一条 + `rowStatements.test.ts` 新增十条。
+    已反向验证八处：NULL 当空文本、空串与 NULL 混为一谈、表达式算没变、默认值不算没填、
+    `default` 进 INSERT 列清单、表达式当字面量绑定、SQLite 也发 `SET = DEFAULT`、
+    `unset` 不从 SET 里滤掉。
+  - 渲染核对（1280/660、明暗两色）抓到两处单测抓不到的：`unset` 被画成 DEFAULT；
+    明确的空字符串与没填过的格子长得完全一样。现在靠三种占位符分开。
 - [ ] 所有变更先进入 `ChangeSet`，不再编辑后立即提交
 - [ ] 提供差异预览、逐项撤销、全部撤销和批量提交
 - [ ] 使用原始值或版本字段检测并发修改冲突
