@@ -5,8 +5,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryHistoryEntry } from '../contracts/queryHistory';
 import {
   DEFAULT_HISTORY_RETENTION,
+  loadHistoryRetention,
   loadQueryHistory,
   pruneHistory,
+  RETENTION_DAY_CHOICES,
+  RETENTION_ENTRY_CHOICES,
+  saveHistoryRetention,
   saveQueryHistory
 } from './queryHistoryStorage';
 
@@ -160,5 +164,49 @@ describe('loadQueryHistory / saveQueryHistory', () => {
     // 桩确实被调到了，否则这条「不抛」什么也没证明
     expect(setItem).toHaveBeenCalled();
     setItem.mockRestore();
+  });
+});
+
+describe('loadHistoryRetention / saveHistoryRetention', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('没设过时用默认值', () => {
+    expect(loadHistoryRetention()).toEqual(DEFAULT_HISTORY_RETENTION);
+  });
+
+  it('存进去再读出来是同一份', () => {
+    saveHistoryRetention({ maxAgeDays: 90, maxEntries: 2000 });
+    expect(loadHistoryRetention()).toEqual({ maxAgeDays: 90, maxEntries: 2000 });
+  });
+
+  it('只有一项能用时，另一项不跟着被丢掉', () => {
+    localStorage.setItem(
+      'dataomni.history-retention',
+      JSON.stringify({ maxAgeDays: 90, maxEntries: '一万' })
+    );
+    expect(loadHistoryRetention()).toEqual({
+      maxAgeDays: 90,
+      maxEntries: DEFAULT_HISTORY_RETENTION.maxEntries
+    });
+  });
+
+  it('不认识的档位回落到默认值', () => {
+    // 无上限会让历史把工作区快照挤出 localStorage，代价是标签全没
+    saveHistoryRetention({ maxAgeDays: 30, maxEntries: Number.MAX_SAFE_INTEGER });
+    expect(loadHistoryRetention().maxEntries).toBe(DEFAULT_HISTORY_RETENTION.maxEntries);
+  });
+
+  it('默认值本身在可选档位里', () => {
+    // 否则设置界面的下拉框打开就是空的，看上去像没设过
+    expect(RETENTION_DAY_CHOICES).toContain(DEFAULT_HISTORY_RETENTION.maxAgeDays);
+    expect(RETENTION_ENTRY_CHOICES).toContain(DEFAULT_HISTORY_RETENTION.maxEntries);
+  });
+
+  it('条数档位不提供「不限」，也不开到上万', () => {
+    // 一万条 SQL 足以撑满和工作区快照共用的 5MB 配额
+    expect(RETENTION_ENTRY_CHOICES).not.toContain(0);
+    expect(Math.max(...RETENTION_ENTRY_CHOICES)).toBeLessThanOrEqual(2000);
   });
 });

@@ -17,6 +17,7 @@ import type { QueryHistoryEntry } from '../contracts/queryHistory';
 import { isAnnotated } from '../contracts/queryHistory';
 
 const STORAGE_KEY = 'dataomni.query-history';
+const RETENTION_KEY = 'dataomni.history-retention';
 const SNAPSHOT_VERSION = 1;
 
 export interface HistoryRetention {
@@ -30,6 +31,55 @@ export const DEFAULT_HISTORY_RETENTION: HistoryRetention = {
   maxAgeDays: 30,
   maxEntries: 500
 };
+
+/** 保留天数可选的几档。`0` 是「不限」 */
+export const RETENTION_DAY_CHOICES: readonly number[] = [7, 30, 90, 365, 0];
+
+/**
+ * 条数可选的几档，最高 2000。
+ *
+ * 不提供「不限」，也不往上开到上万：历史和工作区快照共用一份 5MB 配额，
+ * 一万条 SQL 足以把它撑满，而代价是用户下次启动时标签全没。真要上万条
+ * 就该换后端的 SQLite 文件，那是另一件事（见模块说明）。
+ */
+export const RETENTION_ENTRY_CHOICES: readonly number[] = [100, 500, 1000, 2000];
+
+export function loadHistoryRetention(): HistoryRetention {
+  let stored: unknown;
+  try {
+    const raw = localStorage.getItem(RETENTION_KEY);
+    stored = raw ? JSON.parse(raw) : null;
+  } catch {
+    return { ...DEFAULT_HISTORY_RETENTION };
+  }
+
+  if (typeof stored !== 'object' || stored === null) {
+    return { ...DEFAULT_HISTORY_RETENTION };
+  }
+
+  // 逐项回落：存下来的只有一项能用时，另一项不该跟着被丢掉
+  const source = stored as Record<string, unknown>;
+  return {
+    maxAgeDays: pick(source.maxAgeDays, RETENTION_DAY_CHOICES, DEFAULT_HISTORY_RETENTION.maxAgeDays),
+    maxEntries: pick(
+      source.maxEntries,
+      RETENTION_ENTRY_CHOICES,
+      DEFAULT_HISTORY_RETENTION.maxEntries
+    )
+  };
+}
+
+function pick(value: unknown, choices: readonly number[], fallback: number): number {
+  return typeof value === 'number' && choices.includes(value) ? value : fallback;
+}
+
+export function saveHistoryRetention(retention: HistoryRetention): void {
+  try {
+    localStorage.setItem(RETENTION_KEY, JSON.stringify(retention));
+  } catch {
+    // 存不下只影响下次启动的默认值，不该让设置界面报错
+  }
+}
 
 /**
  * 淘汰：先按时间，再按条数，两轮都**先淘汰没被标注过的**。

@@ -7,18 +7,23 @@ import {
 } from '../contracts/queryHistory';
 import type { QueryExecution } from '../contracts/queryExecution';
 import {
-  DEFAULT_HISTORY_RETENTION,
+  loadHistoryRetention,
   loadQueryHistory,
   pruneHistory,
+  saveHistoryRetention,
   saveQueryHistory,
   type HistoryRetention
 } from '../utils/queryHistoryStorage';
+
+const INITIAL_RETENTION = loadHistoryRetention();
 
 interface HistoryState {
   /** 最新的在前 */
   entries: QueryHistoryEntry[];
   retention: HistoryRetention;
   record: (execution: QueryExecution, context: QueryHistoryContext) => void;
+  /** 改保留策略。立刻按新策略淘汰一遍，见实现处的说明 */
+  setRetention: (retention: Partial<HistoryRetention>) => void;
   /** 收藏 / 命名 / 打标签。只传要改的那几项 */
   annotate: (id: string, annotation: { favorite?: boolean; name?: string; tags?: string[] }) => void;
   remove: (id: string) => void;
@@ -28,8 +33,8 @@ interface HistoryState {
 export const useHistoryStore = create<HistoryState>((set) => ({
   // 启动时就按当前策略淘汰一遍：保留期是从「现在」算的，不能等到下次执行
   // 才生效——一个只读不跑查询的会话里，过期记录会一直摆在那
-  entries: pruneHistory(loadQueryHistory(), DEFAULT_HISTORY_RETENTION),
-  retention: DEFAULT_HISTORY_RETENTION,
+  entries: pruneHistory(loadQueryHistory(), INITIAL_RETENTION),
+  retention: INITIAL_RETENTION,
 
   record: (execution, context) => {
     const entry = historyEntryFromExecution(execution, context);
@@ -40,6 +45,18 @@ export const useHistoryStore = create<HistoryState>((set) => ({
       const entries = pruneHistory([entry, ...state.entries], state.retention);
       saveQueryHistory(entries);
       return { entries };
+    });
+  },
+
+  setRetention: (change) => {
+    set((state) => {
+      const retention = { ...state.retention, ...change };
+      saveHistoryRetention(retention);
+      // 立刻执行而不是等下次执行查询：调小上限多半就是为了腾地方，
+      // 设完什么也没发生会让人以为没生效，再去调一次更小的
+      const entries = pruneHistory(state.entries, retention);
+      saveQueryHistory(entries);
+      return { retention, entries };
     });
   },
 
