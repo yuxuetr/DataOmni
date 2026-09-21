@@ -467,7 +467,18 @@
       后者只吃 Latin-1，一个中文表名就会抛 `InvalidCharacterError`。2 倍分辨率。
     - 验证不是只看魔数——一张白纸也是合法 PNG。把导出的 base64 塞回 `<img>`
       渲染出来核对，深浅两种主题各导一张。
-    - **未做**：PDF 导出。SVG 已经是矢量的，放进任何文档工具都能直接用。
+    - **PDF 导出**已完成（`5b32125`）：内嵌位图而非矢量。矢量 PDF 的文字要靠
+      PDF 字体，基础 14 号字体只有 Latin-1——一个中文表名就会乱码或消失；
+      随包嵌 CJK 字体是几 MB 的代价，为一个导出功能不划算。需要矢量用 SVG。
+    - 不引入 PDF 库（jsPDF + svg2pdf 约 350KB）：单图 PDF 结构固定且很小，
+      手写约 120 行。前提是它可验证——验证分三层：11 条单测直接查字节偏移
+      （四次反向注入都精确变红）、Chromium 的 PDFium 打开看、再用 poppler 的
+      `pdfinfo` 复核。最后一层是必要的：PDFium 在 xref 坏掉时会悄悄重建，
+      poppler 会直接抱怨；把偏移故意 +3 后它确实报了
+      「xref num 1 not found but needed」。
+    - 图像走 JPEG + `/DCTDecode`（字节可原样内嵌，不需要浏览器端 zlib；
+      `/FlateDecode` 要依赖 `CompressionStream`，旧 WebKit 没有）。
+      页面尺寸取 1 像素 = 1 点，不凑 A4——关系图的比例不是纸张比例。
 - [x] 结构变化后自动刷新
   - 能做到什么要说清楚：数据库**不会推送**「结构变了」这件事——PostgreSQL 的
     LISTEN/NOTIFY 要自己装事件触发器，MySQL 干脆没有。所以做不到推送式实时。
