@@ -63,6 +63,7 @@ export const en: Translations = {
   'common.cancel': 'Cancel',
   'common.confirm': 'OK',
   'common.done': 'Done',
+  'common.close': 'Close',
 
   'welcome.title': 'Connect to a database',
   'welcome.recent': 'Recent connections',
@@ -218,6 +219,10 @@ export const en: Translations = {
   'table.notNull': 'NOT NULL',
   'table.loading': 'Loading…',
   'table.empty': 'No data',
+
+  'editor.format': 'Format SQL',
+  'editor.formatTitle': 'Format SQL (the selection only, when there is one) \u2318\u21e7F',
+  'editor.formatFailed': 'Formatting failed; the editor was left unchanged',
 
   'completion.schema': 'Schema',
   'completion.noDatabaseName': 'This connection has no database name, so the completion catalog cannot be read.',

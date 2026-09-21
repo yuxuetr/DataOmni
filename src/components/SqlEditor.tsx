@@ -9,7 +9,8 @@ import {
   AlertCircle,
   CheckCircle,
   Loader,
-  Square
+  Square,
+  AlignLeft
 } from 'lucide-react';
 import { selectActiveSqlDocument, useQueryStore, SqlStatement } from '../stores/queryStore';
 import type { QueryExecution } from '../contracts/queryExecution';
@@ -28,6 +29,7 @@ import {
   findSqlStatementAtOffset,
   splitSqlStatements
 } from '../utils/sqlStatements';
+import { planFormat, sqlFormatterLanguage } from '../utils/formatSql';
 import { useLanguageStore } from '../stores/languageStore';
 import { useCompletionCatalog } from '../hooks/useCompletionCatalog';
 import {
@@ -107,6 +109,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
     axis: 'y'
   });
   const [hasSelection, setHasSelection] = useState(false);
+  const [formatError, setFormatError] = useState<string | null>(null);
+  const formatterLanguage = sqlFormatterLanguage(connection.db_type);
   const editorViewRef = useRef<EditorView | null>(null);
 
   /**
@@ -198,7 +202,18 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
   };
 
   const handleEditorKeyDown = (event: React.KeyboardEvent) => {
-    if (!(event.metaKey || event.ctrlKey) || event.key !== 'Enter') {
+    if (!(event.metaKey || event.ctrlKey)) {
+      return;
+    }
+
+    // 按住 Shift 时 event.key 是 'F'，所以要先归一化
+    if (event.shiftKey && event.key.toLowerCase() === 'f') {
+      event.preventDefault();
+      formatEditorContent();
+      return;
+    }
+
+    if (event.key !== 'Enter') {
       return;
     }
 
@@ -219,6 +234,38 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
   const runAllGuarded = () => {
     runGuarded(statements.map((statement) => statement.sql), () => {
       void executeAllStatements();
+    });
+  };
+
+  /**
+   * 排版当前选区；没有选区就排整份。
+   *
+   * 改动走 `view.dispatch` 而不是 `setSqlInput`：受控地整份换掉文本会重置
+   * CodeMirror 的编辑历史，那样格式化就**撤不回来**了——而它恰恰是个随手
+   * 会按、按错了想立刻撤回的动作。
+   */
+  const formatEditorContent = () => {
+    const view = editorViewRef.current;
+    if (!view || !formatterLanguage) {
+      return;
+    }
+
+    const { from, to, head } = view.state.selection.main;
+    const plan = planFormat(view.state.doc.toString(), { from, to, head }, formatterLanguage);
+
+    if (plan.kind === 'failed') {
+      setFormatError(plan.message);
+      return;
+    }
+
+    setFormatError(null);
+    if (plan.kind === 'unchanged') {
+      return;
+    }
+
+    view.dispatch({
+      changes: { from: plan.from, to: plan.to, insert: plan.insert },
+      selection: { anchor: plan.anchor, head: plan.head }
     });
   };
 
@@ -328,6 +375,17 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
             </button>
           )}
 
+          {/* 格式化。头部已经很挤，这里只给图标，说明放在 title 里 */}
+          <button
+            onClick={formatEditorContent}
+            disabled={!formatterLanguage}
+            aria-label={t('editor.format')}
+            title={t('editor.formatTitle')}
+            className="flex items-center rounded-control border border-line-strong p-1.5 text-fg-muted transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:border-line disabled:text-fg-subtle"
+          >
+            <AlignLeft size={14} />
+          </button>
+
           {/* 清除结果 */}
           <button
             onClick={clearResults}
@@ -396,6 +454,27 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
               ✕
             </button>
           </div>
+        </div>
+      )}
+
+      {/* 排版失败。解析器给的行号列号原样显示——「格式化失败」四个字
+          说不出是哪里写错了 */}
+      {formatError && (
+        <div className="flex items-start gap-2 border-b border-warning-line bg-warning-soft p-3">
+          <AlertCircle className="mt-0.5 shrink-0 text-warning" size={16} />
+          <div className="min-w-0 flex-1">
+            <h4 className="mb-1 text-sm font-medium text-warning">{t('editor.formatFailed')}</h4>
+            <p className="whitespace-pre-wrap break-words font-mono text-xs text-warning">
+              {formatError}
+            </p>
+          </div>
+          <button
+            onClick={() => setFormatError(null)}
+            aria-label={t('common.close')}
+            className="shrink-0 text-warning hover:opacity-80"
+          >
+            ✕
+          </button>
         </div>
       )}
 

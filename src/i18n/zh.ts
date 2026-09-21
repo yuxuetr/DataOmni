@@ -74,6 +74,7 @@ export const zh = {
   'common.cancel': '取消',
   'common.confirm': '确定',
   'common.done': '完成',
+  'common.close': '关闭',
 
   // 欢迎页
   'welcome.title': '连接到数据库',
@@ -236,6 +237,10 @@ export const zh = {
   'table.empty': '暂无数据',
 
   // SQL 编辑器
+  'editor.format': '格式化 SQL',
+  'editor.formatTitle': '格式化 SQL（有选区时只排选区）⌘⇧F',
+  'editor.formatFailed': '格式化失败，编辑器内容未改动',
+
   'completion.schema': 'Schema',
   'completion.noDatabaseName': '该连接没有指定数据库名，无法读取补全目录。',
   'completion.catalogFailed': '补全目录加载失败，当前只补全关键字',
