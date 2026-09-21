@@ -32,16 +32,16 @@ import {
   failSqlStatement,
   reconcileSqlStatements
 } from '../utils/queryStatements';
-import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from '../utils/sqlIdentifiers';
 import { describeResultEditability, parseSingleTableSelect } from '../utils/resultEditability';
 import { loadTableMetadata } from '../utils/tableMetadata';
 import {
   buildDeleteStatement,
+  buildInsertStatement,
   buildUpdateStatement,
-  type BoundValue,
   type RowKey,
   type TableTarget
 } from '../utils/rowStatements';
+import type { CellInput } from '../utils/cellInput';
 import { unwrapResultValue } from '../utils/resultValues';
 import { executeSequentially } from '../utils/queryExecutionPolicy';
 import { translateNow } from './languageStore';
@@ -126,9 +126,9 @@ interface QueryActions {
   setError: (error: string | null) => void;
 
   // 数据操作
-  updateRowData: (statementId: string, rowIndex: number, columnName: string, newValue: any) => Promise<void>;
+  updateRowData: (statementId: string, rowIndex: number, columnName: string, newValue: CellInput) => Promise<void>;
   deleteRowData: (statementId: string, rowIndex: number) => Promise<void>;
-  insertRowData: (statementId: string, newRowData: Record<string, any>) => Promise<void>;
+  insertRowData: (statementId: string, newRowData: Record<string, CellInput>) => Promise<void>;
 }
 
 // 完整的Store类型
@@ -144,6 +144,10 @@ const formatExecutionTime = (ms: number): string => {
     return `${Math.floor(ms / 60000)}m ${((ms % 60000) / 1000).toFixed(2)}s`;
   }
 };
+
+/** 供组件订阅当前连接的方言：`SET 列 = DEFAULT` 这类差别要在界面上就分开 */
+export const selectSqlDialect = (state: QueryState): SqlDialect =>
+  getSqlDialect(state.connectionString);
 
 const getSqlDialect = (connectionString: string | null): SqlDialect => {
   if (connectionString?.startsWith('mysql://')) {
@@ -208,22 +212,6 @@ function recordHistory(execution: QueryExecution, rowsAffected: number | null): 
   useHistoryStore
     .getState()
     .record(execution, { connectionName: connection?.name ?? profileId, rowsAffected });
-}
-
-/**
- * 把编辑框里的值变成可绑定的值。
- *
- * 不按值的样子猜类型：`Number('9007199254740993')` 会丢精度，
- * `Boolean('false')` 是 true。原样交给数据库按目标列的类型解析。
- */
-function toBoundValue(value: unknown): BoundValue {
-  if (value === null || value === undefined || value === '') {
-    return null;
-  }
-  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') {
-    return value;
-  }
-  return unwrapResultValue(value as SerializedResultValue);
 }
 
 interface ResultWriteContext {
@@ -973,22 +961,23 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
   // 数据操作方法
 
-  updateRowData: async (statementId: string, rowIndex: number, columnName: string, newValue: any) => {
+  updateRowData: async (statementId: string, rowIndex: number, columnName: string, newValue: CellInput) => {
     await writeToResultRow(get, set, statementId, async (context) => {
       const { result, target, key, rowIndex: row } = context;
-      const statement = buildUpdateStatement(target, key, {
-        [columnName]: toBoundValue(newValue)
-      });
+      const statement = buildUpdateStatement(target, key, { [columnName]: newValue });
       const updateResult = await context.database.execute(statement.sql, statement.params);
       assertSingleRowAffected(updateResult, translateNow('table.operation.update'));
 
       const columnIndex = result.columns.indexOf(columnName);
-      if (columnIndex === -1) {
+      // `default` 与 `expression` 的结果由数据库决定，本地算不出来；
+      // 显示成 NULL 会是一句假话，所以重跑这条查询把真值读回来
+      if (columnIndex === -1 || newValue.kind === 'default' || newValue.kind === 'expression') {
+        void get().executeStatement(statementId);
         return result;
       }
       const rows = [...result.rows];
       rows[row] = [...rows[row]];
-      rows[row][columnIndex] = newValue;
+      rows[row][columnIndex] = newValue.kind === 'value' ? newValue.value : null;
       return { ...result, rows };
     }, rowIndex, 'error.updateFailed');
   },
@@ -1008,7 +997,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     }, rowIndex, 'error.deleteFailed');
   },
 
-  insertRowData: async (statementId: string, newRowData: Record<string, any>) => {
+  insertRowData: async (statementId: string, newRowData: Record<string, CellInput>) => {
     const documentId = get().activeDocumentId;
     if (!documentId) {
       throw new Error(translateNow('error.noActiveSqlTab'));
@@ -1027,24 +1016,17 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     }
 
     try {
-      const dialect = getSqlDialect(connectionString);
-      const columns = Object.keys(newRowData);
-      if (columns.length === 0) {
-        throw new Error(translateNow('table.noInsertableColumns'));
-      }
-
       // 值原样交给数据库按目标列的类型解析。此前这里按**列名**猜类型
       // （名字里带 time 就当时间），并把看起来像数字的字符串过一遍 Number()——
       // 一个叫 `timeout_ms` 的整数列会被当成时间戳，而大整数会丢精度
-      const placeholder = (index: number) => (dialect === 'postgresql' ? `$${index + 1}` : '?');
-      const quotedTable = quoteQualifiedSqlIdentifier(
-        editability.schema ? [editability.schema, editability.table] : [editability.table],
-        dialect
-      );
-      const sql = `INSERT INTO ${quotedTable} (`
-        + columns.map(column => quoteSqlIdentifier(column, dialect)).join(', ')
-        + `) VALUES (${columns.map((_, index) => placeholder(index)).join(', ')})`;
-      await database.execute(sql, columns.map(column => toBoundValue(newRowData[column])));
+      const statement = buildInsertStatement({
+        schema: editability.schema,
+        table: editability.table,
+        columns: get().documents[documentId]?.statements
+          .find(s => s.id === statementId)?.result?.tableColumns ?? [],
+        dialect: getSqlDialect(connectionString)
+      }, newRowData);
+      await database.execute(statement.sql, statement.params);
 
       // 重新跑一遍原来那条查询，而不是 `SELECT * FROM 表`：后者会把结果集换成
       // 整张表（没有 WHERE、没有 LIMIT），在大表上直接把界面拖死，而且用户

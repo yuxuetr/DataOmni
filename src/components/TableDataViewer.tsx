@@ -12,8 +12,6 @@ import {
   ChevronRight,
   FileText,
   Table,
-  Calendar,
-  Clock,
   RefreshCw,
   Info,
   Plus,
@@ -32,7 +30,7 @@ import {
 import clsx from 'clsx';
 import type { ConnectionProfile, TableSchema } from '../contracts';
 import { assertSingleRowAffected } from '../utils/executeResult';
-import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from '../utils/sqlIdentifiers';
+import { quoteQualifiedSqlIdentifier } from '../utils/sqlIdentifiers';
 import {
   createSortedOrderClause,
   createTablePaginationOrder,
@@ -60,11 +58,19 @@ import { tableColumnsQuery, toColumnInfo } from '../utils/tableMetadata';
 import { describeRowIdentity, type IndexMetadata } from '../utils/rowIdentity';
 import {
   buildDeleteStatement,
+  buildInsertStatement,
   buildUpdateStatement,
-  type BoundValue,
   type RowKey,
   type TableTarget
 } from '../utils/rowStatements';
+import {
+  cellInputFromValue,
+  isUnchangedInput,
+  missingRequiredColumns,
+  type BoundValue,
+  type CellInput
+} from '../utils/cellInput';
+import { CellInputEditor } from './CellInputEditor';
 import { GridCellValue } from './GridCellValue';
 import { TableFilterBar } from './TableFilterBar';
 import { GridColumnMenu } from './GridColumnMenu';
@@ -85,15 +91,10 @@ type EditMode = 'view' | 'edit' | 'add';
 interface EditState {
   mode: EditMode;
   rowIndex?: number;
-  originalData?: any;
-  editedData?: any;
-}
-
-// 日期时间选择器状态
-interface DateTimePickerState {
-  isOpen: boolean;
-  field: string;
-  value: string;
+  /** 这一行加载时的值，用来判断哪些列真的改了，并回到 WHERE 里 */
+  originalData?: Record<string, BoundValue>;
+  /** 每一列「要写什么」；空串和 NULL 在这里是两件事 */
+  editedData?: Record<string, CellInput>;
 }
 
 interface TableDataViewerProps {
@@ -167,13 +168,6 @@ export default function TableDataViewer({
   const [editState, setEditState] = useState<EditState>({ mode: 'view' });
   const [editingLoading, setEditingLoading] = useState(false);
   const [editingError, setEditingError] = useState<string | null>(null);
-  
-  // 日期时间选择器状态
-  const [dateTimePicker, setDateTimePicker] = useState<DateTimePickerState>({
-    isOpen: false,
-    field: '',
-    value: ''
-  });
   
   const { database, connectionId } = useQueryStore();
   const currentTableKey = `${connection.id}:${schema ?? ''}:${tableName}`;
@@ -405,23 +399,6 @@ export default function TableDataViewer({
     initializeViewer();
   }, [tableName, schema, activeTab, connectionId]); // connectionId：绑定的连接重新激活后自动恢复加载
 
-  // 点击外部关闭日期时间选择器
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dateTimePicker.isOpen) {
-        const target = event.target as Element;
-        if (!target.closest('.datetime-picker')) {
-          setDateTimePicker({ isOpen: false, field: '', value: '' });
-        }
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [dateTimePicker.isOpen]);
-
   // 处理分页变化
   const handlePageChange = (newPage: number) => {
     setCurrentPage(newPage);
@@ -548,6 +525,20 @@ export default function TableDataViewer({
   ].join('|');
   const cells = useCellSelection(visibleRows, visibleColumnNames, datasetKey);
 
+  /**
+   * 这一列的值由数据库生成（自增 / serial / identity）。
+   *
+   * 新增时它的起点是「默认值」而不是空文本：填一个空串进去，数据库要么报错，
+   * 要么真的写了个 0 覆盖掉自增序列该给的那个值。
+   */
+  const isGeneratedKeyColumn = (column: { data_type: string; default_value?: string }): boolean => {
+    const type = column.data_type.toLowerCase();
+    return type.includes('serial')
+      || type.includes('auto_increment')
+      || type.includes('identity')
+      || (column.default_value ?? '').toLowerCase().includes('nextval(');
+  };
+
   // 处理标签页切换
   const handleTabChange = (tabId: TabType) => {
     setActiveTab(tabId);
@@ -576,48 +567,32 @@ export default function TableDataViewer({
       mode: 'edit',
       rowIndex,
       originalData: { ...rowData },
-      editedData: { ...rowData }
+      // NULL 回到 `null` 档而不是空文本：否则打开编辑框再直接关掉，
+      // 就把一个 NULL 变成了空字符串
+      editedData: Object.fromEntries(
+        Object.entries(rowData).map(([column, value]) => [column, cellInputFromValue(value)])
+      )
     });
     setEditingError(null);
   };
 
   // 开始添加新行
   const startAddRow = () => {
-    const newRowData: any = {};
-    if (tableSchema) {
-      tableSchema.columns.forEach(col => {
-        // 如果是自增主键，设置为null或空字符串
-        if (col.is_primary_key && (col.data_type.includes('serial') || col.data_type.includes('auto_increment'))) {
-          newRowData[col.name] = null;
-        } else if (col.default_value) {
-          // 处理默认值
-          if (col.data_type.includes('int') || col.data_type.includes('bigint')) {
-            newRowData[col.name] = col.default_value === 'NULL' ? null : Number(col.default_value);
-          } else if (col.data_type.includes('float') || col.data_type.includes('decimal') || col.data_type.includes('numeric')) {
-            newRowData[col.name] = col.default_value === 'NULL' ? null : Number(col.default_value);
-          } else if (col.data_type.includes('bool')) {
-            newRowData[col.name] = col.default_value === 'true';
-          } else {
-            // 移除字符串默认值的引号
-            let defaultValue = col.default_value;
-            if (defaultValue.startsWith("'") && defaultValue.endsWith("'")) {
-              defaultValue = defaultValue.slice(1, -1);
-            }
-            newRowData[col.name] = defaultValue === 'NULL' ? null : defaultValue;
-          }
-        } else if (col.is_nullable) {
-          newRowData[col.name] = null;
-        } else {
-          // 非空字段设置空字符串，用户需要填写
-          newRowData[col.name] = '';
-        }
-      });
+    // 三档起点，对应三件不同的事：有默认值（含自增主键）的列交给数据库；
+    // 可空的列先摆成 NULL；非空又没有默认值的列留成「未填写」，
+    // 由 `missingRequiredColumns` 在提交前点名，而不是让数据库去拒绝
+    const newRowData: Record<string, CellInput> = {};
+    for (const column of tableSchema?.columns ?? []) {
+      if (column.default_value != null || isGeneratedKeyColumn(column)) {
+        newRowData[column.name] = { kind: 'default' };
+      } else if (column.is_nullable) {
+        newRowData[column.name] = { kind: 'null' };
+      } else {
+        newRowData[column.name] = { kind: 'unset' };
+      }
     }
-    
-    setEditState({
-      mode: 'add',
-      editedData: newRowData
-    });
+
+    setEditState({ mode: 'add', editedData: newRowData });
     setEditingError(null);
   };
 
@@ -677,14 +652,11 @@ export default function TableDataViewer({
   };
 
   // 更新编辑数据
-  const updateEditData = (field: string, value: any) => {
+  const updateEditData = (field: string, value: CellInput) => {
     if (editState.editedData) {
       setEditState({
         ...editState,
-        editedData: {
-          ...editState.editedData,
-          [field]: value
-        }
+        editedData: { ...editState.editedData, [field]: value }
       });
     }
   };
@@ -692,85 +664,19 @@ export default function TableDataViewer({
   // 数据库操作函数
   
   // 插入新行
-  const insertRow = async (rowData: any) => {
+  const insertRow = async (rowData: Record<string, CellInput>) => {
     if (!database || !tableSchema) return;
-    
-    // 过滤掉空值和主键列（如果是自增主键）
-    const columns = Object.keys(rowData).filter(key => {
-      const value = rowData[key];
-      const column = tableSchema.columns.find(col => col.name === key);
-      
-      // 如果是自增主键且值为空，则跳过
-      if (column?.is_primary_key && (value === null || value === '' || value === undefined)) {
-        return false;
-      }
-      
-      // 如果是非空字段且值为空，则跳过
-      if (!column?.is_nullable && (value === null || value === '' || value === undefined)) {
-        return false;
-      }
-      
-      return true;
-    });
-    
-    if (columns.length === 0) {
-      throw new Error(t('table.noInsertableColumns'));
+
+    const missing = missingRequiredColumns(rowData, tableSchema.columns);
+    if (missing.length > 0) {
+      throw new Error(t('cellInput.requiredMissing', {
+        columns: missing.join(', '),
+        count: missing.length
+      }));
     }
-    
-    const values = columns.map(key => {
-      const value = rowData[key];
-      const column = tableSchema.columns.find(col => col.name === key);
-      
-      // 根据数据类型转换值
-      if (value === null || value === '' || value === undefined) {
-        return null;
-      }
-      
-      if (column?.data_type.includes('int') || column?.data_type.includes('bigint')) {
-        return Number(value);
-      } else if (column?.data_type.includes('float') || column?.data_type.includes('decimal') || column?.data_type.includes('numeric')) {
-        return Number(value);
-      } else if (column?.data_type.includes('bool')) {
-        return Boolean(value);
-      } else if (column?.data_type.includes('date') || column?.data_type.includes('time') || column?.data_type.includes('timestamp')) {
-        // 处理日期时间格式
-        if (value === 'CURRENT_TIMESTAMP' || value === 'NOW') {
-          return 'CURRENT_TIMESTAMP';
-        } else if (typeof value === 'string' && value.trim() !== '') {
-          // 确保日期时间格式正确
-          return value;
-        } else {
-          return null;
-        }
-      } else {
-        return String(value);
-      }
-    });
-    
-    const placeholders = columns.map((_, index) => {
-      switch (connection.db_type) {
-        case 'postgresql':
-          return `$${index + 1}`;
-        case 'mysql':
-          return '?';
-        case 'sqlite':
-          return '?';
-        default:
-          return '?';
-      }
-    });
-    
-    const tableNameWithSchema = quoteQualifiedSqlIdentifier(
-      schema ? [schema, tableName] : [tableName],
-      dialect
-    );
-    const quotedColumns = columns.map(column => quoteSqlIdentifier(column, dialect));
-    const insertQuery = `INSERT INTO ${tableNameWithSchema} (${quotedColumns.join(', ')}) VALUES (${placeholders.join(', ')})`;
-    
-    console.log('插入查询:', insertQuery);
-    console.log('插入值:', values);
-    
-    await database.execute(insertQuery, values);
+
+    const statement = buildInsertStatement(writeTarget(), rowData);
+    await database.execute(statement.sql, statement.params);
   };
 
   /**
@@ -803,43 +709,23 @@ export default function TableDataViewer({
     };
   };
 
-  /**
-   * 编辑框里的值转成可绑定的值。
-   *
-   * 不按列类型做 `Number()` / `Boolean()` 转换：`Number()` 会让超过 2^53 的
-   * BIGINT 丢精度，而 `Boolean('false')` 是 true。原样交给数据库去转换，
-   * 三种方言在赋值时都会按目标列的类型精确解析。
-   *
-   * 空串仍然写成 NULL——把「清空」和「写空字符串」分开是 2.5 的另一条，
-   * 需要界面上先有那个区分，这里不擅自改语义。
-   */
-  const toBoundValue = (value: unknown): BoundValue => {
-    if (value === null || value === undefined || value === '') {
-      return null;
-    }
-    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'string') {
-      return value;
-    }
-    return unwrapResultValue(value as SerializedResultValue);
-  };
-
   // 更新行
-  const updateRow = async (_rowIndex: number, rowData: any) => {
+  const updateRow = async (_rowIndex: number, rowData: Record<string, CellInput>) => {
     if (!database || !tableSchema || !editState.originalData) return;
 
     const key = rowKeyFrom(editState.originalData);
     const keySet = new Set(key.columns);
 
-    const assignments: Record<string, BoundValue> = {};
+    const assignments: Record<string, CellInput> = {};
     for (const column of Object.keys(rowData)) {
       // 键列不进 SET：改键等于换一行的身份，那是删一行加一行，不是更新
       if (keySet.has(column)) {
         continue;
       }
-      const next = toBoundValue(rowData[column]);
-      const previous = toBoundValue(editState.originalData[column]);
-      if (next !== previous) {
-        assignments[column] = next;
+      // 没变的列不进 SET：MySQL 对「新值等于旧值」的 UPDATE 返回 0 affected rows，
+      // 而 0 正是「一行都没匹配上」的信号
+      if (!isUnchangedInput(rowData[column], editState.originalData[column] ?? null)) {
+        assignments[column] = rowData[column];
       }
     }
 
@@ -867,7 +753,6 @@ export default function TableDataViewer({
     field,
     isEditing,
     isKeyColumn = false,
-    dataType = 'text',
     align = 'left',
     densityClass = 'px-2 py-1',
     frozenLeft = null,
@@ -882,7 +767,6 @@ export default function TableDataViewer({
     isEditing: boolean;
     /** 这一列参与定位行：改它等于换一行的身份，所以不让改 */
     isKeyColumn?: boolean;
-    dataType?: string;
     align?: 'left' | 'right';
     densityClass?: string;
     /** 冻结列的左偏移；null 表示这一列跟着横向滚动 */
@@ -894,14 +778,6 @@ export default function TableDataViewer({
     onSelect?: (extend: boolean) => void;
     onContextMenu?: (event: React.MouseEvent) => void;
   }) => {
-    // 获取当前编辑的值
-    const currentValue = isEditing && editState.editedData ? editState.editedData[field] : value;
-    
-    // 判断是否为日期时间字段
-    const isDateTimeField = dataType.includes('date') || 
-                           dataType.includes('time') || 
-                           dataType.includes('timestamp');
-    
     if (!isEditing || isKeyColumn) {
       // 非编辑状态或键列，显示只读
       // 自建执行器把 BigInt / Decimal / 二进制等包成 tagged value 以保住精度，
@@ -926,196 +802,25 @@ export default function TableDataViewer({
         >
           {/* 单行形态、NULL / 空串 / 空白 / 二进制的区分都在 GridCellValue 里，
               与 SQL 结果表共用同一套约定 */}
-          <GridCellValue value={(currentValue ?? null) as SerializedResultValue} />
+          <GridCellValue value={(value ?? null) as SerializedResultValue} />
         </td>
       );
     }
 
     // 编辑状态
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      let newValue: any = e.target.value;
-      
-      // 根据数据类型转换值
-      if (dataType.includes('int') || dataType.includes('bigint') || dataType.includes('number')) {
-        newValue = newValue === '' ? null : Number(newValue);
-      } else if (dataType.includes('float') || dataType.includes('decimal') || dataType.includes('numeric')) {
-        newValue = newValue === '' ? null : Number(newValue);
-      } else if (dataType.includes('bool')) {
-        newValue = newValue === 'true';
-      } else if (newValue === '') {
-        newValue = null;
-      }
-      
-      updateEditData(field, newValue);
-    };
-
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter') {
-        saveEdit();
-      } else if (e.key === 'Escape') {
-        cancelEdit();
-      }
-    };
-
-    const inputValue = currentValue === null ? '' : String(currentValue);
-
+    const input = editState.editedData?.[field] ?? { kind: 'unset' as const };
     return (
       <td className={clsx('border-r border-line', densityClass)}>
-        {isDateTimeField ? (
-          <DateTimePicker
-            field={field}
-            value={inputValue}
-            onChange={(value) => updateEditData(field, value)}
-            dataType={dataType}
-          />
-        ) : (
-          <input
-            type={dataType.includes('int') || dataType.includes('bigint') || dataType.includes('number') || dataType.includes('float') || dataType.includes('decimal') || dataType.includes('numeric') ? 'number' : 'text'}
-            value={inputValue}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            onBlur={cancelEdit}
-            className="w-full px-2 py-1 text-sm border border-accent-line rounded-control focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent"
-            placeholder={dataType.includes('int') || dataType.includes('bigint') || dataType.includes('number') || dataType.includes('float') || dataType.includes('decimal') || dataType.includes('numeric') ? '0' : t('table.enterValue')}
-            autoFocus
-          />
-        )}
+        <CellInputEditor
+          value={input}
+          onChange={(next) => updateEditData(field, next)}
+          // SQLite 的 UPDATE 没有 `SET 列 = DEFAULT`，那一档在这里不给选
+          allowDefault={dialect !== 'sqlite'}
+          autoFocus
+          onCommit={saveEdit}
+          onCancel={cancelEdit}
+        />
       </td>
-    );
-  };
-
-  // 日期时间选择器组件
-  const DateTimePicker = ({ 
-    field, 
-    value, 
-    onChange, 
-    dataType = 'timestamp' 
-  }: {
-    field: string;
-    value: string;
-    onChange: (value: string) => void;
-    dataType?: string;
-  }) => {
-    const isOpen = dateTimePicker.isOpen && dateTimePicker.field === field;
-    
-    const openPicker = () => {
-      setDateTimePicker({
-        isOpen: true,
-        field,
-        value: value || new Date().toISOString().slice(0, 16)
-      });
-    };
-    
-    const closePicker = () => {
-      setDateTimePicker({ isOpen: false, field: '', value: '' });
-    };
-    
-    const handleDateTimeChange = (newValue: string) => {
-      setDateTimePicker(prev => ({ ...prev, value: newValue }));
-    };
-    
-    const applyDateTime = () => {
-      onChange(dateTimePicker.value);
-      closePicker();
-    };
-    
-    const setCurrentTime = () => {
-      const now = new Date();
-      let formattedValue = '';
-      
-      if (dataType.includes('date')) {
-        formattedValue = now.toISOString().split('T')[0];
-      } else if (dataType.includes('time')) {
-        formattedValue = now.toTimeString().split(' ')[0];
-      } else {
-        formattedValue = now.toISOString().slice(0, 19).replace('T', ' ');
-      }
-      
-      onChange(formattedValue);
-      closePicker();
-    };
-    
-    const setNull = () => {
-      onChange('');
-      closePicker();
-    };
-    
-    return (
-      <div className="relative datetime-picker">
-        <div className="flex items-center space-x-1">
-          <input
-            type={dataType.includes('date') ? 'date' : dataType.includes('time') ? 'time' : 'datetime-local'}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            className="flex-1 px-2 py-1 text-sm border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
-            placeholder={dataType.includes('date') ? t('table.pickDate') : dataType.includes('time') ? t('table.pickTime') : t('table.pickDateTime')}
-          />
-          <button
-            type="button"
-            onClick={openPicker}
-            className="px-2 py-1 text-xs text-accent border border-accent-line rounded-control hover:bg-accent-soft"
-            title={t('table.openDateTimePicker')}
-          >
-            <Calendar size={12} />
-          </button>
-        </div>
-        
-        {isOpen && (
-          <div className="absolute top-full left-0 mt-1 bg-surface border border-line-strong rounded-panel shadow-lg z-50 min-w-[280px]">
-            <div className="p-3 border-b border-line">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-medium text-fg">{t('table.dateTimePicker')}</h4>
-                <button
-                  onClick={closePicker}
-                  className="text-fg-subtle hover:text-fg-muted"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-              
-              <div className="space-y-2">
-                <input
-                  type={dataType.includes('date') ? 'date' : dataType.includes('time') ? 'time' : 'datetime-local'}
-                  value={dateTimePicker.value}
-                  onChange={(e) => handleDateTimeChange(e.target.value)}
-                  className="w-full px-2 py-1 text-sm border border-line-strong rounded-control"
-                />
-                
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={setCurrentTime}
-                    className="flex-1 px-2 py-1 text-xs text-success border border-success-line rounded-control hover:bg-success-soft"
-                  >
-                    <Clock size={12} className="mr-1" />
-                    {t('table.now')}
-                  </button>
-                  <button
-                    onClick={setNull}
-                    className="px-2 py-1 text-xs text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover"
-                  >
-                    {t('table.clear')}
-                  </button>
-                </div>
-                
-                <div className="flex items-center space-x-2 pt-2 border-t border-line">
-                  <button
-                    onClick={applyDateTime}
-                    className="flex-1 px-3 py-1 text-sm text-fg-on-accent bg-accent rounded-control hover:bg-accent-hover"
-                  >
-                    {t('common.confirm')}
-                  </button>
-                  <button
-                    onClick={closePicker}
-                    className="flex-1 px-3 py-1 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover"
-                  >
-                    {t('common.cancel')}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
     );
   };
 
@@ -1463,72 +1168,27 @@ export default function TableDataViewer({
                   <h3 className="text-sm font-medium text-fg">{t('table.addRowTitle')}</h3>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {tableSchema.columns.map((column) => {
-                    const isAutoIncrement = column.is_primary_key && (
-                      column.data_type.includes('serial') || 
-                      column.data_type.includes('auto_increment')
-                    );
-                    
-                    const isDateTimeField = column.data_type.includes('date') || 
-                                          column.data_type.includes('time') || 
-                                          column.data_type.includes('timestamp');
-                    
-                    return (
-                      <div key={column.name} className="flex flex-col">
-                        <label className="text-xs font-medium text-fg mb-1">
-                          {column.name}
-                          {column.is_primary_key && (
-                            <span className="ml-1 text-accent">{t('table.primaryKeyTag')}</span>
-                          )}
-                          {isAutoIncrement && (
-                            <span className="ml-1 text-success">{t('table.autoIncrementTag')}</span>
-                          )}
-                          {!column.is_nullable && !isAutoIncrement && (
-                            <span className="ml-1 text-danger">*</span>
-                          )}
-                        </label>
-                        {isAutoIncrement ? (
-                          <input
-                            type="text"
-                            value={t('table.autoGenerated')}
-                            disabled
-                            className="px-2 py-1 text-sm border border-line-strong rounded-control bg-surface-hover text-fg-muted cursor-not-allowed"
-                          />
-                        ) : isDateTimeField ? (
-                          <DateTimePicker
-                            field={column.name}
-                            value={editState.editedData[column.name] === null ? '' : String(editState.editedData[column.name] || '')}
-                            onChange={(value) => updateEditData(column.name, value)}
-                            dataType={column.data_type}
-                          />
-                        ) : (
-                          <input
-                            type={column.data_type.includes('int') || column.data_type.includes('bigint') || column.data_type.includes('number') || column.data_type.includes('float') || column.data_type.includes('decimal') || column.data_type.includes('numeric') ? 'number' : 'text'}
-                            value={editState.editedData[column.name] === null ? '' : String(editState.editedData[column.name] || '')}
-                            onChange={(e) => {
-                              let newValue: any = e.target.value;
-                              
-                              // 根据数据类型转换值
-                              if (column.data_type.includes('int') || column.data_type.includes('bigint') || column.data_type.includes('number')) {
-                                newValue = newValue === '' ? null : Number(newValue);
-                              } else if (column.data_type.includes('float') || column.data_type.includes('decimal') || column.data_type.includes('numeric')) {
-                                newValue = newValue === '' ? null : Number(newValue);
-                              } else if (column.data_type.includes('bool')) {
-                                newValue = newValue === 'true';
-                              } else if (newValue === '') {
-                                newValue = null;
-                              }
-                              
-                              updateEditData(column.name, newValue);
-                            }}
-                            className="px-2 py-1 text-sm border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
-                            placeholder={column.default_value && column.default_value !== 'NULL' ? column.default_value : t('table.enterValue')}
-                            required={!column.is_nullable && !isAutoIncrement}
-                          />
+                  {tableSchema.columns.map((column) => (
+                    <div key={column.name} className="flex flex-col">
+                      <label className="mb-1 text-xs font-medium text-fg">
+                        {column.name}
+                        {column.is_primary_key && (
+                          <span className="ml-1 text-accent">{t('table.primaryKeyTag')}</span>
                         )}
-                      </div>
-                    );
-                  })}
+                        {isGeneratedKeyColumn(column) && (
+                          <span className="ml-1 text-success">{t('table.autoIncrementTag')}</span>
+                        )}
+                        {!column.is_nullable && column.default_value == null && (
+                          <span className="ml-1 text-danger">*</span>
+                        )}
+                        <span className="ml-1 font-normal text-fg-subtle">{column.data_type}</span>
+                      </label>
+                      <CellInputEditor
+                        value={editState.editedData?.[column.name] ?? { kind: 'unset' }}
+                        onChange={(next) => updateEditData(column.name, next)}
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -1653,7 +1313,6 @@ export default function TableDataViewer({
                                   field={column.name}
                                   isEditing={editState.mode === 'edit' && editState.rowIndex === rowIndex}
                                   isKeyColumn={keyColumnSet.has(column.name)}
-                                  dataType={column.data_type}
                                   align={alignments[colIndex]}
                                   densityClass={densityClass}
                                   frozenLeft={frozenOffsets[visiblePosition]}

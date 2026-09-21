@@ -1,5 +1,6 @@
 import type { ColumnInfo } from '../contracts';
 import { isNumericColumnType, NUMERIC_LITERAL } from './columnTypes';
+import type { BoundValue, CellInput } from './cellInput';
 import { translateNow } from '../stores/languageStore';
 import {
   quoteQualifiedSqlIdentifier,
@@ -20,8 +21,6 @@ import { quoteSqlStringLiteral } from './sqlLiterals';
  * 主键因此会和邻近的几个值比成相等，于是定位到的是错的那一行。赋值
  * （SET / VALUES）没有这个问题——那是转换不是比较，字符串转整数是精确的。
  */
-
-export type BoundValue = string | number | boolean | null;
 
 export interface BoundStatement {
   sql: string;
@@ -109,12 +108,46 @@ function keyCondition(
     .join(' AND ');
 }
 
+/**
+ * 一项赋值的右手边。
+ *
+ * `default` 在 SQLite 的 UPDATE 里不存在——`SET col = DEFAULT` 是语法错误，
+ * 而且 SQLite 也没有别的写法能在更新时套用列默认值。这里点名报错而不是
+ * 拼一条跑不通的语句；界面上那一档在 SQLite 下本来就不给选。
+ */
+function assignmentTerm(
+  input: CellInput,
+  dialect: SqlIdentifierDialect,
+  placeholder: () => string,
+  params: BoundValue[]
+): string {
+  switch (input.kind) {
+    case 'default':
+      if (dialect === 'sqlite') {
+        throw new Error(translateNow('write.sqliteNoUpdateDefault'));
+      }
+      return 'DEFAULT';
+    case 'expression':
+      // 用户明确选择「表达式」时才走到这里，原样写进语句正是它的意思
+      return input.sql;
+    case 'null':
+      params.push(null);
+      return placeholder();
+    case 'value':
+      params.push(input.value);
+      return placeholder();
+    default:
+      // 调用方已经把 unset 滤掉了；走到这里说明过滤和这里的分支漂开了
+      throw new Error(translateNow('write.noAssignments'));
+  }
+}
+
 export function buildUpdateStatement(
   target: TableTarget,
   key: RowKey,
-  assignments: Readonly<Record<string, BoundValue>>
+  assignments: Readonly<Record<string, CellInput>>
 ): BoundStatement {
-  const columns = Object.keys(assignments);
+  const columns = Object.keys(assignments).filter((name) => assignments[name].kind !== 'unset');
   if (columns.length === 0) {
     throw new Error(translateNow('write.noAssignments'));
   }
@@ -126,13 +159,44 @@ export function buildUpdateStatement(
   // 编号和 params 的次序对不上，而错位后的语句仍然语法正确
   const setClause = columns
     .map((name) => {
-      params.push(assignments[name]);
-      return `${quoteSqlIdentifier(name, target.dialect)} = ${placeholder()}`;
+      const right = assignmentTerm(assignments[name], target.dialect, placeholder, params);
+      return `${quoteSqlIdentifier(name, target.dialect)} = ${right}`;
     })
     .join(', ');
 
   const where = keyCondition(target, key, placeholder, params);
   return { sql: `UPDATE ${tableReference(target)} SET ${setClause} WHERE ${where}`, params };
+}
+
+/**
+ * 拼出 INSERT。
+ *
+ * `unset`（没填）与 `default`（明确要默认值）的列都**整列省掉**，让数据库
+ * 套用它自己的默认值。不写成 `VALUES (DEFAULT, ...)`：SQLite 不认这个关键字。
+ * 两者在 SQL 上同形，在界面上是两件事——「还没填」要提醒，「用默认值」不用。
+ */
+export function buildInsertStatement(
+  target: TableTarget,
+  values: Readonly<Record<string, CellInput>>
+): BoundStatement {
+  const columns = Object.keys(values)
+    .filter((name) => values[name].kind !== 'unset' && values[name].kind !== 'default');
+  if (columns.length === 0) {
+    throw new Error(translateNow('table.noInsertableColumns'));
+  }
+
+  const placeholder = createPlaceholderAllocator(target.dialect);
+  const params: BoundValue[] = [];
+  const terms = columns.map((name) =>
+    assignmentTerm(values[name], target.dialect, placeholder, params)
+  );
+
+  return {
+    sql: `INSERT INTO ${tableReference(target)} (`
+      + columns.map((name) => quoteSqlIdentifier(name, target.dialect)).join(', ')
+      + `) VALUES (${terms.join(', ')})`,
+    params
+  };
 }
 
 export function buildDeleteStatement(target: TableTarget, key: RowKey): BoundStatement {

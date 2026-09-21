@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { ColumnInfo } from '../contracts';
+import type { CellInput } from './cellInput';
 import {
   buildDeleteStatement,
+  buildInsertStatement,
   buildUpdateStatement,
   renderStatementForDisplay,
   type RowKey,
@@ -24,6 +26,8 @@ function target(dialect: TableTarget['dialect'], schema: string | null = null): 
   return { schema, table: 'orders', columns: COLUMNS, dialect };
 }
 
+const value = (v: string | number | boolean): CellInput => ({ kind: 'value', value: v });
+
 const COMPOSITE: RowKey = {
   columns: ['tenant', 'sku'],
   values: { tenant: 'acme', sku: 'A-1' }
@@ -32,7 +36,7 @@ const COMPOSITE: RowKey = {
 describe('buildUpdateStatement', () => {
   it('复合键的全部键列都进 WHERE', () => {
     // 只拼第一列会命中所有 tenant 相同的行——语法正确、执行成功、改了一批
-    const statement = buildUpdateStatement(target('mysql'), COMPOSITE, { qty: 2 });
+    const statement = buildUpdateStatement(target('mysql'), COMPOSITE, { qty: value(2) });
     expect(statement.sql).toBe(
       'UPDATE `orders` SET `qty` = ? WHERE `tenant` = ? AND `sku` = ?'
     );
@@ -41,10 +45,7 @@ describe('buildUpdateStatement', () => {
 
   it('PostgreSQL 的 $n 按语句里出现的次序编号', () => {
     // SET 在 WHERE 前面，编号错位后的语句仍然语法正确，只是改错了行
-    const statement = buildUpdateStatement(target('postgresql', 'shop'), COMPOSITE, {
-      qty: 2,
-      note: 'hi'
-    });
+    const statement = buildUpdateStatement(target('postgresql', 'shop'), COMPOSITE, { qty: value(2), note: value('hi') });
     expect(statement.sql).toBe(
       'UPDATE "shop"."orders" SET "qty" = $1, "note" = $2 WHERE "tenant" = $3 AND "sku" = $4'
     );
@@ -56,7 +57,7 @@ describe('buildUpdateStatement', () => {
     const statement = buildUpdateStatement(
       target('mysql'),
       { columns: ['big'], values: { big: '9007199254740993' } },
-      { note: 'x' }
+      { note: value('x') }
     );
     expect(statement.sql).toBe('UPDATE `orders` SET `note` = ? WHERE `big` = 9007199254740993');
     expect(statement.params).toEqual(['x']);
@@ -66,7 +67,7 @@ describe('buildUpdateStatement', () => {
     const statement = buildUpdateStatement(
       target('mysql'),
       { columns: ['qty'], values: { qty: "1 OR 1=1" } },
-      { note: 'x' }
+      { note: value('x') }
     );
     expect(statement.sql).toBe('UPDATE `orders` SET `note` = ? WHERE `qty` = ?');
     expect(statement.params).toEqual(['x', '1 OR 1=1']);
@@ -74,19 +75,19 @@ describe('buildUpdateStatement', () => {
 
   it('赋值一律绑定，哪怕是数值列', () => {
     // 赋值是转换不是比较，字符串转整数是精确的；绑定还省掉一层转义
-    const statement = buildUpdateStatement(target('mysql'), COMPOSITE, { qty: '42' });
+    const statement = buildUpdateStatement(target('mysql'), COMPOSITE, { qty: value('42') });
     expect(statement.params[0]).toBe('42');
   });
 
   it('键值是 NULL 时报错，不拼成一条定位不到行的条件', () => {
     // SQLite 的非 INTEGER 主键列允许存 NULL，`= NULL` 一行都匹配不到
     expect(() =>
-      buildUpdateStatement(target('sqlite'), { columns: ['tenant'], values: { tenant: null } }, { qty: 1 })
+      buildUpdateStatement(target('sqlite'), { columns: ['tenant'], values: { tenant: null } }, { qty: value(1) })
     ).toThrow(/tenant/);
   });
 
   it('没有键列时报错', () => {
-    expect(() => buildUpdateStatement(target('mysql'), { columns: [], values: {} }, { qty: 1 }))
+    expect(() => buildUpdateStatement(target('mysql'), { columns: [], values: {} }, { qty: value(1) }))
       .toThrow();
   });
 
@@ -111,7 +112,7 @@ describe('buildDeleteStatement', () => {
 
 describe('renderStatementForDisplay', () => {
   it('把参数填回去，得到一条能直接读的语句', () => {
-    const statement = buildUpdateStatement(target('mysql'), COMPOSITE, { note: "it's" });
+    const statement = buildUpdateStatement(target('mysql'), COMPOSITE, { note: value("it's") });
     expect(renderStatementForDisplay(statement, 'mysql')).toBe(
       "UPDATE `orders` SET `note` = 'it''s' WHERE `tenant` = 'acme' AND `sku` = 'A-1'"
     );
@@ -121,5 +122,89 @@ describe('renderStatementForDisplay', () => {
     expect(
       renderStatementForDisplay({ sql: 'UPDATE t SET a = ?, b = ?', params: [null, true] }, 'sqlite')
     ).toBe('UPDATE t SET a = NULL, b = TRUE');
+  });
+});
+
+describe('buildInsertStatement', () => {
+  it('省掉「未填写」与「默认值」的列，让数据库套用它自己的默认值', () => {
+    // 不写成 VALUES (DEFAULT, ...)：SQLite 不认这个关键字
+    const statement = buildInsertStatement(target('sqlite'), {
+      tenant: value('acme'),
+      sku: { kind: 'default' },
+      qty: { kind: 'unset' },
+      note: { kind: 'null' }
+    });
+    expect(statement.sql).toBe('INSERT INTO "orders" ("tenant", "note") VALUES (?, ?)');
+    expect(statement.params).toEqual(['acme', null]);
+  });
+
+  it('空字符串是一个值，不是「没填」', () => {
+    const statement = buildInsertStatement(target('mysql'), { note: value('') });
+    expect(statement.sql).toBe('INSERT INTO `orders` (`note`) VALUES (?)');
+    expect(statement.params).toEqual(['']);
+  });
+
+  it('表达式原样进语句，不当成字面量绑定', () => {
+    // 绑定进去存下的是 "CURRENT_TIMESTAMP" 这串字符本身
+    const statement = buildInsertStatement(target('mysql'), {
+      note: { kind: 'expression', sql: 'CURRENT_TIMESTAMP' },
+      tenant: value('acme')
+    });
+    expect(statement.sql).toBe(
+      'INSERT INTO `orders` (`note`, `tenant`) VALUES (CURRENT_TIMESTAMP, ?)'
+    );
+    expect(statement.params).toEqual(['acme']);
+  });
+
+  it('PostgreSQL 的 $n 跳过不占位的表达式', () => {
+    const statement = buildInsertStatement(target('postgresql'), {
+      note: { kind: 'expression', sql: 'now()' },
+      tenant: value('acme'),
+      sku: value('A-1')
+    });
+    expect(statement.sql).toBe(
+      'INSERT INTO "orders" ("note", "tenant", "sku") VALUES (now(), $1, $2)'
+    );
+  });
+
+  it('一列都没有可写时报错', () => {
+    expect(() => buildInsertStatement(target('mysql'), { note: { kind: 'unset' } })).toThrow();
+  });
+});
+
+describe('更新时的几种写入方式', () => {
+  it('NULL 与空字符串是两条不同的语句', () => {
+    const asNull = buildUpdateStatement(target('mysql'), COMPOSITE, { note: { kind: 'null' } });
+    const asEmpty = buildUpdateStatement(target('mysql'), COMPOSITE, { note: value('') });
+    expect(asNull.params[0]).toBeNull();
+    expect(asEmpty.params[0]).toBe('');
+  });
+
+  it('未填写的列不进 SET', () => {
+    const statement = buildUpdateStatement(target('mysql'), COMPOSITE, {
+      note: value('x'),
+      qty: { kind: 'unset' }
+    });
+    expect(statement.sql).not.toContain('`qty`');
+  });
+
+  it('全是未填写时报错，不发一条 SET 为空的语句', () => {
+    expect(() => buildUpdateStatement(target('mysql'), COMPOSITE, { note: { kind: 'unset' } }))
+      .toThrow();
+  });
+
+  it('默认值写成 DEFAULT，不占参数位', () => {
+    const statement = buildUpdateStatement(target('postgresql'), COMPOSITE, {
+      note: { kind: 'default' },
+      qty: value(1)
+    });
+    expect(statement.sql).toBe(
+      'UPDATE "orders" SET "note" = DEFAULT, "qty" = $1 WHERE "tenant" = $2 AND "sku" = $3'
+    );
+  });
+
+  it('SQLite 的 UPDATE 不支持 DEFAULT，点名报错而不是拼一条跑不通的语句', () => {
+    expect(() => buildUpdateStatement(target('sqlite'), COMPOSITE, { note: { kind: 'default' } }))
+      .toThrow();
   });
 });

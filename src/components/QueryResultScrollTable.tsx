@@ -12,8 +12,11 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { QueryResult } from '../contracts/query';
-import { useQueryStore } from '../stores/queryStore';
-import { formatResultValue } from '../utils/resultValues';
+import { selectSqlDialect, useQueryStore } from '../stores/queryStore';
+import { unwrapResultValue } from '../utils/resultValues';
+import type { SerializedResultValue } from '../contracts/resultSet';
+import { cellInputFromValue, type CellInput } from '../utils/cellInput';
+import { CellInputEditor } from './CellInputEditor';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
@@ -38,6 +41,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
 }) => {
   const t = useLanguageStore((state) => state.t);
   const { updateRowData, deleteRowData, insertRowData } = useQueryStore();
+  const dialect = useQueryStore(selectSqlDialect);
   
   // 分页状态
   const [currentPage, setCurrentPage] = useState(1);
@@ -49,11 +53,11 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
     rowIndex: number;
     columnIndex: number;
   } | null>(null);
-  const [editValue, setEditValue] = useState<string>('');
+  const [editValue, setEditValue] = useState<CellInput>({ kind: 'unset' });
   
   // 新增行状态
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newRowData, setNewRowData] = useState<Record<string, string>>({});
+  const [newRowData, setNewRowData] = useState<Record<string, CellInput>>({});
   const [showExport, setShowExport] = useState(false);
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -109,26 +113,17 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
     useResizableColumns(result.columns, currentRows);
   const tableWidth = totalWidth + (canEdit ? ACTION_COLUMN_WIDTH : 0);
   
-  // 判断是否为时间字段
-  const isTimeField = (columnName: string): boolean => {
-    const lowerName = columnName.toLowerCase();
-    return lowerName.includes('time') || 
-           lowerName.includes('date') || 
-           lowerName.includes('created') || 
-           lowerName.includes('updated') ||
-           lowerName.includes('timestamp');
-  };
-  
   // 编辑相关函数
-  const startEditing = (rowIndex: number, columnIndex: number, currentValue: any) => {
+  const startEditing = (rowIndex: number, columnIndex: number, currentValue: SerializedResultValue) => {
     if (!canEdit) return;
     setEditingCell({ rowIndex, columnIndex });
-    setEditValue(currentValue === null ? '' : formatResultValue(currentValue));
+    // NULL 回到 `null` 档：否则打开编辑框再关掉就把 NULL 变成了空字符串
+    setEditValue(cellInputFromValue(unwrapResultValue(currentValue)));
   };
   
   const cancelEditing = () => {
     setEditingCell(null);
-    setEditValue('');
+    setEditValue({ kind: 'unset' });
   };
   
   const saveEdit = async () => {
@@ -147,22 +142,15 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
     }
   };
   
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      saveEdit();
-    } else if (e.key === 'Escape') {
-      cancelEditing();
-    }
-  };
-  
   // 新增行相关函数
   const showAddRowForm = () => {
     if (!canEdit) return;
     
-    const initialData: Record<string, string> = {};
+    // 键列留空：新增时它们由数据库生成，用户填进去的值多半会和序列打架
+    const initialData: Record<string, CellInput> = {};
     result.columns.forEach(column => {
       if (!keyColumns.has(column)) {
-        initialData[column] = '';
+        initialData[column] = { kind: 'unset' };
       }
     });
     
@@ -177,48 +165,19 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   
   const saveNewRow = async () => {
     if (!canEdit) return;
-    
+
     try {
-      const filteredData: Record<string, any> = {};
-      Object.entries(newRowData).forEach(([key, value]) => {
-        if (value.trim() !== '') {
-          if (isTimeField(key)) {
-            if (value === 'NOW' || value === 'now' || value === 'CURRENT_TIMESTAMP') {
-              filteredData[key] = 'CURRENT_TIMESTAMP';
-            } else {
-              try {
-                const parsedDate = new Date(value);
-                if (!isNaN(parsedDate.getTime())) {
-                  filteredData[key] = parsedDate.toISOString();
-                } else {
-                  filteredData[key] = value;
-                }
-              } catch {
-                filteredData[key] = value;
-              }
-            }
-          } else if (value === 'NULL' || value === 'null') {
-            filteredData[key] = null;
-          } else if (!isNaN(Number(value)) && value.trim() !== '' && !isTimeField(key)) {
-            filteredData[key] = Number(value);
-          } else {
-            filteredData[key] = value;
-          }
-        }
-      });
-      
-      await insertRowData(statementId, filteredData);
+      // 值原样交给数据库按目标列的类型解析。此前这里按**列名**猜类型，
+      // 并把看起来像数字的字符串过一遍 Number()
+      await insertRowData(statementId, newRowData);
       cancelAddRow();
     } catch (error) {
       console.error('保存新行失败:', error);
     }
   };
-  
-  const updateNewRowData = (column: string, value: string) => {
-    setNewRowData(prev => ({
-      ...prev,
-      [column]: value
-    }));
+
+  const updateNewRowData = (column: string, value: CellInput) => {
+    setNewRowData(prev => ({ ...prev, [column]: value }));
   };
   
   return (
@@ -378,29 +337,10 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                     >
                       {keyColumns.has(column) ? (
                         <span className="text-fg-subtle italic text-xs">{t('result.autoGenerated')}</span>
-                      ) : isTimeField(column) ? (
-                        <div className="flex items-center space-x-1">
-                          <input
-                            type="datetime-local"
-                            value={newRowData[column] || ''}
-                            onChange={(e) => updateNewRowData(column, e.target.value)}
-                            className="flex-1 px-2 py-1 text-sm border border-success-line rounded-control"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => updateNewRowData(column, 'NOW')}
-                            className="px-2 py-1 text-xs text-success border border-success-line rounded-control hover:bg-success-soft"
-                          >
-                            NOW
-                          </button>
-                        </div>
                       ) : (
-                        <input
-                          type="text"
-                          value={newRowData[column] || ''}
-                          onChange={(e) => updateNewRowData(column, e.target.value)}
-                          placeholder={t('result.enterValue', { column })}
-                          className="w-full px-2 py-1 text-sm border border-success-line rounded-control"
+                        <CellInputEditor
+                          value={newRowData[column] ?? { kind: 'unset' }}
+                          onChange={(next) => updateNewRowData(column, next)}
                         />
                       )}
                     </td>
@@ -459,14 +399,14 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                           && startEditing(rowIndex, cellIndex, cell)}
                       >
                         {isEditing ? (
-                          <input
-                            type="text"
+                          <CellInputEditor
                             value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            onBlur={cancelEditing}
-                            className="w-full rounded-control border border-accent-line px-1 py-0.5 text-sm"
+                            onChange={setEditValue}
+                            // SQLite 的 UPDATE 没有 `SET 列 = DEFAULT`
+                            allowDefault={dialect !== 'sqlite'}
                             autoFocus
+                            onCommit={saveEdit}
+                            onCancel={cancelEditing}
                           />
                         ) : (
                           // 每格再挂一个类型标签是重复——表头已经写了 BIGINT · NOT NULL，
