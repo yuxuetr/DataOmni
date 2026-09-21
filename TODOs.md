@@ -230,8 +230,33 @@
 
 ### 2.2 SQL 编辑体验
 
-- [ ] 使用当前 Session 的真实元数据补全 Schema、表和列
-- [ ] 补全内容按数据库方言和对象类型过滤
+- [x] 使用当前 Session 的真实元数据补全 Schema、表和列
+  - 完成于 1e99f9b。此前补全给的是编造的清单（表名固定 users / orders / products /
+    customers / categories，列名固定 id / name / email / created_at / updated_at /
+    status），和当前连接的库毫无关系——选中一个就得到一个不存在的标识符。
+  - 新增 `completion_catalog` 服务，一条查询取回整库的关系与列。与 `er_diagram`
+    的列查询分开：ER 图只要表（视图没有外键），补全要表**和**视图（视图一样能 SELECT）。
+  - 别名解析交给 `@codemirror/lang-sql` 自己的 schema 补全源——它按语法树判断位置，
+    `FROM orders o` 之后 `o.` 能补出 orders 的列。我们负责的是把真的库结构喂给它。
+  - 目录缓存在 appStore：一次只渲染活动标签，编辑器随切标签卸载，存在组件里
+    等于每切一次标签就把整库的列重查一遍。失效条件是 `schemaVersion`，并与对象
+    目录一起被 `clearDatabaseMetadata` 清掉。
+  - 判据：`src/utils/sqlCompletionSchema.test.ts`（25 条，其中「弹出来的次序」一组
+    起真的 EditorView 读 `currentCompletions`）与 `cargo test --test database_smoke`
+    里的三条 `*_completion_catalog_lists_views_next_to_tables`。已反向验证：MySQL 加回
+    `BASE TABLE` 过滤后精确红在视图断言，PostgreSQL 改按列名排序后红在列顺序断言。
+- [x] 补全内容按数据库方言和对象类型过滤
+  - 关键字改由 lang-sql 按方言给：`AUTO_INCREMENT` 只在 MySQL 出现，`RETURNING`
+    只在 PostgreSQL 出现；原来那份硬编码清单三种库共用。层级也跟着方言走：
+    PostgreSQL 保留 Schema 一层，MySQL 与 SQLite 不保留（连接时已经选定了库）。
+  - 对象类型：表与视图都进补全并在说明里区分。函数与存储过程**没有**放进来——
+    PostgreSQL 的函数可重载、目录里的名字带签名，要正确插入得先去掉参数表，
+    而它们本就不在本条要求的「Schema、表和列」里。真需要时再补。
+  - 两处是看了真实渲染才发现的：(1) CodeMirror 会按匹配得分重排，补出来的第一个
+    是 customer_id 而不是 id，改为按表内位置递减加权（范围 ±99，而匹配质量档距
+    至少 100，所以只在质量相同时起作用，两端都有测试钉住）；(2) 深色模式下补全
+    弹窗的选中项看不见（oneDark 的 #2c313a 压在 #21252b 上），改用应用强调色，
+    靠选择器特异性取胜——同优先级时 oneDark 的样式表在后面。
 - [ ] 增加格式化 SQL
 - [ ] 增加查找、替换、跳转和注释快捷键
 - [ ] 显示执行目标、数据库、Schema、只读和生产环境标记
