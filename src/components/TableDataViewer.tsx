@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 import type { ConnectionProfile, TableSchema } from '../contracts';
-import { quoteQualifiedSqlIdentifier } from '../utils/sqlIdentifiers';
+import { identifierDialectFor, quoteQualifiedSqlIdentifier } from '../utils/sqlIdentifiers';
 import {
   createSortedOrderClause,
   createTablePaginationOrder,
@@ -186,11 +186,7 @@ export default function TableDataViewer({
   const { database, connectionId } = useQueryStore();
   const currentTableKey = `${connection.id}:${schema ?? ''}:${tableName}`;
   // 标识符引用方言。此前这行三元式在四个函数里各抄了一份
-  const dialect = connection.db_type === 'mysql'
-    ? 'mysql'
-    : connection.db_type === 'postgresql'
-      ? 'postgresql'
-      : 'sqlite';
+  const dialect = identifierDialectFor(connection.db_type);
 
   // COUNT(*) 在大表上是全表扫描（InnoDB 与 PostgreSQL 都没有常数级行数），
   // 按数据集身份缓存，使翻页和调整页大小不再重复付这笔代价。

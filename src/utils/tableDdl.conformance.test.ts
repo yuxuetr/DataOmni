@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { ColumnInfo } from '../contracts';
-import { buildTableDdl, columnDefaultSql, type ColumnDraft } from './tableDdl';
+import {
+  buildCreateTable,
+  buildTableDdl,
+  columnDefaultSql,
+  type ColumnDraft
+} from './tableDdl';
 import type { SqlIdentifierDialect } from './sqlIdentifiers';
 
 /**
@@ -35,10 +40,13 @@ interface CorpusDraft {
   nullable?: boolean;
   defaultValue?: string | null;
   dropped?: boolean;
+  primaryKey?: boolean;
 }
 
 interface CorpusCase {
   name: string;
+  /** 缺省是改结构；`create` 走建表那条路径 */
+  kind?: 'create';
   dialect: SqlIdentifierDialect;
   schema: string | null;
   table: string;
@@ -95,7 +103,8 @@ function toDraft(
       : origin
         ? columnDefaultSql(origin, dialect)
         : null,
-    dropped: entry.dropped ?? false
+    dropped: entry.dropped ?? false,
+    primaryKey: entry.primaryKey ?? origin?.is_primary_key ?? false
   };
 }
 
@@ -107,13 +116,21 @@ describe('改结构语料', () => {
         return [info.name, info];
       }));
 
-      const plan = buildTableDdl({
-        schema: testCase.schema,
-        table: testCase.table,
-        newTableName: testCase.newTableName,
-        dialect: testCase.dialect,
-        columns: testCase.draft.map((entry) => toDraft(entry, byName, testCase.dialect))
-      });
+      const columns = testCase.draft.map((entry) => toDraft(entry, byName, testCase.dialect));
+      const plan = testCase.kind === 'create'
+        ? buildCreateTable({
+          schema: testCase.schema,
+          table: testCase.table,
+          dialect: testCase.dialect,
+          columns
+        })
+        : buildTableDdl({
+          schema: testCase.schema,
+          table: testCase.table,
+          newTableName: testCase.newTableName,
+          dialect: testCase.dialect,
+          columns
+        });
 
       expect(plan.statements).toEqual(testCase.statements);
       expect(plan.refusals).toEqual(testCase.refusals);
@@ -121,8 +138,12 @@ describe('改结构语料', () => {
     });
   }
 
-  it('三种方言都有用例——少一种就是那一种从没跑过真库', () => {
-    expect(new Set(corpus.cases.map((testCase) => testCase.dialect)))
-      .toEqual(new Set(['postgresql', 'mysql', 'sqlite']));
+  it('三种方言的改结构与建表都有用例——少一种就是那一种从没跑过真库', () => {
+    for (const kind of [undefined, 'create'] as const) {
+      expect(new Set(
+        corpus.cases.filter((testCase) => testCase.kind === kind)
+          .map((testCase) => testCase.dialect)
+      )).toEqual(new Set(['postgresql', 'mysql', 'sqlite']));
+    }
   });
 });

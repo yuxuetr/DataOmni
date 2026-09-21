@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react';
-import { clsx } from 'clsx';
+import { Pencil, Plus } from 'lucide-react';
 import type { ColumnInfo, ConnectionEnvironment } from '../contracts';
 import { useLanguageStore } from '../stores/languageStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -16,6 +15,7 @@ import {
   type ColumnDraft,
   type DdlPlan
 } from '../utils/tableDdl';
+import { ColumnDraftTable } from './ColumnDraftTable';
 import { DdlPreviewDialog } from './DdlPreviewDialog';
 import { DestructiveStatementPrompt } from './DestructiveStatementPrompt';
 
@@ -71,7 +71,8 @@ export function TableStructureEditor({
       // 目录里的默认值先归一成 SQL 原文，否则 MySQL 上「什么都没改」
       // 也会被 diff 判成改了默认值
       defaultValue: columnDefaultSql(column, dialect),
-      dropped: false
+      dropped: false,
+      primaryKey: column.is_primary_key
     })));
     setTableName(table);
     setError(null);
@@ -93,7 +94,10 @@ export function TableStructureEditor({
   const addDraft = () => {
     setDrafts((current) => [
       ...(current ?? []),
-      { origin: null, name: '', dataType: '', nullable: true, defaultValue: null, dropped: false }
+      {
+        origin: null, name: '', dataType: '', nullable: true,
+        defaultValue: null, dropped: false, primaryKey: false
+      }
     ]);
   };
 
@@ -224,7 +228,7 @@ export function TableStructureEditor({
 
       {editing && incomplete.length > 0 && (
         <p className="border-b border-warning-line bg-warning-soft px-4 py-2 text-xs text-warning">
-          {t('ddl.incomplete', { columns: incomplete.map((name) => name || '—').join(', ') })}
+          {t('ddl.incomplete', { columns: incomplete.join(', ') })}
         </p>
       )}
       {editing && (
@@ -238,141 +242,23 @@ export function TableStructureEditor({
         </p>
       )}
 
-      <table className="w-full">
-        <thead className="sticky top-0 bg-surface-sunken">
-          <tr>
-            {[
-              'table.column.name',
-              'table.column.type',
-              'table.column.nullable',
-              'table.column.primaryKey',
-              'table.column.default'
-            ].map((key) => (
-              <th
-                key={key}
-                className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-fg-muted"
-              >
-                {t(key as Parameters<typeof t>[0])}
-              </th>
-            ))}
-            {editing && <th className="w-12 px-4 py-3" />}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-line bg-surface">
-          {(drafts ?? columns.map((column) => ({
-            origin: column,
-            name: column.name,
-            dataType: column.data_type,
-            nullable: column.is_nullable,
-            // 只读时也显示归一后的 SQL 原文：MySQL 目录里的 `active` 和
-            // `0` 分不出字符串与数字，而 `'active'` 与 `0` 分得出
-            defaultValue: columnDefaultSql(column, dialect),
-            dropped: false
-          }))).map((draft, index) => (
-            <tr
-              key={draft.origin ? `origin:${draft.origin.name}` : `new:${index}`}
-              className={clsx('hover:bg-surface-hover', draft.dropped && 'opacity-50')}
-            >
-              <td className="px-4 py-2 text-sm font-medium text-fg">
-                {editing ? (
-                  <input
-                    value={draft.name}
-                    onChange={(event) => updateDraft(index, { name: event.target.value })}
-                    disabled={draft.dropped}
-                    className={clsx(
-                      'w-full rounded-control border border-line bg-surface px-2 py-1 font-mono text-sm text-fg',
-                      draft.dropped && 'line-through'
-                    )}
-                  />
-                ) : (
-                  <>
-                    {draft.name}
-                    {draft.origin?.is_generated && (
-                      <span className="ml-1 text-xs font-normal text-success">
-                        {t('table.generatedTag')}
-                      </span>
-                    )}
-                  </>
-                )}
-              </td>
-              <td className="px-4 py-2 text-sm text-fg-muted">
-                {editing ? (
-                  <input
-                    value={draft.dataType}
-                    onChange={(event) => updateDraft(index, { dataType: event.target.value })}
-                    disabled={draft.dropped}
-                    className="w-full rounded-control border border-line bg-surface px-2 py-1 font-mono text-sm text-fg"
-                  />
-                ) : (
-                  <span className="inline-flex items-center rounded-control bg-accent-soft px-2 py-1 text-xs font-medium text-accent">
-                    {draft.dataType}
-                  </span>
-                )}
-              </td>
-              <td className="px-4 py-2 text-sm text-fg-muted">
-                {editing ? (
-                  <input
-                    type="checkbox"
-                    checked={draft.nullable}
-                    disabled={draft.dropped}
-                    onChange={(event) => updateDraft(index, { nullable: event.target.checked })}
-                  />
-                ) : draft.nullable ? (
-                  <span className="inline-flex items-center rounded-control bg-success-soft px-2 py-1 text-xs font-medium text-success">
-                    {t('table.yes')}
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center rounded-control bg-danger-soft px-2 py-1 text-xs font-medium text-danger">
-                    {t('table.no')}
-                  </span>
-                )}
-              </td>
-              <td className="px-4 py-2 text-sm text-fg-muted">
-                {draft.origin?.is_primary_key ? (
-                  <span className="inline-flex items-center rounded-control bg-accent-soft px-2 py-1 text-xs font-medium text-accent">
-                    {t('table.column.primaryKey')}
-                  </span>
-                ) : draft.origin ? (
-                  <span className="text-fg-subtle">-</span>
-                ) : (
-                  <span className="text-fg-subtle">{t('ddl.newColumn')}</span>
-                )}
-              </td>
-              <td className="px-4 py-2 text-sm text-fg-muted">
-                {editing ? (
-                  <input
-                    value={draft.defaultValue ?? ''}
-                    placeholder="NULL"
-                    disabled={draft.dropped}
-                    onChange={(event) => updateDraft(index, {
-                      defaultValue: event.target.value === '' ? null : event.target.value
-                    })}
-                    className="w-full rounded-control border border-line bg-surface px-2 py-1 font-mono text-sm text-fg"
-                  />
-                ) : draft.defaultValue ? (
-                  <code className="rounded-control bg-surface-hover px-2 py-1 text-xs">
-                    {draft.defaultValue}
-                  </code>
-                ) : (
-                  <span className="text-fg-subtle">-</span>
-                )}
-              </td>
-              {editing && (
-                <td className="px-4 py-2">
-                  <button
-                    type="button"
-                    onClick={() => removeDraft(index)}
-                    title={draft.dropped ? t('ddl.undoDrop') : t('ddl.dropColumn')}
-                    className="rounded-control p-1 text-fg-muted hover:bg-surface-hover hover:text-danger"
-                  >
-                    {draft.dropped ? <RotateCcw size={14} /> : <Trash2 size={14} />}
-                  </button>
-                </td>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <ColumnDraftTable
+        drafts={drafts ?? columns.map((column) => ({
+          origin: column,
+          name: column.name,
+          dataType: column.data_type,
+          nullable: column.is_nullable,
+          // 只读时也显示归一后的 SQL 原文：MySQL 目录里的 `active` 和 `0`
+          // 分不出字符串与数字，而 `'active'` 与 `0` 分得出
+          defaultValue: columnDefaultSql(column, dialect),
+          dropped: false,
+          primaryKey: column.is_primary_key
+        }))}
+        editing={editing}
+        primaryKeyEditable={false}
+        onChange={updateDraft}
+        onRemove={removeDraft}
+      />
 
       {preview && (
         <DdlPreviewDialog

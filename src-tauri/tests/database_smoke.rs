@@ -2508,6 +2508,9 @@ mod ddl_corpus {
     pub final_table: String,
     pub fixture: Vec<String>,
     pub statements: Vec<String>,
+    /// 建表用例跑完之后不写主键值插一行：写错的自增表现不是建表失败，
+    /// 而是建出来了但**插不进行**
+    pub insert: Vec<String>,
     pub origin: Vec<Column>,
     pub after: Vec<Column>,
     pub cleanup: Vec<String>,
@@ -2578,6 +2581,7 @@ mod ddl_corpus {
         final_table: text(case, "newTableName").unwrap_or_default(),
         fixture: strings(case, "fixture"),
         statements: strings(case, "statements"),
+        insert: strings(case, "insert"),
         origin: columns(case, "origin"),
         after: columns(case, "after"),
         cleanup: strings(case, "cleanup"),
@@ -2679,14 +2683,24 @@ async fn postgres_runs_the_generated_ddl_from_the_shared_corpus() {
       sqlx::query(statement).execute(&pool).await.expect("prepare corpus fixture");
     }
 
-    let origin = postgres_catalog_columns(&pool, catalog, &case.table).await;
-    assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+    // 建表用例没有 origin——表还不存在
+    if !case.origin.is_empty() {
+      let origin = postgres_catalog_columns(&pool, catalog, &case.table).await;
+      assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+    }
 
     for statement in &case.statements {
       sqlx::query(statement)
         .execute(&pool)
         .await
         .unwrap_or_else(|error| panic!("{}: 生成的语句跑不了\n{statement}\n{error}", case.name));
+    }
+
+    for statement in &case.insert {
+      sqlx::query(statement)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("{}: 建出来的表插不进行\n{statement}\n{error}", case.name));
     }
 
     let after = postgres_catalog_columns(&pool, catalog, &case.final_table).await;
@@ -2712,14 +2726,24 @@ async fn mysql_runs_the_generated_ddl_from_the_shared_corpus() {
       sqlx::query(statement).execute(&pool).await.expect("prepare corpus fixture");
     }
 
-    let origin = mysql_catalog_columns(&pool, catalog, &case.table).await;
-    assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+    // 建表用例没有 origin——表还不存在
+    if !case.origin.is_empty() {
+      let origin = mysql_catalog_columns(&pool, catalog, &case.table).await;
+      assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+    }
 
     for statement in &case.statements {
       sqlx::query(statement)
         .execute(&pool)
         .await
         .unwrap_or_else(|error| panic!("{}: 生成的语句跑不了\n{statement}\n{error}", case.name));
+    }
+
+    for statement in &case.insert {
+      sqlx::query(statement)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("{}: 建出来的表插不进行\n{statement}\n{error}", case.name));
     }
 
     let after = mysql_catalog_columns(&pool, catalog, &case.final_table).await;
@@ -2745,14 +2769,24 @@ async fn sqlite_runs_the_generated_ddl_from_the_shared_corpus() {
       sqlx::query(statement).execute(&pool).await.expect("prepare corpus fixture");
     }
 
-    let origin = sqlite_catalog_columns(&pool, catalog, &case.table).await;
-    assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+    // 建表用例没有 origin——表还不存在
+    if !case.origin.is_empty() {
+      let origin = sqlite_catalog_columns(&pool, catalog, &case.table).await;
+      assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+    }
 
     for statement in &case.statements {
       sqlx::query(statement)
         .execute(&pool)
         .await
         .unwrap_or_else(|error| panic!("{}: 生成的语句跑不了\n{statement}\n{error}", case.name));
+    }
+
+    for statement in &case.insert {
+      sqlx::query(statement)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("{}: 建出来的表插不进行\n{statement}\n{error}", case.name));
     }
 
     let after = sqlite_catalog_columns(&pool, catalog, &case.final_table).await;

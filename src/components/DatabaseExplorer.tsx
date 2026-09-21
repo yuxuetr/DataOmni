@@ -8,6 +8,7 @@ import {
   FunctionSquare,
   GitBranch,
   Hash,
+  Plus,
   RefreshCw,
   Loader,
   AlertCircle,
@@ -27,6 +28,8 @@ import {
   type ObjectTreeNode
 } from '../utils/databaseObjects';
 import { ObjectDefinitionDialog } from './ObjectDefinitionDialog';
+import { CreateTableDialog } from './CreateTableDialog';
+import { identifierDialectFor } from '../utils/sqlIdentifiers';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useQueryStore } from '../stores/queryStore';
 import { useAppStore } from '../stores/appStore';
@@ -65,6 +68,7 @@ export default function DatabaseExplorer({
   // 展开状态按节点 key 存；schema 与类型分组共用一套
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [inspecting, setInspecting] = useState<DatabaseObject | null>(null);
+  const [creatingTable, setCreatingTable] = useState(false);
 
   const t = useLanguageStore((state) => state.t);
   const kindLabel = (kind: DatabaseObjectKind) => t(KIND_LABEL_KEYS[kind]);
@@ -239,6 +243,15 @@ export default function DatabaseExplorer({
             </button>
           )}
           <button
+            onClick={() => setCreatingTable(true)}
+            disabled={!connectionReady}
+            className="p-1 text-fg-muted transition-colors hover:text-accent disabled:opacity-40"
+            title={t('ddl.createTable')}
+            aria-label={t('ddl.createTable')}
+          >
+            <Plus size={14} />
+          </button>
+          <button
             onClick={() => loadDatabaseMetadata(true)}
             disabled={loading}
             className="p-1 text-fg-muted hover:text-accent transition-colors"
@@ -306,6 +319,23 @@ export default function DatabaseExplorer({
           object={inspecting}
           connection={connection}
           onClose={() => setInspecting(null)}
+        />
+      )}
+
+      {creatingTable && (
+        <CreateTableDialog
+          connectionId={connectionId}
+          dialect={identifierDialectFor(connection.db_type)}
+          // schema 取自已经读到的对象，不另发一次目录查询：能建表的 schema
+          // 就是树里那几个，而凭空让用户手打一个名字只会打错
+          schemas={[...new Set(
+            objects.map((object) => object.schema).filter((name): name is string => !!name)
+          )].sort()}
+          onClose={() => setCreatingTable(false)}
+          onCreated={(table, schema) => {
+            void loadDatabaseMetadata(true);
+            onTableSelect?.(table, schema ?? undefined);
+          }}
         />
       )}
     </div>

@@ -128,6 +128,10 @@ export const en: Translations = {
 
   // Table structure editing
   'ddl.edit': 'Edit structure',
+  'ddl.createTitle': 'New table',
+  'ddl.createTable': 'New table',
+  'ddl.schema': 'Schema',
+  'ddl.noPrimaryKeyNote': 'This table has no primary key. The database allows that, but a table without one is read-only here — there is no way to point at a single row.',
   'ddl.tableName': 'Table name',
   'ddl.addColumn': 'Add column',
   'ddl.newColumn': 'New',

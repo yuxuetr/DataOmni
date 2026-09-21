@@ -36,6 +36,14 @@ export interface ColumnDraft {
   defaultValue: string | null;
   /** 标记删除。原列才有意义，新加的列直接从草稿里去掉 */
   dropped: boolean;
+  /**
+   * 进不进主键。
+   *
+   * 只有**新建表**用得上：`buildTableDdl` 不看这一项——改主键要先验证现有
+   * 数据的唯一性，还要考虑外键引用，不是改一格就能算出来的事，当前版本不做。
+   * 改结构时这一格是只读的。
+   */
+  primaryKey: boolean;
 }
 
 export interface TableDdlRequest {
@@ -74,12 +82,31 @@ export interface DdlPlan {
   impacts: DdlImpact[];
 }
 
-/** 新增列必须填的两项。缺了就整条不生成，而不是拼一条语法错误的语句 */
+/**
+ * 一行什么都没填。
+ *
+ * 新建表的表格里留着一行空白是**还没写**，不是「一个没有名字的列」。把它
+ * 当成缺项点名，等于对话框一打开就先报一次错；把它拼进语句，等于发一条
+ * 语法错误的 SQL。两种都不对，所以它既不点名也不进语句。
+ */
+function isBlankDraft(column: ColumnDraft): boolean {
+  return !column.origin && column.name.trim() === '' && column.dataType.trim() === '';
+}
+
+/** 会进语句的列：去掉标记删除的和整行空白的 */
+export function usableDraftColumns(columns: readonly ColumnDraft[]): ColumnDraft[] {
+  return columns.filter((column) => !column.dropped && !isBlankDraft(column));
+}
+
+/**
+ * 填了一半的列。缺了名字或类型就整条不生成，而不是拼一条语法错误的语句。
+ *
+ * 没名字时用类型来指代那一行——总得说得出是哪一行，而「—」说不出。
+ */
 export function incompleteDraftColumns(columns: readonly ColumnDraft[]): string[] {
-  return columns
-    .filter((column) => !column.dropped)
+  return usableDraftColumns(columns)
     .filter((column) => column.name.trim() === '' || column.dataType.trim() === '')
-    .map((column) => column.name.trim() || column.origin?.name || '');
+    .map((column) => column.name.trim() || column.dataType.trim());
 }
 
 function tableReference(request: TableDdlRequest, name: string): string {
@@ -253,7 +280,9 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
     }
 
     if (!origin) {
-      adds.push(`ADD COLUMN ${addColumnDefinition(column, dialect)}`);
+      if (!isBlankDraft(column)) {
+        adds.push(`ADD COLUMN ${addColumnDefinition(column, dialect)}`);
+      }
       continue;
     }
 
@@ -369,4 +398,59 @@ function changedDdlActions(change: ColumnChange): DdlAction[] {
     actions.push('change-default');
   }
   return actions;
+}
+
+export interface CreateTableRequest {
+  schema: string | null;
+  table: string;
+  dialect: SqlIdentifierDialect;
+  columns: readonly ColumnDraft[];
+}
+
+/**
+ * 拼出 CREATE TABLE。
+ *
+ * 和改结构相反，这里三种方言几乎一致——没有已存在的数据要迁移，也没有
+ * 要重述的既有属性，列定义就是用户刚写下的那一行。
+ *
+ * 主键写成表级 `PRIMARY KEY (a, b)` 而不是列级 `... PRIMARY KEY`：复合主键
+ * 只能这么写，而两种写法并存意味着「一列还是多列」要分两条路径。
+ *
+ * **没有主键时不拦着**：临时表、日志表本来就可能不要主键。但那样的表在这个
+ * 程序里不可编辑（定位不到一行），所以界面上要提一句，而不是悄悄建出来。
+ */
+export function buildCreateTable(request: CreateTableRequest): DdlPlan {
+  const { dialect } = request;
+  const columns = usableDraftColumns(request.columns);
+  const definitions = columns.map((column) => {
+    const parts = [quoteSqlIdentifier(column.name, dialect), column.dataType.trim()];
+    // 主键列一律 NOT NULL：三家里只有 SQLite 允许主键存 NULL，而那是它自己
+    // 记录在案的历史遗留，照着建出来的表会有一行谁也定位不到
+    if (!column.nullable || column.primaryKey) {
+      parts.push('NOT NULL');
+    }
+    if (column.defaultValue != null) {
+      parts.push(`DEFAULT ${column.defaultValue}`);
+    }
+    return parts.join(' ');
+  });
+
+  const keyColumns = columns.filter((column) => column.primaryKey);
+  if (keyColumns.length > 0) {
+    definitions.push(
+      `PRIMARY KEY (${keyColumns
+        .map((column) => quoteSqlIdentifier(column.name, dialect))
+        .join(', ')})`
+    );
+  }
+
+  const reference = quoteQualifiedSqlIdentifier(
+    request.schema ? [request.schema, request.table] : [request.table],
+    dialect
+  );
+  return {
+    statements: [`CREATE TABLE ${reference} (\n  ${definitions.join(',\n  ')}\n)`],
+    refusals: [],
+    impacts: []
+  };
 }

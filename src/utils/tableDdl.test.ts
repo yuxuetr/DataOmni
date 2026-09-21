@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ColumnInfo } from '../contracts';
 import {
+  buildCreateTable,
   buildTableDdl,
   columnDefaultSql,
   incompleteDraftColumns,
@@ -26,7 +27,8 @@ function draftOf(origin: ColumnInfo, dialect: SqlIdentifierDialect): ColumnDraft
     dataType: origin.data_type,
     nullable: origin.is_nullable,
     defaultValue: columnDefaultSql(origin, dialect),
-    dropped: false
+    dropped: false,
+    primaryKey: origin.is_primary_key
   };
 }
 
@@ -95,7 +97,7 @@ describe('buildTableDdl / PostgreSQL', () => {
       { ...draftOf(code, 'postgresql'), dropped: true },
       {
         origin: null, name: 'note', dataType: 'text',
-        nullable: false, defaultValue: "''", dropped: false
+        nullable: false, defaultValue: "''", dropped: false, primaryKey: false
       }
     ]));
     expect(plan.statements).toEqual([
@@ -174,7 +176,7 @@ describe('buildTableDdl / MySQL', () => {
       { ...draftOf(code, 'mysql'), dropped: true },
       {
         origin: null, name: 'note', dataType: 'text',
-        nullable: true, defaultValue: null, dropped: false
+        nullable: true, defaultValue: null, dropped: false, primaryKey: false
       }
     ], { newTableName: 'sales' }));
     expect(plan.statements).toEqual([
@@ -266,7 +268,7 @@ describe('buildTableDdl / SQLite', () => {
       { ...draftOf(code, 'sqlite'), name: 'sku' },
       {
         origin: null, name: 'note', dataType: 'TEXT',
-        nullable: true, defaultValue: null, dropped: false
+        nullable: true, defaultValue: null, dropped: false, primaryKey: false
       },
       { ...draftOf(column({ name: 'old', data_type: 'INT' }), 'sqlite'), dropped: true }
     ]));
@@ -300,18 +302,109 @@ describe('buildTableDdl / SQLite', () => {
 });
 
 describe('incompleteDraftColumns', () => {
-  it('点名缺名字或缺类型的列', () => {
+  it('点名缺名字或缺类型的列；没名字的那一行用类型指代，总得说得出是哪一行', () => {
     expect(incompleteDraftColumns([
-      { origin: null, name: '', dataType: 'int', nullable: true, defaultValue: null, dropped: false },
-      { origin: null, name: 'ok', dataType: '', nullable: true, defaultValue: null, dropped: false },
-      { origin: null, name: 'fine', dataType: 'int', nullable: true, defaultValue: null, dropped: false }
-    ])).toEqual(['', 'ok']);
+      { origin: null, name: '', dataType: 'int', nullable: true, defaultValue: null, dropped: false, primaryKey: false },
+      { origin: null, name: 'ok', dataType: '', nullable: true, defaultValue: null, dropped: false, primaryKey: false },
+      { origin: null, name: 'fine', dataType: 'int', nullable: true, defaultValue: null, dropped: false, primaryKey: false }
+    ])).toEqual(['int', 'ok']);
+  });
+
+  it('整行空白是「还没写」，既不点名也不进语句', () => {
+    // 对话框一打开就先报一次错，和把一行空白拼进 CREATE TABLE，两种都不对
+    expect(incompleteDraftColumns([
+      { origin: null, name: '', dataType: '', nullable: true, defaultValue: null, dropped: false, primaryKey: false }
+    ])).toEqual([]);
+    expect(buildCreateTable({
+      schema: null,
+      table: 'log',
+      dialect: 'sqlite',
+      columns: [
+        { origin: null, name: 'line', dataType: 'TEXT', nullable: true, defaultValue: null, dropped: false, primaryKey: false },
+        { origin: null, name: '', dataType: '', nullable: true, defaultValue: null, dropped: false, primaryKey: false }
+      ]
+    }).statements).toEqual(['CREATE TABLE "log" (\n  "line" TEXT\n)']);
   });
 
   it('已标记删除的列不算', () => {
     const origin = column({ name: 'gone', data_type: '' });
     expect(incompleteDraftColumns([
-      { origin, name: 'gone', dataType: '', nullable: true, defaultValue: null, dropped: true }
+      { origin, name: 'gone', dataType: '', nullable: true, defaultValue: null, dropped: true, primaryKey: false }
     ])).toEqual([]);
+  });
+});
+
+describe('buildCreateTable', () => {
+  const draft = (
+    name: string,
+    dataType: string,
+    overrides: Partial<ColumnDraft> = {}
+  ): ColumnDraft => ({
+    origin: null,
+    name,
+    dataType,
+    nullable: true,
+    defaultValue: null,
+    dropped: false,
+    primaryKey: false,
+    ...overrides
+  });
+
+  it('主键写成表级约束，复合主键才有唯一一种写法', () => {
+    const plan = buildCreateTable({
+      schema: 'public',
+      table: 'orders',
+      dialect: 'postgresql',
+      columns: [
+        draft('tenant_id', 'integer', { primaryKey: true }),
+        draft('id', 'integer', { primaryKey: true }),
+        draft('code', 'text', { nullable: false, defaultValue: "''" }),
+        draft('note', 'text')
+      ]
+    });
+    expect(plan.statements).toEqual([
+      'CREATE TABLE "public"."orders" (\n'
+        + '  "tenant_id" integer NOT NULL,\n'
+        + '  "id" integer NOT NULL,\n'
+        + '  "code" text NOT NULL DEFAULT \'\',\n'
+        + '  "note" text,\n'
+        + '  PRIMARY KEY ("tenant_id", "id")\n'
+        + ')'
+    ]);
+  });
+
+  it('主键列一律 NOT NULL，哪怕勾了可空', () => {
+    // 只有 SQLite 允许主键存 NULL，而那是它记录在案的历史遗留：
+    // 照着建出来的表会有一行谁也定位不到
+    const plan = buildCreateTable({
+      schema: null,
+      table: 'notes',
+      dialect: 'sqlite',
+      columns: [draft('id', 'INTEGER', { primaryKey: true, nullable: true })]
+    });
+    expect(plan.statements).toEqual([
+      'CREATE TABLE "notes" (\n  "id" INTEGER NOT NULL,\n  PRIMARY KEY ("id")\n)'
+    ]);
+  });
+
+  it('没有主键就不写 PRIMARY KEY，不替用户挑一列', () => {
+    const plan = buildCreateTable({
+      schema: null,
+      table: 'log',
+      dialect: 'mysql',
+      columns: [draft('line', 'text')]
+    });
+    expect(plan.statements).toEqual(['CREATE TABLE `log` (\n  `line` text\n)']);
+    expect(plan.impacts).toEqual([]);
+  });
+
+  it('标记删除的列不进建表语句', () => {
+    const plan = buildCreateTable({
+      schema: null,
+      table: 'log',
+      dialect: 'mysql',
+      columns: [draft('line', 'text'), draft('gone', 'int', { dropped: true })]
+    });
+    expect(plan.statements).toEqual(['CREATE TABLE `log` (\n  `line` text\n)']);
   });
 });

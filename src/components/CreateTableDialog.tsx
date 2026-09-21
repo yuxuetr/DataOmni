@@ -1,0 +1,235 @@
+import { useMemo, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { Plus, X } from 'lucide-react';
+import { useLanguageStore } from '../stores/languageStore';
+import { useAppStore } from '../stores/appStore';
+import { describeError } from '../utils/describeError';
+import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
+import {
+  buildCreateTable,
+  incompleteDraftColumns,
+  usableDraftColumns,
+  type ColumnDraft,
+  type DdlPlan
+} from '../utils/tableDdl';
+import { ColumnDraftTable } from './ColumnDraftTable';
+import { DdlPreviewDialog } from './DdlPreviewDialog';
+
+interface CreateTableDialogProps {
+  connectionId: string;
+  dialect: SqlIdentifierDialect;
+  /** 库里已有的 schema；SQLite 没有这一层，传空数组 */
+  schemas: readonly string[];
+  onClose: () => void;
+  onCreated: (table: string, schema: string | null) => void;
+}
+
+const BLANK: ColumnDraft = {
+  origin: null,
+  name: '',
+  dataType: '',
+  nullable: true,
+  defaultValue: null,
+  dropped: false,
+  primaryKey: false
+};
+
+/**
+ * 新建表。
+ *
+ * 不走二次确认：建表不碰任何已有数据，风险和一条 INSERT 同级。给每条 CREATE
+ * 弹一次确认，弹到第三次就没人看了，真正危险的那次也会被顺手点掉。
+ *
+ * 和改结构共用同一张列表格，也共用同一个预览框——建表同样是「先看要跑什么，
+ * 再跑」。建表不删数据，所以没有影响清单，风险也只是有界写入。
+ *
+ * 起手两列（一个主键、一个普通列）不是装饰：空表格里第一件要做的事是
+ * 决定主键，而这个程序里没有主键的表**不可编辑**。
+ */
+export function CreateTableDialog({
+  connectionId,
+  dialect,
+  schemas,
+  onClose,
+  onCreated
+}: CreateTableDialogProps) {
+  const t = useLanguageStore((state) => state.t);
+  const markSchemaChanged = useAppStore((state) => state.markSchemaChanged);
+
+  const [table, setTable] = useState('');
+  const [schema, setSchema] = useState(schemas[0] ?? '');
+  const [drafts, setDrafts] = useState<ColumnDraft[]>([
+    { ...BLANK, name: 'id', dataType: defaultKeyType(dialect), nullable: false, primaryKey: true },
+    { ...BLANK }
+  ]);
+  const [preview, setPreview] = useState<DdlPlan | null>(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const updateDraft = (index: number, patch: Partial<ColumnDraft>) => {
+    setDrafts((current) =>
+      current.map((draft, position) => (position === index ? { ...draft, ...patch } : draft)));
+  };
+
+  const removeDraft = (index: number) => {
+    setDrafts((current) => current.filter((_, position) => position !== index));
+  };
+
+  const incomplete = useMemo(() => incompleteDraftColumns(drafts), [drafts]);
+  const usable = useMemo(() => usableDraftColumns(drafts), [drafts]);
+  const ready = table.trim() !== '' && usable.length > 0 && incomplete.length === 0;
+  const withoutKey = usable.every((draft) => !draft.primaryKey);
+
+  const openPreview = () => {
+    if (!ready) {
+      return;
+    }
+    setError(null);
+    setPreview(buildCreateTable({
+      schema: schema.trim() === '' ? null : schema.trim(),
+      table: table.trim(),
+      dialect,
+      columns: drafts
+    }));
+  };
+
+  const run = async (plan: DdlPlan) => {
+    setRunning(true);
+    setError(null);
+    try {
+      await invoke<number[]>('execute_write_batch', {
+        connectionId,
+        statements: plan.statements.map((sql) => ({ sql, params: [], expectRows: null }))
+      });
+      markSchemaChanged();
+      onCreated(table.trim(), schema.trim() === '' ? null : schema.trim());
+      onClose();
+    } catch (caught) {
+      setError(describeError(caught));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="create-table-title"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[80vh] w-[760px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-panel bg-surface-raised shadow-xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-line px-5 py-3">
+          <h2 id="create-table-title" className="text-base font-medium text-fg">
+            {t('ddl.createTitle')}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-control p-1 text-fg-muted hover:bg-surface-hover hover:text-fg"
+            aria-label={t('common.close')}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3 border-b border-line bg-surface-sunken px-5 py-3">
+          {schemas.length > 0 && (
+            <label className="flex items-center gap-2 text-xs text-fg-muted">
+              {t('ddl.schema')}
+              <select
+                value={schema}
+                onChange={(event) => setSchema(event.target.value)}
+                className="rounded-control border border-line bg-surface px-2 py-1 font-mono text-xs text-fg"
+              >
+                {schemas.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="flex items-center gap-2 text-xs text-fg-muted">
+            {t('ddl.tableName')}
+            <input
+              value={table}
+              autoFocus
+              onChange={(event) => setTable(event.target.value)}
+              className="rounded-control border border-line bg-surface px-2 py-1 font-mono text-xs text-fg"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => setDrafts((current) => [...current, { ...BLANK }])}
+            className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover"
+          >
+            <Plus size={14} />
+            {t('ddl.addColumn')}
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          <ColumnDraftTable
+            drafts={drafts}
+            editing
+            primaryKeyEditable
+            onChange={updateDraft}
+            onRemove={removeDraft}
+          />
+        </div>
+
+        <div className="border-t border-line bg-surface-sunken px-5 py-3">
+          {incomplete.length > 0 && (
+            <p className="mb-2 text-xs text-warning">
+              {t('ddl.incomplete', { columns: incomplete.join(', ') })}
+            </p>
+          )}
+          {/* 没有主键不拦着——日志表本来可能不要。但那样的表在这里不可编辑 */}
+          {withoutKey && incomplete.length === 0 && (
+            <p className="mb-2 text-xs text-fg-subtle">{t('ddl.noPrimaryKeyNote')}</p>
+          )}
+          {error && <p className="mb-2 text-sm text-danger">{error}</p>}
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover"
+            >
+              {t('common.cancel')}
+            </button>
+            <button
+              type="button"
+              onClick={openPreview}
+              disabled={!ready}
+              className="rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-solid hover:opacity-90 disabled:opacity-50"
+            >
+              {t('ddl.preview')}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {preview && (
+        <DdlPreviewDialog
+          plan={preview}
+          dialect={dialect}
+          running={running}
+          error={error}
+          onApply={() => void run(preview)}
+          onClose={() => setPreview(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** 主键那一列的起手类型：三家各自最常见的自增写法 */
+function defaultKeyType(dialect: SqlIdentifierDialect): string {
+  if (dialect === 'postgresql') {
+    return 'integer GENERATED ALWAYS AS IDENTITY';
+  }
+  return dialect === 'mysql' ? 'INT AUTO_INCREMENT' : 'INTEGER';
+}

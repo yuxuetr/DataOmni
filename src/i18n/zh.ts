@@ -142,6 +142,10 @@ export const zh = {
 
   // 表结构编辑
   'ddl.edit': '编辑结构',
+  'ddl.createTitle': '新建表',
+  'ddl.createTable': '新建表',
+  'ddl.schema': 'Schema',
+  'ddl.noPrimaryKeyNote': '这张表没有主键。数据库允许，但没有主键的表在这里只能看，改不了——定位不到具体某一行。',
   'ddl.tableName': '表名',
   'ddl.addColumn': '添加列',
   'ddl.newColumn': '新增',
