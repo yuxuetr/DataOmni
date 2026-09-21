@@ -244,6 +244,11 @@ export const zh = {
   'table.empty': '暂无数据',
 
   // SQL 编辑器
+  'editor.saveToFile': '另存为 .sql',
+  'editor.saveToFileTitle': '把当前标签的 SQL 存成 .sql 文件 ⌘S',
+  'editor.saveFailed': '保存文件失败',
+  'editor.openFailed': '打开文件失败',
+  'tab.openSqlFile': '打开 .sql 文件',
   'editor.format': '格式化 SQL',
   'editor.formatTitle': '格式化 SQL（有选区时只排选区）⌘⇧F',
   'editor.formatFailed': '格式化失败，编辑器内容未改动',

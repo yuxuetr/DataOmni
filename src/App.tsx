@@ -28,6 +28,10 @@ import { useResizablePanel } from './hooks/useResizablePanel';
 import { PanelResizeHandle } from './components/PanelResizeHandle';
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette';
 import { QueryHistoryDialog } from './components/QueryHistoryDialog';
+import { SQL_FILE_FILTER, stripBom, tabTitleFromSqlPath } from './utils/sqlFile';
+import { open } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
+import { describeError } from './utils/describeError';
 import { useProfileConnector } from './hooks/useProfileConnector';
 import { useThemeStore } from './stores/themeStore';
 import { environmentBadge } from './contracts/environment';
@@ -60,6 +64,7 @@ function App() {
   const { connect, openSqliteFile } = useProfileConnector();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const unsavedTabIds = useMemo(
     () => new Set(
@@ -281,7 +286,7 @@ function App() {
    * 从历史里取回语句走的是「开新标签」而不是「写进当前标签」：后者会把用户
    * 正在写的草稿覆盖掉，而那份草稿没有第二个地方存着。
    */
-  const openSqlTab = (initialSql?: string) => {
+  const openSqlTab = (initialSql?: string, title?: string) => {
     if (!activeConnection) {
       return;
     }
@@ -291,16 +296,48 @@ function App() {
       (tab) => tab.kind === 'sql' && tab.binding.profileId === profileId
     ).length;
 
-    const tab = createSqlWorkspaceTab(profileId, {
-      titleKey: 'tab.queryNumbered',
-      titleParams: { index: sqlTabCount + 1, connection: activeConnection.config.name }
-    });
+    const tab = createSqlWorkspaceTab(
+      profileId,
+      // 从文件打开的标签直接用文件名，不走「查询 N」的编号
+      title
+        ? { title }
+        : {
+            titleKey: 'tab.queryNumbered',
+            titleParams: { index: sqlTabCount + 1, connection: activeConnection.config.name }
+          }
+    );
     registerTab(tab);
 
     if (initialSql) {
       // 先建文档再灌内容：openDocument 对新 id 会建一份空的
       openDocument(tab.id);
       setSqlInput(initialSql);
+    }
+  };
+
+  /**
+   * 把一个 `.sql` 文件读进新标签。
+   *
+   * 一律开新标签而不是覆盖当前草稿——打开文件是「多一份东西」，不是「换掉
+   * 手里这份」。标签名取文件名，这样标签栏上看得出开的是哪个脚本。
+   */
+  const openSqlFile = async () => {
+    if (!activeConnection) {
+      return;
+    }
+
+    const selected = await open({ multiple: false, filters: [SQL_FILE_FILTER] });
+    if (typeof selected !== 'string') {
+      return;
+    }
+
+    try {
+      const contents = await invoke<string>('read_text_file', { path: selected });
+      // BOM 在编辑器里不可见，却会跟着第一条语句发给数据库，换来一条指着
+      // 第 1 行第 1 列的语法错误，而那一行看上去完全正常
+      openSqlTab(stripBom(contents), tabTitleFromSqlPath(selected));
+    } catch (error) {
+      setFileError(describeError(error, t('editor.openFailed')));
     }
   };
 
@@ -389,6 +426,12 @@ function App() {
         title: t('palette.action.newSql'),
         group: t('palette.group.action'),
         run: () => openSqlTab()
+      },
+      {
+        id: 'action:open-sql-file',
+        title: t('tab.openSqlFile'),
+        group: t('palette.group.action'),
+        run: () => void openSqlFile()
       },
       {
         id: 'action:history',
@@ -498,6 +541,7 @@ function App() {
             activeConnection.connectionString
           )}
           selectedTable={selectedTable || undefined}
+          documentTitle={tabTitle(activeTab, t)}
         />
       );
     }
@@ -559,9 +603,25 @@ function App() {
             onClose={closeWorkspaceTab}
             onContextMenu={(tabId, position) => setTabMenu({ tabId, position })}
             onNewSqlTab={activeConnection ? () => openSqlTab() : undefined}
+            onOpenSqlFile={activeConnection ? () => void openSqlFile() : undefined}
             onReopenClosedTab={closedTabs.length > 0 ? reopenClosedTab : undefined}
             closedTabCount={closedTabs.length}
           />
+        )}
+        {/* 打开文件失败就报在标签栏底下：动作是从这里发起的，
+            提示也该出现在这里，而不是挤进某个标签的内容里 */}
+        {fileError && (
+          <div className="flex items-start gap-2 border-b border-danger-line bg-danger-soft px-3 py-2">
+            <span className="min-w-0 flex-1 break-words text-xs text-danger">{fileError}</span>
+            <button
+              type="button"
+              onClick={() => setFileError(null)}
+              aria-label={t('common.close')}
+              className="shrink-0 text-danger hover:opacity-80"
+            >
+              ✕
+            </button>
+          </div>
         )}
         <div className="flex-1 flex flex-col overflow-hidden">
           {renderActiveTab()}

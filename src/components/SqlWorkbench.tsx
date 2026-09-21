@@ -22,13 +22,16 @@ interface SqlWorkbenchProps {
   onDisconnect: () => Promise<void>;
   onReconnect: () => Promise<void>;
   selectedTable?: { name: string; schema?: string };
+  /** 当前标签的标题，透传给编辑器用来给另存出去的 `.sql` 猜文件名 */
+  documentTitle?: string;
 }
 
 export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({ 
   connection, 
   onDisconnect,
   onReconnect,
-  selectedTable
+  selectedTable,
+  documentTitle
 }) => {
   const t = useLanguageStore((state) => state.t);
   const {
@@ -234,7 +237,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
 
       {/* SQL编辑器主体 */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <SqlEditor connection={connection} />
+        <SqlEditor connection={connection} documentTitle={documentTitle} />
       </div>
     </div>
   );

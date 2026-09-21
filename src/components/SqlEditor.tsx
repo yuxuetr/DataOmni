@@ -10,7 +10,8 @@ import {
   CheckCircle,
   Loader,
   Square,
-  AlignLeft
+  AlignLeft,
+  Save
 } from 'lucide-react';
 import { selectActiveSqlDocument, useQueryStore, SqlStatement } from '../stores/queryStore';
 import type { QueryExecution } from '../contracts/queryExecution';
@@ -34,6 +35,10 @@ import {
   splitSqlStatements
 } from '../utils/sqlStatements';
 import { planFormat, sqlFormatterLanguage } from '../utils/formatSql';
+import { SQL_FILE_FILTER, suggestSqlFileName } from '../utils/sqlFile';
+import { save } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
+import { describeError } from '../utils/describeError';
 import { appEditorTheme } from '../utils/editorTheme';
 import { editorPhrases } from '../utils/editorPhrases';
 import { useLanguageStore } from '../stores/languageStore';
@@ -46,11 +51,15 @@ import {
 interface SqlEditorProps {
   /** 补全要方言与库名，确认框要把「在哪个库上执行」说清楚 */
   connection: ConnectionProfile;
+  /** 当前标签的标题，用来给另存出去的 `.sql` 猜个文件名 */
+  documentTitle?: string;
 }
 
-export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
+export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle }) => {
   const t = useLanguageStore((state) => state.t);
   const environment = connection.environment;
+  const [savedPath, setSavedPath] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const { relations, error: catalogError } = useCompletionCatalog(connection);
   // 确认门槛按环境可配，默认等于可配置之前的固定行为
   const confirmationPolicy = useSettingsStore((state) => state.confirmationPolicy);
@@ -201,8 +210,33 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
     });
   };
 
+  /** 另存为 `.sql`。写完把路径显示出来——只说「已保存」，用户不知道存去了哪 */
+  const saveSqlToFile = async () => {
+    setFileError(null);
+    try {
+      const path = await save({
+        defaultPath: suggestSqlFileName(documentTitle ?? ''),
+        filters: [SQL_FILE_FILTER]
+      });
+      // 取消保存对话框不是错误，不该留下任何提示
+      if (!path) {
+        return;
+      }
+      await invoke<number>('write_text_file', { path, contents: sqlInput });
+      setSavedPath(path);
+    } catch (error) {
+      setFileError(describeError(error, t('editor.saveFailed')));
+    }
+  };
+
   const handleEditorKeyDown = (event: React.KeyboardEvent) => {
     if (!(event.metaKey || event.ctrlKey)) {
+      return;
+    }
+
+    if (!event.shiftKey && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      void saveSqlToFile();
       return;
     }
 
@@ -333,7 +367,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
           )}
         </div>
         
-        <div className="flex items-center space-x-2">
+        {/* 允许换行：这一行已经有两个下拉、一个勾选和六个按钮，窄窗口下
+            不换行就会把「执行全部」整个挤出可视区，而它没有别的入口 */}
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <label className="flex items-center space-x-2 text-sm text-fg-muted">
             <span>{t('editor.rowLimit')}</span>
             <select
@@ -388,6 +424,17 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
               <span>{t('editor.parse')}</span>
             </button>
           )}
+
+          {/* 另存为 .sql。和格式化一样只给图标——头部已经很挤 */}
+          <button
+            onClick={() => void saveSqlToFile()}
+            disabled={sqlInput.trim() === ''}
+            aria-label={t('editor.saveToFile')}
+            title={t('editor.saveToFileTitle')}
+            className="flex items-center rounded-control border border-line-strong p-1.5 text-fg-muted transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:border-line disabled:text-fg-subtle"
+          >
+            <Save size={14} />
+          </button>
 
           {/* 格式化。头部已经很挤，这里只给图标，说明放在 title 里 */}
           <button
@@ -486,6 +533,35 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection }) => {
             onClick={() => setFormatError(null)}
             aria-label={t('common.close')}
             className="shrink-0 text-warning hover:opacity-80"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* 存文件的结果。成功要带上路径——只说「已保存」的话，用户不知道存去了哪 */}
+      {savedPath && (
+        <div className="flex items-center gap-2 border-b border-success-line bg-success-soft px-3 py-2">
+          <CheckCircle className="shrink-0 text-success" size={16} />
+          <span className="min-w-0 flex-1 truncate font-mono text-xs text-success">{savedPath}</span>
+          <button
+            onClick={() => setSavedPath(null)}
+            aria-label={t('common.close')}
+            className="shrink-0 text-success hover:opacity-80"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {fileError && (
+        <div className="flex items-start gap-2 border-b border-danger-line bg-danger-soft px-3 py-2">
+          <AlertCircle className="mt-0.5 shrink-0 text-danger" size={16} />
+          <span className="min-w-0 flex-1 break-words text-xs text-danger">{fileError}</span>
+          <button
+            onClick={() => setFileError(null)}
+            aria-label={t('common.close')}
+            className="shrink-0 text-danger hover:opacity-80"
           >
             ✕
           </button>

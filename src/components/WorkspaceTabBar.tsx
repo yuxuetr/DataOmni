@@ -1,5 +1,5 @@
 import {
-  GitBranch, FileText, History, Pin, Plus, Table, X } from 'lucide-react';
+  FolderOpen, GitBranch, FileText, History, Pin, Plus, Table, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { orderWorkspaceTabs, type WorkspaceTab, type WorkspaceTabKind } from '../contracts/workspace';
 import type { ConnectionEnvironment } from '../contracts';
@@ -24,6 +24,8 @@ interface WorkspaceTabBarProps {
   onContextMenu: (tabId: string, position: { x: number; y: number }) => void;
   /** 未连接时不传，按钮隐藏 */
   onNewSqlTab?: () => void;
+  /** 打开一个 `.sql` 文件到新标签。挨着「新建」放：它做的也是开一个新标签 */
+  onOpenSqlFile?: () => void;
   /** 没有可重新打开的标签时不传，按钮隐藏 */
   onReopenClosedTab?: () => void;
   closedTabCount?: number;
@@ -46,6 +48,7 @@ export function WorkspaceTabBar({
   onClose,
   onContextMenu,
   onNewSqlTab,
+  onOpenSqlFile,
   onReopenClosedTab,
   closedTabCount = 0
 }: WorkspaceTabBarProps) {
@@ -125,6 +128,17 @@ export function WorkspaceTabBar({
           className="flex items-center px-3 text-fg-muted hover:bg-surface-hover hover:text-fg"
         >
           <Plus size={16} />
+        </button>
+      )}
+      {onOpenSqlFile && (
+        <button
+          type="button"
+          onClick={onOpenSqlFile}
+          title={t('tab.openSqlFile')}
+          aria-label={t('tab.openSqlFile')}
+          className="flex items-center px-3 text-fg-muted hover:bg-surface-hover hover:text-fg"
+        >
+          <FolderOpen size={16} />
         </button>
       )}
       {onReopenClosedTab && (

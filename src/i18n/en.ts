@@ -225,6 +225,11 @@ export const en: Translations = {
   'table.loading': 'Loading…',
   'table.empty': 'No data',
 
+  'editor.saveToFile': 'Save as .sql',
+  'editor.saveToFileTitle': 'Save this tab\'s SQL to a .sql file ⌘S',
+  'editor.saveFailed': 'Could not save the file',
+  'editor.openFailed': 'Could not open the file',
+  'tab.openSqlFile': 'Open a .sql file',
   'editor.format': 'Format SQL',
   'editor.formatTitle': 'Format SQL (the selection only, when there is one) \u2318\u21e7F',
   'editor.formatFailed': 'Formatting failed; the editor was left unchanged',

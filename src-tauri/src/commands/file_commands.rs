@@ -52,6 +52,40 @@ pub async fn write_binary_file(path: String, contents_base64: String) -> Result<
   file_size(&target)
 }
 
+/// 一次读进来的文本上限。
+///
+/// SQL 脚本动辄是几百 MB 的整库转储，整份读进 JS 字符串再灌进编辑器会让
+/// 窗口直接卡死，而用户看到的只是「点了没反应」。宁可在这里干净地拒绝，
+/// 并把限额说出来。
+const MAX_TEXT_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// 读用户在打开对话框里选中的文本文件（`.sql` 脚本）。
+///
+/// 同样没有引入 `tauri-plugin-fs`：这里真正需要的只有「读一个用户刚刚亲自
+/// 选中的文件」，用插件就得把读权限的 scope 开到整个主目录。
+#[tauri::command]
+pub async fn read_text_file(path: String) -> Result<String, String> {
+  let target = PathBuf::from(&path);
+
+  let size = file_size(&target)?;
+  if size > MAX_TEXT_FILE_BYTES {
+    return Err(format!(
+      "{} 有 {:.1} MB，超过了 {} MB 的上限",
+      target.display(),
+      size as f64 / (1024.0 * 1024.0),
+      MAX_TEXT_FILE_BYTES / (1024 * 1024)
+    ));
+  }
+
+  // 不是 UTF-8 时点名说是编码问题。`read_to_string` 的原话是
+  // "stream did not contain valid UTF-8"，看的人会以为文件坏了
+  std::fs::read(&target).map_err(|e| format!("读取 {} 失败: {}", target.display(), e)).and_then(
+    |bytes| {
+      String::from_utf8(bytes).map_err(|_| format!("{} 不是 UTF-8 编码的文本", target.display()))
+    },
+  )
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -103,6 +137,49 @@ mod tests {
       .expect_err("should fail");
     assert!(error.contains("base64"), "错误要说清是编码的问题: {}", error);
     assert!(!target.exists(), "解码失败时不该留下半个文件");
+  }
+
+  #[tokio::test]
+  async fn reads_utf8_text_back() {
+    let dir = std::env::temp_dir().join(format!("dataomni-read-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let target = dir.join("script.sql");
+    std::fs::write(&target, "SELECT '中文' FROM t;\n").expect("write");
+
+    let contents = read_text_file(target.to_string_lossy().to_string()).await.expect("read");
+    assert_eq!(contents, "SELECT '中文' FROM t;\n");
+
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[tokio::test]
+  async fn refuses_a_file_over_the_size_limit() {
+    let dir = std::env::temp_dir().join(format!("dataomni-big-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let target = dir.join("dump.sql");
+    // 比上限多一个字节就该被拒，而不是「差不多就放过」
+    std::fs::write(&target, vec![b'-'; (MAX_TEXT_FILE_BYTES + 1) as usize]).expect("write");
+
+    let error =
+      read_text_file(target.to_string_lossy().to_string()).await.expect_err("should refuse");
+    assert!(error.contains("上限"), "错误要说清是大小的问题并给出限额: {}", error);
+
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[tokio::test]
+  async fn names_encoding_as_the_problem_for_non_utf8() {
+    let dir = std::env::temp_dir().join(format!("dataomni-gbk-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let target = dir.join("gbk.sql");
+    // GBK 的「中文」两个字，在 UTF-8 下不是合法序列
+    std::fs::write(&target, [0xd6u8, 0xd0, 0xce, 0xc4]).expect("write");
+
+    let error =
+      read_text_file(target.to_string_lossy().to_string()).await.expect_err("should refuse");
+    assert!(error.contains("UTF-8"), "错误要点名编码而不是说文件坏了: {}", error);
+
+    std::fs::remove_dir_all(&dir).ok();
   }
 
   #[tokio::test]
