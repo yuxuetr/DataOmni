@@ -9,7 +9,7 @@ import {
   type QueryExecution
 } from './queryExecution';
 import type { DatabaseSession } from './session';
-import { historyEntryFromExecution, isAnnotated } from './queryHistory';
+import { annotateEntry, historyEntryFromExecution, isAnnotated, normalizeTags } from './queryHistory';
 
 const SESSION = {
   id: 's1',
@@ -137,5 +137,60 @@ describe('isAnnotated', () => {
 
   it('空名字和空标签不算', () => {
     expect(isAnnotated({ ...base, name: '', tags: [], favorite: false })).toBe(false);
+  });
+});
+
+describe('normalizeTags', () => {
+  it('去空白、丢空项', () => {
+    expect(normalizeTags('  对账 , ,财务  ')).toEqual(['对账', '财务']);
+    expect(normalizeTags('   ')).toEqual([]);
+  });
+
+  it('忽略大小写去重，保留先出现那个的写法', () => {
+    // 用户看不出 `SQL` 和 `sql` 的差别，却会得到两个筛不到一起的标签
+    expect(normalizeTags('SQL, sql, Sql')).toEqual(['SQL']);
+  });
+});
+
+describe('annotateEntry', () => {
+  const base = {
+    id: 'a',
+    startedAt: '2026-09-21T00:00:00.000Z',
+    profileId: 'p1',
+    connectionName: 'c',
+    database: null,
+    sql: 'SELECT 1',
+    redacted: false,
+    durationMs: 1,
+    status: 'succeeded' as const,
+    rowsAffected: 1
+  };
+
+  it('只改传进来的那几项', () => {
+    const named = annotateEntry(base, { name: '对账' });
+    expect(named.name).toBe('对账');
+    expect(named.favorite).toBeUndefined();
+
+    const starred = annotateEntry(named, { favorite: true });
+    expect(starred.name).toBe('对账');
+    expect(starred.favorite).toBe(true);
+  });
+
+  it('清空标注后这条记录不再算「标注过」', () => {
+    // 留下 '' 或 [] 会让 isAnnotated 继续为真，于是这条记录永远不过期，
+    // 而用户以为自己已经把标注取消了
+    const annotated = annotateEntry(base, { favorite: true, name: '对账', tags: ['财务'] });
+    expect(isAnnotated(annotated)).toBe(true);
+
+    const cleared = annotateEntry(annotated, { favorite: false, name: '   ', tags: [] });
+    expect(cleared.name).toBeUndefined();
+    expect(cleared.tags).toBeUndefined();
+    expect(cleared.favorite).toBeUndefined();
+    expect(isAnnotated(cleared)).toBe(false);
+  });
+
+  it('不改原对象', () => {
+    annotateEntry(base, { favorite: true });
+    expect(base).not.toHaveProperty('favorite');
   });
 });

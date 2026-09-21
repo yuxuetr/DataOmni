@@ -111,3 +111,53 @@ export function historyEntryFromExecution(
     errorMessage: execution.error?.message
   };
 }
+
+/**
+ * 把输入框里的一串逗号分隔文本变成标签数组。
+ *
+ * 去空白、丢空项、按**忽略大小写**去重——`对账` 和 `对账 ` 是同一个标签，
+ * 用户看不出两者的差别，却会得到两个筛不到一起的东西。保留先出现那个的
+ * 原样大小写：`SQL` 打出来就该显示成 `SQL`。
+ *
+ * 不设条数上限：上限只会在第 9 个标签上静默吃掉输入，而存储那一层已经按
+ * 字节兜住了极端情况（见 `saveQueryHistory`）。
+ */
+export function normalizeTags(raw: string): string[] {
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const candidate of raw.split(',')) {
+    const tag = candidate.trim();
+    if (tag === '' || seen.has(tag.toLowerCase())) {
+      continue;
+    }
+    seen.add(tag.toLowerCase());
+    tags.push(tag);
+  }
+  return tags;
+}
+
+/**
+ * 标注一条记录。
+ *
+ * 空名字与空标签存成 `undefined` 而不是 `''` / `[]`：`isAnnotated` 据此判断
+ * 一条记录是否该免于过期淘汰，留下一个空字符串会让「清空名字」之后的记录
+ * 永远不过期，而用户以为自己已经把标注取消了。
+ */
+export function annotateEntry(
+  entry: QueryHistoryEntry,
+  annotation: { favorite?: boolean; name?: string; tags?: string[] }
+): QueryHistoryEntry {
+  const next = { ...entry };
+
+  if (annotation.favorite !== undefined) {
+    next.favorite = annotation.favorite || undefined;
+  }
+  if (annotation.name !== undefined) {
+    next.name = annotation.name.trim() || undefined;
+  }
+  if (annotation.tags !== undefined) {
+    next.tags = annotation.tags.length > 0 ? annotation.tags : undefined;
+  }
+
+  return next;
+}

@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Copy, Search, Trash2, X } from 'lucide-react';
+import { Check, Copy, Search, Star, Tag, Trash2, X } from 'lucide-react';
 import { clsx } from 'clsx';
-import { QUERY_HISTORY_STATUSES, type QueryHistoryStatus } from '../contracts/queryHistory';
+import {
+  normalizeTags,
+  QUERY_HISTORY_STATUSES,
+  type QueryHistoryEntry,
+  type QueryHistoryStatus
+} from '../contracts/queryHistory';
 import { EMPTY_HISTORY_FILTER, filterHistory, isEmptyFilter } from '../utils/historySearch';
 import { useHistoryStore } from '../stores/historyStore';
 import { useConnectionStore } from '../stores/connectionStore';
@@ -40,12 +45,15 @@ function formatDuration(durationMs: number): string {
 export function QueryHistoryDialog({ onClose, onOpenInNewTab }: QueryHistoryDialogProps) {
   const t = useLanguageStore((state) => state.t);
   const entries = useHistoryStore((state) => state.entries);
+  const annotate = useHistoryStore((state) => state.annotate);
   const remove = useHistoryStore((state) => state.remove);
   const clear = useHistoryStore((state) => state.clear);
   const connections = useConnectionStore((state) => state.connections);
 
   const [filter, setFilter] = useState(EMPTY_HISTORY_FILTER);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  /** 正在编辑标注的那一条。同时只开一条，免得一屏输入框 */
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -74,7 +82,7 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab }: QueryHistoryDial
       onClick={onClose}
     >
       <div
-        className="flex h-[min(80vh,700px)] w-[860px] max-w-[calc(100vw-2rem)] flex-col rounded-panel bg-surface shadow-xl"
+        className="flex h-[min(80vh,700px)] w-[940px] max-w-[calc(100vw-2rem)] flex-col rounded-panel bg-surface shadow-xl"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-line px-5 py-3">
@@ -94,7 +102,7 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab }: QueryHistoryDial
         {/* 筛选条。四个条件是与的关系，都留在一行上，免得筛完了还要回想自己
             设过什么 */}
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-2.5">
-          <div className="relative min-w-[200px] flex-1">
+          <div className="relative min-w-[160px] flex-1">
             <Search
               size={13}
               className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-fg-subtle"
@@ -108,6 +116,21 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab }: QueryHistoryDial
               className="w-full rounded-control border border-line-strong bg-surface py-1 pl-7 pr-2 text-sm text-fg placeholder:text-fg-subtle"
             />
           </div>
+
+          <button
+            type="button"
+            onClick={() => setFilter({ ...filter, favoritesOnly: !filter.favoritesOnly })}
+            aria-pressed={filter.favoritesOnly}
+            title={t('history.filter.favoritesOnly')}
+            className={clsx(
+              'shrink-0 rounded-control border px-2 py-1',
+              filter.favoritesOnly
+                ? 'border-accent-line bg-accent-soft text-accent'
+                : 'border-line-strong bg-surface text-fg-subtle hover:text-fg'
+            )}
+          >
+            <Star size={14} fill={filter.favoritesOnly ? 'currentColor' : 'none'} />
+          </button>
 
           <select
             value={filter.profileId ?? ''}
@@ -209,7 +232,38 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab }: QueryHistoryDial
                     )}
 
                     {/* 动作只在这一行悬停时出现：每行常驻五个图标会把列表变成按钮墙 */}
-                    <span className="ml-auto flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <span
+                      className={clsx(
+                        'ml-auto flex shrink-0 items-center gap-1 transition-opacity focus-within:opacity-100 group-hover:opacity-100',
+                        // 已收藏的星标常驻：它是这条记录的状态，不是一个动作
+                        entry.favorite ? 'opacity-100' : 'opacity-0'
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => annotate(entry.id, { favorite: !entry.favorite })}
+                        aria-pressed={entry.favorite === true}
+                        aria-label={t('history.favorite')}
+                        title={t('history.favorite')}
+                        className={clsx(
+                          'rounded-control p-1 hover:bg-surface',
+                          entry.favorite ? 'text-warning' : 'hover:text-fg'
+                        )}
+                      >
+                        <Star size={13} fill={entry.favorite ? 'currentColor' : 'none'} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditingId((current) => (current === entry.id ? null : entry.id))
+                        }
+                        aria-expanded={editingId === entry.id}
+                        aria-label={t('history.annotate')}
+                        title={t('history.annotate')}
+                        className="rounded-control p-1 hover:bg-surface hover:text-fg"
+                      >
+                        <Tag size={13} />
+                      </button>
                       <button
                         type="button"
                         onClick={() => void copySql(entry.id, entry.sql)}
@@ -251,6 +305,36 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab }: QueryHistoryDial
                     <p className="mt-1 truncate font-mono text-sm text-fg">{entry.sql}</p>
                   )}
 
+                  {(entry.name || (entry.tags?.length ?? 0) > 0) && (
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      {entry.name && (
+                        <span className="text-xs font-medium text-fg">{entry.name}</span>
+                      )}
+                      {entry.tags?.map((tag) => (
+                        <button
+                          key={tag}
+                          type="button"
+                          // 点一个标签就按它筛：标签的用处就是把同一类语句聚起来
+                          onClick={() => setFilter({ ...filter, text: tag })}
+                          className="rounded-control border border-line-strong bg-surface-sunken px-1.5 py-0.5 text-[11px] text-fg-muted hover:text-fg"
+                        >
+                          {tag}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {editingId === entry.id && (
+                    <AnnotationEditor
+                      entry={entry}
+                      onSubmit={(annotation) => {
+                        annotate(entry.id, annotation);
+                        setEditingId(null);
+                      }}
+                      onCancel={() => setEditingId(null)}
+                    />
+                  )}
+
                   {entry.redacted && (
                     // 不说这句，用户会拿着一条 '***' 的语句去跑然后不明白为什么失败
                     <p className="mt-0.5 text-xs text-warning">{t('history.redacted')}</p>
@@ -281,5 +365,68 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab }: QueryHistoryDial
         </div>
       </div>
     </div>
+  );
+}
+
+interface AnnotationEditorProps {
+  entry: QueryHistoryEntry;
+  onSubmit: (annotation: { name: string; tags: string[] }) => void;
+  onCancel: () => void;
+}
+
+/**
+ * 命名与标签的就地编辑。
+ *
+ * 用 form + 提交而不是每敲一个字就写回 store：标注会落盘，逐字写等于每个
+ * 按键都重写一遍整份历史。Esc 取消，回车提交。
+ */
+function AnnotationEditor({ entry, onSubmit, onCancel }: AnnotationEditorProps) {
+  const t = useLanguageStore((state) => state.t);
+  const [name, setName] = useState(entry.name ?? '');
+  const [tags, setTags] = useState((entry.tags ?? []).join(', '));
+
+  return (
+    <form
+      className="mt-1.5 flex flex-wrap items-center gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit({ name, tags: normalizeTags(tags) });
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.stopPropagation();
+          onCancel();
+        }
+      }}
+    >
+      <input
+        autoFocus
+        value={name}
+        onChange={(event) => setName(event.target.value)}
+        placeholder={t('history.namePlaceholder')}
+        aria-label={t('history.name')}
+        className="min-w-[140px] flex-1 rounded-control border border-line-strong bg-surface px-2 py-1 text-xs text-fg placeholder:text-fg-subtle"
+      />
+      <input
+        value={tags}
+        onChange={(event) => setTags(event.target.value)}
+        placeholder={t('history.tagsPlaceholder')}
+        aria-label={t('history.tags')}
+        className="min-w-[140px] flex-1 rounded-control border border-line-strong bg-surface px-2 py-1 text-xs text-fg placeholder:text-fg-subtle"
+      />
+      <button
+        type="submit"
+        className="rounded-control border border-accent-line bg-accent-soft px-2 py-1 text-xs text-accent"
+      >
+        {t('common.save')}
+      </button>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="rounded-control px-2 py-1 text-xs text-fg-muted hover:text-fg"
+      >
+        {t('common.cancel')}
+      </button>
+    </form>
   );
 }
