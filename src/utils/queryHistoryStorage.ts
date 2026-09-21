@@ -14,7 +14,7 @@
  */
 
 import type { QueryHistoryEntry } from '../contracts/queryHistory';
-import { isAnnotated } from '../contracts/queryHistory';
+import { isAnnotated, isSlowQuery } from '../contracts/queryHistory';
 
 const STORAGE_KEY = 'dataomni.query-history';
 const RETENTION_KEY = 'dataomni.history-retention';
@@ -25,11 +25,20 @@ export interface HistoryRetention {
   maxAgeDays: number;
   /** 最多留多少条。必须有限，见模块说明 */
   maxEntries: number;
+  /**
+   * 跑到这么久就算慢查询，毫秒。
+   *
+   * 慢查询和标注过的记录一样**不参与按时间淘汰**——三十天前那条跑了十秒的
+   * 语句，正是最需要翻出来的一条，而按时间淘汰会第一个删掉它。
+   * 总条数仍然管着，所以不会把配额吃光。
+   */
+  slowQueryMs: number;
 }
 
 export const DEFAULT_HISTORY_RETENTION: HistoryRetention = {
   maxAgeDays: 30,
-  maxEntries: 500
+  maxEntries: 500,
+  slowQueryMs: 1000
 };
 
 /** 保留天数可选的几档。`0` 是「不限」 */
@@ -43,6 +52,9 @@ export const RETENTION_DAY_CHOICES: readonly number[] = [7, 30, 90, 365, 0];
  * 就该换后端的 SQLite 文件，那是另一件事（见模块说明）。
  */
 export const RETENTION_ENTRY_CHOICES: readonly number[] = [100, 500, 1000, 2000];
+
+/** 慢查询阈值可选的几档，毫秒。`0` 是「不标记慢查询」 */
+export const SLOW_QUERY_MS_CHOICES: readonly number[] = [0, 200, 500, 1000, 3000, 10_000];
 
 export function loadHistoryRetention(): HistoryRetention {
   let stored: unknown;
@@ -65,6 +77,11 @@ export function loadHistoryRetention(): HistoryRetention {
       source.maxEntries,
       RETENTION_ENTRY_CHOICES,
       DEFAULT_HISTORY_RETENTION.maxEntries
+    ),
+    slowQueryMs: pick(
+      source.slowQueryMs,
+      SLOW_QUERY_MS_CHOICES,
+      DEFAULT_HISTORY_RETENTION.slowQueryMs
     )
   };
 }
@@ -98,7 +115,7 @@ export function pruneHistory(
     retention.maxAgeDays > 0 ? now.getTime() - retention.maxAgeDays * 24 * 60 * 60 * 1000 : null;
 
   const kept = entries.filter((entry) => {
-    if (cutoff === null || isAnnotated(entry)) {
+    if (cutoff === null || isAnnotated(entry) || isSlowQuery(entry, retention.slowQueryMs)) {
       return true;
     }
     const startedAt = Date.parse(entry.startedAt);

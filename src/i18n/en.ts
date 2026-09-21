@@ -166,6 +166,12 @@ export const en: Translations = {
   'plan.loading': 'Fetching the plan…',
   'plan.noStatement': 'There is no statement to explain at the cursor.',
 
+  'history.filter.slowOnly': 'Slow only (≥ {ms} ms)',
+  'settings.history.slowQuery': 'Slow query threshold',
+  'settings.history.slowQueryOff': 'Off',
+  'settings.history.slowQueryMs': '{ms} ms',
+  'settings.history.slowQueryNote': 'Statements this slow are exempt from age-based eviction — the ten-second one from a month ago is exactly the one worth keeping. Cancelled and timed-out runs do not count; their duration measures something else. Result rows are never stored in history.',
+
   'ddl.edit': 'Edit structure',
   'ddl.createTitle': 'New table',
   'ddl.createTable': 'New table',

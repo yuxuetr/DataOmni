@@ -10,7 +10,8 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useHistoryStore } from '../stores/historyStore';
 import {
   RETENTION_DAY_CHOICES,
-  RETENTION_ENTRY_CHOICES
+  RETENTION_ENTRY_CHOICES,
+  SLOW_QUERY_MS_CHOICES
 } from '../utils/queryHistoryStorage';
 import { useLanguageStore } from '../stores/languageStore';
 import type { TranslationKey } from '../i18n/translate';
@@ -189,7 +190,28 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 ))}
               </select>
             </label>
+
+            <label className="flex items-center justify-between gap-3 rounded-control px-2 py-1.5 hover:bg-surface-hover">
+              <span className="text-sm text-fg">{t('settings.history.slowQuery')}</span>
+              <select
+                value={retention.slowQueryMs}
+                onChange={(event) => setRetention({ slowQueryMs: Number(event.target.value) })}
+                className="shrink-0 rounded-control border border-line-strong bg-surface px-2 py-1 text-sm text-fg"
+              >
+                {SLOW_QUERY_MS_CHOICES.map((ms) => (
+                  <option key={ms} value={ms}>
+                    {ms === 0
+                      ? t('settings.history.slowQueryOff')
+                      : t('settings.history.slowQueryMs', { ms })}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
+
+          <p className="mt-2 px-2 text-xs text-fg-subtle">
+            {t('settings.history.slowQueryNote')}
+          </p>
 
             <p className="mt-2 px-2 text-xs text-fg-subtle">
               {t('settings.history.current', { count: historyCount })}

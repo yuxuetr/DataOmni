@@ -63,6 +63,23 @@ export function isFinishedStatus(status: QueryExecutionStatus): status is QueryH
   return (QUERY_HISTORY_STATUSES as readonly string[]).includes(status);
 }
 
+/**
+ * 这条跑得慢。
+ *
+ * 只看已经跑完的成功/失败记录：取消与超时的耗时说的是「用户等了多久」
+ * 或者「闸门设的多长」，不是这条语句本身有多慢，按它判断会让超时设置
+ * 一改，历史里的慢查询就换了一批。
+ */
+export function isSlowQuery(entry: QueryHistoryEntry, thresholdMs: number): boolean {
+  if (thresholdMs <= 0) {
+    return false;
+  }
+  if (entry.status === 'cancelled' || entry.status === 'timed-out') {
+    return false;
+  }
+  return entry.durationMs >= thresholdMs;
+}
+
 /** 一条记录被用户标注过——收藏、命名或打过标签 */
 export function isAnnotated(entry: QueryHistoryEntry): boolean {
   return entry.favorite === true || Boolean(entry.name) || (entry.tags?.length ?? 0) > 0;

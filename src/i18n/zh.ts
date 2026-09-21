@@ -180,6 +180,12 @@ export const zh = {
   'plan.loading': '正在取执行计划…',
   'plan.noStatement': '光标所在处没有可解释的语句。',
 
+  'history.filter.slowOnly': '只看慢查询（≥ {ms} 毫秒）',
+  'settings.history.slowQuery': '慢查询阈值',
+  'settings.history.slowQueryOff': '不标记',
+  'settings.history.slowQueryMs': '{ms} 毫秒',
+  'settings.history.slowQueryNote': '跑到这么久的语句不参与按时间淘汰——三十天前那条跑了十秒的，正是最需要翻出来的一条。取消与超时不算，它们的耗时说的是别的事。历史里从不保存查询结果。',
+
   'ddl.edit': '编辑结构',
   'ddl.createTitle': '新建表',
   'ddl.createTable': '新建表',

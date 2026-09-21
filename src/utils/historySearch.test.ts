@@ -134,3 +134,25 @@ describe('filterHistory', () => {
     expect(filterHistory(entries, { ...EMPTY_HISTORY_FILTER, from: '昨天' })).toHaveLength(1);
   });
 });
+
+describe('慢查询筛选', () => {
+  it('按耗时筛，阈值是筛选时算的不是记录时定的', () => {
+    // 存一个「当时算不算慢」的布尔，用户把阈值从 1 秒调到 200 毫秒之后，
+    // 那些 400 毫秒的记录仍然不见
+    const entries = [
+      entry({ id: 'fast', durationMs: 120 }),
+      entry({ id: 'mid', durationMs: 400 }),
+      entry({ id: 'slow', durationMs: 5_000 })
+    ];
+    const ids = (ms: number | null) =>
+      filterHistory(entries, { ...EMPTY_HISTORY_FILTER, slowerThanMs: ms }).map((e) => e.id);
+    expect(ids(1000)).toEqual(['slow']);
+    expect(ids(200)).toEqual(['mid', 'slow']);
+    expect(ids(null)).toEqual(['fast', 'mid', 'slow']);
+  });
+
+  it('慢查询筛选算「设过筛选条件」', () => {
+    // 不算的话，清空按钮不会亮，用户会以为自己什么也没筛
+    expect(isEmptyFilter({ ...EMPTY_HISTORY_FILTER, slowerThanMs: 1000 })).toBe(false);
+  });
+});

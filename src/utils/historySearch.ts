@@ -18,6 +18,14 @@ export interface HistoryFilter {
   from: string | null;
   to: string | null;
   favoritesOnly: boolean;
+  /**
+   * 只看跑得慢的。`null` 表示不按耗时筛。
+   *
+   * 阈值是**筛选时**的，不是记录时的：存一个「当时算不算慢」的布尔，用户
+   * 把阈值从 1 秒调到 200 毫秒之后，历史里那些 400 毫秒的记录仍然不见。
+   * 耗时本来就存着，现算就行。
+   */
+  slowerThanMs: number | null;
 }
 
 export const EMPTY_HISTORY_FILTER: HistoryFilter = {
@@ -26,7 +34,8 @@ export const EMPTY_HISTORY_FILTER: HistoryFilter = {
   status: null,
   from: null,
   to: null,
-  favoritesOnly: false
+  favoritesOnly: false,
+  slowerThanMs: null
 };
 
 export function isEmptyFilter(filter: HistoryFilter): boolean {
@@ -36,7 +45,8 @@ export function isEmptyFilter(filter: HistoryFilter): boolean {
     filter.status === null &&
     filter.from === null &&
     filter.to === null &&
-    !filter.favoritesOnly
+    !filter.favoritesOnly &&
+    filter.slowerThanMs === null
   );
 }
 
@@ -76,6 +86,9 @@ export function filterHistory(
       return false;
     }
     if (filter.favoritesOnly && entry.favorite !== true) {
+      return false;
+    }
+    if (filter.slowerThanMs !== null && entry.durationMs < filter.slowerThanMs) {
       return false;
     }
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Copy, Search, Star, Tag, Trash2, X } from 'lucide-react';
+import { Check, Copy, Search, Star, Tag, Timer, Trash2, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import {
   normalizeTags,
@@ -48,6 +48,7 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab }: QueryHistoryDial
   const annotate = useHistoryStore((state) => state.annotate);
   const remove = useHistoryStore((state) => state.remove);
   const clear = useHistoryStore((state) => state.clear);
+  const retention = useHistoryStore((state) => state.retention);
   const connections = useConnectionStore((state) => state.connections);
 
   const [filter, setFilter] = useState(EMPTY_HISTORY_FILTER);
@@ -131,6 +132,30 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab }: QueryHistoryDial
           >
             <Star size={14} fill={filter.favoritesOnly ? 'currentColor' : 'none'} />
           </button>
+
+          {/* 阈值设成「不标记」时这个按钮不出现：一个按了什么也不筛的按钮，
+              比没有这个按钮更让人困惑 */}
+          {retention.slowQueryMs > 0 && (
+            <button
+              type="button"
+              onClick={() =>
+                setFilter({
+                  ...filter,
+                  slowerThanMs: filter.slowerThanMs === null ? retention.slowQueryMs : null
+                })
+              }
+              aria-pressed={filter.slowerThanMs !== null}
+              title={t('history.filter.slowOnly', { ms: retention.slowQueryMs })}
+              className={clsx(
+                'shrink-0 rounded-control border px-2 py-1',
+                filter.slowerThanMs !== null
+                  ? 'border-warning-line bg-warning-soft text-warning'
+                  : 'border-line-strong bg-surface text-fg-subtle hover:text-fg'
+              )}
+            >
+              <Timer size={14} />
+            </button>
+          )}
 
           <select
             value={filter.profileId ?? ''}
