@@ -53,7 +53,11 @@
 - 结果导出为 CSV / JSON，可选分隔符、表头、NULL 写法与 UTF-8 BOM
   （查询结果导出排序后的整份；表数据服务端分页，导出的是当前页，对话框写明范围）
 
-> 尚未实现：服务端排序与筛选、变更集与差异预览、整表流式导出。
+- ER 关系图：整库的表都画出来（含没有外键的），每张列出全部字段与类型，
+  有外键的表之间按具体字段连线；可搜索表名与列名、缩放平移；
+  执行 DDL 后自动刷新
+
+> 尚未实现：服务端排序与筛选、变更集与差异预览、整表流式导出、ER 图导出图片。
 
 ### 🛡️ 凭据与传输安全
 
@@ -128,6 +132,20 @@ bun tauri dev
 # npm tauri build
 # pnpm tauri build
 bun tauri build
+```
+
+### 示例数据
+
+想快速看到 ER 关系图的效果，可以先导入示例 schema（建库 `dataomni_demo`，
+11 张表，覆盖链式引用、分叉、自引用、复合外键和孤立表）：
+
+```bash
+# MySQL
+mysql -h HOST -u USER -p < examples/sample-schema.sql
+
+# PostgreSQL（建库要单独一步，CREATE DATABASE 不能在事务里跑）
+createdb -h HOST -U USER dataomni_demo
+psql -h HOST -U USER -d dataomni_demo -f examples/sample-schema.postgres.sql
 ```
 
 ## 📖 使用指南

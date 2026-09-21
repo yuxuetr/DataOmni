@@ -36,6 +36,12 @@
 - [x] 建立 CI，至少覆盖前端构建、类型检查和 Rust 检查
 - [x] 为连接串生成、SQL 分句、查询分类和行变更增加单元测试
 - [x] 建立 MySQL、PostgreSQL、SQLite 的最小集成测试数据库
+- [x] 提供一套示例 schema，便于观察 ER 关系图
+  - `examples/sample-schema.sql`（MySQL）与 `examples/sample-schema.postgres.sql`
+    （PostgreSQL），建库 `dataomni_demo`，11 张表。刻意覆盖了在图上长得不一样的
+    几种情况：一条链（customers → orders → order_items）、一个分叉、
+    自引用（categories.parent_id）、复合外键（inventory），以及三张一条外键
+    都没有的孤立表——正是用来确认「没有关联的表也画出来」。
 - [x] 记录三平台构建状态，避免在未验证前宣称完整跨平台支持
   - README 新增「构建与验证状态」表：macOS aarch64 已验证（2026-09-20 `bun tauri build` 退出码 0，产出 .app 与 .dmg）；macOS x86_64 未验证；Linux 仅 CI 编译检查、从未执行 `tauri build`；Windows 完全未验证。
   - 同时对齐 README 能力声明：MongoDB / Redis / Neo4j / DuckDB / ClickHouse / Elasticsearch 只有连接表单、不能执行查询；导出、服务端排序筛选、变更集、危险语句确认、应用级主题均未实现；表名列名补全是硬编码示例值；无 Releases 可下载。
@@ -434,7 +440,21 @@
   - 踩过一次假绿：「悬空引用被忽略」最初只断言没有幽灵节点，而那是被下游
     一个 `if (!table)` 兜住的，删掉过滤照样绿。改成「有悬空边与没有这条边
     的布局必须完全一致」才真的红，同时删掉了那个不可达分支。
-  - **未做**：搜索与导出图片。
+  - 搜索已完成（`245ced9`）：表名与列名都参与匹配——找一张表常常是从
+    「哪张表有 customer_id 这一列」开始的。命中的列整行高亮；未命中的表
+    **压暗而不是隐藏**，藏起来会让图的形状跟着变，反而认不出剩下的是哪几张。
+  - **未做**：导出图片。SVG 用的是 Tailwind 类名，导出前要把颜色内联成
+    计算值，否则导出的文件在应用外没有样式。
+- [x] 结构变化后自动刷新
+  - 能做到什么要说清楚：数据库**不会推送**「结构变了」这件事——PostgreSQL 的
+    LISTEN/NOTIFY 要自己装事件触发器，MySQL 干脆没有。所以做不到推送式实时。
+  - 做到的是**我们自己执行的 DDL 立刻反映出来**（`245ced9`）：编辑器里
+    CREATE TABLE，对象树与 ER 图同时更新。`changesSchema()` 复用
+    `topLevelKeywords`，跳过字符串与注释、不看子查询，`SELECT 'CREATE TABLE'`
+    不触发；只在语句**成功之后**加版本号，失败的 DDL 什么也没改。
+  - 外部改动（别人在另一个客户端改了结构）靠 ER 图上的重新读取按钮。
+  - **不做轮询**：每隔几秒对整库查一遍列和外键，代价随表数增长，而收益只是
+    把「点一下刷新」省掉。要做也该是用户显式开启的选项，不是默认行为。
 - [ ] 支持按 Schema、表和关系过滤
 
 **P3 退出标准**
