@@ -208,7 +208,7 @@ export function TableStructureEditor({
                 type="button"
                 onClick={openPreview}
                 disabled={incomplete.length > 0}
-                className="rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-solid hover:opacity-90 disabled:opacity-50"
+                className="rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:opacity-90 disabled:opacity-50"
               >
                 {t('ddl.preview')}
               </button>

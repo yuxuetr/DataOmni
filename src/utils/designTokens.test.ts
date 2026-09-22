@@ -184,3 +184,89 @@ describe('语义色的含义', () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * 实心底上的字要读得清。
+ *
+ * 这道门是量出来的，不是照约定写的。四个主操作按钮坐在 `bg-accent` 上却用了
+ * `text-fg-on-solid`，而那个 token 在深色下是白字——实测对比度 **2.28:1**，
+ * 浅色下也只有 3.44:1，两套主题都不到 WCAG AA 的 4.5:1。正确的
+ * `text-fg-on-accent` 是 6.75 / 5.17。
+ *
+ * 代码评审看不出这种事：两个类名都合法、都指向真实存在的变量，只有算一下
+ * 才知道其中一对读不清。所以这里直接算，不去规定「哪个 token 配哪个底」。
+ */
+function channel(hex: string): number[] {
+  const value = hex.trim().replace('#', '');
+  const full = value.length === 3 ? [...value].map((c) => c + c).join('') : value;
+  return [0, 2, 4].map((at) => Number.parseInt(full.slice(at, at + 2), 16));
+}
+
+function luminance(hex: string): number {
+  const [r, g, b] = channel(hex).map((raw) => {
+    const s = raw / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** `--color-x: var(--dm-x)` 转成那一套主题里的实际颜色 */
+function resolve(theme: Map<string, string>, colorToken: string): string | null {
+  const indirection = themeLayer.get(`--color-${colorToken}`);
+  const variable = indirection?.match(/var\((--[\w-]+)\)/)?.[1];
+  const value = variable ? theme.get(variable) : undefined;
+  return value?.startsWith('#') ? value : null;
+}
+
+describe('实心底上的字', () => {
+  const AA = 4.5;
+
+  it('每一对用到的「实心底 + 其上的字」两套主题都到 4.5:1', () => {
+    const root = fileURLToPath(new URL('..', import.meta.url));
+    const pairs = new Set<string>();
+
+    for (const entry of readdirSync(root, { recursive: true, encoding: 'utf8' })) {
+      if (!entry.endsWith('.tsx')) {
+        continue;
+      }
+      const source = readFileSync(join(root, entry), 'utf8');
+      // 同一个 className 串里同时出现的实心底与其上的字，才是真的叠在一起
+      for (const [, attribute] of source.matchAll(/className=(?:"([^"]*)"|\{[^}]*\})/g)) {
+        if (!attribute) {
+          continue;
+        }
+        const background = attribute.match(/\bbg-((?:accent|danger|warning|success)(?:-solid|-hover)?)\b/);
+        const text = attribute.match(/\btext-(fg-on-[\w-]+)\b/);
+        if (background && text) {
+          pairs.add(`${background[1]}|${text[1]}`);
+        }
+      }
+    }
+
+    expect(pairs.size, '一对都没扫到说明这道门失效了').toBeGreaterThan(0);
+
+    const failures: string[] = [];
+    for (const pair of pairs) {
+      const [background, text] = pair.split('|');
+      for (const [themeName, theme] of [['浅色', light], ['深色', dark]] as const) {
+        const backgroundColor = resolve(theme, background);
+        const textColor = resolve(theme, text);
+        if (!backgroundColor || !textColor) {
+          failures.push(`${pair}：${themeName}下取不到颜色，token 可能写错了`);
+          continue;
+        }
+        const ratio = contrast(backgroundColor, textColor);
+        if (ratio < AA) {
+          failures.push(`bg-${background} + text-${text} 在${themeName}下只有 ${ratio.toFixed(2)}:1`);
+        }
+      }
+    }
+
+    expect(failures, '这些组合读不清，而代码评审看不出来').toEqual([]);
+  });
+});

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { AlertTriangle, Ban, Loader2, X } from 'lucide-react';
 import { useLanguageStore } from '../stores/languageStore';
 import type { TranslationKey } from '../i18n/translate';
@@ -40,6 +41,21 @@ export function DdlPreviewDialog({
   onClose
 }: DdlPreviewDialogProps) {
   const t = useLanguageStore((state) => state.t);
+
+  // 点遮罩已经会把填的内容丢掉，Esc 却不动——两条关闭路径得一致，否则人会
+  // 以为这个弹窗「关不掉」。跑着的时候不关：那一下会让人以为动作被取消了，
+  // 而语句已经发出去了
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !running) {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [running, onClose]);
+
   // MySQL 的 MODIFY / CHANGE 会重述整段定义，没写进语句的属性就此消失。
   // 这句提示只在真的发了这种语句时出现
   const restates = dialect === 'mysql'
@@ -145,7 +161,7 @@ export function DdlPreviewDialog({
             type="button"
             onClick={onApply}
             disabled={running || plan.statements.length === 0}
-            className="flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-solid hover:opacity-90 disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:opacity-90 disabled:opacity-50"
           >
             {running && <Loader2 size={14} className="animate-spin" />}
             {running ? t('ddl.applying') : t('ddl.apply')}

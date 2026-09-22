@@ -93,7 +93,7 @@ export function UncommittedTransactionPrompt({
             <button
               type="button"
               onClick={() => onChoose('commit')}
-              className="rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-solid hover:opacity-90"
+              className="rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:opacity-90"
             >
               {t('tx.leaveCommit')}
             </button>

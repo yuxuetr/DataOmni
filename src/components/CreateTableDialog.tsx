@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Plus, X } from 'lucide-react';
 import { useLanguageStore } from '../stores/languageStore';
@@ -64,6 +64,21 @@ export function CreateTableDialog({
   ]);
   const [preview, setPreview] = useState<DdlPlan | null>(null);
   const [running, setRunning] = useState(false);
+
+  // 点遮罩已经会把填的内容丢掉，Esc 却不动——两条关闭路径得一致，否则人会
+  // 以为这个弹窗「关不掉」。跑着的时候不关：那一下会让人以为动作被取消了，
+  // 而语句已经发出去了
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !running) {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [running, onClose]);
+
   const [error, setError] = useState<string | null>(null);
 
   const updateDraft = (index: number, patch: Partial<ColumnDraft>) => {
@@ -204,7 +219,7 @@ export function CreateTableDialog({
               type="button"
               onClick={openPreview}
               disabled={!ready}
-              className="rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-solid hover:opacity-90 disabled:opacity-50"
+              className="rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:opacity-90 disabled:opacity-50"
             >
               {t('ddl.preview')}
             </button>
