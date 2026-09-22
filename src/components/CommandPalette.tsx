@@ -3,6 +3,7 @@ import { clsx } from 'clsx';
 import { Search } from 'lucide-react';
 import { rankFuzzy } from '../utils/fuzzyMatch';
 import { useLanguageStore } from '../stores/languageStore';
+import { formatShortcut, type Shortcut } from '../utils/shortcuts';
 
 export interface PaletteCommand {
   id: string;
@@ -13,6 +14,13 @@ export interface PaletteCommand {
   group: string;
   /** 右侧的补充说明，比如 host:port */
   detail?: string;
+  /**
+   * 这个动作的全局快捷键。有就画在右边。
+   *
+   * 命令面板是人**找得到**动作的地方，也就该是人**学会**快捷键的地方——
+   * 否则快捷键只存在于文档里，而文档没人看。按平台格式化，见 `shortcuts.ts`
+   */
+  shortcut?: Shortcut;
   run: () => void;
 }
 
@@ -144,6 +152,11 @@ export function CommandPalette({ commands, onDismiss }: CommandPaletteProps) {
                       <span className="ml-2 text-xs text-fg-subtle">{result.item.detail}</span>
                     )}
                   </span>
+                  {result.item.shortcut && (
+                    <kbd className="shrink-0 rounded-control border border-line px-1.5 py-0.5 text-[11px] font-medium text-fg-muted">
+                      {formatShortcut(result.item.shortcut)}
+                    </kbd>
+                  )}
                   <span className="shrink-0 text-[11px] text-fg-subtle">{result.item.group}</span>
                 </button>
               </li>

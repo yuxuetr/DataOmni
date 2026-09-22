@@ -569,12 +569,14 @@ function App() {
         id: 'action:reopen-tab',
         title: t('palette.action.reopenTab'),
         group: t('palette.group.action'),
+        shortcut: SHORTCUTS.reopenClosedTab,
         run: () => reopenClosedTab()
       },
       {
         id: 'action:toggle-sidebar',
         title: t('palette.action.toggleSidebar'),
         group: t('palette.group.action'),
+        shortcut: SHORTCUTS.toggleSidebar,
         run: () => sidebar.toggleCollapsed()
       },
       {
