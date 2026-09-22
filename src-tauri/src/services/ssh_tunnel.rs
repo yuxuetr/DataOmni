@@ -64,28 +64,32 @@ impl From<russh::Error> for TunnelError {
   }
 }
 
+/// 送到界面上的写法是 `CODE: 数据`，和 `connection_service` 里那一套一致。
+///
+/// 冒号后面只放数据（指纹、操作系统给的原因），句子在前端的文案目录里——
+/// 否则英文界面上会印出中文，这在 TLS 那边已经真的发生过。
+pub const SSH_HOST_KEY_CHANGED: &str = "DATAOMNI_SSH_HOST_KEY_CHANGED";
+pub const SSH_HOST_KEY_UNKNOWN: &str = "DATAOMNI_SSH_HOST_KEY_UNKNOWN";
+pub const SSH_PRIVATE_KEY_UNREADABLE: &str = "DATAOMNI_SSH_PRIVATE_KEY_UNREADABLE";
+pub const SSH_AUTH_REJECTED: &str = "DATAOMNI_SSH_AUTH_REJECTED";
+pub const SSH_FAILED: &str = "DATAOMNI_SSH_FAILED";
+
 impl std::fmt::Display for TunnelError {
   fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      TunnelError::HostKeyChanged { recorded, fingerprint } => write!(
-        formatter,
-        "跳板机的主机密钥和 known_hosts 里记录的不一致：记录的是 {}，现在给的是 {fingerprint}。\
-         在排清原因之前不要连接：这有可能是中间人。",
-        recorded.join("、")
-      ),
-      TunnelError::HostKeyUnknown { fingerprint } => write!(
-        formatter,
-        "known_hosts 里没有这台跳板机的记录。它的指纹是 {fingerprint}，\
-         请通过可信渠道核对之后再信任它。"
-      ),
-      TunnelError::PrivateKey { message } => write!(formatter, "私钥读不出来: {message}"),
-      TunnelError::AuthRejected => {
-        write!(
-          formatter,
-          "跳板机拒绝了这把私钥。确认用户名与私钥对得上，且公钥已经在服务器的 authorized_keys 里。"
-        )
+      // 两个指纹之间用箭头分开：记录的在左，服务器这次给的在右。
+      // 箭头不属于任何一种语言，所以可以留在数据里
+      TunnelError::HostKeyChanged { recorded, fingerprint } => {
+        write!(formatter, "{SSH_HOST_KEY_CHANGED}: {} → {fingerprint}", recorded.join(" / "))
       }
-      TunnelError::Ssh { message } => write!(formatter, "SSH 连接失败: {message}"),
+      TunnelError::HostKeyUnknown { fingerprint } => {
+        write!(formatter, "{SSH_HOST_KEY_UNKNOWN}: {fingerprint}")
+      }
+      TunnelError::PrivateKey { message } => {
+        write!(formatter, "{SSH_PRIVATE_KEY_UNREADABLE}: {message}")
+      }
+      TunnelError::AuthRejected => write!(formatter, "{SSH_AUTH_REJECTED}"),
+      TunnelError::Ssh { message } => write!(formatter, "{SSH_FAILED}: {message}"),
     }
   }
 }

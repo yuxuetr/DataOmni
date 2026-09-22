@@ -146,7 +146,7 @@ pub async fn test_connection(
   };
 
   let Some(known_hosts) = ssh_tunnel::default_known_hosts() else {
-    return Err("找不到当前用户的主目录，读不到 ~/.ssh/known_hosts".to_string());
+    return Err(crate::services::connection_service::KNOWN_HOSTS_NO_HOME.to_string());
   };
 
   let local_port =

@@ -10,6 +10,26 @@ const CREDENTIAL_SERVICE: &str = "DataOmni";
 const CREDENTIAL_REF_PREFIX: &str = "system-keyring://connection/";
 const SESSION_PASSWORD_REQUIRED: &str = "SESSION_PASSWORD_REQUIRED";
 
+/// 送到界面上的校验错误一律写成 `CODE: 细节`。
+///
+/// 后端这些串是硬编码中文，英文界面上会原样印出中文——实际见过：把 SSH 私钥
+/// 填进 TLS 的客户端私钥格子之后，英文界面报的是「客户端证书和私钥必须同时
+/// 配置」。前端按 CODE 查文案，查不到就把整串照原样显示，所以加一个新错误
+/// 而忘了配文案时，用户看到的不会比今天更糟。
+///
+/// 冒号后面只放**数据**（类型名、指纹、操作系统给的原因），不放句子——
+/// 句子在文案目录里，数据由 `{detail}` 带进去。这个约定跟已有的
+/// `SESSION_PASSWORD_REQUIRED` 是同一套。
+pub const UNSUPPORTED_DATABASE: &str = "DATAOMNI_UNSUPPORTED_DATABASE";
+pub const TLS_CLIENT_PAIR_REQUIRED: &str = "DATAOMNI_TLS_CLIENT_PAIR_REQUIRED";
+pub const TLS_CERTIFICATES_UNSUPPORTED: &str = "DATAOMNI_TLS_CERTIFICATES_UNSUPPORTED";
+pub const SQLITE_PATH_REQUIRED: &str = "DATAOMNI_SQLITE_PATH_REQUIRED";
+pub const HOST_REQUIRED: &str = "DATAOMNI_HOST_REQUIRED";
+pub const USERNAME_REQUIRED: &str = "DATAOMNI_USERNAME_REQUIRED";
+pub const PORT_INVALID: &str = "DATAOMNI_PORT_INVALID";
+pub const DATABASE_REQUIRED: &str = "DATAOMNI_DATABASE_REQUIRED";
+pub const KNOWN_HOSTS_NO_HOME: &str = "DATAOMNI_KNOWN_HOSTS_NO_HOME";
+
 trait CredentialStore: Send + Sync {
   fn set_password(&self, profile_id: &str, password: &str) -> Result<(), String>;
   fn get_password(&self, profile_id: &str) -> Result<String, String>;
@@ -275,20 +295,20 @@ impl ConnectionService {
     let database_is_blank = config.database.as_deref().unwrap_or("").is_empty();
     if matches!(config.db_type, DatabaseType::SQLite) {
       if database_is_blank {
-        return Err("数据库文件路径不能为空".to_string());
+        return Err(SQLITE_PATH_REQUIRED.to_string());
       }
     } else {
       if config.host.is_empty() {
-        return Err("主机地址不能为空".to_string());
+        return Err(HOST_REQUIRED.to_string());
       }
       if config.username.is_empty() {
-        return Err("用户名不能为空".to_string());
+        return Err(USERNAME_REQUIRED.to_string());
       }
       if config.port == 0 {
-        return Err("端口号无效，必须在1-65535范围内".to_string());
+        return Err(PORT_INVALID.to_string());
       }
       if database_is_blank {
-        return Err("数据库名不能为空".to_string());
+        return Err(DATABASE_REQUIRED.to_string());
       }
     }
 
@@ -362,7 +382,7 @@ fn credential_ref(profile_id: &str) -> String {
 /// 说清三件事：哪个类型、为什么不行、现在能用什么。只说「不支持」会让用户
 /// 反复检查主机和密码——那是配置问题的症状，而这里根本没走到配置。
 fn unsupported_database_message(db_type: &DatabaseType) -> String {
-  format!("{db_type:?} 在当前版本还没有可用驱动，无法连接；已支持的是 MySQL、PostgreSQL 和 SQLite")
+  format!("{UNSUPPORTED_DATABASE}: {db_type:?}")
 }
 
 fn validate_tls_configuration(config: &ConnectionProfile) -> Result<(), String> {
@@ -371,7 +391,7 @@ fn validate_tls_configuration(config: &ConnectionProfile) -> Result<(), String> 
   let has_client_key = config.client_key_path.as_ref().is_some_and(|path| !path.is_empty());
 
   if has_client_certificate != has_client_key {
-    return Err("客户端证书和私钥必须同时配置".to_string());
+    return Err(TLS_CLIENT_PAIR_REQUIRED.to_string());
   }
 
   let has_certificate_paths =
@@ -380,7 +400,7 @@ fn validate_tls_configuration(config: &ConnectionProfile) -> Result<(), String> 
   if has_certificate_paths
     && !matches!(config.db_type, DatabaseType::MySQL | DatabaseType::PostgreSQL)
   {
-    return Err("当前数据库驱动不支持自定义 TLS 证书".to_string());
+    return Err(TLS_CERTIFICATES_UNSUPPORTED.to_string());
   }
 
   Ok(())
@@ -596,10 +616,7 @@ mod tests {
     let mut config = profile("profile-1", "secret");
     config.client_certificate_path = Some("/certs/client.pem".to_string());
 
-    assert_eq!(
-      validate_tls_configuration(&config),
-      Err("客户端证书和私钥必须同时配置".to_string())
-    );
+    assert_eq!(validate_tls_configuration(&config), Err(TLS_CLIENT_PAIR_REQUIRED.to_string()));
   }
 
   /// 界面已经把这些类型的按钮置灰了，但存档里可能留着更早版本存下的配置，
@@ -622,10 +639,8 @@ mod tests {
       config.db_type = db_type.clone();
 
       let error = service.test_connection(&config).expect_err("没有驱动就不该通过");
-      assert!(
-        error.contains(&format!("{db_type:?}")) && error.contains("还没有可用驱动"),
-        "{db_type:?} 的拒绝理由要说清是哪个类型、为什么：{error}"
-      );
+      // 理由要说清是哪个类型：码点明「为什么」，冒号后面的数据点明「哪一个」
+      assert_eq!(error, format!("{UNSUPPORTED_DATABASE}: {db_type:?}"));
     }
   }
 
@@ -641,13 +656,13 @@ mod tests {
     sqlite.database = None;
     assert_eq!(
       service.test_connection(&sqlite),
-      Err("数据库文件路径不能为空".to_string()),
+      Err(SQLITE_PATH_REQUIRED.to_string()),
       "SQLite 缺文件路径要报路径，不能报成「没有驱动」"
     );
 
     let mut mysql = profile("profile-1", "secret");
     mysql.db_type = DatabaseType::MySQL;
     mysql.host = String::new();
-    assert_eq!(service.test_connection(&mysql), Err("主机地址不能为空".to_string()));
+    assert_eq!(service.test_connection(&mysql), Err(HOST_REQUIRED.to_string()));
   }
 }

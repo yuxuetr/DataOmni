@@ -673,94 +673,13 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   </div>
                 )}
 
-                {/* TLS 选项 - 仅对支持 TLS 的数据库显示 */}
-                {(formData.db_type === DatabaseType.MySQL || 
-                  formData.db_type === DatabaseType.PostgreSQL ||
-                  formData.db_type === DatabaseType.Elasticsearch) && (
-                  <div className="space-y-4">
-                    <div>
-                      <label htmlFor="tls-mode" className="block text-sm font-medium text-fg mb-1">
-                        {t('form.tlsMode')}
-                      </label>
-                      <select
-                        id="tls-mode"
-                        value={formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')}
-                        onChange={(event) => {
-                          const tlsMode = event.target.value as TlsMode;
-                          setFormData((previous) => ({
-                            ...previous,
-                            tls_mode: tlsMode,
-                            ssl: tlsMode !== 'disabled'
-                          }));
-                        }}
-                        className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
-                      >
-                        <option value="disabled">{t('form.tls.disabled')}</option>
-                        <option value="preferred">{t('form.tls.preferred')}</option>
-                        <option value="required">{t('form.tls.required')}</option>
-                        <option value="verify-ca">{t('form.tls.verifyCa')}</option>
-                        <option value="verify-full">{t('form.tls.verifyFull')}</option>
-                      </select>
-                    </div>
-
-                    {(formData.db_type === DatabaseType.MySQL
-                      || formData.db_type === DatabaseType.PostgreSQL)
-                      && (formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')) !== 'disabled' && (
-                      <div className="space-y-3 rounded-control border border-line bg-surface-sunken p-3">
-                        <div>
-                          <label htmlFor="ca-certificate" className="block text-sm font-medium text-fg mb-1">
-                            {t('form.caPath')}
-                          </label>
-                          <input
-                            id="ca-certificate"
-                            type="text"
-                            value={formData.ca_certificate_path ?? ''}
-                            onChange={(event) => setFormData((previous) => ({
-                              ...previous,
-                              ca_certificate_path: event.target.value
-                            }))}
-                            placeholder="/path/to/ca.pem"
-                            className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
-                          />
-                        </div>
-                        <div>
-                          <label htmlFor="client-certificate" className="block text-sm font-medium text-fg mb-1">
-                            {t('form.clientCertPath')}
-                          </label>
-                          <input
-                            id="client-certificate"
-                            type="text"
-                            value={formData.client_certificate_path ?? ''}
-                            onChange={(event) => setFormData((previous) => ({
-                              ...previous,
-                              client_certificate_path: event.target.value
-                            }))}
-                            placeholder="/path/to/client.crt"
-                            className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
-                          />
-                        </div>
-                        <div>
-                          <label htmlFor="client-key" className="block text-sm font-medium text-fg mb-1">
-                            {t('form.clientKeyPath')}
-                          </label>
-                          <input
-                            id="client-key"
-                            type="text"
-                            value={formData.client_key_path ?? ''}
-                            onChange={(event) => setFormData((previous) => ({
-                              ...previous,
-                              client_key_path: event.target.value
-                            }))}
-                            placeholder="/path/to/client.key"
-                            className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* SSH 隧道。默认收起：绝大多数连接不需要它，而它有五个格子 */}
+                {/* SSH 隧道排在 TLS 前面：它决定「怎么够到这台主机」，TLS 决定
+                    「够到之后怎么加密」，顺序和实际发生的顺序一致。
+                    更要紧的是它此前排在 TLS 证书那一组后面而且默认收起，
+                    于是「私钥路径」这个格子在界面上先出现的是 TLS 那一个——
+                    实际发生过：SSH 私钥被填进了「客户端私钥路径」，
+                    报出来的是一句「客户端证书和私钥必须同时配置」。
+                    默认仍然收起：绝大多数连接不需要它，而它有五个格子 */}
                 {formData.db_type && supportsSshTunnel(formData.db_type) && (
                   <div className="space-y-3">
                     <div className="flex items-start">
@@ -904,6 +823,97 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                     )}
                   </div>
                 )}
+                {/* TLS 选项 - 仅对支持 TLS 的数据库显示 */}
+                {(formData.db_type === DatabaseType.MySQL || 
+                  formData.db_type === DatabaseType.PostgreSQL ||
+                  formData.db_type === DatabaseType.Elasticsearch) && (
+                  <div className="space-y-4">
+                    <div>
+                      <label htmlFor="tls-mode" className="block text-sm font-medium text-fg mb-1">
+                        {t('form.tlsMode')}
+                      </label>
+                      <select
+                        id="tls-mode"
+                        value={formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')}
+                        onChange={(event) => {
+                          const tlsMode = event.target.value as TlsMode;
+                          setFormData((previous) => ({
+                            ...previous,
+                            tls_mode: tlsMode,
+                            ssl: tlsMode !== 'disabled'
+                          }));
+                        }}
+                        className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                      >
+                        <option value="disabled">{t('form.tls.disabled')}</option>
+                        <option value="preferred">{t('form.tls.preferred')}</option>
+                        <option value="required">{t('form.tls.required')}</option>
+                        <option value="verify-ca">{t('form.tls.verifyCa')}</option>
+                        <option value="verify-full">{t('form.tls.verifyFull')}</option>
+                      </select>
+                    </div>
+
+                    {(formData.db_type === DatabaseType.MySQL
+                      || formData.db_type === DatabaseType.PostgreSQL)
+                      && (formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')) !== 'disabled' && (
+                      <div className="space-y-3 rounded-control border border-line bg-surface-sunken p-3">
+                        {/* 这一组要有自己的标题：里面的「客户端私钥路径」和
+                            SSH 隧道那个「私钥文件」只隔着一段，不写清楚归属
+                            就会被当成同一个东西 */}
+                        <p className="text-xs font-medium text-fg-muted">{t('form.tlsCertificates')}</p>
+                        <div>
+                          <label htmlFor="ca-certificate" className="block text-sm font-medium text-fg mb-1">
+                            {t('form.caPath')}
+                          </label>
+                          <input
+                            id="ca-certificate"
+                            type="text"
+                            value={formData.ca_certificate_path ?? ''}
+                            onChange={(event) => setFormData((previous) => ({
+                              ...previous,
+                              ca_certificate_path: event.target.value
+                            }))}
+                            placeholder="/path/to/ca.pem"
+                            className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="client-certificate" className="block text-sm font-medium text-fg mb-1">
+                            {t('form.clientCertPath')}
+                          </label>
+                          <input
+                            id="client-certificate"
+                            type="text"
+                            value={formData.client_certificate_path ?? ''}
+                            onChange={(event) => setFormData((previous) => ({
+                              ...previous,
+                              client_certificate_path: event.target.value
+                            }))}
+                            placeholder="/path/to/client.crt"
+                            className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="client-key" className="block text-sm font-medium text-fg mb-1">
+                            {t('form.clientKeyPath')}
+                          </label>
+                          <input
+                            id="client-key"
+                            type="text"
+                            value={formData.client_key_path ?? ''}
+                            onChange={(event) => setFormData((previous) => ({
+                              ...previous,
+                              client_key_path: event.target.value
+                            }))}
+                            placeholder="/path/to/client.key"
+                            className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
               </>
             )}
           </div>

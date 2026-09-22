@@ -753,6 +753,8 @@ export const en: Translations = {
   'form.passwordPlaceholder': 'Enter a password',
   'form.savePassword': 'Save the password in the system credential store',
   'form.savePasswordHint': 'When off, the password is used only for this app session and must be entered again after a restart.',
+  'form.tlsCertificates':
+    'TLS certificates (for encrypting the database connection — not the SSH key)',
   'form.tlsMode': 'TLS mode',
   'form.tls.disabled': 'Disabled',
   'form.tls.preferred': 'Prefer TLS',
@@ -796,6 +798,28 @@ export const en: Translations = {
   'error.createProfileFailed': 'Failed to create the connection',
   'error.updateProfileFailed': 'Failed to update the connection',
   'error.deleteProfileFailed': 'Failed to delete the connection',
+  'error.backend.unsupportedDatabase':
+    'There is no driver for {detail} in this version, so it cannot connect. MySQL, PostgreSQL and SQLite are supported.',
+  'error.backend.tlsClientPairRequired':
+    'A TLS client certificate and a client private key have to be set together — one without the other will not connect. These are the TLS certificates for the database; an SSH key belongs under "Connect through an SSH tunnel".',
+  'error.backend.tlsCertificatesUnsupported':
+    'This database driver does not support custom TLS certificates.',
+  'error.backend.sqlitePathRequired': 'The database file path cannot be empty.',
+  'error.backend.hostRequired': 'The host cannot be empty.',
+  'error.backend.usernameRequired': 'The user name cannot be empty.',
+  'error.backend.portInvalid': 'Invalid port. It must be between 1 and 65535.',
+  'error.backend.databaseRequired': 'The database name cannot be empty.',
+  'error.backend.knownHostsNoHome':
+    'No home directory for the current user, so ~/.ssh/known_hosts cannot be read and the jump host key cannot be verified.',
+  'error.backend.sshHostKeyChanged':
+    "The jump host's host key does not match the one in known_hosts (recorded → received this time): {detail}. Do not connect until you know why — this could be a man-in-the-middle.",
+  'error.backend.sshHostKeyUnknown':
+    'known_hosts has no entry for this jump host. Its fingerprint is {detail}. Verify it through a trusted channel before adding it to known_hosts.',
+  'error.backend.sshPrivateKeyUnreadable':
+    'The private key could not be read: {detail}. This version supports keys without a passphrase only, and the path must be written out in full — no ~.',
+  'error.backend.sshAuthRejected':
+    'The jump host rejected this private key. Check that the SSH user name matches the key, and that the matching public key is in the server\'s authorized_keys.',
+  'error.backend.sshFailed': 'SSH connection failed: {detail}',
   'error.invalidPort': 'Invalid port: {port}. It must be between 1 and 65535.',
   'error.portOutOfRange': 'Invalid port: {port}. Check that 1) it is within 1-65535, 2) it is not blocked by a firewall, and 3) the database is actually listening on it.',
   'error.connectFailed': 'Could not connect to the database',
@@ -826,7 +850,7 @@ export const en: Translations = {
   'sshTunnel.host': 'Jump host',
   'sshTunnel.port': 'SSH port',
   'sshTunnel.username': 'SSH user name',
-  'sshTunnel.privateKey': 'Private key file',
+  'sshTunnel.privateKey': 'SSH private key file',
   'sshTunnel.privateKeyHint':
     'This version supports keys without a passphrase only. A passphrase would have to be stored in the keyring, and that step is not built yet.',
   'sshTunnel.remoteHost': 'Forward to host',
