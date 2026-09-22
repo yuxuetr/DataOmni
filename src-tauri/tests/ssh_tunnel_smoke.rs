@@ -5,14 +5,18 @@
 //! ```text
 //! DATAOMNI_REQUIRE_SSH_TUNNEL_TESTS=1
 //! DATAOMNI_SSH_TUNNEL_HOST=...
-//! DATAOMNI_SSH_TUNNEL_PORT=22                      # 可选
+//! DATAOMNI_SSH_TUNNEL_PORT=22                      # 可选，默认 22
 //! DATAOMNI_SSH_TUNNEL_USER=...
-//! DATAOMNI_SSH_TUNNEL_KEY=/Users/me/.ssh/id_rsa    # 无口令私钥
+//! DATAOMNI_SSH_TUNNEL_KEY=/Users/me/.ssh/id_rsa    # 无口令私钥，别用 ~
 //! DATAOMNI_SSH_TUNNEL_TARGET=127.0.0.1:23306       # 从跳板机看过去的库地址
 //! DATAOMNI_SSH_TUNNEL_DB_USER=root
 //! DATAOMNI_SSH_TUNNEL_DB_PASSWORD=...
 //! DATAOMNI_SSH_TUNNEL_DB_NAME=dataomni_tunnel
 //! ```
+//!
+//! 用 `env A=1 B=2 … cargo test` 写成一行，别用反斜杠续行：断了一截的话
+//! 变量会落在上一条命令里，而那时**这套用例会报错而不是跳过**（见
+//! `intends_to_run`）——静默跳过和全绿在 `cargo test` 的输出里分不开。
 //!
 //! **目标库必须是直连不到的**（只监听跳板机的 `127.0.0.1`）。这不是环境
 //! 的一个细节而是整套验收的地基：如果它能被直连，那么「经隧道读到数据」
@@ -77,11 +81,31 @@ fn tunnel_setup() -> Option<(ConnectionProfile, SshTunnelConfig, PathBuf)> {
   Some((profile, tunnel, known_hosts_path()))
 }
 
+/// 设了一半也算「打算跑」。
+///
+/// 静默跳过和通过在 `cargo test` 的输出里长得一模一样（都是 `ok`），而
+/// stderr 默认不显示。于是「多行命令粘贴时断了一截」这种事的表现是：
+/// 一次什么都没验的运行，报出来是全绿。实际踩过一次——七个变量设了六个，
+/// 唯独 REQUIRE 落在了上一条命令里。
+///
+/// 所以只要**任何一个** `DATAOMNI_SSH_TUNNEL_*` 出现，就把这套用例当成
+/// 要跑的：缺哪个就报哪个，而不是假装没人想跑。
+fn intends_to_run() -> bool {
+  if std::env::var(REQUIRE_ENV).as_deref() == Ok("1") {
+    return true;
+  }
+  std::env::vars()
+    .any(|(name, value)| name.starts_with("DATAOMNI_SSH_TUNNEL_") && !value.is_empty())
+}
+
 fn variable(name: &str) -> Option<String> {
   match std::env::var(name) {
     Ok(value) if !value.is_empty() => Some(value),
-    _ if std::env::var(REQUIRE_ENV).as_deref() == Ok("1") => {
-      panic!("{name} must be set when {REQUIRE_ENV}=1")
+    _ if intends_to_run() => {
+      panic!(
+        "{name} 没设。设了任何一个 DATAOMNI_SSH_TUNNEL_* 就说明想跑这套用例，\
+         所以这里报错而不是跳过——多行命令断了一截时，静默跳过看起来和全绿一样"
+      )
     }
     _ => {
       eprintln!("skipping ssh tunnel smoke test because {name} is not set");

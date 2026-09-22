@@ -132,11 +132,21 @@ ActiveTunnel { local_port: u16, shutdown: oneshot::Sender<()>, session: Arc<russ
 ```
 DATAOMNI_REQUIRE_SSH_TUNNEL_TESTS=1
 DATAOMNI_SSH_TUNNEL_HOST=...
+DATAOMNI_SSH_TUNNEL_PORT=22                     # 可选，默认 22
 DATAOMNI_SSH_TUNNEL_USER=...
-DATAOMNI_SSH_TUNNEL_KEY=~/.ssh/id_rsa
+DATAOMNI_SSH_TUNNEL_KEY=/Users/me/.ssh/id_rsa   # 无口令私钥，写绝对路径
 DATAOMNI_SSH_TUNNEL_TARGET=127.0.0.1:23306      # 从服务器看过去的地址
-DATAOMNI_SSH_TUNNEL_DB_URL=mysql://root:...@{local}/dataomni_tunnel
+DATAOMNI_SSH_TUNNEL_DB_USER=root
+DATAOMNI_SSH_TUNNEL_DB_PASSWORD=...
+DATAOMNI_SSH_TUNNEL_DB_NAME=dataomni_tunnel
 ```
+
+**写成 `env A=1 B=2 … cargo test` 一行，不要用反斜杠续行。** 断了一截的话
+变量会落在上一条命令里；`cargo test` 输出里静默跳过和全绿长得一模一样
+（都是 `ok`，而跳过的理由写在默认不显示的 stderr 上）。为此
+`intends_to_run()` 规定：只要出现任何一个 `DATAOMNI_SSH_TUNNEL_*`，缺的
+变量就报错而不是跳过。这一条实际救过一次——七个变量设了六个，唯独
+REQUIRE 落在了上一条命令里，那次运行什么都没验，报出来是全绿。
 
 1. **该绿**：经隧道能读到 `tunnel_marker` 那一行
    （`reached-through-ssh-tunnel`）。
