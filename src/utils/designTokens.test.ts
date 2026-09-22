@@ -142,3 +142,45 @@ describe('层级', () => {
     }
   });
 });
+
+/**
+ * 语义色的含义不许被稀释。
+ *
+ * 量过一次：「只读」在三处出现，主语各不相同——连接只读（副本或 SQLite 的
+ * `query_only`）、这张表不能就地改、这份结果不能就地改。前者写进去**会被
+ * 数据库拒绝**，是真风险；后两者不带任何风险，只是一句能力说明。
+ *
+ * 而它们原来一个黄、一个黄、一个灰。给不带风险的事涂黄，是在教人忽略黄色，
+ * 而黄色同时还用在「未提交事务」上——那是真会丢东西的。
+ *
+ * 所以规则是：**警告色只给「做下去会被拒绝或会丢东西」的状态。**
+ * 这道门只守住其中可机械判定的那一半：两张数据网格的「不能就地编辑」
+ * 不许是警告色。
+ */
+describe('语义色的含义', () => {
+  const GRIDS = ['components/TableDataViewer.tsx', 'components/QueryResultScrollTable.tsx'];
+
+  it('两张网格的「不能就地编辑」都不是警告色', () => {
+    const root = fileURLToPath(new URL('..', import.meta.url));
+    const offenders: string[] = [];
+
+    for (const file of GRIDS) {
+      const lines = readFileSync(join(root, file), 'utf8').split('\n');
+      lines.forEach((line, index) => {
+        // 只看画「只读」那几行：readOnly 的文案键或 Lock 图标所在的一小段
+        if (!/readOnly|<Lock\b/.test(line)) {
+          return;
+        }
+        const around = lines.slice(Math.max(0, index - 3), index + 4).join('\n');
+        if (/warning/.test(around)) {
+          offenders.push(`${file}:${index + 1}`);
+        }
+      });
+    }
+
+    expect(
+      offenders,
+      '「不能就地编辑」不带风险，涂成警告色会稀释警告色本身的含义'
+    ).toEqual([]);
+  });
+});

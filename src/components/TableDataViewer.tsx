@@ -1303,13 +1303,18 @@ export default function TableDataViewer({
 
             {/* 不能改就说清为什么。把按钮藏起来却不解释，用户只会以为界面坏了。
                 `metadata-pending` 不进这里：它在同一次加载里就会有结论，
-                先闪一条警告再收回去，比什么都不说更让人不安 */}
+                先闪一条警告再收回去，比什么都不说更让人不安。
+
+                **中性色，不是警告色。** 警告色留给「写进去会被拒绝」那一种
+                （连接只读、未提交事务）；「这里不能就地编辑」不带任何风险，
+                只是一句能力说明。给不带风险的事涂黄，是在教人忽略黄色。
+                查询结果那张网格本来就是中性的，两处现在一致 */}
             {readOnlyMessage && (
-              <div className="flex items-start gap-2 border-b border-warning-line bg-warning-soft px-4 py-2">
-                <Lock className="mt-0.5 shrink-0 text-warning" size={14} />
-                <div className="text-xs text-warning">
+              <div className="flex items-start gap-2 border-b border-line bg-surface-sunken px-4 py-2">
+                <Lock className="mt-0.5 shrink-0 text-fg-subtle" size={14} />
+                <div className="text-xs text-fg-muted">
                   {/* 做成有边框的小标签：贴着后面那句话的裸文字会被读成同一句的开头 */}
-                  <span className="mr-1.5 rounded-control border border-warning-line px-1 py-0.5 font-medium">
+                  <span className="mr-1.5 rounded-control border border-line-strong px-1 py-0.5 font-medium">
                     {t('table.readOnly.badge')}
                   </span>
                   {readOnlyMessage}
