@@ -72,6 +72,7 @@ export const en: Translations = {
   'objectDefinition.noSequences': 'This database type has no sequence objects',
   'objectDefinition.close': 'Close',
 
+  'common.listSeparator': ', ',
   'common.copy': 'Copy',
   'common.copied': 'Copied',
   'common.copyFailed': 'Failed to copy to the clipboard',
@@ -951,7 +952,6 @@ export const en: Translations = {
   'sshTunnel.remoteHint':
     'Where the database is, as seen from the jump host. Leave it empty to reuse the address above — put 127.0.0.1 here when the database runs on the jump host itself.',
   'sshTunnel.incomplete': 'Still missing: {fields}',
-  'sshTunnel.fieldSeparator': ', ',
   'sshTunnel.field.host': 'jump host',
   'sshTunnel.field.port': 'SSH port',
   'sshTunnel.field.username': 'SSH user name',

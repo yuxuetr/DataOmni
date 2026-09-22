@@ -142,6 +142,14 @@ export interface ImportIssue {
   level: 'error' | 'warning';
   key: TranslationKey;
   params?: TranslationParams;
+  /**
+   * 要拼进 `{columns}` 的那几个列名。**拼接由渲染方做**。
+   *
+   * 这里是纯函数，拿不到当前语言，而中英文的顿号不一样——此前写死的
+   * `join('、')` 让英文界面上印出 `column_a、column_b`。
+   * 决定「有哪几列」是这个函数的事，决定「一串名字怎么写」是语言的事。
+   */
+  columns?: readonly string[];
 }
 
 /** 样例里挑出来的第一个不合类型的值，用来在映射表里就地提示 */
@@ -220,7 +228,8 @@ export function validateImport(
     issues.push({
       level: 'error',
       key: 'import.issue.requiredMissing',
-      params: { columns: missing.join('、'), count: missing.length }
+      params: { count: missing.length },
+      columns: missing
     });
   }
 
@@ -232,7 +241,8 @@ export function validateImport(
     issues.push({
       level: 'error',
       key: 'import.issue.generatedTarget',
-      params: { columns: generated.join('、'), count: generated.length }
+      params: { count: generated.length },
+      columns: generated
     });
   }
 

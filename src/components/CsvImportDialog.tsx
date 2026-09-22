@@ -649,7 +649,13 @@ function IssueList({ issues }: { issues: readonly ImportIssue[] }) {
                 : 'border-warning-line bg-warning-soft text-warning'
             )}
           >
-            {t(issue.key, issue.params)}
+            {/* 列名在这里才拼起来：分隔符跟着语言走，纯函数那边不知道语言 */}
+            {t(
+              issue.key,
+              issue.columns
+                ? { ...issue.params, columns: issue.columns.join(t('common.listSeparator')) }
+                : issue.params
+            )}
           </li>
         ))}
       </ul>

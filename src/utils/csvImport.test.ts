@@ -135,7 +135,9 @@ describe('validateImport', () => {
     );
     const required = issues.find((issue) => issue.key === 'import.issue.requiredMissing');
     expect(required?.level).toBe('error');
-    expect(required?.params?.columns).toBe('id');
+    // 列名不在这里拼成串：拼接要按语言来，而这个函数不知道当前是哪种语言
+    expect(required?.columns).toEqual(['id']);
+    expect(required?.params?.columns).toBeUndefined();
   });
 
   it('有默认值或由数据库产生的非空列不算必填', () => {

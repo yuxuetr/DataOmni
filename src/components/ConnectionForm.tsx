@@ -813,7 +813,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             {t('sshTunnel.incomplete', {
                               fields: tunnelGaps
                                 .map((gap) => t(`sshTunnel.field.${gap}`))
-                                .join(t('sshTunnel.fieldSeparator'))
+                                .join(t('common.listSeparator'))
                             })}
                           </p>
                         )}

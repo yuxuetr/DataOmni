@@ -85,6 +85,8 @@ export const zh = {
   'objectDefinition.close': '关闭',
 
   // 通用
+  /** 把几个名字连成一串时用的分隔符。中英文不一样，所以它是文案不是常量 */
+  'common.listSeparator': '、',
   'common.copy': '复制',
   'common.copied': '已复制',
   'common.copyFailed': '复制到剪贴板失败',
@@ -962,7 +964,6 @@ export const zh = {
   'sshTunnel.remotePort': '端口',
   'sshTunnel.remoteHint': '从跳板机的角度看，数据库在哪。留空就用上面填的连接地址——库跑在跳板机上时填 127.0.0.1。',
   'sshTunnel.incomplete': '还差: {fields}',
-  'sshTunnel.fieldSeparator': '、',
   'sshTunnel.field.host': '跳板机地址',
   'sshTunnel.field.port': 'SSH 端口',
   'sshTunnel.field.username': 'SSH 用户名',

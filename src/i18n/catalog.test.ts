@@ -93,6 +93,26 @@ describe('翻译目录', () => {
     }
   });
 
+  it('代码里不写死中文标点当分隔符', () => {
+    // 上一条只看得见文案目录。而「把几个名字连成一串」的分隔符常常写在
+    // 纯函数里——`csvImport.ts` 曾经 `join('、')`，于是英文界面上印的是
+    // `column_a、column_b`。纯函数拿不到当前语言，所以分隔符只能是文案
+    // （`common.listSeparator`），拼接只能发生在渲染的地方。
+    //
+    // 只盯 `.join()` 的字面量参数：源码里的中文大多是注释、日志和测试名，
+    // 一律扫中文标点会淹没在噪声里，而噪声里的门等于没有门。
+    const CJK_PUNCTUATION = /[\u3000-\u303f\uff01-\uff65]/;
+    const problems: string[] = [];
+    for (const [file, source] of sourceFiles()) {
+      for (const call of source.matchAll(/\.join\(\s*(['"])((?:[^'"\\]|\\.)*)\1\s*\)/g)) {
+        if (CJK_PUNCTUATION.test(call[2])) {
+          problems.push(`${file}: join('${call[2]}') 把分隔符写死了，英文界面上会印出中文标点`);
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
   it('没有空文案', () => {
     for (const key of KEYS) {
       expect(zh[key].trim(), `${key} 的中文为空`).not.toBe('');
