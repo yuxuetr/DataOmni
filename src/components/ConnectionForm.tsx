@@ -38,6 +38,7 @@ import {
   supportsSshTunnel
 } from '../utils/sshTunnel';
 import { clsx } from 'clsx';
+import { PLAIN_TEXT_INPUT } from './FormControls';
 import { 
   ConnectionConfig, 
   DatabaseType, 
@@ -397,9 +398,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   validationErrors.name ? "border-danger-line" : "border-line-strong"
                 )}
                 placeholder={t('form.namePlaceholder')}
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
+                {...PLAIN_TEXT_INPUT}
               />
               {validationErrors.name && (
                 <p className="text-danger text-sm mt-1">{validationErrors.name}</p>
@@ -484,9 +483,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         'min-w-0 flex-1 rounded-control border px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent',
                         validationErrors.database ? 'border-danger-line' : 'border-line-strong'
                       )}
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
+                      {...PLAIN_TEXT_INPUT}
                     />
                     <button
                       type="button"
@@ -523,9 +520,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         validationErrors.host ? "border-danger-line" : "border-line-strong"
                       )}
                       placeholder="localhost"
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
+                      {...PLAIN_TEXT_INPUT}
                     />
                     {validationErrors.host && (
                       <p className="text-danger text-sm mt-1">{validationErrors.host}</p>
@@ -575,9 +570,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         formData.db_type === DatabaseType.Neo4j ? "neo4j" :
                         formData.db_type === DatabaseType.ClickHouse ? "default" : ""
                       }
-                      autoCapitalize="none"
-                      autoCorrect="off"
-                      spellCheck={false}
+                      {...PLAIN_TEXT_INPUT}
                     />
                   </div>
                 )}
@@ -623,9 +616,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                           validationErrors.username ? "border-danger-line" : "border-line-strong"
                         )}
                         placeholder={t('form.usernamePlaceholder')}
-                        autoCapitalize="none"
-                        autoCorrect="off"
-                        spellCheck={false}
+                        {...PLAIN_TEXT_INPUT}
                       />
                       {validationErrors.username && (
                         <p className="text-danger text-sm mt-1">{validationErrors.username}</p>
@@ -643,6 +634,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                           onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
                           className="w-full px-3 py-2 pr-10 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
                           placeholder={t('form.passwordPlaceholder')}
+                          {...PLAIN_TEXT_INPUT}
                         />
                         <button
                           type="button"
@@ -716,6 +708,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                               onChange={(event) => updateTunnel({ host: event.target.value })}
                               placeholder="jump.example.com"
                               className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                              {...PLAIN_TEXT_INPUT}
                             />
                           </div>
                           <div>
@@ -746,6 +739,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             onChange={(event) => updateTunnel({ username: event.target.value })}
                             placeholder="ops"
                             className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                            {...PLAIN_TEXT_INPUT}
                           />
                         </div>
 
@@ -786,6 +780,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                               }
                               placeholder="~/.ssh/id_rsa"
                               className="min-w-0 flex-1 px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                              {...PLAIN_TEXT_INPUT}
                             />
                             <button
                               type="button"
@@ -815,6 +810,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             value={tunnel.secret}
                             onChange={(event) => updateTunnel({ secret: event.target.value })}
                             className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                            {...PLAIN_TEXT_INPUT}
                           />
                           <p className="mt-1 text-xs text-fg-muted">
                             {hasStoredSecret(tunnel) ? t('sshTunnel.secretStored') : t('sshTunnel.secretHint')}
@@ -833,6 +829,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                               onChange={(event) => updateTunnel({ remote_host: event.target.value })}
                               placeholder={formData.host || '127.0.0.1'}
                               className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                              {...PLAIN_TEXT_INPUT}
                             />
                           </div>
                           <div>
@@ -920,6 +917,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             }))}
                             placeholder="/path/to/ca.pem"
                             className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                            {...PLAIN_TEXT_INPUT}
                           />
                         </div>
                         <div>
@@ -936,6 +934,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             }))}
                             placeholder="/path/to/client.crt"
                             className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                            {...PLAIN_TEXT_INPUT}
                           />
                         </div>
                         <div>
@@ -952,6 +951,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             }))}
                             placeholder="/path/to/client.key"
                             className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                            {...PLAIN_TEXT_INPUT}
                           />
                         </div>
                       </div>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { PLAIN_TEXT_INPUT } from './FormControls';
 import { Check, Copy, Search, Star, Tag, Timer, Trash2, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import {
@@ -115,6 +116,7 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab }: QueryHistoryDial
               placeholder={t('history.searchPlaceholder')}
               aria-label={t('history.searchPlaceholder')}
               className="w-full rounded-control border border-line-strong bg-surface py-1 pl-7 pr-2 text-sm text-fg placeholder:text-fg-subtle"
+              {...PLAIN_TEXT_INPUT}
             />
           </div>
 
@@ -428,6 +430,7 @@ function AnnotationEditor({ entry, onSubmit, onCancel }: AnnotationEditorProps) 
         placeholder={t('history.namePlaceholder')}
         aria-label={t('history.name')}
         className="min-w-[140px] flex-1 rounded-control border border-line-strong bg-surface px-2 py-1 text-xs text-fg placeholder:text-fg-subtle"
+        {...PLAIN_TEXT_INPUT}
       />
       <input
         value={tags}
@@ -435,6 +438,7 @@ function AnnotationEditor({ entry, onSubmit, onCancel }: AnnotationEditorProps) 
         placeholder={t('history.tagsPlaceholder')}
         aria-label={t('history.tags')}
         className="min-w-[140px] flex-1 rounded-control border border-line-strong bg-surface px-2 py-1 text-xs text-fg placeholder:text-fg-subtle"
+        {...PLAIN_TEXT_INPUT}
       />
       <button
         type="submit"

@@ -46,7 +46,7 @@ import {
 import type { ConnectionProfile } from '../contracts';
 import type { TranslationKey } from '../i18n/translate';
 import { requireDatabase } from '../utils/requireDatabase';
-import { SegmentedControl } from './FormControls';
+import { SegmentedControl, PLAIN_TEXT_INPUT } from './FormControls';
 
 interface ErDiagramQueries {
   columns: string;
@@ -437,6 +437,7 @@ export function ErDiagramCanvas({
             placeholder={t('er.searchPlaceholder')}
             aria-label={t('er.searchPlaceholder')}
             className="w-52 rounded-control border border-line bg-surface py-1 pl-6 pr-2 text-xs text-fg placeholder:text-fg-subtle focus:border-accent focus:outline-none"
+            {...PLAIN_TEXT_INPUT}
           />
         </div>
         {matches && (

@@ -1,4 +1,5 @@
 import { RotateCcw, Trash2 } from 'lucide-react';
+import { PLAIN_TEXT_INPUT } from './FormControls';
 import { clsx } from 'clsx';
 import { useLanguageStore } from '../stores/languageStore';
 import type { ColumnDraft } from '../utils/tableDdl';
@@ -73,6 +74,7 @@ export function ColumnDraftTable({
                     'w-full rounded-control border border-line bg-surface px-2 py-1 font-mono text-sm text-fg',
                     draft.dropped && 'line-through'
                   )}
+                  {...PLAIN_TEXT_INPUT}
                 />
               ) : (
                 <>
@@ -92,6 +94,7 @@ export function ColumnDraftTable({
                   onChange={(event) => onChange(index, { dataType: event.target.value })}
                   disabled={draft.dropped}
                   className="w-full rounded-control border border-line bg-surface px-2 py-1 font-mono text-sm text-fg"
+                  {...PLAIN_TEXT_INPUT}
                 />
               ) : (
                 <span className="inline-flex items-center rounded-control bg-accent-soft px-2 py-1 text-xs font-medium text-accent">
@@ -147,6 +150,7 @@ export function ColumnDraftTable({
                     defaultValue: event.target.value === '' ? null : event.target.value
                   })}
                   className="w-full rounded-control border border-line bg-surface px-2 py-1 font-mono text-sm text-fg"
+                  {...PLAIN_TEXT_INPUT}
                 />
               ) : draft.defaultValue ? (
                 <code className="rounded-control bg-surface-hover px-2 py-1 text-xs">

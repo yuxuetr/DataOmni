@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { PLAIN_TEXT_INPUT } from './FormControls';
 import clsx from 'clsx';
 import { ChevronDown } from 'lucide-react';
 import { useLanguageStore } from '../stores/languageStore';
@@ -203,6 +204,7 @@ function ValueField({ value, onChange, editor, dialect, autoFocus, onKeyDown }: 
         onKeyDown={onKeyDown}
         placeholder={t('cellInput.expressionHint')}
         className="min-w-0 flex-1 rounded-control border border-accent-line bg-accent-soft px-2 py-1 font-mono text-sm text-accent"
+        {...PLAIN_TEXT_INPUT}
       />
     );
   }
@@ -278,6 +280,7 @@ function ValueField({ value, onChange, editor, dialect, autoFocus, onKeyDown }: 
             'min-w-0 flex-1 rounded-control border px-2 py-1 font-mono text-xs',
             complete ? 'border-line-strong bg-surface text-fg' : 'border-danger-line bg-danger-soft text-fg'
           )}
+          {...PLAIN_TEXT_INPUT}
         />
         <div className="flex items-center gap-2">
           <button
@@ -314,6 +317,7 @@ function ValueField({ value, onChange, editor, dialect, autoFocus, onKeyDown }: 
           onKeyDown={onKeyDown}
           placeholder={t(value.kind === 'unset' ? 'cellInput.unsetHint' : 'cellInput.emptyString')}
           className="min-w-0 rounded-control border border-line-strong bg-surface px-2 py-1 font-mono text-xs text-fg"
+          {...PLAIN_TEXT_INPUT}
         />
         <div className="flex items-center gap-1">
           {/* 选择器只往文本里写。认不出的原值（`0000-00-00`、带时区的、
@@ -349,6 +353,7 @@ function ValueField({ value, onChange, editor, dialect, autoFocus, onKeyDown }: 
       // 空文本框有两种含义，只有占位符能分开它们：还没填，还是要写一个空字符串
       placeholder={t(PLACEHOLDER[value.kind])}
       className="min-w-0 flex-1 rounded-control border border-line-strong bg-surface px-2 py-1 text-sm text-fg"
+      {...PLAIN_TEXT_INPUT}
     />
   );
 }

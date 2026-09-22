@@ -1,4 +1,5 @@
 import { Filter, Plus, X } from 'lucide-react';
+import { PLAIN_TEXT_INPUT } from './FormControls';
 import clsx from 'clsx';
 import type { ColumnInfo } from '../contracts';
 import { useLanguageStore } from '../stores/languageStore';
@@ -146,6 +147,7 @@ export function TableFilterBar({
                       'min-w-40 flex-1 rounded-control border bg-surface px-1.5 py-1 text-xs text-fg',
                       complete ? 'border-line-strong' : 'border-warning-line'
                     )}
+                    {...PLAIN_TEXT_INPUT}
                   />
                 )}
 

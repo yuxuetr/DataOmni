@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { PLAIN_TEXT_INPUT } from './FormControls';
 import {
   Database,
   ChevronDown,
@@ -400,6 +401,7 @@ export default function DatabaseExplorer({
             placeholder={t('explorer.filterPlaceholder')}
             aria-label={t('explorer.filter')}
             className="min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-fg-subtle"
+            {...PLAIN_TEXT_INPUT}
           />
           {filtering && (
             <button

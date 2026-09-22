@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { PLAIN_TEXT_INPUT } from './FormControls';
 import { invoke } from '@tauri-apps/api/core';
 import { Plus, X } from 'lucide-react';
 import { useLanguageStore } from '../stores/languageStore';
@@ -174,6 +175,7 @@ export function CreateTableDialog({
               autoFocus
               onChange={(event) => setTable(event.target.value)}
               className="rounded-control border border-line bg-surface px-2 py-1 font-mono text-xs text-fg"
+              {...PLAIN_TEXT_INPUT}
             />
           </label>
           <button

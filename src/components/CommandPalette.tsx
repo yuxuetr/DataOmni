@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { PLAIN_TEXT_INPUT } from './FormControls';
 import { clsx } from 'clsx';
 import { Search } from 'lucide-react';
 import { rankFuzzy } from '../utils/fuzzyMatch';
@@ -120,9 +121,7 @@ export function CommandPalette({ commands, onDismiss }: CommandPaletteProps) {
             placeholder={t('palette.search')}
             aria-label={t('palette.search')}
             className="min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-fg-subtle"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
+            {...PLAIN_TEXT_INPUT}
           />
         </div>
 

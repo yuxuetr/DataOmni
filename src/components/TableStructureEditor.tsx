@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { PLAIN_TEXT_INPUT } from './FormControls';
 import { invoke } from '@tauri-apps/api/core';
 import { Pencil, Plus } from 'lucide-react';
 import type { ColumnInfo, ConnectionEnvironment } from '../contracts';
@@ -181,6 +182,7 @@ export function TableStructureEditor({
                 value={tableName}
                 onChange={(event) => setTableName(event.target.value)}
                 className="rounded-control border border-line bg-surface px-2 py-1 font-mono text-xs text-fg"
+                {...PLAIN_TEXT_INPUT}
               />
             </label>
           )}
