@@ -102,6 +102,18 @@ pub async fn get_connections(
   }
 }
 
+/// 连接失败之后查一遍断在哪一段。
+///
+/// 不经过 `ConnectionService`：这里只看主机、端口和文件路径，用不到凭据，
+/// 也不该因为服务没初始化而查不成——而「连不上」的时候服务正好最可能没初始化。
+#[tauri::command]
+pub async fn diagnose_connection(
+  config: ConnectionProfile,
+) -> Result<crate::services::ConnectionDiagnosis, String> {
+  println!("🩺 诊断数据库连接: {}", config.name);
+  Ok(crate::services::diagnose(&config).await)
+}
+
 #[tauri::command]
 pub fn test_connection(
   config: ConnectionProfile,

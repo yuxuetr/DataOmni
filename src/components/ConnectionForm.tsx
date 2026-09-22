@@ -15,10 +15,19 @@ import {
   Zap,
   Search,
   BarChart3,
-  FolderOpen
+  FolderOpen,
+  Stethoscope
 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { isDatabaseTypeSupported } from '../contracts/databaseSupport';
+import type { ConnectionDiagnosis } from '../contracts/connectionDiagnosis';
+import {
+  diagnosisConclusionKey,
+  diagnosisLines,
+  diagnosisPassed
+} from '../utils/connectionDiagnosis';
+import { describeError } from '../utils/describeError';
 import { clsx } from 'clsx';
 import { 
   ConnectionConfig, 
@@ -147,6 +156,12 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   // 成败来自结构化的 ok，而不是在文案里找「成功」二字——那在翻译之后必然失效
   const testSucceeded = testResult?.ok ?? false;
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  // 诊断是用户在测试失败之后自己点的：不自动跑，免得每次失败都多两次
+  // 网络等待——最常见的失败是密码错，那时诊断只会说「网络没问题」
+  const [diagnosis, setDiagnosis] = useState<ConnectionDiagnosis | null>(null);
+  const [diagnosisError, setDiagnosisError] = useState<string | null>(null);
+  const [diagnosing, setDiagnosing] = useState(false);
+  const diagnosisConclusion = diagnosis ? diagnosisConclusionKey(diagnosis) : null;
 
   // 清除测试结果当组件卸载时
   useEffect(() => {
@@ -229,10 +244,37 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   const handleTestConnection = async () => {
     if (!validateForm()) return;
 
+    // 上一次的诊断说的是上一次那组主机端口，留在屏幕上会被当成这次的结论
+    setDiagnosis(null);
+    setDiagnosisError(null);
+
     try {
       await testConnection(formData as ConnectionConfig);
     } catch {
       // 错误已在store中处理
+    }
+  };
+
+  /**
+   * 查一遍断在哪一段。
+   *
+   * 不走 `validateForm`：诊断要回答的恰恰包括「主机填了没有」这类问题，
+   * 先用表单校验挡住等于把能回答的问题挡在外面。
+   */
+  const handleDiagnose = async () => {
+    setDiagnosing(true);
+    setDiagnosis(null);
+    setDiagnosisError(null);
+
+    try {
+      const result = await invoke<ConnectionDiagnosis>('diagnose_connection', {
+        config: formData
+      });
+      setDiagnosis(result);
+    } catch (cause) {
+      setDiagnosisError(describeError(cause, t('diagnosis.failedFallback')));
+    } finally {
+      setDiagnosing(false);
     }
   };
 
@@ -683,19 +725,82 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
             </div>
           )}
 
-          <div className="flex items-center justify-between px-5 py-3">
-            <button
-              type="button"
-              onClick={handleTestConnection}
-              disabled={isLoading}
-              className={clsx(
-                'flex items-center gap-1.5 rounded-control border border-accent px-3 py-1.5 text-sm text-accent transition-colors',
-                isLoading ? 'cursor-not-allowed opacity-50' : 'hover:bg-accent-soft'
+          {diagnosisError && (
+            <div className="flex items-start gap-2 border-b border-danger-line bg-danger-soft px-5 py-2 text-sm text-danger">
+              <AlertCircle size={15} className="mt-0.5 shrink-0" />
+              <span className="min-w-0 flex-1 break-words">
+                {t('diagnosis.failed', { reason: diagnosisError })}
+              </span>
+            </div>
+          )}
+
+          {diagnosis && (
+            <div className="border-b border-line px-5 py-2 text-sm">
+              <h4 className="mb-1 text-xs font-semibold tracking-wide text-fg-subtle">
+                {t('diagnosis.title')}
+              </h4>
+              <ul className="space-y-1">
+                {diagnosisLines(diagnosis).map((line, index) => (
+                  <li key={`${line.titleKey}-${index}`} className="flex items-start gap-2">
+                    {line.ok
+                      ? <CheckCircle size={14} className="mt-0.5 shrink-0 text-success" />
+                      : <AlertCircle size={14} className="mt-0.5 shrink-0 text-danger" />}
+                    <span className="shrink-0 text-fg">{t(line.titleKey)}</span>
+                    {/* 事实用等宽字体：这里是地址、路径和系统原话，
+                        按比例字体排出来的 IP 很难核对 */}
+                    <span className="min-w-0 flex-1 break-all font-mono text-xs text-fg-muted">
+                      {line.detail}
+                    </span>
+                    <span className="shrink-0 text-xs text-fg-subtle">{line.elapsedMs}ms</span>
+                  </li>
+                ))}
+              </ul>
+              {/* 结论算不出来时这一段整个不出现，不用一句含糊的话占位 */}
+              {diagnosisConclusion && (
+                <p
+                  className={clsx(
+                    'mt-1.5 break-words text-xs',
+                    diagnosisPassed(diagnosis) ? 'text-fg-muted' : 'text-danger'
+                  )}
+                >
+                  {t(diagnosisConclusion)}
+                </p>
               )}
-            >
-              <TestTube size={14} />
-              <span>{isLoading ? t('form.testing') : t('form.testConnection')}</span>
-            </button>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between px-5 py-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleTestConnection}
+                disabled={isLoading}
+                className={clsx(
+                  'flex items-center gap-1.5 rounded-control border border-accent px-3 py-1.5 text-sm text-accent transition-colors',
+                  isLoading ? 'cursor-not-allowed opacity-50' : 'hover:bg-accent-soft'
+                )}
+              >
+                <TestTube size={14} />
+                <span>{isLoading ? t('form.testing') : t('form.testConnection')}</span>
+              </button>
+
+              {/* 只在测试失败之后出现：那才是「断在哪一段」这个问题被问出来的
+                  时刻。成功时摆一个诊断按钮只会让人怀疑是不是没真的成功 */}
+              {testResult && !testSucceeded && (
+                <button
+                  type="button"
+                  onClick={handleDiagnose}
+                  disabled={diagnosing}
+                  className={clsx(
+                    'flex items-center gap-1.5 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg transition-colors',
+                    diagnosing ? 'cursor-not-allowed opacity-50' : 'hover:bg-surface-hover'
+                  )}
+                >
+                  <Stethoscope size={14} />
+                  <span>{diagnosing ? t('diagnosis.running') : t('diagnosis.run')}</span>
+                </button>
+              )}
+            </div>
 
             <div className="flex gap-2">
               <button

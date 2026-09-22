@@ -91,6 +91,7 @@ pub fn run() {
       delete_connection,
       get_connections,
       test_connection,
+      diagnose_connection,
       // 数据库操作命令
       execute_query,
       execute_write_batch,

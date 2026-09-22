@@ -40,7 +40,8 @@ csv = "1.3"
 tauri-plugin-window-state = "=2.2.0"
 urlencoding = "2.1.3"
 keyring = "4.2.0"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+# `net` 是连接诊断要的：解析主机与试连端口（`services/connection_probe.rs`）
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-cli = "2"
