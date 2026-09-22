@@ -482,6 +482,8 @@ localStorage（重估条件写在 `queryHistoryStorage` 模块说明里）；`.s
     sqlx 根本不做转换。
   - 剩余：表结构查询仍走插件，因为它带绑定参数而 `execute_query` 还没有参数支持；
     84495ab 的 CAST 已让它工作，等真需要时再给命令补参数。
+    「CAST 是否都补齐了」此前没有门，现在有：见 4.2「前置重构」那条
+    （`e61654c`），14 段目录查询在真库上逐列比对插件的类型表。
   - 未支持且暂不打算支持：PostgreSQL 的 `BIT` 与 `INET` / `CIDR`，需分别开启 sqlx 的
     `bit-vec` 与 `ipnetwork` feature，在应用 schema 中少见。碰上时会报出点名类型的错误。
   - 判据：`cargo test --test database_smoke` 中的 `mysql_decodes_common_column_types` 与
@@ -1371,6 +1373,38 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     等于把已经可信的路径重新变得不可信。
 - [ ] 为每个新数据库补齐连接、元数据、执行、分页、导入导出和测试
 - [ ] 新数据库达到核心验收标准后才能标记为“已支持”
+- [x] ~~前置重构：前端直连收进后端命令~~ **评估完成（2026-09-23）：当前版本不做，
+      换成一道门钉住那条缝**（`e61654c`）
+  - 先纠正两处事实：一是**只有一个连接池**——后端的 `execute_query` 本来就从
+    插件的 `DbInstances` 里按连接串取池子，前端 `.select` 与后端执行器用的是
+    同一批连接，所以「两套连接各管各的」这个顾虑不存在，差别只在**解码器**。
+    二是锁定的插件版本是 **2.4.1** 不是 2.2.1：它给 PostgreSQL 补了
+    `NUMERIC`，并对不认识的类型退回按字符串硬解；MySQL 与 SQLite 的类型表没动。
+  - 那次重构唯一的**现实**收益是「目录查询不再受插件解码器的限制」，于是先做
+    五分钟的实验看这个限制现在有没有咬人：界面会发的 14 段目录查询（表级六段、
+    对象目录、ER 两段、补全、会话目标、例程定义、序列属性），在
+    `cu` 上的 MySQL 8.4.11 / PostgreSQL 16 跑一遍，逐列按插件的判法比对。
+    **结果：一列都没有越界。** 84495ab 起补的那些 `CAST` / `::text` 全部生效。
+    重构要解决的问题现在没有实例，剩下的理由只有「为第四种库做准备」，而那由
+    上面两条决定——当前结论是不接。
+  - 实验本身留成常驻的门：`*_catalog_results_are_decodable_by_the_plugin`
+    三条（SQLite 那条随 `bun run check` 每次都跑），外加
+    `plugin_decoder_tables_were_read_from_the_locked_version` 读 `Cargo.lock`
+    钉住类型表是照哪个版本抄的。它补的是 2.4 那条教训的同一类缝：冒烟用例拿
+    sqlx 的 `row.get::<T>` 取值，而界面用的是插件的解码器，两者从来没比过。
+    每段查询必须真的返回行，否则那段的列类型根本没被检查。
+  - 反向验证：去掉补全目录 `TABLE_NAME` 的 `CAST` → 精确红在
+    `relation_name: VARBINARY`，与 84495ab 用户报的同一个错；去掉序列属性
+    `data_type` 的 `::text` → 红在 `regtype`；SQLite 夹具不建触发器 → 红在
+    「返回 0 行」；版本常量改成 2.2.1 → 红。
+  - 顺带的发现：去掉 `COLUMN_NAME` 的 `CAST` 并**不会**红——它的排序规则是
+    `utf8mb3_tolower_ci`，不带 BINARY 标志；VARBINARY 只出在 `_bin` 排序规则的
+    列上（`TABLE_NAME` / `TABLE_SCHEMA` / `COLUMN_TYPE`，这跟
+    `lower_case_table_names=0` 有关）。所以有几处 `CAST` 是多余的保险，不删：
+    `lower_case_table_names` 设得不一样的服务器上，排序规则会变。
+  - **重估条件**：两条之一——(1) 这道门在某次加目录查询时红了，而那一列没法
+    靠 `CAST` 绕开；(2) 4.2 决定接一个非 sqlx 的库。只满足「CAST 写得多」
+    不算，那是每条查询一行的成本，重构是跨 8 个文件的成本。
 
 **重估条件（可执行，已就位）**——真的有人来接第四种库时，这几道门会红并
 指出还缺什么，不需要靠记性：
@@ -1379,6 +1413,9 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
   加了驱动但没补五张元数据查询表 → 红，且点名是哪张表。
 - `src/contracts/databaseSupport.test.ts`：界面可选的类型集合与 `Cargo.toml`
   里编进去的驱动不一致 → 红。
+- `database_smoke.rs` 的 `*_catalog_results_are_decodable_by_the_plugin`：新方言
+  若仍走插件的 `select`，它的目录结果列要在插件类型表里；若不走插件，这道门
+  正好标出哪些调用点要先收进后端。
 - 还缺一道、接的时候要补：`identifierDialectFor()` 对不认识的类型回落到
   `sqlite`（双引号）而不是报错。这在「只有三种」时是对的容错，多出第四种
   方言时会变成静默用错引用字符。
