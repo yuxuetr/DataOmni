@@ -6,6 +6,39 @@ use tauri::{AppHandle, State};
 // 全局连接服务状态
 pub type ConnectionServiceState = Mutex<Option<ConnectionService>>;
 
+/// 拿不到服务状态的锁——上一次持有它的线程 panic 了。用户无从下手，
+/// 但也不该看见一句中文
+pub const SERVICE_STATE_UNAVAILABLE: &str = "DATAOMNI_SERVICE_STATE_UNAVAILABLE";
+/// 连接服务建不起来：读不到配置目录、配置文件坏了之类
+pub const SERVICE_INIT_FAILED: &str = "DATAOMNI_SERVICE_INIT_FAILED";
+
+/// 取连接服务，没初始化就地初始化。
+///
+/// 五个命令原来把同一段抄了五遍：加锁、没有就建、还是没有就报「未初始化」。
+/// 抄五遍的代价不只是行数——那一段里有三条错误串，于是同一句话在文件里有
+/// 十五处，而「未初始化」那一支在初始化刚刚成功之后根本不可能走到。
+///
+/// 这里用 `slot.insert(...)` 让「刚建好却还是 None」在类型上就不存在，
+/// 不需要再写一条永远不会执行的错误分支。
+fn with_service<T>(
+  service_state: &State<'_, ConnectionServiceState>,
+  app_handle: &AppHandle,
+  action: impl FnOnce(&mut ConnectionService) -> Result<T, String>,
+) -> Result<T, String> {
+  let mut guard =
+    service_state.lock().map_err(|error| format!("{SERVICE_STATE_UNAVAILABLE}: {error}"))?;
+
+  let service = match &mut *guard {
+    Some(service) => service,
+    slot => slot.insert(
+      ConnectionService::new(app_handle)
+        .map_err(|error| format!("{SERVICE_INIT_FAILED}: {error}"))?,
+    ),
+  };
+
+  action(service)
+}
+
 #[tauri::command]
 pub async fn create_connection(
   config: ConnectionProfile,
@@ -14,20 +47,7 @@ pub async fn create_connection(
 ) -> Result<String, String> {
   println!("🔧 创建数据库连接: {}", config.name);
 
-  let mut service_guard = service_state.lock().map_err(|e| format!("获取服务状态失败: {}", e))?;
-
-  // 初始化服务（如果尚未初始化）
-  if service_guard.is_none() {
-    let service =
-      ConnectionService::new(&app_handle).map_err(|e| format!("初始化连接服务失败: {}", e))?;
-    *service_guard = Some(service);
-  }
-
-  if let Some(service) = service_guard.as_mut() {
-    service.create_connection(config)
-  } else {
-    Err("连接服务未初始化".to_string())
-  }
+  with_service(&service_state, &app_handle, |service| service.create_connection(config))
 }
 
 #[tauri::command]
@@ -39,20 +59,7 @@ pub async fn update_connection(
 ) -> Result<(), String> {
   println!("📝 更新数据库连接: {} (ID: {})", config.name, id);
 
-  let mut service_guard = service_state.lock().map_err(|e| format!("获取服务状态失败: {}", e))?;
-
-  // 初始化服务（如果尚未初始化）
-  if service_guard.is_none() {
-    let service =
-      ConnectionService::new(&app_handle).map_err(|e| format!("初始化连接服务失败: {}", e))?;
-    *service_guard = Some(service);
-  }
-
-  if let Some(service) = service_guard.as_mut() {
-    service.update_connection(&id, config)
-  } else {
-    Err("连接服务未初始化".to_string())
-  }
+  with_service(&service_state, &app_handle, |service| service.update_connection(&id, config))
 }
 
 #[tauri::command]
@@ -63,20 +70,7 @@ pub async fn delete_connection(
 ) -> Result<(), String> {
   println!("🗑️ 删除数据库连接: {}", id);
 
-  let mut service_guard = service_state.lock().map_err(|e| format!("获取服务状态失败: {}", e))?;
-
-  // 初始化服务（如果尚未初始化）
-  if service_guard.is_none() {
-    let service =
-      ConnectionService::new(&app_handle).map_err(|e| format!("初始化连接服务失败: {}", e))?;
-    *service_guard = Some(service);
-  }
-
-  if let Some(service) = service_guard.as_mut() {
-    service.delete_connection(&id)
-  } else {
-    Err("连接服务未初始化".to_string())
-  }
+  with_service(&service_state, &app_handle, |service| service.delete_connection(&id))
 }
 
 #[tauri::command]
@@ -86,20 +80,7 @@ pub async fn get_connections(
 ) -> Result<Vec<ConnectionProfile>, String> {
   println!("📋 获取所有数据库连接");
 
-  let mut service_guard = service_state.lock().map_err(|e| format!("获取服务状态失败: {}", e))?;
-
-  // 初始化服务（如果尚未初始化）
-  if service_guard.is_none() {
-    let service =
-      ConnectionService::new(&app_handle).map_err(|e| format!("初始化连接服务失败: {}", e))?;
-    *service_guard = Some(service);
-  }
-
-  if let Some(service) = service_guard.as_ref() {
-    Ok(service.get_connections())
-  } else {
-    Err("连接服务未初始化".to_string())
-  }
+  with_service(&service_state, &app_handle, |service| Ok(service.get_connections()))
 }
 
 /// 连接失败之后查一遍断在哪一段。
@@ -125,21 +106,8 @@ pub async fn test_connection(
 
   // 校验与读钥匙串都是同步的，锁在这个块里拿了就还——下面建隧道要 await,
   // 而跨 await 持有 std 的 MutexGuard 会把整个命令变成不可 Send
-  let resolved = {
-    let mut service_guard = service_state.lock().map_err(|e| format!("获取服务状态失败: {}", e))?;
-
-    // 初始化服务（如果尚未初始化）
-    if service_guard.is_none() {
-      let service =
-        ConnectionService::new(&app_handle).map_err(|e| format!("初始化连接服务失败: {}", e))?;
-      *service_guard = Some(service);
-    }
-
-    let Some(service) = service_guard.as_ref() else {
-      return Err("连接服务未初始化".to_string());
-    };
-    service.resolve_for_connection(&config)?
-  };
+  let resolved =
+    with_service(&service_state, &app_handle, |service| service.resolve_for_connection(&config))?;
 
   let Some(tunnel) = resolved.ssh_tunnel.clone() else {
     return Ok(resolved.connection_string_via(None));
