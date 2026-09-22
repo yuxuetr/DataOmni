@@ -546,6 +546,7 @@ export const en: Translations = {
   'editor.saveToFileTitle': 'Save this tab\'s SQL to a .sql file ({shortcut})',
   'editor.saveFailed': 'Could not save the file',
   'editor.openFailed': 'Could not open the file',
+  'tab.listLabel': 'Workspace tabs',
   'tab.openSqlFile': 'Open a .sql file',
   'editor.format': 'Format SQL',
   'editor.formatTitle': 'Format SQL, the selection only when there is one ({shortcut})',

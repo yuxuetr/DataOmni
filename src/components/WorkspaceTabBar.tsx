@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import {
   FolderOpen, GitBranch, FileText, History, Pin, Plus, Table, X } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -7,6 +8,7 @@ import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
 import { tabTitle } from '../utils/tabTitle';
 import { SHORTCUTS, formatShortcut } from '../utils/shortcuts';
+import { activatesFocusedTab, nextTabIndex } from '../utils/tabListNavigation';
 
 interface WorkspaceTabBarProps {
   tabs: WorkspaceTab[];
@@ -54,10 +56,56 @@ export function WorkspaceTabBar({
   closedTabCount = 0
 }: WorkspaceTabBarProps) {
   const t = useLanguageStore((state) => state.t);
+  const ordered = orderWorkspaceTabs(tabs);
+  const tabRefs = useRef(new Map<string, HTMLDivElement>());
+  /**
+   * 键盘焦点落在哪个标签上。和 `activeTabId` 分开：方向键只挪焦点，
+   * 按 Enter 才真的切——切到表标签要重新打库，按住方向键滑过去就是一串查询
+   */
+  const [focusedTabId, setFocusedTabId] = useState<string | null>(activeTabId);
+
+  // 从别处切了标签（点击、快捷键、命令面板）时焦点跟过去，
+  // 否则下次 Tab 进标签栏会落在一个早就不相干的位置上
+  useEffect(() => {
+    setFocusedTabId(activeTabId);
+  }, [activeTabId]);
+
+  // 焦点所在的标签被关掉了：退回当前活动标签，别把 tabIndex=0 留在一个
+  // 已经不存在的 id 上——那会让整条标签栏都 Tab 不进去
+  const focusedExists = ordered.some((tab) => tab.id === focusedTabId);
+  const rovingTabId = focusedExists ? focusedTabId : activeTabId ?? ordered[0]?.id ?? null;
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const current = ordered.findIndex((tab) => tab.id === rovingTabId);
+    if (current < 0) {
+      return;
+    }
+
+    if (activatesFocusedTab(event.key)) {
+      event.preventDefault();
+      onActivate(ordered[current].id);
+      return;
+    }
+
+    const next = nextTabIndex(event.key, current, ordered.length);
+    if (next === null) {
+      // 不归标签栏管的键原样放过去，不要 preventDefault
+      return;
+    }
+    event.preventDefault();
+    const target = ordered[next];
+    setFocusedTabId(target.id);
+    tabRefs.current.get(target.id)?.focus();
+  };
 
   return (
-    <div className="flex items-stretch bg-surface-sunken border-b border-line overflow-x-auto">
-      {orderWorkspaceTabs(tabs).map((tab) => {
+    <div
+      role="tablist"
+      aria-label={t('tab.listLabel')}
+      onKeyDown={handleKeyDown}
+      className="flex items-stretch bg-surface-sunken border-b border-line overflow-x-auto"
+    >
+      {ordered.map((tab) => {
         const Icon = TAB_ICONS[tab.kind];
         const isActive = tab.id === activeTabId;
         // 只有一个活跃会话，绑定到其它连接的标签无法执行，先在标签上说明
@@ -67,8 +115,19 @@ export function WorkspaceTabBar({
         return (
           <div
             key={tab.id}
+            ref={(node) => {
+              if (node) {
+                tabRefs.current.set(tab.id, node);
+              } else {
+                tabRefs.current.delete(tab.id);
+              }
+            }}
             role="tab"
             aria-selected={isActive}
+            // roving tabindex：整条标签栏只有一个 Tab 停靠点，进来之后用方向键走。
+            // 每个标签各留一个停靠点的话，开十个标签就要按十次 Tab 才能走过去
+            tabIndex={tab.id === rovingTabId ? 0 : -1}
+            onFocus={() => setFocusedTabId(tab.id)}
             onClick={() => onActivate(tab.id)}
             onContextMenu={(event) => {
               event.preventDefault();

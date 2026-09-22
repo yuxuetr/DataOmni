@@ -565,6 +565,7 @@ export const zh = {
   'editor.saveToFileTitle': '把当前标签的 SQL 存成 .sql 文件（{shortcut}）',
   'editor.saveFailed': '保存文件失败',
   'editor.openFailed': '打开文件失败',
+  'tab.listLabel': '工作区标签',
   'tab.openSqlFile': '打开 .sql 文件',
   'editor.format': '格式化 SQL',
   'editor.formatTitle': '格式化 SQL，有选区时只排选区（{shortcut}）',
