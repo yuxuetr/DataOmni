@@ -66,6 +66,23 @@ describe('整表导出的 SQL', () => {
     expect(sql).toContain('SELECT `id`, `name`, `secret` FROM `public`.`orders`');
   });
 
+  /**
+   * 这一条钉的是一次真实的白屏，不是一个假想的边界。
+   *
+   * 表结构读不到（表被别人删了、或者账号看不到 information_schema）时，
+   * `paginationOrder` 是 null。此前调用方写的是
+   * `paginationOrder ?? createTablePaginationOrder(columns)`，而那个函数在列
+   * 为空时会抛；它又恰好在 useMemo 里，也就是**渲染期**。渲染期抛出去的异常
+   * 会把整棵 React 树卸掉——不是这个标签页报错，是整个窗口变白，其它标签和
+   * 没保存的草稿一起没了。
+   *
+   * 这条断言同时是一道编译期的门：谁把 `paginationOrder` 的类型改回非空，
+   * 这里传 null 就过不了 `bun run typecheck`，逼着重新想一遍渲染期怎么办。
+   */
+  it('还没有分页排序时返回 null，而不是现造一个', () => {
+    expect(buildTableExportQuery(request({ paginationOrder: null }))).toBeNull();
+  });
+
   it('一列都不可见时返回 null，而不是拼出一条不合法的 SELECT', () => {
     // `SELECT  FROM t` 会在点下导出之后才报语法错误，那时用户已经选完路径了
     expect(buildTableExportQuery(request({ visibleColumns: [] }))).toBeNull();

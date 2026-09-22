@@ -311,10 +311,20 @@ export default function TableDataViewer({
         tableColumnsParams(connection.db_type, tableName, schema)
       );
       const columns = toColumnInfo(columnsResult);
+      // 一列都读不到不是「一张没有列的表」——SQL 里没有这种表。真实的原因是
+      // 表已经被别人删了（对象树缓存 5 分钟，这个窗口一点都不窄），或者当前
+      // 账号看不到它的结构。当成空结构放过去，下游拿到的是一张画不出表头的
+      // 空网格，而用户得不到任何解释
+      if (columns.length === 0) {
+        setError(t('table.noColumnsRead'));
+        return null;
+      }
 
       const loadedSchema = { columns };
       setTableSchema(loadedSchema);
       setTableSchemaKey(currentTableKey);
+      // 排序在这里就定下来：结构页上从没取过数，但「导出整表」在那儿也要能用
+      setPaginationOrder(createTablePaginationOrder(columns, dialect));
       // 不 await：列已经可以画了，索引和约束到了再补上
       void loadSchemaObjects();
       return loadedSchema;
@@ -341,7 +351,10 @@ export default function TableDataViewer({
         ? tableSchema
         : await loadTableSchema();
       if (!loadedSchema) {
-        throw new Error(t('table.schemaLoadFailedStopped'));
+        // 这里不再抛一条泛泛的「无法加载表结构」：loadTableSchema 的两条失败
+        // 路径都已经把**原因**写进 error 了（读不到列 / 驱动报的错），再抛一条
+        // 只会把原因盖掉，留给用户一句没有下一步动作的话
+        return;
       }
       const order = createTablePaginationOrder(loadedSchema.columns, dialect);
       setPaginationOrder(order);
@@ -543,7 +556,7 @@ export default function TableDataViewer({
       columns: tableSchema.columns,
       visibleColumns: visibleIndexes.map((index) => columnNames[index] ?? ''),
       filters: appliedFilters,
-      paginationOrder: paginationOrder ?? createTablePaginationOrder(tableSchema.columns, dialect),
+      paginationOrder,
       sort,
       dialect
     });
