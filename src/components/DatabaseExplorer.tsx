@@ -12,15 +12,19 @@ import {
   RefreshCw,
   Loader,
   AlertCircle,
-  Info
+  Info,
+  Search,
+  X
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useLanguageStore } from '../stores/languageStore';
 import {
   buildObjectTree,
+  filterObjects,
   KIND_LABEL_KEYS,
   isBrowsableKind,
   normalizeObjectRows,
+  renderedTreeObjects,
   showsSchemaLevel,
   type DatabaseObject,
   type DatabaseObjectKind,
@@ -78,6 +82,8 @@ export default function DatabaseExplorer({
     { object: DatabaseObject; position: { x: number; y: number } } | null
   >(null);
   const [copyError, setCopyError] = useState<string | null>(null);
+  // 筛选词。不进 store——它属于「此刻正在找什么」，换个连接就该没了
+  const [filter, setFilter] = useState('');
 
   const t = useLanguageStore((state) => state.t);
   const kindLabel = (kind: DatabaseObjectKind) => t(KIND_LABEL_KEYS[kind]);
@@ -168,6 +174,7 @@ export default function DatabaseExplorer({
     console.log('🔄 DatabaseExplorer: 连接ID变化，清理旧状态:', connectionId);
     setError(null);
     setExpandedNodes(new Set());
+    setFilter('');
   }, [connectionId]);
 
   // 调试：监控连接状态变化
@@ -191,7 +198,11 @@ export default function DatabaseExplorer({
   }
 
   const objects = cachedMetadata && !isMetadataStale ? cachedMetadata.objects : [];
-  const tree = buildObjectTree(objects, showsSchemaLevel(connection.db_type), kindLabel);
+  // 先筛再建树：分组是按筛完的结果分的，所以标题上的计数就是命中数，
+  // 而一个都没命中的类型根本不会出现——不用再画一行「函数 0」
+  const matching = filterObjects(objects, filter);
+  const filtering = filter.trim().length > 0;
+  const tree = buildObjectTree(matching, showsSchemaLevel(connection.db_type), kindLabel);
 
   const toggleNode = (key: string) => {
     setExpandedNodes(current => {
@@ -295,6 +306,33 @@ export default function DatabaseExplorer({
         </div>
       </div>
 
+      {/* 筛选框。一个几千个对象的库里，滚动不是找东西的方式——实测一组 5000 张表
+          在侧边栏里要滚 185 屏，而后面的「视图」「函数」两组连标题都看不见 */}
+      {objects.length > 0 && (
+        <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+          <Search size={13} className="shrink-0 text-fg-subtle" />
+          <input
+            type="text"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            placeholder={t('explorer.filterPlaceholder')}
+            aria-label={t('explorer.filter')}
+            className="min-w-0 flex-1 bg-transparent text-sm text-fg outline-none placeholder:text-fg-subtle"
+          />
+          {filtering && (
+            <button
+              type="button"
+              onClick={() => setFilter('')}
+              title={t('explorer.filterClear')}
+              aria-label={t('explorer.filterClear')}
+              className="shrink-0 text-fg-subtle transition-colors hover:text-fg"
+            >
+              <X size={13} />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* 错误提示 */}
       {error && (
         <div className="p-3 bg-danger-soft border-b border-danger-line">
@@ -327,9 +365,15 @@ export default function DatabaseExplorer({
         ) : tree.length === 0 ? (
           <div className="p-4 text-center text-fg-muted text-sm">
             <Info className="mx-auto mb-2" size={16} />
-            {/* 「暂无对象」是在说这个库是空的。没连上时说这句是假话，
-                而且会让人去找一个根本不存在的空库问题 */}
-            <p>{database ? t('explorer.empty') : t('explorer.notConnected')}</p>
+            {/* 三句话要分清楚：筛没了、库是空的、没连上。都写成「暂无对象」，
+                会让一个打错字的人去找一个根本不存在的空库问题 */}
+            <p>
+              {filtering
+                ? t('explorer.filterEmpty', { query: filter.trim() })
+                : database
+                  ? t('explorer.empty')
+                  : t('explorer.notConnected')}
+            </p>
           </div>
         ) : (
           <div className="p-2">
@@ -339,6 +383,8 @@ export default function DatabaseExplorer({
                 node={node}
                 depth={0}
                 expandedNodes={expandedNodes}
+                // 筛选时一律展开：筛完还要自己一层层点开，等于没筛
+                forceExpand={filtering}
                 onToggle={toggleNode}
                 onSelect={handleObjectClick}
                 onContextMenu={(object, position) => setObjectMenu({ object, position })}
@@ -404,6 +450,7 @@ function ObjectTreeGroup({
   node,
   depth,
   expandedNodes,
+  forceExpand,
   onToggle,
   onSelect,
   onContextMenu
@@ -411,11 +458,14 @@ function ObjectTreeGroup({
   node: ObjectTreeNode;
   depth: number;
   expandedNodes: Set<string>;
+  forceExpand: boolean;
   onToggle: (key: string) => void;
   onSelect: (object: DatabaseObject) => void;
   onContextMenu: (object: DatabaseObject, position: { x: number; y: number }) => void;
 }) {
-  const expanded = expandedNodes.has(node.key);
+  const t = useLanguageStore((state) => state.t);
+  const expanded = forceExpand || expandedNodes.has(node.key);
+  const { shown, hidden } = renderedTreeObjects(node.objects);
 
   return (
     <div className="mb-1">
@@ -439,6 +489,7 @@ function ObjectTreeGroup({
               node={child}
               depth={depth + 1}
               expandedNodes={expandedNodes}
+              forceExpand={forceExpand}
               onToggle={onToggle}
               onSelect={onSelect}
               onContextMenu={onContextMenu}
@@ -449,7 +500,7 @@ function ObjectTreeGroup({
 
       {expanded && !node.children && (
         <div className="mt-0.5 space-y-0.5">
-          {node.objects.map(object => (
+          {shown.map(object => (
             <button
               key={`${object.kind}:${object.id}`}
               onClick={() => onSelect(object)}
@@ -465,6 +516,16 @@ function ObjectTreeGroup({
               <span className="truncate">{object.name}</span>
             </button>
           ))}
+          {/* 被上限挡住的部分要说出来。少画几百行是性能取舍，而让人以为
+              「这个库里没有这张表」是一个会让他去改连接配置的错误结论 */}
+          {hidden > 0 && (
+            <p
+              className="px-2 py-1 text-xs text-fg-subtle"
+              style={{ paddingLeft: `${28 + depth * 12}px` }}
+            >
+              {t('explorer.moreHidden', { count: hidden })}
+            </p>
+          )}
         </div>
       )}
     </div>

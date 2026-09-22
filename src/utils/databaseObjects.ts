@@ -74,6 +74,75 @@ export function normalizeObjectRows(
 }
 
 /**
+ * 一个分组里最多画多少项。
+ *
+ * 这个数是量出来的，不是拍的。同一套量法（点一下分组标题，等到节点全部落地，
+ * 取 9 次中位数）在 MySQL 形态的对象树上：
+ *
+ * | 单组项数 | 展开中位数 | 页面节点数 |
+ * | --- | --- | --- |
+ * | 200 | 24.8ms | 1,699 |
+ * | 500 | 41.7ms | 3,799 |
+ * | 2000 | 183.5ms | 14,299 |
+ * | 5000 | 300.1ms | 35,299 |
+ *
+ * 200 是唯一落在一帧预算里的档位，而且这还是 Chrome 里的开发构建，打包后的
+ * WebView 只会更慢。和网格的 `MAX_UNVIRTUALIZED_ROWS` 同值不是巧合——两处
+ * 问的是同一个问题：一次交互能画多少个节点。
+ */
+export const MAX_RENDERED_TREE_ITEMS = 200;
+
+export interface RenderedTreeObjects {
+  shown: DatabaseObject[];
+  /**
+   * 被上限挡住的个数。
+   *
+   * 必须画出来。悄悄少掉几百个对象，比多等 300ms 严重得多：慢是看得见的，
+   * 而「这个库里没有这张表」是一个会让人去改连接配置的错误结论。
+   */
+  hidden: number;
+}
+
+export function renderedTreeObjects(
+  objects: readonly DatabaseObject[]
+): RenderedTreeObjects {
+  return {
+    shown: objects.slice(0, MAX_RENDERED_TREE_ITEMS),
+    hidden: Math.max(0, objects.length - MAX_RENDERED_TREE_ITEMS)
+  };
+}
+
+/**
+ * 按名字筛选对象。匹配限定名（`schema.name`），所以输 schema 名能把那个 schema
+ * 整个筛出来。
+ *
+ * **是子串，不是命令面板那套子序列匹配。** 一开始复用了 `matchFuzzy`，理由是
+ * 「一棵树里两种搜索规则记不住」；写完测试才发现输 `or` 会把 `customers` 也留下
+ * （c-u-s-t-**o**-m-e-**r**-s 顺序上确实命中）。面板能容忍这种宽松，是因为它按
+ * 分数排序、只露前 50 条，噪音会沉下去；而树里结果保持字母序、一条不漏地铺开，
+ * 噪音就摊在每一屏里。而人筛东西时第一个输入的恰恰是两三个字母。
+ *
+ * 两个控件两件事：树是「把看得见的东西缩窄」，面板是「凭印象找一个东西」。
+ *
+ * 顺序原样保留，不按相似度重排——树是按名字排好的，筛一下就跳位置会让人
+ * 每次都要重新找一遍自己刚刚看到的那一行。
+ */
+export function filterObjects(
+  objects: readonly DatabaseObject[],
+  query: string
+): DatabaseObject[] {
+  const normalized = query.trim().toLowerCase();
+  if (normalized.length === 0) {
+    return [...objects];
+  }
+  return objects.filter((object) =>
+    (object.schema ? `${object.schema}.${object.name}` : object.name)
+      .toLowerCase()
+      .includes(normalized)
+  );
+}
+
+/**
  * `kindLabel` 由调用方传入而不是在这里查表：这个函数是纯的、可单测的，
  * 把翻译塞进来会让它依赖当前语言，测试也要跟着起一个 store。
  */
