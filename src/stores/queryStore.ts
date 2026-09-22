@@ -376,15 +376,6 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       const safeConnectionString = connectionString.replace(/:([^:@]+)@/, ':***@');
       console.log('🔗 连接到数据库:', safeConnectionString);
       
-      // 检查Tauri SQL插件端口限制
-      const portMatch = connectionString.match(/:(\d+)\//);
-      if (portMatch) {
-        const port = parseInt(portMatch[1]);
-        if (port > 32767) {
-          throw new Error(translateNow('error.portTooLargeShort', { port }));
-        }
-      }
-      
       const db = await Database.load(connectionString);
       
       set({ 
@@ -406,11 +397,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         // 尝试从连接字符串中提取端口号
         const portMatch = connectionString.match(/:(\d+)\//);
         const port = portMatch ? parseInt(portMatch[1]) : 0;
-        if (port > 32767) {
-          errorMessage = translateNow('error.portTooLargeShort', { port });
-        } else {
-          errorMessage = translateNow('error.portOutOfRange', { port: port || '?' });
-        }
+        errorMessage = translateNow('error.portOutOfRange', { port: port || '?' });
       }
       
       set({ 

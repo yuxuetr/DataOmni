@@ -797,8 +797,6 @@ export const en: Translations = {
   'error.updateProfileFailed': 'Failed to update the connection',
   'error.deleteProfileFailed': 'Failed to delete the connection',
   'error.invalidPort': 'Invalid port: {port}. It must be between 1 and 65535.',
-  'error.portTooLargeDetail': 'Port compatibility error: port {port} is outside the range the Tauri SQL plugin supports (max 32767). This comes from the underlying driver using a 16-bit signed integer.\n\nOptions:\n1. Ask the database administrator for a port in the standard range (1-32767)\n2. Use SSH port forwarding: ssh -L 3306:{host}:{port} user@jump-server\n3. Forward the port with a local proxy such as socat\n4. Ask the administrator to put a load balancer or proxy in front',
-  'error.portTooLargeShort': 'Port compatibility problem: {port}. The current driver does not support ports above 32767. Ask the database administrator for a port in the standard range, or check whether a port mapping is available.',
   'error.portOutOfRange': 'Invalid port: {port}. Check that 1) it is within 1-65535, 2) it is not blocked by a firewall, and 3) the database is actually listening on it.',
   'error.connectFailed': 'Could not connect to the database',
   'error.validateConfigFailed': 'The connection settings failed validation',

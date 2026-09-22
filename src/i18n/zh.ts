@@ -824,8 +824,6 @@ export const zh = {
   'error.updateProfileFailed': '更新连接失败',
   'error.deleteProfileFailed': '删除连接失败',
   'error.invalidPort': '端口号无效: {port}。端口号必须在 1-65535 范围内。',
-  'error.portTooLargeDetail': '端口兼容性错误：端口 {port} 超出了 Tauri SQL 插件支持的范围（最大 32767）。这是底层驱动使用 16 位有符号整数的限制。\n\n解决方案：\n1. 联系数据库管理员使用标准端口范围（1-32767）\n2. 使用 SSH 端口转发：ssh -L 3306:{host}:{port} user@jump-server\n3. 使用本地代理服务（如 socat）进行端口转发\n4. 请求数据库管理员配置负载均衡器或代理',
-  'error.portTooLargeShort': '端口号兼容性问题: {port}。当前数据库驱动不支持大于 32767 的端口号。建议联系数据库管理员使用标准端口范围，或检查是否存在端口映射方案。',
   'error.portOutOfRange': '端口号无效: {port}。请检查：1) 端口是否在有效范围内 (1-65535)，2) 端口是否被防火墙阻止，3) 数据库服务是否在此端口运行。',
   'error.connectFailed': '数据库连接失败',
   'error.validateConfigFailed': '连接配置验证失败',

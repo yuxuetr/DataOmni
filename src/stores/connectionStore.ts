@@ -6,6 +6,7 @@ import {
   type ConnectionEnvironment,
   type TlsMode
 } from '../contracts/connection';
+import { isUsablePort } from '../utils/connectionPort';
 import { describeError } from '../utils/describeError';
 import { translateNow } from './languageStore';
 
@@ -268,21 +269,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         config.db_type !== DatabaseType.DuckDB;
 
       // 前端预验证
-      if (requiresNetworkPort && (config.port > 65535 || config.port < 1)) {
+      if (requiresNetworkPort && !isUsablePort(config.port)) {
         throw new Error(translateNow('error.invalidPort', { port: config.port }));
       }
-      
-      // 检查网络数据库的Tauri SQL插件端口限制
-      if (requiresNetworkPort && config.port > 32767) {
-        const errorMessage = translateNow('error.portTooLargeDetail', {
-          port: config.port,
-          host: config.host
-        });
-        
-        console.error(`❌ ${errorMessage}`);
-        throw new Error(errorMessage);
-      }
-      
+
       // 先进行后端验证
       const connectionString = await invoke<string>('test_connection', { config });
       
@@ -304,11 +294,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
         // 特殊处理端口错误
         let finalErrorMessage = dbErrorMessage;
         if (dbErrorMessage.includes('invalid port number')) {
-          if (config.port > 32767) {
-            finalErrorMessage = translateNow('error.portTooLargeShort', { port: config.port });
-          } else {
-            finalErrorMessage = translateNow('error.portOutOfRange', { port: config.port });
-          }
+          finalErrorMessage = translateNow('error.portOutOfRange', { port: config.port });
         }
         
         set({ 
