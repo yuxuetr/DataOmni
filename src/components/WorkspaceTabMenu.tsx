@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react';
 import { Copy, Pin, PinOff, X } from 'lucide-react';
 import type { WorkspaceTab } from '../contracts/workspace';
 import { useLanguageStore } from '../stores/languageStore';
+import { useContextMenu } from '../hooks/useContextMenu';
 
 interface WorkspaceTabMenuProps {
   tab: WorkspaceTab;
@@ -22,27 +22,7 @@ export function WorkspaceTabMenu({
   onDismiss
 }: WorkspaceTabMenuProps) {
   const t = useLanguageStore((state) => state.t);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handlePointerDown = (event: MouseEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) {
-        onDismiss();
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onDismiss();
-      }
-    };
-
-    window.addEventListener('mousedown', handlePointerDown);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('mousedown', handlePointerDown);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [onDismiss]);
+  const { ref: menuRef, style } = useContextMenu<HTMLDivElement>(position, onDismiss);
 
   const itemClass = 'flex w-full items-center gap-2 px-3 py-1.5 text-sm text-left text-fg hover:bg-surface-hover';
 
@@ -50,11 +30,7 @@ export function WorkspaceTabMenu({
     <div
       ref={menuRef}
       role="menu"
-      // 贴着鼠标位置显示；宽度固定，靠右边界时由 max 限制避免溢出窗口
-      style={{
-        left: Math.min(position.x, window.innerWidth - 180),
-        top: Math.min(position.y, window.innerHeight - 120)
-      }}
+      style={style}
       className="fixed z-50 w-44 py-1 bg-surface border border-line rounded-control shadow-lg"
     >
       <button type="button" role="menuitem" className={itemClass} onClick={onTogglePinned}>

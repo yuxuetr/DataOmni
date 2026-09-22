@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useLanguageStore } from '../stores/languageStore';
+import { useContextMenu } from '../hooks/useContextMenu';
 import { SHORTCUTS, formatShortcut } from '../utils/shortcuts';
 
 export interface GridContextTarget {
@@ -31,39 +31,7 @@ export function GridContextMenu({
   onClose
 }: GridContextMenuProps) {
   const t = useLanguageStore((state) => state.t);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState({ left: target.x, top: target.y });
-
-  // 贴着视口边缘右击时，菜单会有一半在屏幕外而且滚不到
-  useLayoutEffect(() => {
-    const panel = panelRef.current;
-    if (!panel) {
-      return;
-    }
-    const { width, height } = panel.getBoundingClientRect();
-    setPosition({
-      left: Math.max(4, Math.min(target.x, window.innerWidth - width - 4)),
-      top: Math.max(4, Math.min(target.y, window.innerHeight - height - 4))
-    });
-  }, [target.x, target.y]);
-
-  useEffect(() => {
-    const dismiss = () => onClose();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onClose();
-      }
-    };
-    document.addEventListener('mousedown', dismiss);
-    document.addEventListener('keydown', onKeyDown);
-    // 滚动会让菜单留在原地而目标格跑掉，指向的东西就不对了
-    window.addEventListener('scroll', dismiss, true);
-    return () => {
-      document.removeEventListener('mousedown', dismiss);
-      document.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('scroll', dismiss, true);
-    };
-  }, [onClose]);
+  const { ref: panelRef, style } = useContextMenu<HTMLDivElement>(target, onClose);
 
   const hint = formatShortcut;
   const items: Array<{ label: string; hint?: string; run: () => void }> = [
@@ -76,9 +44,8 @@ export function GridContextMenu({
   return (
     <div
       ref={panelRef}
-      style={{ left: `${position.left}px`, top: `${position.top}px` }}
+      style={style}
       className="fixed z-50 min-w-48 rounded-control border border-line-strong bg-surface py-1 shadow-lg"
-      onMouseDown={(event) => event.stopPropagation()}
     >
       {items.map((item) => (
         <button
