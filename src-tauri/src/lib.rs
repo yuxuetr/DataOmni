@@ -11,11 +11,6 @@ pub mod services;
 
 use commands::{connection_commands::ConnectionServiceState, *};
 
-#[tauri::command]
-fn greet(name: &str) -> String {
-  format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -90,7 +85,6 @@ pub fn run() {
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
-      greet,
       // 连接管理命令
       create_connection,
       update_connection,
@@ -98,13 +92,6 @@ pub fn run() {
       get_connections,
       test_connection,
       // 数据库操作命令
-      get_databases_query,
-      get_tables_query,
-      get_table_columns_query,
-      get_table_data_query,
-      get_table_list_query,
-      get_database_metadata_query,
-      get_table_quick_view_query,
       execute_query,
       execute_write_batch,
       export_query_to_file,
@@ -117,7 +104,6 @@ pub fn run() {
       release_database_session,
       get_session_transaction,
       explain_query,
-      validate_query,
       get_schema_metadata_queries,
       get_object_catalog_queries,
       get_er_diagram_queries,
@@ -130,16 +116,4 @@ pub fn run() {
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn test_greet_function() {
-    let result = greet("世界");
-    assert!(result.contains("世界"));
-    assert!(result.contains("Hello"));
-  }
 }
