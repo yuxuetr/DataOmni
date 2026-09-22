@@ -3,7 +3,7 @@ import { Check, Copy, Loader2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useQueryStore } from '../stores/queryStore';
 import { describeError } from '../utils/describeError';
-import { KIND_LABEL_KEYS, type DatabaseObject } from '../utils/databaseObjects';
+import { KIND_BADGE_KEYS, type DatabaseObject } from '../utils/databaseObjects';
 import { useLanguageStore } from '../stores/languageStore';
 import type { ConnectionProfile } from '../contracts';
 import type { ObjectCatalogQueries } from './DatabaseExplorer';
@@ -160,7 +160,7 @@ export function ObjectDefinitionDialog({
             {object.schema ? `${object.schema}.` : ''}{object.name}
           </h2>
           <span className="shrink-0 rounded-control bg-accent-soft px-1.5 py-0.5 text-xs text-accent">
-            {t(KIND_LABEL_KEYS[object.kind])}
+            {t(KIND_BADGE_KEYS[object.kind])}
           </span>
           {copyText && (
             <button

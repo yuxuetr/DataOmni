@@ -65,6 +65,12 @@ export const en: Translations = {
   'objectKind.function': 'Functions',
   'objectKind.procedure': 'Procedures',
   'objectKind.sequence': 'Sequences',
+  'objectKindOne.table': 'Table',
+  'objectKindOne.view': 'View',
+  'objectKindOne.materialized-view': 'Materialized view',
+  'objectKindOne.function': 'Function',
+  'objectKindOne.procedure': 'Procedure',
+  'objectKindOne.sequence': 'Sequence',
 
   'objectDefinition.loading': 'Reading definition…',
   'objectDefinition.empty': 'The database returned no definition.',

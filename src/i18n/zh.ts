@@ -76,6 +76,13 @@ export const zh = {
   'objectKind.function': '函数',
   'objectKind.procedure': '存储过程',
   'objectKind.sequence': '序列',
+  // 指着一个对象时用的名字。中文与分组抬头同形，英文那边是单数
+  'objectKindOne.table': '表',
+  'objectKindOne.view': '视图',
+  'objectKindOne.materialized-view': '物化视图',
+  'objectKindOne.function': '函数',
+  'objectKindOne.procedure': '存储过程',
+  'objectKindOne.sequence': '序列',
 
   // 对象定义弹窗
   'objectDefinition.loading': '正在读取定义…',

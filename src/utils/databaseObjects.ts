@@ -17,6 +17,22 @@ export const KIND_LABEL_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
   sequence: 'objectKind.sequence'
 };
 
+/**
+ * 指着**一个**对象时用的名字。
+ *
+ * 上面那份是分组抬头，英文是复数（Views、Sequences）。拿它去标一个对象，
+ * 英文界面上会印出 `public.monthly_revenue [Views]`——一个视图被标成
+ * 「视图们」。中文两份一样，所以这处错误只在英文界面上看得见。
+ */
+export const KIND_BADGE_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
+  table: 'objectKindOne.table',
+  view: 'objectKindOne.view',
+  'materialized-view': 'objectKindOne.materialized-view',
+  function: 'objectKindOne.function',
+  procedure: 'objectKindOne.procedure',
+  sequence: 'objectKindOne.sequence'
+};
+
 /** 分组次序。按「最常点开的在最上面」排，不按字母。 */
 const KIND_ORDER: DatabaseObjectKind[] = [
   'table',

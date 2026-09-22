@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DatabaseType } from '../contracts/connection';
 import {
+  KIND_BADGE_KEYS,
   KIND_LABEL_KEYS,
   MAX_RENDERED_TREE_ITEMS,
   buildObjectTree,
@@ -148,6 +149,9 @@ describe('KIND_LABEL_KEYS', () => {
   it('每种类型都有对应的文案键', () => {
     for (const kind of ['table', 'view', 'materialized-view', 'function', 'procedure', 'sequence'] as const) {
       expect(KIND_LABEL_KEYS[kind]).toBe(`objectKind.${kind}`);
+      // 分组抬头是复数、标一个对象是单数。混用的后果是英文界面上
+      // 一个视图被标成「Views」
+      expect(KIND_BADGE_KEYS[kind]).toBe(`objectKindOne.${kind}`);
     }
   });
 });
