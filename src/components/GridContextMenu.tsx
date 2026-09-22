@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useLanguageStore } from '../stores/languageStore';
+import { SHORTCUTS, formatShortcut } from '../utils/shortcuts';
 
 export interface GridContextTarget {
   row: number;
@@ -64,11 +65,12 @@ export function GridContextMenu({
     };
   }, [onClose]);
 
+  const hint = formatShortcut;
   const items: Array<{ label: string; hint?: string; run: () => void }> = [
-    { label: t('grid.copySelection'), hint: '⌘C', run: () => onCopy(false) },
-    { label: t('grid.copyWithHeaders'), hint: '⇧⌘C', run: () => onCopy(true) },
-    { label: t('grid.copyRow'), hint: '⇧Space', run: () => onCopyRow(target.row) },
-    { label: t('grid.copyColumn'), hint: '⌥Space', run: () => onCopyColumn(target.column) }
+    { label: t('grid.copySelection'), hint: hint(SHORTCUTS.copySelection), run: () => onCopy(false) },
+    { label: t('grid.copyWithHeaders'), hint: hint(SHORTCUTS.copyWithHeaders), run: () => onCopy(true) },
+    { label: t('grid.copyRow'), hint: hint(SHORTCUTS.copyRow), run: () => onCopyRow(target.row) },
+    { label: t('grid.copyColumn'), hint: hint(SHORTCUTS.copyColumn), run: () => onCopyColumn(target.column) }
   ];
 
   return (

@@ -13,6 +13,7 @@ import {
 } from '../utils/cellSelection';
 import { describeError } from '../utils/describeError';
 import { translateNow } from '../stores/languageStore';
+import { SHORTCUTS, hasCommandModifier, matchesShortcut } from '../utils/shortcuts';
 
 export interface CellSelectionController {
   selection: CellSelection | null;
@@ -93,12 +94,13 @@ export function useCellSelection(
   }, []);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
-    const commandKey = event.metaKey || event.ctrlKey;
+    const commandKey = hasCommandModifier(event);
 
-    if (commandKey && event.key.toLowerCase() === 'c') {
+    const withHeaders = matchesShortcut(event, SHORTCUTS.copyWithHeaders);
+    if (withHeaders || matchesShortcut(event, SHORTCUTS.copySelection)) {
       if (selection) {
         event.preventDefault();
-        void copySelection(selection, event.shiftKey);
+        void copySelection(selection, withHeaders);
       }
       return;
     }
@@ -124,7 +126,7 @@ export function useCellSelection(
       return;
     }
 
-    if (commandKey && event.key.toLowerCase() === 'a') {
+    if (matchesShortcut(event, SHORTCUTS.selectAll)) {
       event.preventDefault();
       setSelection(selectAllCells({ rowCount, columnCount }));
       return;

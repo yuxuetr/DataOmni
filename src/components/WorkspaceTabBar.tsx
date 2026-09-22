@@ -6,6 +6,7 @@ import type { ConnectionEnvironment } from '../contracts';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
 import { tabTitle } from '../utils/tabTitle';
+import { SHORTCUTS, formatShortcut } from '../utils/shortcuts';
 
 interface WorkspaceTabBarProps {
   tabs: WorkspaceTab[];
@@ -145,7 +146,10 @@ export function WorkspaceTabBar({
         <button
           type="button"
           onClick={onReopenClosedTab}
-          title={t('tab.reopenClosedTitle', { count: closedTabCount })}
+          title={t('tab.reopenClosedTitle', {
+            count: closedTabCount,
+            shortcut: formatShortcut(SHORTCUTS.reopenClosedTab)
+          })}
           aria-label={t('tab.reopenClosed')}
           className="flex items-center gap-1 px-3 text-fg-muted hover:bg-surface-hover hover:text-fg"
         >

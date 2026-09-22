@@ -28,6 +28,7 @@ import type { EditorView } from '@codemirror/view';
 import { useThemeStore } from '../stores/themeStore';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { PanelResizeHandle } from './PanelResizeHandle';
+import { SHORTCUTS, formatShortcut, matchesShortcut } from '../utils/shortcuts';
 import { DestructiveStatementPrompt } from './DestructiveStatementPrompt';
 import { QueryPlanDialog } from './QueryPlanDialog';
 import { highestRiskNeedingConfirmation, type StatementRisk } from '../utils/statementRisk';
@@ -252,33 +253,29 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
   };
 
   const handleEditorKeyDown = (event: React.KeyboardEvent) => {
-    if (!(event.metaKey || event.ctrlKey)) {
-      return;
-    }
-
-    if (!event.shiftKey && event.key.toLowerCase() === 's') {
+    if (matchesShortcut(event, SHORTCUTS.saveToFile)) {
       event.preventDefault();
       void saveSqlToFile();
       return;
     }
 
-    // 按住 Shift 时 event.key 是 'F'，所以要先归一化
-    if (event.shiftKey && event.key.toLowerCase() === 'f') {
+    if (matchesShortcut(event, SHORTCUTS.formatSql)) {
       event.preventDefault();
       formatEditorContent();
       return;
     }
 
-    if (event.key !== 'Enter') {
-      return;
-    }
-
-    event.preventDefault();
-    if (event.shiftKey) {
+    if (matchesShortcut(event, SHORTCUTS.runAll)) {
+      event.preventDefault();
       runAllGuarded();
       return;
     }
 
+    if (!matchesShortcut(event, SHORTCUTS.runCurrent)) {
+      return;
+    }
+
+    event.preventDefault();
     const selection = editorViewRef.current?.state.selection.main;
     if (selection && !selection.empty) {
       executeSelectedSql();
@@ -473,7 +470,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
             onClick={() => void saveSqlToFile()}
             disabled={sqlInput.trim() === ''}
             aria-label={t('editor.saveToFile')}
-            title={t('editor.saveToFileTitle')}
+            title={t('editor.saveToFileTitle', { shortcut: formatShortcut(SHORTCUTS.saveToFile) })}
             className="flex items-center rounded-control border border-line-strong p-1.5 text-fg-muted transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:border-line disabled:text-fg-subtle"
           >
             <Save size={14} />
@@ -484,7 +481,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
             onClick={formatEditorContent}
             disabled={!formatterLanguage}
             aria-label={t('editor.format')}
-            title={t('editor.formatTitle')}
+            title={t('editor.formatTitle', { shortcut: formatShortcut(SHORTCUTS.formatSql) })}
             className="flex items-center rounded-control border border-line-strong p-1.5 text-fg-muted transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:border-line disabled:text-fg-subtle"
           >
             <AlignLeft size={14} />
@@ -529,7 +526,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
             onClick={executeCurrentStatement}
             disabled={statements.length === 0 || isConnecting}
             className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors disabled:text-fg-subtle disabled:border-line disabled:cursor-not-allowed"
-            title={t('editor.runCurrentTitle')}
+            title={t('editor.runCurrentTitle', { shortcut: formatShortcut(SHORTCUTS.runCurrent) })}
           >
             <Play size={14} />
             <span>{t('editor.runCurrent')}</span>
@@ -541,7 +538,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
           <button
             onClick={runAllGuarded}
             disabled={statements.length === 0 || isConnecting}
-            title={t('editor.runAllTitle')}
+            title={t('editor.runAllTitle', { shortcut: formatShortcut(SHORTCUTS.runAll) })}
             className={clsx(
               "flex items-center space-x-2 px-4 py-1.5 text-sm rounded-control transition-colors",
               statements.length === 0 || isConnecting

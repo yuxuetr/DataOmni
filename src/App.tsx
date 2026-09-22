@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { clsx } from 'clsx';
+import { SHORTCUTS, matchesShortcut } from './utils/shortcuts';
 import { PanelLeftOpen } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Sidebar } from './components/Sidebar';
@@ -157,21 +158,21 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 't') {
+      if (matchesShortcut(event, SHORTCUTS.reopenClosedTab)) {
         event.preventDefault();
         reopenClosedTab();
         return;
       }
 
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      if (matchesShortcut(event, SHORTCUTS.commandPalette)) {
         event.preventDefault();
         setPaletteOpen((open) => !open);
         return;
       }
 
-      // Cmd/Ctrl+B 折叠侧边栏。不带 shift——带 shift 的 B 在 CodeMirror 里没占用，
+      // 折叠侧边栏。不带 shift——带 shift 的 B 在 CodeMirror 里没占用，
       // 但这个组合在别处普遍就是「收起侧栏」，改掉只会让人多试一次
-      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 'b') {
+      if (matchesShortcut(event, SHORTCUTS.toggleSidebar)) {
         event.preventDefault();
         sidebar.toggleCollapsed();
       }

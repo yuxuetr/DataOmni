@@ -47,6 +47,7 @@ import { ExportResultDialog, type ExportScope } from './ExportResultDialog';
 import { ResultChartDialog } from './ResultChartDialog';
 import { DENSITY_CELL_CLASS } from '../utils/gridColumns';
 import { useSettingsStore } from '../stores/settingsStore';
+import { SHORTCUTS, formatShortcut } from '../utils/shortcuts';
 
 interface QueryResultScrollTableProps {
   result: QueryResult;
@@ -345,7 +346,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
               <span className="max-w-[28rem] truncate">{readOnlyReason}</span>
             </span>
           )}
-          <span className="text-fg-subtle">{t('result.copyHint')}</span>
+          <span className="text-fg-subtle">{t('result.copyHint', { shortcut: formatShortcut(SHORTCUTS.copySelection) })}</span>
         </div>
         
         <div className="flex items-center gap-2">
