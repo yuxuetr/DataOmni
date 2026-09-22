@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Database,
   ChevronDown,
@@ -36,6 +36,12 @@ import { identifierDialectFor } from '../utils/sqlIdentifiers';
 import { ObjectContextMenu } from './ObjectContextMenu';
 import { qualifiedObjectName, type ObjectMenuAction } from '../utils/objectMenu';
 import { describeError } from '../utils/describeError';
+import {
+  flattenVisibleTree,
+  objectNodeKey,
+  treeKeyAction,
+  type FlatTreeNode
+} from '../utils/treeNavigation';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useQueryStore } from '../stores/queryStore';
 import { METADATA_TTL_MS, useAppStore } from '../stores/appStore';
@@ -82,6 +88,13 @@ export default function DatabaseExplorer({
     { object: DatabaseObject; position: { x: number; y: number } } | null
   >(null);
   const [copyError, setCopyError] = useState<string | null>(null);
+  /**
+   * 键盘焦点落在哪个节点上。整棵树只有一个 Tab 停靠点（roving tabindex），
+   * 进来之后用方向键走——此前每个对象都是独立的停靠点，单组上限 200，
+   * 意味着最多按 200 次 Tab 才走得过这一组
+   */
+  const [focusedKey, setFocusedKey] = useState<string | null>(null);
+  const nodeRefs = useRef(new Map<string, HTMLElement>());
   // 筛选词。不进 store——它属于「此刻正在找什么」，换个连接就该没了
   const [filter, setFilter] = useState('');
 
@@ -226,6 +239,49 @@ export default function DatabaseExplorer({
       return;
     }
     onTableSelect?.(object.name, object.schema ?? undefined);
+  };
+
+  // Tab 进来时停在哪一个。焦点还没落下、或者落在一个已经收起来/被筛掉的节点上时
+  // 回到第一个——把 tabIndex=0 留在一个画不出来的节点上，整棵树就 Tab 不进去了
+  const visibleNodes: FlatTreeNode[] = flattenVisibleTree(
+    tree,
+    (key) => filtering || expandedNodes.has(key)
+  );
+  const rovingKey = visibleNodes.some((node) => node.key === focusedKey)
+    ? focusedKey
+    : visibleNodes[0]?.key ?? null;
+
+  const focusNode = (key: string) => {
+    setFocusedKey(key);
+    // 等这一帧画完再聚焦：展开之后那个节点才存在
+    requestAnimationFrame(() => nodeRefs.current.get(key)?.focus());
+  };
+
+  const handleTreeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const flat = visibleNodes;
+    const action = treeKeyAction(event.key, flat, rovingKey);
+    if (!action) {
+      // 不归对象树管的键原样放过去，不要 preventDefault
+      return;
+    }
+    event.preventDefault();
+
+    if (action.kind === 'focus') {
+      focusNode(action.key);
+      return;
+    }
+    if (action.kind === 'expand' || action.kind === 'collapse') {
+      toggleNode(action.key);
+      setFocusedKey(action.key);
+      return;
+    }
+
+    const node = flat.find((candidate) => candidate.key === action.key);
+    if (node?.object) {
+      handleObjectClick(node.object);
+    } else {
+      toggleNode(action.key);
+    }
   };
 
   const runObjectAction = (action: ObjectMenuAction, object: DatabaseObject) => {
@@ -376,13 +432,21 @@ export default function DatabaseExplorer({
             </p>
           </div>
         ) : (
-          <div className="p-2">
+          <div
+            role="tree"
+            aria-label={t('explorer.title')}
+            onKeyDown={handleTreeKeyDown}
+            className="p-2"
+          >
             {tree.map(node => (
               <ObjectTreeGroup
                 key={node.key}
                 node={node}
                 depth={0}
                 expandedNodes={expandedNodes}
+                rovingKey={rovingKey}
+                nodeRefs={nodeRefs}
+                onFocusNode={setFocusedKey}
                 // 筛选时一律展开：筛完还要自己一层层点开，等于没筛
                 forceExpand={filtering}
                 onToggle={toggleNode}
@@ -450,6 +514,9 @@ function ObjectTreeGroup({
   node,
   depth,
   expandedNodes,
+  rovingKey,
+  nodeRefs,
+  onFocusNode,
   forceExpand,
   onToggle,
   onSelect,
@@ -458,6 +525,10 @@ function ObjectTreeGroup({
   node: ObjectTreeNode;
   depth: number;
   expandedNodes: Set<string>;
+  /** 整棵树唯一那个 Tab 停靠点 */
+  rovingKey: string | null;
+  nodeRefs: React.MutableRefObject<Map<string, HTMLElement>>;
+  onFocusNode: (key: string) => void;
   forceExpand: boolean;
   onToggle: (key: string) => void;
   onSelect: (object: DatabaseObject) => void;
@@ -470,7 +541,22 @@ function ObjectTreeGroup({
   return (
     <div className="mb-1">
       <button
+        ref={(element) => {
+          if (element) {
+            nodeRefs.current.set(node.key, element);
+          } else {
+            nodeRefs.current.delete(node.key);
+          }
+        }}
+        role="treeitem"
+        aria-expanded={expanded}
+        aria-level={depth + 1}
+        tabIndex={node.key === rovingKey ? 0 : -1}
+        onFocus={() => onFocusNode(node.key)}
         onClick={() => onToggle(node.key)}
+        // 焦点不另加底色：渲染验证过，浏览器默认的 outline 在深浅两套主题下
+        // 都看得清。而按 `focusedKey` 涂底色的话，焦点离开树之后底色还留着，
+        // 看上去像一个并不存在的选中态
         className="w-full flex items-center gap-2 px-2 py-1.5 text-sm font-medium text-fg hover:bg-surface-hover rounded-control transition-colors"
         style={{ paddingLeft: `${8 + depth * 12}px` }}
       >
@@ -489,6 +575,9 @@ function ObjectTreeGroup({
               node={child}
               depth={depth + 1}
               expandedNodes={expandedNodes}
+              rovingKey={rovingKey}
+              nodeRefs={nodeRefs}
+              onFocusNode={onFocusNode}
               forceExpand={forceExpand}
               onToggle={onToggle}
               onSelect={onSelect}
@@ -502,7 +591,18 @@ function ObjectTreeGroup({
         <div className="mt-0.5 space-y-0.5">
           {shown.map(object => (
             <button
-              key={`${object.kind}:${object.id}`}
+              key={objectNodeKey(object)}
+              ref={(element) => {
+                if (element) {
+                  nodeRefs.current.set(objectNodeKey(object), element);
+                } else {
+                  nodeRefs.current.delete(objectNodeKey(object));
+                }
+              }}
+              role="treeitem"
+              aria-level={depth + 2}
+              tabIndex={objectNodeKey(object) === rovingKey ? 0 : -1}
+              onFocus={() => onFocusNode(objectNodeKey(object))}
               onClick={() => onSelect(object)}
               onContextMenu={(event) => {
                 event.preventDefault();
