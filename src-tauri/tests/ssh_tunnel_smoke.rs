@@ -23,7 +23,9 @@
 //! 这条断言在隧道完全没起作用的情况下也会是绿的。`the_target_must_not_be
 //! _reachable_without_the_tunnel` 就是把这个前提本身变成一道门。
 
-use dataomni_lib::models::{ConnectionProfile, DatabaseType, SshTunnelConfig, TlsMode};
+use dataomni_lib::models::{
+  ConnectionProfile, DatabaseType, SshAuthMethod, SshTunnelConfig, TlsMode,
+};
 use dataomni_lib::services::ssh_tunnel;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -58,6 +60,10 @@ fn tunnel_setup() -> Option<(ConnectionProfile, SshTunnelConfig, PathBuf)> {
     port: ssh_port,
     username,
     private_key_path,
+    auth: SshAuthMethod::PrivateKey,
+    // 可选：私钥带口令时设 DATAOMNI_SSH_TUNNEL_KEY_PASSPHRASE
+    secret: std::env::var("DATAOMNI_SSH_TUNNEL_KEY_PASSPHRASE").unwrap_or_default(),
+    secret_ref: None,
     remote_host: Some(target_host.clone()),
     remote_port: Some(target_port),
   };
@@ -148,6 +154,51 @@ async fn the_target_must_not_be_reachable_without_the_tunnel() {
     "目标库能被直连（收到了握手包 {greeting:?}），那么「经隧道读到数据」那条断言就证明不了任何事。\
      请把它改成只监听跳板机的 127.0.0.1"
   );
+}
+
+/// 口令登录走的是另一条认证分支。
+///
+/// **可选**：只在 `DATAOMNI_SSH_TUNNEL_PASSWORD` 设了的时候跑。多数跳板机的
+/// sshd 关着 `PasswordAuthentication`，把它设成必需会让这套用例在正常环境里
+/// 红在一件与本项目无关的事情上。
+///
+/// 同时验两侧：对的口令建得起隧道，错的口令必须被拒。只验前者的话，一个
+/// **完全不看口令**的实现也会是绿的。
+#[tokio::test]
+async fn password_authentication_opens_a_tunnel_and_a_wrong_password_does_not() {
+  let password = match std::env::var("DATAOMNI_SSH_TUNNEL_PASSWORD") {
+    Ok(password) if !password.is_empty() => password,
+    _ => {
+      eprintln!("skipping password auth: DATAOMNI_SSH_TUNNEL_PASSWORD is not set");
+      return;
+    }
+  };
+  let Some((profile, key_tunnel, known_hosts)) = tunnel_setup() else {
+    return;
+  };
+
+  let with_password = SshTunnelConfig {
+    auth: SshAuthMethod::Password,
+    secret: password,
+    // 口令登录不该再去读私钥文件
+    private_key_path: String::new(),
+    ..key_tunnel
+  };
+
+  let opened = match ssh_tunnel::open(&profile, &with_password, &known_hosts).await {
+    Ok(opened) => opened,
+    Err(error) => panic!("口令登录应当建得起隧道: {error}"),
+  };
+  let greeting = read_mysql_greeting("127.0.0.1", opened.local_port).await;
+  assert!(greeting.is_some(), "口令登录建起来的隧道后面没有 MySQL 在应答");
+
+  let wrong =
+    SshTunnelConfig { secret: "definitely-not-the-password".to_string(), ..with_password };
+  match ssh_tunnel::open(&profile, &wrong, &known_hosts).await {
+    Err(ssh_tunnel::TunnelError::AuthRejected) => {}
+    Err(other) => panic!("错的口令该报被拒，报的却是: {other:?}"),
+    Ok(_) => panic!("错的口令居然建起了隧道——这条门证明不了口令被用上了"),
+  }
 }
 
 /// 经隧道读到那一行标记。

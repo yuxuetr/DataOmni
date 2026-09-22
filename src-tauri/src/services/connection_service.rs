@@ -193,6 +193,7 @@ impl ConnectionService {
 
     let id = config.id.clone();
     self.persist_submitted_password(&mut config)?;
+    self.persist_submitted_ssh_secret(&mut config, None)?;
     self.connections.insert(id.clone(), config);
 
     self.save_connections().map_err(|e| format!("{CONFIG_SAVE_FAILED}: {e}"))?;
@@ -217,6 +218,7 @@ impl ConnectionService {
     } else {
       self.persist_submitted_password(&mut config)?;
     }
+    self.persist_submitted_ssh_secret(&mut config, Some(&existing))?;
 
     self.connections.insert(id.to_string(), config);
 
@@ -233,6 +235,14 @@ impl ConnectionService {
 
     if connection.credential_ref.is_some() {
       if let Err(error) = self.credential_store.delete_password(id) {
+        self.connections.insert(id.to_string(), connection);
+        return Err(error);
+      }
+    }
+    // 隧道那份也要删。漏掉的后果是钥匙串里留下一条没人认领的密钥，而用户
+    // 在界面上已经看不到这个连接了
+    if connection.ssh_tunnel.as_ref().is_some_and(|tunnel| tunnel.secret_ref.is_some()) {
+      if let Err(error) = self.credential_store.delete_password(&ssh_credential_id(id)) {
         self.connections.insert(id.to_string(), connection);
         return Err(error);
       }
@@ -320,6 +330,14 @@ impl ConnectionService {
         .ok_or_else(|| SESSION_PASSWORD_REQUIRED.to_string())?;
     }
 
+    // 隧道的那份口令同样从钥匙串取。取不到就直说：拿一个空口令去解密一把
+    // 有口令的私钥，报出来的会是「私钥读不了」，指向完全错误的方向
+    if let Some(tunnel) = resolved_config.ssh_tunnel.as_mut() {
+      if tunnel.secret.is_empty() && tunnel.secret_ref.is_some() {
+        tunnel.secret = self.credential_store.get_password(&ssh_credential_id(&config.id))?;
+      }
+    }
+
     // 基本验证。过了上面那道门只剩三种类型，真正的差别只有一个：
     // SQLite 的「库」是一个文件路径，另两种要主机、端口、账号和库名
     let database_is_blank = config.database.as_deref().unwrap_or("").is_empty();
@@ -343,6 +361,39 @@ impl ConnectionService {
     }
 
     Ok(resolved_config)
+  }
+
+  /// 隧道口令落钥匙串，`config` 里只留一个引用。
+  ///
+  /// `existing` 是这个 profile 之前存着的那一份：编辑连接时口令那一格是空的
+  /// （界面不会把存着的口令回填），空**不等于**「删掉它」。没有这一步，
+  /// 改一次端口就会把口令弄丢，而表现是下一次连接报「私钥读不了」。
+  fn persist_submitted_ssh_secret(
+    &mut self,
+    config: &mut ConnectionProfile,
+    existing: Option<&ConnectionProfile>,
+  ) -> Result<(), String> {
+    let previous_ref =
+      existing.and_then(|profile| profile.ssh_tunnel.as_ref()).and_then(|t| t.secret_ref.clone());
+
+    let Some(tunnel) = config.ssh_tunnel.as_mut() else {
+      // 隧道被关掉了，那份口令没有任何东西再用得上它。留着等于在钥匙串里
+      // 攒一条没人认领的密钥
+      if previous_ref.is_some() {
+        self.credential_store.delete_password(&ssh_credential_id(&config.id))?;
+      }
+      return Ok(());
+    };
+
+    if tunnel.secret.is_empty() {
+      tunnel.secret_ref = previous_ref;
+      return Ok(());
+    }
+
+    self.credential_store.set_password(&ssh_credential_id(&config.id), &tunnel.secret)?;
+    tunnel.secret_ref = Some(credential_ref(&ssh_credential_id(&config.id)));
+    tunnel.secret.clear();
+    Ok(())
   }
 
   fn persist_submitted_password(&mut self, config: &mut ConnectionProfile) -> Result<(), String> {
@@ -406,6 +457,15 @@ fn credential_entry(profile_id: &str) -> Result<Entry, String> {
 
 fn credential_ref(profile_id: &str) -> String {
   format!("{CREDENTIAL_REF_PREFIX}{profile_id}")
+}
+
+/// SSH 的那份密钥在钥匙串里的键。
+///
+/// `{id}#ssh` 而不是另起一个 service 名：`#` 不会出现在 uuid 里，所以它和
+/// 任何一个 profile 自己的键都撞不上，而已保存的数据库密码一条都不用迁移。
+/// 见 `rfcs/ssh-tunnel.md` §4。
+fn ssh_credential_id(profile_id: &str) -> String {
+  format!("{profile_id}#ssh")
 }
 
 /// 没驱动时给出的那句话。
@@ -555,17 +615,143 @@ mod tests {
   }
 
   fn tunnelled(id: &str) -> ConnectionProfile {
+    tunnelled_with_secret(id, "")
+  }
+
+  fn tunnelled_with_secret(id: &str, secret: &str) -> ConnectionProfile {
     ConnectionProfile {
       ssh_tunnel: Some(crate::models::SshTunnelConfig {
         host: "jump.example.com".to_string(),
         port: 22,
         username: "ops".to_string(),
         private_key_path: "~/.ssh/id_rsa".to_string(),
+        auth: crate::models::SshAuthMethod::PrivateKey,
+        secret: secret.to_string(),
+        secret_ref: None,
         remote_host: Some("127.0.0.1".to_string()),
         remote_port: Some(23306),
       }),
       ..profile(id, "secret")
     }
+  }
+
+  /// 隧道的口令和数据库密码是**两条**钥匙串条目，键不同、互不覆盖。
+  ///
+  /// 同一个键的后果是后写的那一份把先写的顶掉：改一次 SSH 口令，数据库
+  /// 密码就没了，而报出来的是「认证失败」。
+  #[test]
+  fn the_ssh_secret_gets_its_own_key_and_never_touches_disk() {
+    let config_path = temporary_config_path();
+    let store = Box::<MemoryCredentialStore>::default();
+    let mut service = match ConnectionService::from_path(&config_path, store) {
+      Ok(service) => service,
+      Err(error) => panic!("服务应当建得起来: {error}"),
+    };
+
+    if let Err(error) = service.create_connection(tunnelled_with_secret("profile-1", "key-pass")) {
+      panic!("保存带隧道的连接不该失败: {error}");
+    }
+
+    let content = match fs::read_to_string(&config_path) {
+      Ok(content) => content,
+      Err(error) => panic!("配置应当读得出: {error}"),
+    };
+    assert!(!content.contains("key-pass"), "私钥口令不该落盘: {content}");
+    assert!(content.contains("system-keyring://connection/profile-1#ssh"), "{content}");
+
+    // 两份密钥都要取得回来，而且是各自那一份
+    let saved = match service.get_connection("profile-1") {
+      Some(saved) => saved.clone(),
+      None => panic!("刚保存的连接应当在"),
+    };
+    let resolved = match service.resolve_for_connection(&saved) {
+      Ok(resolved) => resolved,
+      Err(error) => panic!("解析不该失败: {error}"),
+    };
+    assert_eq!(resolved.password, "secret", "数据库密码不该被 SSH 那份顶掉");
+    match resolved.ssh_tunnel {
+      Some(tunnel) => assert_eq!(tunnel.secret, "key-pass", "私钥口令应当从钥匙串取回来"),
+      None => panic!("隧道配置应当还在"),
+    }
+
+    let _ = fs::remove_file(&config_path);
+  }
+
+  /// 编辑连接时口令那一格是空的——界面不会把存着的口令回填。
+  /// 空**不等于**删掉它，否则改一次端口就把口令弄丢了。
+  #[test]
+  fn editing_a_connection_without_retyping_the_ssh_secret_keeps_it() {
+    let config_path = temporary_config_path();
+    let store = Box::<MemoryCredentialStore>::default();
+    let mut service = match ConnectionService::from_path(&config_path, store) {
+      Ok(service) => service,
+      Err(error) => panic!("服务应当建得起来: {error}"),
+    };
+
+    if let Err(error) = service.create_connection(tunnelled_with_secret("profile-1", "key-pass")) {
+      panic!("保存不该失败: {error}");
+    }
+
+    // 只改了端口，两个口令格都是空的
+    let mut edited = tunnelled("profile-1");
+    edited.password = String::new();
+    if let Some(tunnel) = edited.ssh_tunnel.as_mut() {
+      tunnel.port = 2222;
+    }
+    if let Err(error) = service.update_connection("profile-1", edited) {
+      panic!("更新不该失败: {error}");
+    }
+
+    let saved = match service.get_connection("profile-1") {
+      Some(saved) => saved.clone(),
+      None => panic!("连接应当还在"),
+    };
+    let resolved = match service.resolve_for_connection(&saved) {
+      Ok(resolved) => resolved,
+      Err(error) => panic!("解析不该失败: {error}"),
+    };
+    match resolved.ssh_tunnel {
+      Some(tunnel) => {
+        assert_eq!(tunnel.port, 2222, "改的那一项要生效");
+        assert_eq!(tunnel.secret, "key-pass", "没重填的口令不该被清掉");
+      }
+      None => panic!("隧道配置应当还在"),
+    }
+
+    let _ = fs::remove_file(&config_path);
+  }
+
+  /// 关掉隧道之后那份口令没有任何东西再用得上它。
+  #[test]
+  fn turning_the_tunnel_off_removes_its_secret() {
+    let config_path = temporary_config_path();
+    let store = Box::<MemoryCredentialStore>::default();
+    let mut service = match ConnectionService::from_path(&config_path, store) {
+      Ok(service) => service,
+      Err(error) => panic!("服务应当建得起来: {error}"),
+    };
+
+    if let Err(error) = service.create_connection(tunnelled_with_secret("profile-1", "key-pass")) {
+      panic!("保存不该失败: {error}");
+    }
+
+    let mut without_tunnel = profile("profile-1", "");
+    without_tunnel.ssh_tunnel = None;
+    if let Err(error) = service.update_connection("profile-1", without_tunnel) {
+      panic!("更新不该失败: {error}");
+    }
+
+    match service.credential_store.get_password("profile-1#ssh") {
+      Err(error) if error == CREDENTIAL_MISSING => {}
+      other => panic!("关掉隧道之后那份口令该没了: {other:?}"),
+    }
+    // 数据库密码不受牵连
+    match service.credential_store.get_password("profile-1") {
+      Ok(password) => assert_eq!(password, "secret"),
+      Err(error) => panic!("数据库密码不该被一起删掉: {error}"),
+    }
+
+    let _ = fs::remove_file(&config_path);
   }
 
   /// 前端 `Database.load` 用的串，和后端执行查询时算的串，必须一模一样。

@@ -852,7 +852,11 @@ export const en: Translations = {
   'error.backend.sshHostKeyUnknown':
     'known_hosts has no entry for this jump host. Its fingerprint is {detail}. Verify it through a trusted channel before adding it to known_hosts.',
   'error.backend.sshPrivateKeyUnreadable':
-    'The private key could not be read: {detail}. This version supports keys without a passphrase only.',
+    'The private key could not be read: {detail}. Check the path, the file permissions, and that it is an OpenSSH private key.',
+  'error.backend.sshPrivateKeyLocked':
+    'This private key has a passphrase. Type it under "Key passphrase" — it goes into the system keyring, never to disk.',
+  'error.backend.sshPrivateKeyPassphrase':
+    'That passphrase does not unlock this private key. Nothing is wrong on the server — the step that failed is unlocking the key.',
   'error.backend.sshHostKeyCertificate':
     'This jump host uses a certificate host key, which has to be checked against a CA. That is not implemented in this version.',
   'error.backend.sshKnownHostsUnreadable':
@@ -918,7 +922,7 @@ export const en: Translations = {
   'error.backend.dbSessionNotConnected':
     'No database session. Connect to this database before running statements; if the UI still shows it as connected, the session has gone stale — disconnect and connect again.',
   'error.backend.sshAuthRejected':
-    'The jump host rejected this private key. Check that the SSH user name matches the key, and that the matching public key is in the server\'s authorized_keys.',
+    'The jump host rejected the login. With a private key, check that the SSH user name matches the key and that the matching public key is in the server\'s authorized_keys; with a password, check that the server allows password logins (PasswordAuthentication yes).',
   'error.backend.sshFailed': 'SSH connection failed: {detail}',
   'error.invalidPort': 'Invalid port: {port}. It must be between 1 and 65535.',
   'error.portOutOfRange': 'Invalid port: {port}. Check that 1) it is within 1-65535, 2) it is not blocked by a firewall, and 3) the database is actually listening on it.',
@@ -952,7 +956,14 @@ export const en: Translations = {
   'sshTunnel.username': 'SSH user name',
   'sshTunnel.privateKey': 'SSH private key file',
   'sshTunnel.privateKeyHint':
-    'This version supports keys without a passphrase only. A passphrase would have to be stored in the keyring, and that step is not built yet.',
+    'If the key has a passphrase, type it in the field below; leave it empty if it has none.',
+  'sshTunnel.auth': 'Sign in with',
+  'sshTunnel.auth.privateKey': 'Private key',
+  'sshTunnel.auth.password': 'Password',
+  'sshTunnel.passphrase': 'Key passphrase',
+  'sshTunnel.password': 'SSH password',
+  'sshTunnel.secretHint': 'Stored in the system keyring, never in the config file.',
+  'sshTunnel.secretStored': 'One is already in the keyring. Leave this empty to keep it, or type a new one to replace it.',
   'sshTunnel.remoteHost': 'Forward to host',
   'sshTunnel.remotePort': 'Port',
   'sshTunnel.remoteHint':
@@ -962,6 +973,7 @@ export const en: Translations = {
   'sshTunnel.field.port': 'SSH port',
   'sshTunnel.field.username': 'SSH user name',
   'sshTunnel.field.privateKeyPath': 'private key file',
+  'sshTunnel.field.password': 'SSH password',
   'sshTunnel.hostKeyHint':
     "The jump host's host key is checked against ~/.ssh/known_hosts, the same file the ssh command uses. A missing entry and a mismatched one both refuse the connection.",
   'diagnosis.run': 'Diagnose',

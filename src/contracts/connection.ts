@@ -19,14 +19,23 @@ export type TlsMode = 'disabled' | 'preferred' | 'required' | 'verify-ca' | 'ver
  * `remote_host` / `remote_port` 是**从跳板机看过去**的库地址；留空就用
  * profile 自己的 host / port，那是最常见的填法。
  *
- * 第一个增量只支持无口令私钥——口令要放进钥匙串，而钥匙串的键现在是一个
- * 连接一份，得先改命名方案。见 `rfcs/ssh-tunnel.md`。
+ * `secret` 按 `auth` 决定含义：私钥的解锁口令，或登录口令。它只在**提交的
+ * 那一次**有值，后端存进钥匙串（键 `{id}#ssh`）之后清空，留下 `secret_ref`。
+ * 界面不会把存着的口令回填，所以「这一格是空的」不等于「没有口令」——
+ * 判断有没有要看 `secret_ref`。见 `rfcs/ssh-tunnel.md`。
  */
+export type SshAuthMethod = 'private-key' | 'password';
+
 export interface SshTunnelConfig {
   host: string;
   port: number;
   username: string;
   private_key_path: string;
+  auth: SshAuthMethod;
+  /** 提交时填，存住之后为空 */
+  secret: string;
+  /** 钥匙串里已经有一份的标记 */
+  secret_ref?: string | null;
   remote_host?: string;
   remote_port?: number;
 }

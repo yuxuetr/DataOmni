@@ -14,7 +14,7 @@
 //! - **不自动重连。** 会话断了就把隧道从注册表里摘掉，下一次请求重新建立；
 //!   「重连期间已经发出去的查询怎么办」是连接池的问题，不在这里回答。
 
-use crate::models::{ConnectionProfile, SshTunnelConfig};
+use crate::models::{ConnectionProfile, SshAuthMethod, SshTunnelConfig};
 use russh::client::{self, Handle};
 use russh::keys::known_hosts::known_host_keys_path;
 use russh::keys::{
@@ -52,6 +52,10 @@ pub enum TunnelError {
   PrivateKey {
     message: String,
   },
+  /// 私钥是加密的，而没有给口令
+  PrivateKeyLocked,
+  /// 给了口令，但解不开这把私钥
+  PrivateKeyPassphrase,
   AuthRejected,
   Ssh {
     message: String,
@@ -71,6 +75,12 @@ impl From<russh::Error> for TunnelError {
 pub const SSH_HOST_KEY_CHANGED: &str = "DATAOMNI_SSH_HOST_KEY_CHANGED";
 pub const SSH_HOST_KEY_UNKNOWN: &str = "DATAOMNI_SSH_HOST_KEY_UNKNOWN";
 pub const SSH_PRIVATE_KEY_UNREADABLE: &str = "DATAOMNI_SSH_PRIVATE_KEY_UNREADABLE";
+/// 私钥有口令而这里没有口令。和「读不了」分开：用户的下一步是去填那一格，
+/// 不是去查文件权限
+pub const SSH_PRIVATE_KEY_LOCKED: &str = "DATAOMNI_SSH_PRIVATE_KEY_LOCKED";
+/// 口令不对。和「认证被拒」分开：钥匙本身没问题，是解锁它的口令错了——
+/// 报成认证失败会让人去查服务器上的 authorized_keys，而那边什么事都没有
+pub const SSH_PRIVATE_KEY_PASSPHRASE: &str = "DATAOMNI_SSH_PRIVATE_KEY_PASSPHRASE";
 pub const SSH_AUTH_REJECTED: &str = "DATAOMNI_SSH_AUTH_REJECTED";
 pub const SSH_FAILED: &str = "DATAOMNI_SSH_FAILED";
 pub const SSH_HOST_KEY_CERTIFICATE: &str = "DATAOMNI_SSH_HOST_KEY_CERTIFICATE";
@@ -92,6 +102,8 @@ impl std::fmt::Display for TunnelError {
       TunnelError::PrivateKey { message } => {
         write!(formatter, "{SSH_PRIVATE_KEY_UNREADABLE}: {message}")
       }
+      TunnelError::PrivateKeyLocked => write!(formatter, "{SSH_PRIVATE_KEY_LOCKED}"),
+      TunnelError::PrivateKeyPassphrase => write!(formatter, "{SSH_PRIVATE_KEY_PASSPHRASE}"),
       TunnelError::AuthRejected => write!(formatter, "{SSH_AUTH_REJECTED}"),
       // `message` 本身可能已经是一个码（超时、本地端口、known_hosts 读不了
       // 都是自己产生的），那时不要再套一层 `SSH_FAILED:`——前端只认开头那个码，
@@ -217,15 +229,42 @@ pub fn default_known_hosts() -> Option<PathBuf> {
   std::env::home_dir().map(|home| home.join(".ssh").join("known_hosts"))
 }
 
+/// 读私钥，把三种失败分开报。
+///
+/// 三种的下一步完全不同：**有口令而没填**要去填那一格；**口令不对**要改那一格；
+/// **读不了**（不存在、没权限、格式不认）要去查文件。全报成「私钥读不了」的
+/// 后果是最常见的一种——给密钥加了口令——看起来像文件坏了。
+fn read_private_key(tunnel: &SshTunnelConfig) -> Result<russh::keys::PrivateKey, TunnelError> {
+  let key_path = expand_home(&tunnel.private_key_path);
+  // 空口令与「没有口令」要一样对待：用户把那一格留空就是没有口令。
+  // 传一个空字符串进去，russh 会拿它当真口令去解密，于是一把本来没有口令的
+  // 钥匙会解失败
+  let passphrase = Some(tunnel.secret.as_str()).filter(|secret| !secret.is_empty());
+  match load_secret_key(&key_path, passphrase) {
+    Ok(key) => Ok(key),
+    Err(russh::keys::Error::KeyIsEncrypted) => Err(TunnelError::PrivateKeyLocked),
+    // russh 把解密失败归到 ssh-key 的 Crypto 上。这里只在**给了口令**时才
+    // 当成口令错——没给口令走的是上面那一支
+    Err(russh::keys::Error::SshKey(russh::keys::ssh_key::Error::Crypto))
+      if passphrase.is_some() =>
+    {
+      Err(TunnelError::PrivateKeyPassphrase)
+    }
+    Err(error) => Err(TunnelError::PrivateKey { message: format!("{key_path}: {error}") }),
+  }
+}
+
 /// 建一条隧道：连上跳板机、校验主机密钥、认证，然后在本地开一个端口转发。
 pub async fn open(
   config: &ConnectionProfile,
   tunnel: &SshTunnelConfig,
   known_hosts: &Path,
 ) -> Result<ActiveTunnel, TunnelError> {
-  let key_path = expand_home(&tunnel.private_key_path);
-  let key = load_secret_key(&key_path, None)
-    .map_err(|error| TunnelError::PrivateKey { message: format!("{key_path}: {error}") })?;
+  // 私钥要在连之前读：钥匙不对就不必去打扰跳板机。口令登录没有这一步
+  let key = match tunnel.auth {
+    SshAuthMethod::PrivateKey => Some(read_private_key(tunnel)?),
+    SshAuthMethod::Password => None,
+  };
 
   let ssh_config = Arc::new(client::Config {
     inactivity_timeout: None,
@@ -248,13 +287,21 @@ pub async fn open(
     Ok(session) => session?,
   };
 
-  // RSA 私钥必须协商出 SHA-2 的签名算法。给 `None` 会用 SHA-1 的 `ssh-rsa`，
-  // 而 OpenSSH 8.8 起默认不再接受它——那时报出来的是一句「认证失败」，
-  // 看上去像钥匙不对，实际是签名算法过时了
-  let hash_alg = session.best_supported_rsa_hash().await?.flatten();
-  let authenticated = session
-    .authenticate_publickey(&tunnel.username, PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg))
-    .await?;
+  let authenticated = match key {
+    Some(key) => {
+      // RSA 私钥必须协商出 SHA-2 的签名算法。给 `None` 会用 SHA-1 的 `ssh-rsa`，
+      // 而 OpenSSH 8.8 起默认不再接受它——那时报出来的是一句「认证失败」，
+      // 看上去像钥匙不对，实际是签名算法过时了
+      let hash_alg = session.best_supported_rsa_hash().await?.flatten();
+      session
+        .authenticate_publickey(
+          &tunnel.username,
+          PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
+        )
+        .await?
+    }
+    None => session.authenticate_password(&tunnel.username, &tunnel.secret).await?,
+  };
   if !authenticated.success() {
     return Err(TunnelError::AuthRejected);
   }
@@ -397,6 +444,99 @@ mod tests {
       Ok(key) => key,
       Err(error) => panic!("测试用的公钥应当解析得出: {error}"),
     }
+  }
+
+  /// 造一把私钥写到临时文件里，返回路径。`passphrase` 为空就是不加密。
+  ///
+  /// 现造而不是在仓库里放一个密钥文件：那种文件会被密钥扫描器报，
+  /// 而且一份固定的样本只能覆盖一种算法。
+  fn private_key_file(passphrase: &str) -> PathBuf {
+    use ssh_key::{getrandom::SysRng, rand_core::UnwrapErr};
+    let mut rng = UnwrapErr(SysRng::default());
+    let key = match ssh_key::PrivateKey::random(&mut rng, ssh_key::Algorithm::Ed25519) {
+      Ok(key) => key,
+      Err(error) => panic!("测试用的私钥应当造得出: {error}"),
+    };
+    let key = if passphrase.is_empty() {
+      key
+    } else {
+      match key.encrypt(&mut rng, passphrase.as_bytes()) {
+        Ok(encrypted) => encrypted,
+        Err(error) => panic!("加密应当成功: {error}"),
+      }
+    };
+    let pem = match key.to_openssh(ssh_key::LineEnding::LF) {
+      Ok(pem) => pem,
+      Err(error) => panic!("应当写得出 OpenSSH 格式: {error}"),
+    };
+    let path = std::env::temp_dir().join(format!("dataomni-key-{}", uuid::Uuid::new_v4()));
+    if let Err(error) = std::fs::write(&path, pem.as_bytes()) {
+      panic!("临时私钥应当写得进: {error}");
+    }
+    path
+  }
+
+  fn key_tunnel(path: &Path, secret: &str) -> SshTunnelConfig {
+    SshTunnelConfig {
+      host: "jump.example.com".to_string(),
+      port: 22,
+      username: "ops".to_string(),
+      private_key_path: path.display().to_string(),
+      auth: SshAuthMethod::PrivateKey,
+      secret: secret.to_string(),
+      secret_ref: None,
+      remote_host: None,
+      remote_port: None,
+    }
+  }
+
+  /// 三种失败要分开报，因为用户的下一步完全不同。
+  ///
+  /// 全报成「私钥读不了」的后果是：最常见的一种——**给密钥加了口令**——
+  /// 看起来像文件坏了，而用户会去查权限、换路径，唯独不会去填那一格。
+  #[test]
+  fn a_locked_key_a_wrong_passphrase_and_an_unreadable_file_are_three_different_things() {
+    let locked = private_key_file("hunter2");
+
+    match read_private_key(&key_tunnel(&locked, "")) {
+      Err(TunnelError::PrivateKeyLocked) => {}
+      other => panic!("有口令却没填，该报「要口令」: {other:?}"),
+    }
+    match read_private_key(&key_tunnel(&locked, "wrong")) {
+      Err(TunnelError::PrivateKeyPassphrase) => {}
+      other => panic!("口令不对，该单独报出来而不是说认证失败: {other:?}"),
+    }
+    if let Err(error) = read_private_key(&key_tunnel(&locked, "hunter2")) {
+      panic!("口令对了就该读得出: {error:?}");
+    }
+
+    let missing = locked.with_extension("gone");
+    match read_private_key(&key_tunnel(&missing, "")) {
+      Err(TunnelError::PrivateKey { message }) => {
+        assert!(message.contains(&missing.display().to_string()), "要带上路径: {message}");
+      }
+      other => panic!("文件不在该报读不了，并且带上路径: {other:?}"),
+    }
+
+    let _ = std::fs::remove_file(&locked);
+  }
+
+  /// 没有口令的私钥照样要能用——这是第一个增量唯一支持的情形，不能回退。
+  ///
+  /// 顺带钉住「那一格留空」与「那一格填了但这把钥匙没加密」都放行：
+  /// 把空串当成真口令传下去，会让一把好钥匙解不开。
+  #[test]
+  fn a_key_without_a_passphrase_still_opens_whether_or_not_one_is_typed() {
+    let plain = private_key_file("");
+
+    if let Err(error) = read_private_key(&key_tunnel(&plain, "")) {
+      panic!("无口令私钥应当读得出: {error:?}");
+    }
+    if let Err(error) = read_private_key(&key_tunnel(&plain, "irrelevant")) {
+      panic!("多填的口令不该把一把没加密的钥匙判成坏的: {error:?}");
+    }
+
+    let _ = std::fs::remove_file(&plain);
   }
 
   /// 写一份临时 known_hosts。`entries` 是整行，和真文件里长得一样

@@ -318,18 +318,40 @@ impl ConnectionProfile {
   }
 }
 
+/// 怎么向跳板机证明身份。
+///
+/// 写成枚举而不是「私钥路径填了就用私钥」：后者把两种模式压在一个字段的
+/// 空与非空上，界面上要填哪几格就没法在类型上说清，而用口令登录的人会
+/// 对着一个必填的「私钥路径」不知道填什么。
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SshAuthMethod {
+  #[default]
+  PrivateKey,
+  Password,
+}
+
 /// 一条 SSH 隧道要知道的全部。
 ///
-/// 第一个增量只支持**无口令私钥**：口令保护的私钥和口令登录都需要往钥匙串里
-/// 放第二份密钥，而现在的键是一个 profile 一份（`Entry::new("DataOmni", id)`），
-/// 要先改命名方案。见 `rfcs/ssh-tunnel.md` §4。
+/// `secret` 是**第二份密钥**：按 `auth` 决定它是私钥的解锁口令还是登录口令。
+/// 两者不会同时需要，所以钥匙串里一个 profile 只多一条 `{id}#ssh`——
+/// 不动已有的 `{id}`，已保存的数据库密码不需要迁移。见 `rfcs/ssh-tunnel.md` §4。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SshTunnelConfig {
   pub host: String,
   #[serde(default = "default_ssh_port")]
   pub port: u16,
   pub username: String,
+  #[serde(default)]
   pub private_key_path: String,
+  #[serde(default)]
+  pub auth: SshAuthMethod,
+  /// 只在提交的那一次有值，落盘前清空——和 `ConnectionProfile::password` 同一
+  /// 套路。真正的值在钥匙串里，这里留下的是 `secret_ref`
+  #[serde(default)]
+  pub secret: String,
+  #[serde(default)]
+  pub secret_ref: Option<String>,
   /// 转发到哪，**从跳板机的角度看**的地址。留空取 profile 自己的 host / port
   #[serde(default)]
   pub remote_host: Option<String>,
@@ -421,6 +443,9 @@ mod tests {
         port: 22,
         username: "ops".to_string(),
         private_key_path: "/home/me/.ssh/id_rsa".to_string(),
+        auth: super::SshAuthMethod::PrivateKey,
+        secret: String::new(),
+        secret_ref: None,
         remote_host: remote_host.map(str::to_string),
         remote_port,
       }),

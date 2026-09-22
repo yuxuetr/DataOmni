@@ -25,6 +25,8 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_SSH_HOST_KEY_CHANGED: 'error.backend.sshHostKeyChanged',
   DATAOMNI_SSH_HOST_KEY_UNKNOWN: 'error.backend.sshHostKeyUnknown',
   DATAOMNI_SSH_PRIVATE_KEY_UNREADABLE: 'error.backend.sshPrivateKeyUnreadable',
+  DATAOMNI_SSH_PRIVATE_KEY_LOCKED: 'error.backend.sshPrivateKeyLocked',
+  DATAOMNI_SSH_PRIVATE_KEY_PASSPHRASE: 'error.backend.sshPrivateKeyPassphrase',
   DATAOMNI_SSH_AUTH_REJECTED: 'error.backend.sshAuthRejected',
   DATAOMNI_SSH_FAILED: 'error.backend.sshFailed',
   DATAOMNI_SSH_HOST_KEY_CERTIFICATE: 'error.backend.sshHostKeyCertificate',

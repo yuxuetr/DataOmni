@@ -31,6 +31,7 @@ import {
 import { describeError } from '../utils/describeError';
 import {
   createDefaultSshTunnel,
+  hasStoredSecret,
   isSshTunnelBlank,
   normalizeSshTunnel,
   sshTunnelProblems,
@@ -748,6 +749,29 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                           />
                         </div>
 
+                        {/* 登录方式决定下面出现哪两格。画成两个单选而不是
+                            「私钥路径填了就用私钥」：后者让用口令登录的人
+                            对着一个必填的私钥路径不知道填什么 */}
+                        <fieldset>
+                          <legend className="block text-sm font-medium text-fg mb-1">
+                            {t('sshTunnel.auth')}
+                          </legend>
+                          <div className="flex gap-4">
+                            {(['private-key', 'password'] as const).map((method) => (
+                              <label key={method} className="flex items-center gap-1.5 text-sm text-fg">
+                                <input
+                                  type="radio"
+                                  name="ssh-auth"
+                                  checked={tunnel.auth === method}
+                                  onChange={() => updateTunnel({ auth: method })}
+                                />
+                                {t(method === 'private-key' ? 'sshTunnel.auth.privateKey' : 'sshTunnel.auth.password')}
+                              </label>
+                            ))}
+                          </div>
+                        </fieldset>
+
+                        {tunnel.auth === 'private-key' && (
                         <div>
                           <label htmlFor="ssh-private-key" className="block text-sm font-medium text-fg mb-1">
                             {t('sshTunnel.privateKey')} *
@@ -773,6 +797,27 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                           </div>
                           <p className="mt-1 text-xs text-fg-muted">
                             {t('sshTunnel.privateKeyHint')}
+                          </p>
+                        </div>
+                        )}
+
+                        {/* 私钥口令与登录口令是同一格：按方式换标签，存的是
+                            钥匙串里同一条 `{id}#ssh`——两者不会同时需要 */}
+                        <div>
+                          <label htmlFor="ssh-secret" className="block text-sm font-medium text-fg mb-1">
+                            {t(tunnel.auth === 'private-key' ? 'sshTunnel.passphrase' : 'sshTunnel.password')}
+                            {tunnel.auth === 'password' && ' *'}
+                          </label>
+                          <input
+                            id="ssh-secret"
+                            type="password"
+                            autoComplete="off"
+                            value={tunnel.secret}
+                            onChange={(event) => updateTunnel({ secret: event.target.value })}
+                            className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                          />
+                          <p className="mt-1 text-xs text-fg-muted">
+                            {hasStoredSecret(tunnel) ? t('sshTunnel.secretStored') : t('sshTunnel.secretHint')}
                           </p>
                         </div>
 

@@ -46,4 +46,10 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"]
 # 现实中大量跳板机用的还是 `~/.ssh/id_rsa`。见 `rfcs/ssh-tunnel.md`
 russh = "0.63.3"
 
+[dev-dependencies]
+# 只为在测试里**造**一把带口令的私钥：russh 依赖的 ssh-key 默认不开
+# `rand_core`，没有它就没法生成密钥，于是「有口令的私钥」这条门要么依赖
+# 仓库里的密钥文件（扫描器会报），要么依赖外部的 ssh-keygen（装没装不一定）。
+ssh-key = { version = "=0.7.0-rc.11", features = ["rand_core", "getrandom", "ed25519", "encryption"] }
+
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

@@ -3,6 +3,7 @@ import { DatabaseType } from '../contracts/connection';
 import {
   SSH_DEFAULT_PORT,
   createDefaultSshTunnel,
+  hasStoredSecret,
   isSshTunnelBlank,
   normalizeSshTunnel,
   sshTunnelProblems,
@@ -40,8 +41,8 @@ describe('sshTunnel', () => {
     // 而用户看着那一行路径以为是对的
     expect(
       sshTunnelProblems({
+        ...createDefaultSshTunnel(),
         host: '  ',
-        port: 22,
         username: ' ',
         private_key_path: '\t'
       })
@@ -49,17 +50,81 @@ describe('sshTunnel', () => {
   });
 
   it('端口超范围或不是整数都要点出来', () => {
-    const base = { host: 'jump', username: 'ops', private_key_path: '/k' };
+    const base = { ...createDefaultSshTunnel(), host: 'jump', username: 'ops', private_key_path: '/k' };
     expect(sshTunnelProblems({ ...base, port: 0 })).toEqual(['port']);
     expect(sshTunnelProblems({ ...base, port: 70000 })).toEqual(['port']);
     expect(sshTunnelProblems({ ...base, port: 22.5 })).toEqual(['port']);
     expect(sshTunnelProblems({ ...base, port: 2222 })).toEqual([]);
   });
 
+  it('口令登录不要求私钥路径，但要求口令', () => {
+    const base = { ...createDefaultSshTunnel(), host: 'jump', username: 'ops', auth: 'password' as const };
+    // 对着一个必填的「私钥文件」无从下手——那一格对口令登录毫无意义
+    expect(sshTunnelProblems(base)).toEqual(['password']);
+    expect(sshTunnelProblems({ ...base, secret: 'hunter2' })).toEqual([]);
+  });
+
+  /**
+   * 私钥的**口令**是可空的：没加密的私钥不需要它。把它也设成必填，
+   * 等于让第一个增量支持的那种钥匙突然用不了了。
+   */
+  it('私钥登录不要求口令', () => {
+    expect(
+      sshTunnelProblems({
+        ...createDefaultSshTunnel(),
+        host: 'jump',
+        username: 'ops',
+        private_key_path: '/k'
+      })
+    ).toEqual([]);
+  });
+
+  // 界面不会把存着的口令回填。分不清「空」和「没有」的后果是：
+  // 编辑一次连接就被要求重填口令，而不填就报「还差口令」——一条走不通的路
+  it('钥匙串里已经有一份时，口令那一格留空不算缺', () => {
+    const stored = {
+      ...createDefaultSshTunnel(),
+      host: 'jump',
+      username: 'ops',
+      auth: 'password' as const,
+      secret_ref: 'system-keyring://connection/p1#ssh'
+    };
+    expect(hasStoredSecret(stored)).toBe(true);
+    expect(sshTunnelProblems(stored)).toEqual([]);
+    // 而且它不算「一格都没填」，否则整段提示会消失
+    expect(isSshTunnelBlank(stored)).toBe(false);
+  });
+
+  // 空格是合法的口令字符。两端剪掉等于悄悄改了用户的密钥，而报出来的是
+  // 「口令不对」——指向服务器，而问题在这一行代码
+  it('口令两端的空格不剪', () => {
+    const tunnel = normalizeSshTunnel({
+      ...createDefaultSshTunnel(),
+      host: 'jump',
+      username: 'ops',
+      auth: 'password',
+      secret: '  pass  '
+    });
+    expect(tunnel.secret).toBe('  pass  ');
+  });
+
+  // 留着私钥路径会让后端以为还要读那个文件
+  it('切到口令登录之后不再把私钥路径带给后端', () => {
+    const tunnel = normalizeSshTunnel({
+      ...createDefaultSshTunnel(),
+      host: 'jump',
+      username: 'ops',
+      auth: 'password',
+      secret: 'x',
+      private_key_path: '/home/me/.ssh/id_rsa'
+    });
+    expect(tunnel.private_key_path).toBe('');
+  });
+
   it('整理之后转发目标留空就是不传，而不是传一个空字符串', () => {
     const tunnel = normalizeSshTunnel({
+      ...createDefaultSshTunnel(),
       host: ' jump.example.com ',
-      port: 22,
       username: ' ops ',
       private_key_path: ' /home/me/.ssh/id_rsa ',
       remote_host: '   ',
@@ -70,7 +135,9 @@ describe('sshTunnel', () => {
       host: 'jump.example.com',
       port: 22,
       username: 'ops',
-      private_key_path: '/home/me/.ssh/id_rsa'
+      private_key_path: '/home/me/.ssh/id_rsa',
+      auth: 'private-key',
+      secret: ''
     });
     // 键必须是不存在，不是 undefined——serde 那边 `Option` 靠键缺失来定
     expect('remote_host' in tunnel).toBe(false);
@@ -79,8 +146,8 @@ describe('sshTunnel', () => {
 
   it('填了转发目标就原样带上', () => {
     const tunnel = normalizeSshTunnel({
+      ...createDefaultSshTunnel(),
       host: 'jump',
-      port: 22,
       username: 'ops',
       private_key_path: '/k',
       remote_host: '127.0.0.1',
