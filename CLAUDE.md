@@ -93,4 +93,10 @@ src-tauri/src/
 - **`bun tauri build` 报 `failed to run bundle_dmg.sh` 时先看 `/Volumes`。**
   上一次失败留下的 `dmg.*` 还挂着就会再失败，而那句报错不说原因。
   `hdiutil detach /Volumes/dmg.*` 再删掉 `bundle/macos/rw.*.dmg` 即可。
+- **验打包后的应用要用 `open -a`，别从终端直接跑那个二进制。** 这台机器的 shell
+  里有 `LD_LIBRARY_PATH=/opt/homebrew/lib`，而 macOS 的 dyld 认这个变量：
+  Homebrew 的 libpng 会抢在 Apple 内部那份前面加载，ImageIO 解 PNG 时跳进
+  ABI 不兼容的实现，启动一秒多就 SIGBUS。堆栈全在 ShareKit / ImageIO 里，
+  看起来跟我们毫无关系，实际也确实不是我们的 bug。A/B 验过：带这个变量 3 次崩
+  3 次，只摘掉它 3 次都不崩。`open -a` 走 launchd，不继承 shell 环境。
 - 凭据走系统钥匙串（`services/connection_service.rs` 的 keyring），不落盘明文。

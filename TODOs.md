@@ -1864,6 +1864,23 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     `failed to run bundle_dmg.sh`，而这句话不说原因。真实原因是上一次的
     `/Volumes/dmg.*` 还挂着；`hdiutil detach` 加删掉 `rw.*.dmg` 之后连跑两次
     都成功。
+  - 验证过程里拿到一份崩溃报告，查清了**不是应用的问题**，但值得记下来：
+    从终端直接跑 `DataOmni.app/Contents/MacOS/dataomni` 会在启动 1.24 秒后
+    `EXC_BAD_ACCESS (SIGBUS)`，崩在 `ShareKit → IconServices → ImageIO →
+    PNGReadPlugin`，PC 是 `0xbad4007` 这种垃圾值。进程里映射着
+    `/opt/homebrew/*` 的 libpng16、libjpeg、libtiff、libgif、liblzma、libzstd。
+  - 原因是 macOS 的 dyld 认 `LD_LIBRARY_PATH`，而这台机器的 shell 里设了
+    `LD_LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib`。Homebrew 的 libpng 抢在
+    Apple 内部那份前面被加载，ImageIO 的 PNG 解码器跳进一个 ABI 不兼容的实现。
+    `otool -L` 确认二进制本身只链系统库，一个 Homebrew 库都没有。
+  - A/B 验过，是确定性的：带着 `LD_LIBRARY_PATH` 跑 3 次崩 3 次；**只摘掉这一个
+    环境变量**、其余不变，跑 3 次一次都不崩。用 `open -a` 启动也不崩——launchd
+    起的进程不继承我的 shell 环境，而 Finder 双击走的正是这条路。
+  - 和签名那条连着：现在的签名没有 Hardened Runtime（flags 只有
+    `adhoc, linker-signed`，没有 `runtime`）。带库校验的签名会直接拒绝这些外来
+    dylib，这一类崩溃在正式签名之后不可能发生。
+  - **一个教训记在自己账上**：这次崩溃发生时我看到「进程没了」，顺手归因成
+    `timeout` 杀的就过去了，没去翻崩溃报告。不查就下结论，和没验一样。
   - 未做：Windows 与 Linux 的三件事，本机出不了那两个平台的包。
 - [ ] 完成崩溃恢复、异常退出恢复和无网络场景测试
 
