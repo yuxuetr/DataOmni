@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { zh } from '../i18n/zh';
@@ -46,9 +47,12 @@ describe('backendError', () => {
   it('后端定义的每个码，前端都有文案', () => {
     // 手写一份码的清单会过期，而过期的样子是界面上突然印出
     // `DATAOMNI_SSH_FAILED: ...`——所以清单直接从 Rust 源码里取
-    const sources = ['../../src-tauri/src/services/connection_service.rs',
-      '../../src-tauri/src/services/ssh_tunnel.rs']
-      .map((path) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), 'utf8'))
+    // 扫整个后端，而不是列几个文件：码定义在哪个文件里是会变的，
+    // 而「定义了就必须有文案」这条不变
+    const root = fileURLToPath(new URL('../../src-tauri/src', import.meta.url));
+    const sources = readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .filter((entry) => entry.endsWith('.rs'))
+      .map((entry) => readFileSync(join(root, entry), 'utf8'))
       .join('\n');
 
     const codes = [...sources.matchAll(/pub const \w+: &str = "(DATAOMNI_[A-Z0-9_]+)";/g)].map(

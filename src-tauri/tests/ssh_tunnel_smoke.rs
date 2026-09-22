@@ -206,6 +206,48 @@ async fn a_tunnel_reaches_a_database_that_is_otherwise_unreachable() {
   assert!(refused, "隧道拆掉之后 127.0.0.1:{local_port} 还在接受连接");
 }
 
+/// 草稿（还没有 id）之间不能互相复用隧道。
+///
+/// 连接表单里「测试连接」是在保存之前点的，那时 `id` 是空字符串。按 id 复用
+/// 的话所有草稿共用同一个键：填了另一台跳板机的第二个草稿会直接拿到第一个
+/// 草稿的隧道，而界面上显示的是它自己填的那一台——连上了，连的却不是它说的
+/// 那台机器。
+///
+/// 这一条要连真的 sshd：复用与否体现在「第二次 ensure 拿到的是不是同一个
+/// 本地端口」，而那要先真的建起来两条。
+#[tokio::test]
+async fn two_drafts_get_two_tunnels_but_a_saved_profile_reuses_one() {
+  let Some((mut profile, tunnel, known_hosts)) = tunnel_setup() else {
+    return;
+  };
+  let registry = ssh_tunnel::TunnelRegistry::default();
+
+  profile.id = String::new();
+  let first = match registry.ensure(&profile, &tunnel, &known_hosts).await {
+    Ok(port) => port,
+    Err(error) => panic!("第一个草稿的隧道建不起来: {error}"),
+  };
+  let second = match registry.ensure(&profile, &tunnel, &known_hosts).await {
+    Ok(port) => port,
+    Err(error) => panic!("第二个草稿的隧道建不起来: {error}"),
+  };
+  assert_ne!(first, second, "两个草稿共用了同一条隧道");
+
+  // 存过的连接有自己的 id，那时复用才是对的——否则每次执行查询都要重连一次
+  profile.id = "saved-profile".to_string();
+  let once = match registry.ensure(&profile, &tunnel, &known_hosts).await {
+    Ok(port) => port,
+    Err(error) => panic!("隧道建不起来: {error}"),
+  };
+  let again = match registry.ensure(&profile, &tunnel, &known_hosts).await {
+    Ok(port) => port,
+    Err(error) => panic!("复用不该失败: {error}"),
+  };
+  assert_eq!(once, again, "同一个 profile 该复用同一条隧道");
+
+  registry.close_all().await;
+}
+
 /// 读服务端主动发来的握手包。
 ///
 /// MySQL 一连上就发；收不到字节说明那头没有 MySQL，不管 `connect()` 是不是

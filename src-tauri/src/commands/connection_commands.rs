@@ -142,7 +142,7 @@ pub async fn test_connection(
   };
 
   let Some(tunnel) = resolved.ssh_tunnel.clone() else {
-    return Ok(resolved.db_type.to_connection_string(&resolved));
+    return Ok(resolved.connection_string_via(None));
   };
 
   let Some(known_hosts) = ssh_tunnel::default_known_hosts() else {
@@ -152,11 +152,10 @@ pub async fn test_connection(
   let local_port =
     tunnels.ensure(&resolved, &tunnel, &known_hosts).await.map_err(|error| error.to_string())?;
 
-  // 连接串必须指向本地转发端口。不改的话隧道建起来了却没人走它，
-  // 而库要是恰好也能直连，这个功能看起来就是好的
-  let local = resolved.redirected_to("127.0.0.1", local_port);
+  // 连接串必须指向本地转发端口，而且要和执行查询那条路算出来的**逐字节
+  // 相同**——两边都走 `connection_string_via`，就没有第二份实现可以走偏
   println!("🔒 SSH 隧道已就绪: 127.0.0.1:{local_port} → {}:{}", tunnel.host, tunnel.port);
-  Ok(local.db_type.to_connection_string(&local))
+  Ok(resolved.connection_string_via(Some(local_port)))
 }
 
 /// 断开连接时拆掉隧道。

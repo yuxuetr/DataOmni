@@ -1,3 +1,4 @@
+import { translateNow } from '../stores/languageStore';
 import type { TranslationKey } from '../i18n/translate';
 
 /**
@@ -29,7 +30,9 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_SSH_HOST_KEY_CERTIFICATE: 'error.backend.sshHostKeyCertificate',
   DATAOMNI_SSH_KNOWN_HOSTS_UNREADABLE: 'error.backend.sshKnownHostsUnreadable',
   DATAOMNI_SSH_CONNECT_TIMEOUT: 'error.backend.sshConnectTimeout',
-  DATAOMNI_SSH_LOCAL_PORT_UNAVAILABLE: 'error.backend.sshLocalPortUnavailable'
+  DATAOMNI_SSH_LOCAL_PORT_UNAVAILABLE: 'error.backend.sshLocalPortUnavailable',
+  DATAOMNI_SSH_TUNNEL_NOT_ESTABLISHED: 'error.backend.sshTunnelNotEstablished',
+  DATAOMNI_DB_SESSION_NOT_CONNECTED: 'error.backend.dbSessionNotConnected'
 };
 
 export interface BackendError {
@@ -56,4 +59,19 @@ export function parseBackendError(message: string): BackendError | null {
   }
 
   return { key, detail: (match[2] ?? '').trim() };
+}
+
+/**
+ * 后端的错误串换成当前语言。认不出就原样返回（去掉两端空白）。
+ *
+ * 两条路都要走这里：`describeError` 处理 reject 的是字符串的命令，
+ * `toQueryExecutionError` 处理 `execute_query` reject 的那个对象。
+ * 只改一条的后果是另一条继续印中文，而两条在界面上长得一模一样。
+ */
+export function translateBackendMessage(message: string): string {
+  const parsed = parseBackendError(message);
+  if (!parsed) {
+    return message.trim();
+  }
+  return translateNow(parsed.key, { detail: parsed.detail });
 }

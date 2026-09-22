@@ -824,6 +824,10 @@ export const en: Translations = {
   'error.backend.sshConnectTimeout':
     'The jump host did not answer within {detail}s. Check the address and port, and whether this machine can reach it at all.',
   'error.backend.sshLocalPortUnavailable': 'Could not open a local forwarding port: {detail}',
+  'error.backend.sshTunnelNotEstablished':
+    'This connection is configured to use an SSH tunnel, but no tunnel is up right now. Connect again.',
+  'error.backend.dbSessionNotConnected':
+    'No database session. Connect to this database before running statements; if the UI still shows it as connected, the session has gone stale — disconnect and connect again.',
   'error.backend.sshAuthRejected':
     'The jump host rejected this private key. Check that the SSH user name matches the key, and that the matching public key is in the server\'s authorized_keys.',
   'error.backend.sshFailed': 'SSH connection failed: {detail}',

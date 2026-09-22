@@ -335,9 +335,14 @@ impl TunnelRegistry {
   ) -> Result<u16, TunnelError> {
     let mut entries = self.entries.lock().await;
 
-    // 会话死了的条目要先摘掉。留着它等于把用户接到一个已经空掉的端口上，
-    // 而报出来的会是数据库驱动的「连不上」
-    if let Some(existing) = entries.get(&config.id) {
+    // 草稿还没有 id（连接表单里「测试连接」是在保存之前点的），这时不能复用：
+    // 所有草稿共用空字符串这一个键，第二个草稿会连上第一个草稿的跳板机，
+    // 而界面上显示的是它自己填的那一台。宁可每次重建
+    if config.id.is_empty() {
+      entries.remove(&config.id);
+    } else if let Some(existing) = entries.get(&config.id) {
+      // 会话死了的条目要先摘掉。留着它等于把用户接到一个已经空掉的端口上，
+      // 而报出来的会是数据库驱动的「连不上」
       if existing.is_alive() {
         return Ok(existing.local_port);
       }
@@ -348,6 +353,16 @@ impl TunnelRegistry {
     let local_port = opened.local_port;
     entries.insert(config.id.clone(), opened);
     Ok(local_port)
+  }
+
+  /// 这个 profile 现在用的是哪个本地端口。没有活着的隧道就是 `None`。
+  ///
+  /// 和 `ensure` 分开：执行查询那条路只该**查**，不该顺手建。隧道死了的话
+  /// 连接池也早就死了，这时重建一条只会换来一个新端口，拼出的连接串照样
+  /// 对不上池子的键——多一次握手，少一条能看懂的错误。
+  pub async fn local_port(&self, profile_id: &str) -> Option<u16> {
+    let entries = self.entries.lock().await;
+    entries.get(profile_id).filter(|tunnel| tunnel.is_alive()).map(|tunnel| tunnel.local_port)
   }
 
   /// 拆掉这个 profile 的隧道。没有也算成功——断开一条不存在的连接不是错误

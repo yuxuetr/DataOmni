@@ -14,7 +14,11 @@ use tokio::time::Duration;
 
 pub const QUERY_CANCELLED_CODE: &str = "QUERY_CANCELLED";
 
-use crate::services::QueryError;
+use crate::services::{QueryError, TunnelRegistry};
+
+/// 池子按连接串做键，查不到说明前端 `Database.load` 用的串和这里算的不是
+/// 同一个。写成码是为了英文界面上不要印中文——见 `utils/backendError.ts`。
+pub const DB_SESSION_NOT_CONNECTED: &str = "DATAOMNI_DB_SESSION_NOT_CONNECTED";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,6 +78,7 @@ pub async fn execute_query(
   request: QueryExecutionRequest,
   on_batch: Channel<QueryResultBatch>,
   connection_service_state: State<'_, ConnectionServiceState>,
+  tunnels: State<'_, TunnelRegistry>,
   database_instances: State<'_, DbInstances>,
   cancellation_state: State<'_, QueryCancellationState>,
   query_session_state: State<'_, QuerySessionState>,
@@ -88,18 +93,23 @@ pub async fn execute_query(
     return Err(QueryError::message("结果内存上限必须在 1 MiB 到 64 MiB 之间"));
   }
 
+  // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
+  let tunnel_port = tunnels.local_port(&request.connection_id).await;
   let connection_string = {
     let connection_service_guard = connection_service_state
       .lock()
       .map_err(|e| QueryError::message(format!("获取连接服务状态失败: {e}")))?;
     let service =
       connection_service_guard.as_ref().ok_or_else(|| QueryError::message("连接服务未初始化"))?;
-    service.resolve_connection_string(&request.connection_id).map_err(QueryError::message)?
+    service
+      .resolve_connection_string(&request.connection_id, tunnel_port)
+      .map_err(QueryError::message)?
   };
 
   let instances = database_instances.0.read().await;
-  let pool =
-    instances.get(&connection_string).ok_or_else(|| QueryError::message("数据库会话未连接"))?;
+  let pool = instances
+    .get(&connection_string)
+    .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED))?;
   let receiver =
     cancellation_state.register(&request.execution_id).await.map_err(QueryError::message)?;
   let mut send_batch =
@@ -137,19 +147,23 @@ pub async fn execute_write_batch(
   connection_id: String,
   statements: Vec<WriteStatement>,
   connection_service_state: State<'_, ConnectionServiceState>,
+  tunnels: State<'_, TunnelRegistry>,
   database_instances: State<'_, DbInstances>,
 ) -> Result<Vec<u64>, WriteBatchError> {
+  // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
+  let tunnel_port = tunnels.local_port(&connection_id).await;
   let connection_string = {
     let connection_service_guard = connection_service_state
       .lock()
       .map_err(|e| batch_error(format!("获取连接服务状态失败: {e}")))?;
     let service =
       connection_service_guard.as_ref().ok_or_else(|| batch_error("连接服务未初始化"))?;
-    service.resolve_connection_string(&connection_id).map_err(batch_error)?
+    service.resolve_connection_string(&connection_id, tunnel_port).map_err(batch_error)?
   };
 
   let instances = database_instances.0.read().await;
-  let pool = instances.get(&connection_string).ok_or_else(|| batch_error("数据库会话未连接"))?;
+  let pool =
+    instances.get(&connection_string).ok_or_else(|| batch_error(DB_SESSION_NOT_CONNECTED))?;
   write_batch::execute_write_batch(pool, &statements).await
 }
 
@@ -179,21 +193,27 @@ pub async fn export_query_to_file(
   request: ExportRequest,
   on_progress: Channel<ExportProgress>,
   connection_service_state: State<'_, ConnectionServiceState>,
+  tunnels: State<'_, TunnelRegistry>,
   database_instances: State<'_, DbInstances>,
   cancellation_state: State<'_, QueryCancellationState>,
 ) -> Result<ExportSummary, QueryError> {
+  // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
+  let tunnel_port = tunnels.local_port(&request.connection_id).await;
   let connection_string = {
     let connection_service_guard = connection_service_state
       .lock()
       .map_err(|e| QueryError::message(format!("获取连接服务状态失败: {e}")))?;
     let service =
       connection_service_guard.as_ref().ok_or_else(|| QueryError::message("连接服务未初始化"))?;
-    service.resolve_connection_string(&request.connection_id).map_err(QueryError::message)?
+    service
+      .resolve_connection_string(&request.connection_id, tunnel_port)
+      .map_err(QueryError::message)?
   };
 
   let instances = database_instances.0.read().await;
-  let pool =
-    instances.get(&connection_string).ok_or_else(|| QueryError::message("数据库会话未连接"))?;
+  let pool = instances
+    .get(&connection_string)
+    .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED))?;
 
   // 取消与查询共用同一个登记表：取消的语义、重复 ID 的检查、结束时的清理
   // 都已经在那里了，再立一套只会多出一处要同步的状态。
@@ -298,22 +318,28 @@ pub async fn import_csv_file(
   request: CsvImportRequest,
   on_progress: Channel<ImportProgress>,
   connection_service_state: State<'_, ConnectionServiceState>,
+  tunnels: State<'_, TunnelRegistry>,
   database_instances: State<'_, DbInstances>,
   cancellation_state: State<'_, QueryCancellationState>,
   pause_state: State<'_, ImportPauseState>,
 ) -> Result<ImportSummary, QueryError> {
+  // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
+  let tunnel_port = tunnels.local_port(&request.connection_id).await;
   let connection_string = {
     let connection_service_guard = connection_service_state
       .lock()
       .map_err(|e| QueryError::message(format!("获取连接服务状态失败: {e}")))?;
     let service =
       connection_service_guard.as_ref().ok_or_else(|| QueryError::message("连接服务未初始化"))?;
-    service.resolve_connection_string(&request.connection_id).map_err(QueryError::message)?
+    service
+      .resolve_connection_string(&request.connection_id, tunnel_port)
+      .map_err(QueryError::message)?
   };
 
   let instances = database_instances.0.read().await;
-  let pool =
-    instances.get(&connection_string).ok_or_else(|| QueryError::message("数据库会话未连接"))?;
+  let pool = instances
+    .get(&connection_string)
+    .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED))?;
 
   let mut receiver =
     cancellation_state.register(&request.import_id).await.map_err(QueryError::message)?;
@@ -425,9 +451,12 @@ pub struct ExplainRequest {
 pub async fn explain_query(
   request: ExplainRequest,
   connection_service_state: State<'_, ConnectionServiceState>,
+  tunnels: State<'_, TunnelRegistry>,
   database_instances: State<'_, DbInstances>,
   query_session_state: State<'_, QuerySessionState>,
 ) -> Result<crate::services::explain::QueryPlan, QueryError> {
+  // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
+  let tunnel_port = tunnels.local_port(&request.connection_id).await;
   let (connection_string, db_type) = {
     let connection_service_guard = connection_service_state
       .lock()
@@ -439,7 +468,9 @@ pub async fn explain_query(
       .ok_or_else(|| QueryError::message("找不到这个连接"))?;
     let db_type = connection.db_type.clone();
     (
-      service.resolve_connection_string(&request.connection_id).map_err(QueryError::message)?,
+      service
+        .resolve_connection_string(&request.connection_id, tunnel_port)
+        .map_err(QueryError::message)?,
       db_type,
     )
   };
@@ -448,8 +479,9 @@ pub async fn explain_query(
     crate::services::explain::explain_statement(&db_type, &request.sql, request.analyze)?;
 
   let instances = database_instances.0.read().await;
-  let pool =
-    instances.get(&connection_string).ok_or_else(|| QueryError::message("数据库会话未连接"))?;
+  let pool = instances
+    .get(&connection_string)
+    .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED))?;
   // 走 streaming 而不是 execute：要带上 assume_rows。MySQL 在预处理
   // `EXPLAIN FORMAT=JSON` 时报告 0 列，按 describe 的说法走会拿回一个
   // Affected，计划就此消失

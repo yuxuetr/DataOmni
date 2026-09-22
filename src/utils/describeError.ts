@@ -1,5 +1,5 @@
 import { translateNow } from '../stores/languageStore';
-import { parseBackendError } from './backendError';
+import { translateBackendMessage } from './backendError';
 /**
  * 把任意 catch 到的东西变成一句能看的消息。
  *
@@ -11,11 +11,11 @@ import { parseBackendError } from './backendError';
  */
 export function describeError(error: unknown, fallback = translateNow('error.unknown')): string {
   if (typeof error === 'string') {
-    return translateBackendCode(error) || fallback;
+    return translateBackendMessage(error) || fallback;
   }
 
   if (error instanceof Error) {
-    return translateBackendCode(error.message) || fallback;
+    return translateBackendMessage(error.message) || fallback;
   }
 
   // Tauri 也可能 reject 一个带 message 的对象
@@ -24,7 +24,7 @@ export function describeError(error: unknown, fallback = translateNow('error.unk
     // 再把整个对象序列化出来只是噪音
     const message = (error as { message?: unknown }).message;
     if (typeof message === 'string') {
-      return translateBackendCode(message) || fallback;
+      return translateBackendMessage(message) || fallback;
     }
 
     try {
@@ -45,16 +45,3 @@ export function describeError(error: unknown, fallback = translateNow('error.unk
   return fallback;
 }
 
-/**
- * 后端的错误码换成当前语言的句子。认不出就原样返回。
- *
- * 放在这里是因为这是所有后端错误串的必经之路——散在各个 store 里判一遍，
- * 漏掉哪一处就在哪一处印出中文（或者一串大写的码）。
- */
-function translateBackendCode(message: string): string {
-  const parsed = parseBackendError(message);
-  if (!parsed) {
-    return message.trim();
-  }
-  return translateNow(parsed.key, { detail: parsed.detail });
-}

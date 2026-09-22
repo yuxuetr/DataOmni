@@ -29,6 +29,7 @@ pub const USERNAME_REQUIRED: &str = "DATAOMNI_USERNAME_REQUIRED";
 pub const PORT_INVALID: &str = "DATAOMNI_PORT_INVALID";
 pub const DATABASE_REQUIRED: &str = "DATAOMNI_DATABASE_REQUIRED";
 pub const KNOWN_HOSTS_NO_HOME: &str = "DATAOMNI_KNOWN_HOSTS_NO_HOME";
+pub const SSH_TUNNEL_NOT_ESTABLISHED: &str = "DATAOMNI_SSH_TUNNEL_NOT_ESTABLISHED";
 
 trait CredentialStore: Send + Sync {
   fn set_password(&self, profile_id: &str, password: &str) -> Result<(), String>;
@@ -245,9 +246,26 @@ impl ConnectionService {
     self.connections.get(id)
   }
 
-  pub fn resolve_connection_string(&self, id: &str) -> Result<String, String> {
+  /// 按 id 算连接串。有隧道的连接必须把本地转发端口传进来。
+  ///
+  /// 端口是参数而不是这里自己去查：建隧道是异步的，而这个类型从上到下都是
+  /// 同步的校验与钥匙串读取。让调用方先拿到端口，换来的是「连接串该指向哪」
+  /// 只有 `connection_string_via` 一处说了算。
+  pub fn resolve_connection_string(
+    &self,
+    id: &str,
+    tunnel_port: Option<u16>,
+  ) -> Result<String, String> {
     let connection = self.connections.get(id).ok_or_else(|| "连接不存在".to_string())?;
-    self.test_connection(connection)
+    let resolved = self.resolve_for_connection(connection)?;
+
+    // 配了隧道却没有活着的隧道：这时按原地址拼串会拼出一个连得上但不是
+    // 目标库的地址，或者一个查不到池子的键。两种都比直说难查
+    if resolved.ssh_tunnel.is_some() && tunnel_port.is_none() {
+      return Err(SSH_TUNNEL_NOT_ESTABLISHED.to_string());
+    }
+
+    Ok(resolved.connection_string_via(tunnel_port))
   }
 
   /// 测试数据库连接 - 实际尝试连接并返回连接字符串
@@ -255,7 +273,7 @@ impl ConnectionService {
     let resolved_config = self.resolve_for_connection(config)?;
 
     // 拼 URL 放在校验之后：校验不过的配置不该被拼成串打进日志
-    let connection_string = resolved_config.db_type.to_connection_string(&resolved_config);
+    let connection_string = resolved_config.connection_string_via(None);
     println!("🔗 准备测试数据库连接: {}", redact_connection_string(&connection_string));
     println!("✅ 连接配置验证通过，返回连接字符串用于前端测试");
     Ok(connection_string)
@@ -521,6 +539,99 @@ mod tests {
       created_at: "2026-09-17T00:00:00Z".to_string(),
       updated_at: "2026-09-17T00:00:00Z".to_string(),
     }
+  }
+
+  fn tunnelled(id: &str) -> ConnectionProfile {
+    ConnectionProfile {
+      ssh_tunnel: Some(crate::models::SshTunnelConfig {
+        host: "jump.example.com".to_string(),
+        port: 22,
+        username: "ops".to_string(),
+        private_key_path: "~/.ssh/id_rsa".to_string(),
+        remote_host: Some("127.0.0.1".to_string()),
+        remote_port: Some(23306),
+      }),
+      ..profile(id, "secret")
+    }
+  }
+
+  /// 前端 `Database.load` 用的串，和后端执行查询时算的串，必须一模一样。
+  ///
+  /// 这是本轮实际踩到的坑：`test_connection` 那条路做了隧道重定向，
+  /// `resolve_connection_string` 那条路没做，于是连上之后对象树能列出表
+  /// （它走前端自己的句柄），一执行查询就报「数据库会话未连接」——因为
+  /// `DbInstances` 是按连接串做键的，两份串差了 host:port。
+  ///
+  /// 现在两条路都走 `connection_string_via`，这一条钉住它们不再分家。
+  #[test]
+  fn both_paths_agree_on_the_connection_string_of_a_tunnelled_profile() {
+    let config_path = temporary_config_path();
+    let mut service =
+      match ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()) {
+        Ok(service) => service,
+        Err(error) => panic!("空配置应当能建起服务: {error}"),
+      };
+
+    let id = match service.create_connection(tunnelled("tunnel-1")) {
+      Ok(id) => id,
+      Err(error) => panic!("保存连接不该失败: {error}"),
+    };
+
+    // 前端那条路：命令层建好隧道之后拿着本地端口拼串
+    let Some(saved) = service.get_connection(&id) else {
+      panic!("刚存进去的连接应当取得出来");
+    };
+    let resolved = match service.resolve_for_connection(&saved.clone()) {
+      Ok(resolved) => resolved,
+      Err(error) => panic!("校验不该失败: {error}"),
+    };
+    let from_test_connection = resolved.connection_string_via(Some(49201));
+
+    // 后端那条路：执行查询时按 id 重算
+    let from_query_path = match service.resolve_connection_string(&id, Some(49201)) {
+      Ok(url) => url,
+      Err(error) => panic!("按 id 取串不该失败: {error}"),
+    };
+
+    assert_eq!(from_test_connection, from_query_path);
+    assert!(from_test_connection.contains("127.0.0.1:49201"), "{from_test_connection}");
+    // 原来的地址一个字都不该留下：留着就说明重定向只做了一半
+    assert!(!from_test_connection.contains("localhost:5432"), "{from_test_connection}");
+
+    let _ = std::fs::remove_file(&config_path);
+  }
+
+  /// 配了隧道却没有活着的隧道时，直说，不要拼一个连得上别处的串。
+  #[test]
+  fn a_tunnelled_profile_without_a_live_tunnel_says_so() {
+    let config_path = temporary_config_path();
+    let mut service =
+      match ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()) {
+        Ok(service) => service,
+        Err(error) => panic!("空配置应当能建起服务: {error}"),
+      };
+
+    let tunnelled_id = match service.create_connection(tunnelled("tunnel-2")) {
+      Ok(id) => id,
+      Err(error) => panic!("保存连接不该失败: {error}"),
+    };
+    assert_eq!(
+      service.resolve_connection_string(&tunnelled_id, None),
+      Err(SSH_TUNNEL_NOT_ESTABLISHED.to_string())
+    );
+
+    // 没配隧道的连接不受影响：传 None 就是它的正常情形
+    let plain_id = match service.create_connection(profile("plain-1", "secret")) {
+      Ok(id) => id,
+      Err(error) => panic!("保存连接不该失败: {error}"),
+    };
+    let url = match service.resolve_connection_string(&plain_id, None) {
+      Ok(url) => url,
+      Err(error) => panic!("没有隧道的连接不该报错: {error}"),
+    };
+    assert!(url.contains("localhost:5432"), "{url}");
+
+    let _ = std::fs::remove_file(&config_path);
   }
 
   fn temporary_config_path() -> PathBuf {

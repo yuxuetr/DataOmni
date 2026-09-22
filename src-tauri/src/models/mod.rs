@@ -290,6 +290,23 @@ impl ConnectionProfile {
     self.tls_mode.unwrap_or(if self.ssl { TlsMode::Required } else { TlsMode::Disabled })
   }
 
+  /// 这个配置的连接串。`tunnel_port` 有值就指向本地转发端口。
+  ///
+  /// **所有拿连接串的地方都必须走这里。** `DbInstances` 是按连接串做键的：
+  /// 前端 `Database.load` 用的那一份，和后端执行查询时算的那一份，差一个
+  /// 字符就查不到池子。那时报出来的是「数据库会话未连接」，而界面上连接
+  /// 状态还是绿的——实际发生过：对象树能列出表（它走前端自己的句柄），
+  /// 一执行查询就说没连接。
+  pub fn connection_string_via(&self, tunnel_port: Option<u16>) -> String {
+    match tunnel_port {
+      Some(port) => {
+        let local = self.redirected_to("127.0.0.1", port);
+        local.db_type.to_connection_string(&local)
+      }
+      None => self.db_type.to_connection_string(self),
+    }
+  }
+
   /// 换一份 host / port，其余照抄。
   ///
   /// 有隧道时连接串要指向本地那个转发端口，而不是 profile 里的主机。用换掉

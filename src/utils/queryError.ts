@@ -1,4 +1,5 @@
 import type { QueryExecutionError } from '../contracts/queryExecution';
+import { translateBackendMessage } from './backendError';
 import { describeError } from './describeError';
 
 export const QUERY_TIMEOUT_CODE = 'QUERY_TIMEOUT';
@@ -23,7 +24,9 @@ export function toQueryExecutionError(error: unknown): QueryExecutionError {
     const source = error as Record<string, unknown>;
     if (typeof source.message === 'string') {
       return {
-        message: source.message,
+        // 这条路绕过 `describeError`，所以翻译要在这里自己做一次——
+        // 「数据库会话未连接」这类后端错误就是从这里印到界面上的
+        message: translateBackendMessage(source.message),
         code: text(source.code),
         position: positive(source.position),
         detail: text(source.detail),

@@ -840,6 +840,8 @@ export const zh = {
   'error.backend.sshKnownHostsUnreadable': '读不了 ~/.ssh/known_hosts: {detail}。没有它就没法校验跳板机的主机密钥，所以这里不继续。',
   'error.backend.sshConnectTimeout': '{detail} 秒内没有连上跳板机。检查地址和端口，以及本机到跳板机这一段是否通。',
   'error.backend.sshLocalPortUnavailable': '本地转发端口开不出来: {detail}',
+  'error.backend.sshTunnelNotEstablished': '这个连接配了 SSH 隧道，但隧道现在没有建起来。重新连接一次。',
+  'error.backend.dbSessionNotConnected': '数据库会话未连接。先连接这个数据库再执行；如果界面上显示已连接，说明会话已经失效，断开后重连一次。',
   'error.backend.sshAuthRejected': '跳板机拒绝了这把私钥。确认 SSH 用户名与私钥对得上，且对应的公钥已经在服务器的 authorized_keys 里。',
   'error.backend.sshFailed': 'SSH 连接失败: {detail}',
   'error.invalidPort': '端口号无效: {port}。端口号必须在 1-65535 范围内。',
