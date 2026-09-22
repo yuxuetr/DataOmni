@@ -4,6 +4,7 @@ import type { ColumnInfo } from '../contracts';
 import { describeRowIdentity, type RowIdentityResult } from './rowIdentity';
 import { groupIndexRows } from './schemaObjects';
 import { requireDatabase } from './requireDatabase';
+import { catalogQueryParams, type SchemaMetadataQueries } from './catalogQueries';
 
 /**
  * 表的列与键，从目录里读。
@@ -14,24 +15,6 @@ import { requireDatabase } from './requireDatabase';
  * id 的表上指向完全错误的行；`LIMIT 1` 则把复合主键砍成一列。两者拼出的
  * UPDATE 都语法正确、执行成功、不报任何错。
  */
-
-/**
- * 列目录查询的参数。
- *
- * SQL 文本住在 Rust 的 `schema_metadata.rs`，和索引、外键那几段一起——只有
- * 住在那边才能被 `tests/database_smoke.rs` 拿真库跑一遍。此前这三段 SQL 写
- * 在这里，于是「PostgreSQL 把 `text[]` 报成 ARRAY」和「自增主键的表一行都
- * 插不进去」这两处一直没有任何测试碰得到。
- *
- * SQLite 只有一个参数：pragma 表值函数认表名，没有 schema 这一层。
- */
-export function tableColumnsParams(
-  dbType: string,
-  tableName: string,
-  schema?: string
-): unknown[] {
-  return dbType === 'sqlite' ? [tableName] : [tableName, schema ?? null];
-}
 
 /**
  * 目录行转成 `ColumnInfo`。
@@ -63,11 +46,6 @@ export function toColumnInfo(rows: unknown): ColumnInfo[] {
 }
 
 /** `get_schema_metadata_queries` 的返回里这里用得上列与索引两条 */
-interface ColumnAndIndexQueries {
-  columns: string;
-  indexes: string;
-}
-
 export interface TableMetadata {
   columns: ColumnInfo[];
   identity: RowIdentityResult;
@@ -96,8 +74,8 @@ export async function loadTableMetadata(
 ): Promise<TableMetadata> {
   try {
     const handle = requireDatabase(database);
-    const queries = await invoke<ColumnAndIndexQueries>('get_schema_metadata_queries', { dbType });
-    const params = tableColumnsParams(dbType, tableName, schema);
+    const queries = await invoke<SchemaMetadataQueries>('get_schema_metadata_queries', { dbType });
+    const params = catalogQueryParams(queries.parameter_count, tableName, schema);
     const [columnRows, indexRows] = await Promise.all([
       handle.select(queries.columns, params),
       handle.select(queries.indexes, params)

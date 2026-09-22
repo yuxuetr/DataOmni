@@ -24,6 +24,12 @@ pub struct SchemaMetadataQueries {
   pub check_constraints: Option<&'static str>,
   pub ddl: Option<DdlQuery>,
   pub triggers: &'static str,
+  /// 每段 `Bound` 查询要绑几个参数。**这一个数管这个方言的全部查询**：
+  /// 前端据它构造 `[表名]` 或 `[表名, schema]`，不再自己按方言分支。
+  ///
+  /// 写成数据而不是让前端记规则，是因为它真的漂过：`ddl` 这一段此前收到的
+  /// 是一个参数，而 PostgreSQL 的视图定义要两个。见 `parameter_count` 那条门。
+  pub parameter_count: u8,
 }
 
 /// 取建表语句的方式。两种形态不是为了对称——它们真的不一样：
@@ -54,6 +60,7 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       // 见 `postgres_has_no_create_table_statement` 上的说明。
       ddl: Some(DdlQuery::Bound { sql: POSTGRES_VIEW_DEFINITION }),
       triggers: POSTGRES_TRIGGERS,
+      parameter_count: 2,
     }),
     DatabaseType::MySQL => Some(SchemaMetadataQueries {
       columns: MYSQL_COLUMNS,
@@ -62,6 +69,7 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       check_constraints: Some(MYSQL_CHECK_CONSTRAINTS),
       ddl: Some(DdlQuery::Interpolated { sql: MYSQL_DDL }),
       triggers: MYSQL_TRIGGERS,
+      parameter_count: 2,
     }),
     DatabaseType::SQLite => Some(SchemaMetadataQueries {
       columns: SQLITE_COLUMNS,
@@ -70,6 +78,7 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       check_constraints: None,
       ddl: Some(DdlQuery::Bound { sql: SQLITE_DDL }),
       triggers: SQLITE_TRIGGERS,
+      parameter_count: 1,
     }),
     _ => None,
   }
@@ -422,6 +431,78 @@ ORDER BY name
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  /// 占位符里最大的序号，就是这段 SQL 要绑几个参数。
+  ///
+  /// PostgreSQL 写 `$1`/`$2`；SQLite 写 `?1`；MySQL 写裸 `?`，按出现次数算。
+  fn placeholder_count(sql: &str) -> usize {
+    let numbered = |marker: char| {
+      sql
+        .match_indices(marker)
+        .filter_map(|(at, _)| {
+          sql[at + 1..].chars().take_while(char::is_ascii_digit).collect::<String>().parse().ok()
+        })
+        .max()
+        .unwrap_or(0)
+    };
+
+    let dollars = numbered('$');
+    if dollars > 0 {
+      return dollars;
+    }
+    let numbered_marks = numbered('?');
+    if numbered_marks > 0 {
+      return numbered_marks;
+    }
+    sql.matches('?').count()
+  }
+
+  /// 前端按 `parameter_count` 造一份参数，发给这个方言的**每一段**查询。
+  /// 这条不变量成立，那份算法才成立。
+  ///
+  /// 它不是假想的：`ddl` 这一段此前实际收到的是一个参数（前端照 SQLite 的
+  /// 形状写死了），而 PostgreSQL 的视图定义要两个。真库上的回答是
+  /// `bind message supplies 1 parameters, but prepared statement requires 2`，
+  /// 而那条查询和索引、外键、触发器在同一个 `Promise.all` 里——于是
+  /// PostgreSQL 上整个「结构」页一条索引都显示不出来。
+  #[test]
+  fn every_bound_query_of_a_dialect_binds_parameter_count_values() {
+    for db_type in [DatabaseType::PostgreSQL, DatabaseType::MySQL, DatabaseType::SQLite] {
+      let queries = schema_metadata_queries(&db_type).expect("supported");
+      let expected = usize::from(queries.parameter_count);
+
+      let mut bound = vec![
+        ("columns", queries.columns),
+        ("indexes", queries.indexes),
+        ("foreign_keys", queries.foreign_keys),
+        ("triggers", queries.triggers),
+      ];
+      if let Some(sql) = queries.check_constraints {
+        bound.push(("check_constraints", sql));
+      }
+      match queries.ddl {
+        // 插值那一种把表名当标识符拼进去，一个占位符都不该有——
+        // 把表名当字符串绑进 SHOW CREATE TABLE 是语法错误
+        Some(DdlQuery::Interpolated { sql }) => assert_eq!(
+          placeholder_count(sql),
+          0,
+          "{db_type:?} 的 ddl 是插值形态，不该有占位符: {sql}"
+        ),
+        Some(DdlQuery::Bound { sql }) => bound.push(("ddl", sql)),
+        None => {}
+      }
+
+      for (name, sql) in bound {
+        assert_eq!(
+          placeholder_count(sql),
+          expected,
+          "{db_type:?} 的 {name} 要 {} 个参数，与声明的 {expected} 不符；\
+           前端只按 parameter_count 造一份参数发给全部查询: {sql}",
+          placeholder_count(sql)
+        );
+      }
+    }
+  }
 
   #[test]
   fn sqlite_reports_no_check_constraint_catalog() {

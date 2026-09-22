@@ -1038,6 +1038,96 @@ async fn sqlite_returns_create_table_together_with_its_indexes() {
 }
 
 // ---------------------------------------------------------------------------
+// 目录查询的参数：前端发出去的那一组，真库答不答应
+// ---------------------------------------------------------------------------
+
+/// 收集一个方言里全部走绑定参数的目录查询，连同它们在界面上的名字。
+fn bound_catalog_queries(
+  queries: &dataomni_lib::services::SchemaMetadataQueries,
+) -> Vec<(&'static str, &'static str)> {
+  let mut bound = vec![
+    ("columns", queries.columns),
+    ("indexes", queries.indexes),
+    ("foreign_keys", queries.foreign_keys),
+    ("triggers", queries.triggers),
+  ];
+  if let Some(sql) = queries.check_constraints {
+    bound.push(("check_constraints", sql));
+  }
+  // 插值那一种不绑参数，表名已经作为标识符拼进语句了
+  if let Some(dataomni_lib::services::DdlQuery::Bound { sql }) = queries.ddl {
+    bound.push(("ddl", sql));
+  }
+  bound
+}
+
+/// 前端只拿 `parameter_count` 造一组参数，发给上面每一段。
+///
+/// 单测数的是占位符个数；这条证明真库确实答应。它红过一次：`ddl` 那一段
+/// 此前照 SQLite 的形状只绑了表名，而 PostgreSQL 的视图定义要两个——
+/// 真库的回答是 `bind message supplies 1 parameters, but prepared statement
+/// requires 2`，而这几段查询在前端是同一个 `Promise.all`，于是 PostgreSQL 上
+/// 整个「结构」页的索引、外键、触发器一条都显示不出来。
+#[tokio::test]
+async fn postgres_accepts_the_parameters_the_ui_actually_sends() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+
+  let fixture = MetaFixture::new("pgparams");
+  for statement in fixture.ddl("postgres") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare PostgreSQL fixture");
+  }
+
+  let queries = dataomni_lib::services::schema_metadata_queries(
+    &dataomni_lib::models::DatabaseType::PostgreSQL,
+  )
+  .expect("supported");
+
+  for (name, sql) in bound_catalog_queries(&queries) {
+    let mut query = sqlx::query(sql).bind(&fixture.child);
+    for _ in 1..queries.parameter_count {
+      query = query.bind(Option::<String>::None);
+    }
+    query
+      .fetch_all(&pool)
+      .await
+      .unwrap_or_else(|error| panic!("PostgreSQL 的 {name} 不接受界面发的参数: {error}"));
+  }
+}
+
+#[tokio::test]
+async fn mysql_accepts_the_parameters_the_ui_actually_sends() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+
+  let fixture = MetaFixture::new("myparams");
+  for statement in fixture.ddl("mysql") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
+  }
+
+  let queries =
+    dataomni_lib::services::schema_metadata_queries(&dataomni_lib::models::DatabaseType::MySQL)
+      .expect("supported");
+
+  for (name, sql) in bound_catalog_queries(&queries) {
+    let mut query = sqlx::query(sql).bind(&fixture.child);
+    for _ in 1..queries.parameter_count {
+      query = query.bind(Option::<String>::None);
+    }
+    query
+      .fetch_all(&pool)
+      .await
+      .unwrap_or_else(|error| panic!("MySQL 的 {name} 不接受界面发的参数: {error}"));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 视图定义与触发器
 // ---------------------------------------------------------------------------
 

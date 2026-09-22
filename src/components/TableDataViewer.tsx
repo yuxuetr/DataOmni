@@ -62,7 +62,13 @@ import { SchemaObjectSections, type SchemaObjects } from './SchemaObjectSections
 import { TableStructureEditor } from './TableStructureEditor';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { requireDatabase } from '../utils/requireDatabase';
-import { tableColumnsParams, toColumnInfo } from '../utils/tableMetadata';
+import { toColumnInfo } from '../utils/tableMetadata';
+import {
+  catalogQueryParams,
+  ddlRequest,
+  type DdlQuery,
+  type SchemaMetadataQueries
+} from '../utils/catalogQueries';
 import { describeRowIdentity, type IndexMetadata } from '../utils/rowIdentity';
 import type { RowKey, TableTarget } from '../utils/rowStatements';
 import {
@@ -123,22 +129,6 @@ interface TableDataViewerProps {
 
 // 标签页类型
 type TabType = 'schema' | 'data';
-
-/** `get_schema_metadata_queries` 的返回；字段名按 Rust 侧的 snake_case */
-interface SchemaMetadataQueries {
-  columns: string;
-  indexes: string;
-  foreign_keys: string;
-  check_constraints: string | null;
-  /** 对象定义原文；PostgreSQL 只对视图有 */
-  ddl: DdlQuery | null;
-  triggers: string;
-}
-
-/** `bound` 走绑定参数，`interpolated` 要把 `{table}` 换成引用过的标识符 */
-type DdlQuery =
-  | { kind: 'bound'; sql: string }
-  | { kind: 'interpolated'; sql: string };
 
 function asRows(value: unknown): Array<Record<string, unknown>> {
   return Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
@@ -253,16 +243,12 @@ export default function TableDataViewer({
     return true;
   };
 
-  const runDdlQuery = (ddl: DdlQuery | null) => {
+  const runDdlQuery = (ddl: DdlQuery | null, parameterCount: number) => {
     if (!ddl) {
       return Promise.resolve(null);
     }
-    if (ddl.kind === 'bound') {
-      return requireDatabase(database).select(ddl.sql, [tableName]);
-    }
-    // SHOW CREATE TABLE 不接受占位符，表名只能作为引用过的标识符插进去
-    const quoted = quoteQualifiedSqlIdentifier(schema ? [schema, tableName] : [tableName], dialect);
-    return requireDatabase(database).select(ddl.sql.replace('{table}', quoted), []);
+    const request = ddlRequest(ddl, parameterCount, tableName, schema, dialect);
+    return requireDatabase(database).select(request.sql, request.params);
   };
 
   /**
@@ -280,14 +266,14 @@ export default function TableDataViewer({
       });
 
       // SQLite 的 pragma 表值函数只认一个表名参数，没有 schema 概念
-      const params = tableColumnsParams(connection.db_type, tableName, schema);
+      const params = catalogQueryParams(queries.parameter_count, tableName, schema);
       const [indexRows, foreignKeyRows, checkRows, ddlRows, triggerRows] = await Promise.all([
         requireDatabase(database).select(queries.indexes, params),
         requireDatabase(database).select(queries.foreign_keys, params),
         queries.check_constraints
           ? requireDatabase(database).select(queries.check_constraints, params)
           : Promise.resolve(null),
-        runDdlQuery(queries.ddl),
+        runDdlQuery(queries.ddl, queries.parameter_count),
         // SQLite 的 pragma 之外的目录查询同样只认一个表名参数
         requireDatabase(database).select(queries.triggers, params)
       ]);
@@ -343,7 +329,7 @@ export default function TableDataViewer({
       });
       const columnsResult = await requireDatabase(database).select(
         queries.columns,
-        tableColumnsParams(connection.db_type, tableName, schema)
+        catalogQueryParams(queries.parameter_count, tableName, schema)
       );
       const columns = toColumnInfo(columnsResult);
       // 一列都读不到不是「一张没有列的表」——SQL 里没有这种表。真实的原因是
