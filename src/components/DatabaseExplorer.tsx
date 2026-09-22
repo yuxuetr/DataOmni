@@ -15,7 +15,6 @@ import {
   Info
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
-import { describeError } from '../utils/describeError';
 import { useLanguageStore } from '../stores/languageStore';
 import {
   buildObjectTree,
@@ -30,6 +29,9 @@ import {
 import { ObjectDefinitionDialog } from './ObjectDefinitionDialog';
 import { CreateTableDialog } from './CreateTableDialog';
 import { identifierDialectFor } from '../utils/sqlIdentifiers';
+import { ObjectContextMenu } from './ObjectContextMenu';
+import { qualifiedObjectName, type ObjectMenuAction } from '../utils/objectMenu';
+import { describeError } from '../utils/describeError';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useQueryStore } from '../stores/queryStore';
 import { useAppStore } from '../stores/appStore';
@@ -38,6 +40,8 @@ import { validateDatabaseConnection } from '../utils/stateSync';
 interface DatabaseExplorerProps {
   connectionId: string;
   onTableSelect?: (tableName: string, schema?: string) => void;
+  /** 直接打开结构页。此前没有任何入口造得出 `table-structure` 标签 */
+  onOpenStructure?: (tableName: string, schema?: string) => void;
   onOpenErDiagram?: () => void;
 }
 
@@ -52,6 +56,7 @@ export interface ObjectCatalogQueries {
 export default function DatabaseExplorer({
   connectionId,
   onTableSelect,
+  onOpenStructure,
   onOpenErDiagram
 }: DatabaseExplorerProps) {
   const { connections } = useConnectionStore();
@@ -69,6 +74,10 @@ export default function DatabaseExplorer({
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [inspecting, setInspecting] = useState<DatabaseObject | null>(null);
   const [creatingTable, setCreatingTable] = useState(false);
+  const [objectMenu, setObjectMenu] = useState<
+    { object: DatabaseObject; position: { x: number; y: number } } | null
+  >(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
 
   const t = useLanguageStore((state) => state.t);
   const kindLabel = (kind: DatabaseObjectKind) => t(KIND_LABEL_KEYS[kind]);
@@ -208,6 +217,30 @@ export default function DatabaseExplorer({
     onTableSelect?.(object.name, object.schema ?? undefined);
   };
 
+  const runObjectAction = (action: ObjectMenuAction, object: DatabaseObject) => {
+    const schema = object.schema ?? undefined;
+    if (action === 'open-data') {
+      onTableSelect?.(object.name, schema);
+      return;
+    }
+    if (action === 'open-structure') {
+      onOpenStructure?.(object.name, schema);
+      return;
+    }
+    if (action === 'view-definition') {
+      setInspecting(object);
+      return;
+    }
+
+    const dialect = connection ? identifierDialectFor(connection.db_type) : 'sqlite';
+    navigator.clipboard
+      .writeText(qualifiedObjectName(object, dialect))
+      .then(() => setCopyError(null))
+      // 剪贴板会被权限或非安全上下文拒绝。静默失败的后果是以为复制成功了，
+      // 粘出来却是上一次的东西
+      .catch((cause) => setCopyError(describeError(cause, t('common.copyFailed'))));
+  };
+
   return (
     <div className="h-full flex flex-col bg-surface">
       {/* 头部 */}
@@ -308,11 +341,27 @@ export default function DatabaseExplorer({
                 expandedNodes={expandedNodes}
                 onToggle={toggleNode}
                 onSelect={handleObjectClick}
+                onContextMenu={(object, position) => setObjectMenu({ object, position })}
               />
             ))}
           </div>
         )}
       </div>
+
+      {copyError && (
+        <div className="border-t border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
+          {copyError}
+        </div>
+      )}
+
+      {objectMenu && (
+        <ObjectContextMenu
+          object={objectMenu.object}
+          position={objectMenu.position}
+          onRun={(action) => runObjectAction(action, objectMenu.object)}
+          onDismiss={() => setObjectMenu(null)}
+        />
+      )}
 
       {inspecting && (
         <ObjectDefinitionDialog
@@ -356,13 +405,15 @@ function ObjectTreeGroup({
   depth,
   expandedNodes,
   onToggle,
-  onSelect
+  onSelect,
+  onContextMenu
 }: {
   node: ObjectTreeNode;
   depth: number;
   expandedNodes: Set<string>;
   onToggle: (key: string) => void;
   onSelect: (object: DatabaseObject) => void;
+  onContextMenu: (object: DatabaseObject, position: { x: number; y: number }) => void;
 }) {
   const expanded = expandedNodes.has(node.key);
 
@@ -390,6 +441,7 @@ function ObjectTreeGroup({
               expandedNodes={expandedNodes}
               onToggle={onToggle}
               onSelect={onSelect}
+              onContextMenu={onContextMenu}
             />
           ))}
         </div>
@@ -401,6 +453,10 @@ function ObjectTreeGroup({
             <button
               key={`${object.kind}:${object.id}`}
               onClick={() => onSelect(object)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                onContextMenu(object, { x: event.clientX, y: event.clientY });
+              }}
               className="w-full flex items-center gap-2 px-2 py-1 text-sm text-fg-muted hover:bg-accent-soft hover:text-accent rounded-control transition-colors"
               style={{ paddingLeft: `${28 + depth * 12}px` }}
               title={object.name}

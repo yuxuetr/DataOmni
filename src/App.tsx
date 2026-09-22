@@ -422,19 +422,31 @@ function App() {
     );
   };
 
-  const openTableTab = (tableName: string, schema?: string) => {
+  const openTableTab = (
+    tableName: string,
+    schema?: string,
+    kind: 'table-data' | 'table-structure' = 'table-data'
+  ) => {
     if (!activeConnection) {
       return;
     }
 
     const profileId = activeConnection.config.id;
     const object = { schema: schema ?? null, table: tableName };
+    const qualified = schema ? `${schema}.${tableName}` : tableName;
 
     registerTab(
       createTableWorkspaceTab(profileId, tableName, {
-        id: workspaceTabId(profileId, 'table-data', object),
+        // 标签 id 带上 kind：数据页和结构页是两个标签，同时开着才有意义
+        id: workspaceTabId(profileId, kind, object),
+        kind,
         schema: schema ?? null,
-        title: schema ? `${schema}.${tableName}` : tableName
+        title: qualified,
+        // 结构页另带一个文案键：两个标签都叫 `public.users` 的话，
+        // 只剩图标能分辨，而图标是要认的，文字是读的
+        ...(kind === 'table-structure'
+          ? { titleKey: 'tab.structureTitle', titleParams: { table: qualified } }
+          : {})
       })
     );
   };
@@ -659,7 +671,8 @@ function App() {
         <Sidebar
           activeConnectionId={activeConnection?.config.id}
           onConnectionDeleted={(connectionId) => sessionManager.handleConnectionDeleted(connectionId)}
-          onTableSelect={openTableTab}
+          onTableSelect={(table, schema) => openTableTab(table, schema)}
+          onOpenStructure={(table, schema) => openTableTab(table, schema, 'table-structure')}
           onOpenErDiagram={openErDiagramTab}
           onOpenHistory={() => setShowHistory(true)}
           onCollapse={sidebar.toggleCollapsed}

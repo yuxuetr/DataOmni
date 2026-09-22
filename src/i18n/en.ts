@@ -47,6 +47,10 @@ export const en: Translations = {
   'explorer.notConnected': 'Not connected to a database',
   'explorer.connectionMissing': 'Connection not found',
   'explorer.noDatabaseName': 'This connection has no database name, so objects cannot be listed. Set one in the connection settings.',
+  'explorer.menu.openData': 'Open data',
+  'explorer.menu.openStructure': 'Open structure',
+  'explorer.menu.viewDefinition': 'View definition',
+  'explorer.menu.copyName': 'Copy qualified name',
 
   'objectKind.table': 'Tables',
   'objectKind.view': 'Views',
@@ -81,6 +85,7 @@ export const en: Translations = {
   'tab.connectionInactive': '{title} (bound connection is not active)',
   'tab.newQuery': 'New query',
   'tab.queryTitle': 'Query · {connection}',
+  'tab.structureTitle': '{table} · Structure',
   'tab.queryNumbered': 'Query {index} · {connection}',
   'tab.duplicate': '{title} copy',
   'tab.resizeSidebar': 'Resize the sidebar',
@@ -722,6 +727,7 @@ export const en: Translations = {
   'offline.emptyDraft': 'Nothing has been written in this query tab yet.',
   'offline.erNeedsConnection': 'The ER diagram requires a connection.',
   'offline.tableNeedsConnection': 'Reading data from "{table}" requires a connection.',
+  'offline.structureNeedsConnection': 'Reading the structure of "{table}" requires a connection.',
 
   'form.category.relational': 'Relational',
   'form.category.nosql': 'Non-relational',

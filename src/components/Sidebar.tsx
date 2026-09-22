@@ -28,6 +28,7 @@ interface SidebarProps {
   activeConnectionId?: string | null;
   onConnectionDeleted?: (deletedConnectionId: string) => Promise<void>;
   onTableSelect?: (tableName: string, schema?: string) => void;
+  onOpenStructure?: (tableName: string, schema?: string) => void;
   onOpenErDiagram?: () => void;
   /** 历史对话框由 App 渲染：它要能把一条语句开进新标签，而建标签是 App 的事 */
   onOpenHistory?: () => void;
@@ -39,6 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeConnectionId,
   onConnectionDeleted,
   onTableSelect,
+  onOpenStructure,
   onOpenErDiagram,
   onOpenHistory,
   onCollapse
@@ -72,13 +74,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const handleCreateConnection = () => {
     setConnectionError(null);
     openConnectionForm();
-  };
-
-  // 处理表格选择
-  const handleTableSelect = (tableName: string, schema?: string) => {
-    if (onTableSelect) {
-      onTableSelect(tableName, schema);
-    }
   };
 
   // 获取当前连接
@@ -249,7 +244,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           // 显示数据库浏览器
           <DatabaseExplorer
             connectionId={activeConnectionId}
-            onTableSelect={handleTableSelect}
+            onTableSelect={onTableSelect}
+            onOpenStructure={onOpenStructure}
             onOpenErDiagram={onOpenErDiagram}
           />
         ) : (

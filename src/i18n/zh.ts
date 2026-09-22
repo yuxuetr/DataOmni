@@ -57,6 +57,10 @@ export const zh = {
   'explorer.notConnected': '尚未连接到数据库',
   'explorer.connectionMissing': '连接不存在',
   'explorer.noDatabaseName': '该连接没有指定数据库名，无法列出对象。请在连接配置中填写数据库。',
+  'explorer.menu.openData': '打开数据',
+  'explorer.menu.openStructure': '打开结构',
+  'explorer.menu.viewDefinition': '查看定义',
+  'explorer.menu.copyName': '复制限定名',
 
   // 对象类型
   'objectKind.table': '表',
@@ -95,6 +99,7 @@ export const zh = {
   'tab.connectionInactive': '{title}（绑定的连接未激活）',
   'tab.newQuery': '新建查询',
   'tab.queryTitle': '查询 · {connection}',
+  'tab.structureTitle': '{table} · 结构',
   'tab.queryNumbered': '查询 {index} · {connection}',
   'tab.duplicate': '{title} 副本',
   'tab.resizeSidebar': '调整侧边栏宽度',
@@ -746,6 +751,7 @@ export const zh = {
   'offline.emptyDraft': '这个查询标签还没有写过内容。',
   'offline.erNeedsConnection': 'ER 关系图需要连接后才能读取。',
   'offline.tableNeedsConnection': '表「{table}」的数据需要连接后才能读取。',
+  'offline.structureNeedsConnection': '表「{table}」的结构需要连接后才能读取。',
 
   // 连接表单
   'form.category.relational': '关系型数据库',

@@ -61,11 +61,18 @@ export function OfflineTabView({ tab, profileName, draft }: OfflineTabViewProps)
             ? <p className="text-sm text-fg-muted">{t('offline.erNeedsConnection')}</p>
             : (
               <p className="text-sm text-fg-muted">
-                {t('offline.tableNeedsConnection', {
-                  table: tab.object.schema
-                    ? `${tab.object.schema}.${tab.object.table}`
-                    : tab.object.table
-                })}
+                {/* 结构页和数据页是两种标签，离线时要读的东西也不一样，
+                    对着一个结构标签说「数据需要连接」是在答非所问 */}
+                {t(
+                  tab.kind === 'table-structure'
+                    ? 'offline.structureNeedsConnection'
+                    : 'offline.tableNeedsConnection',
+                  {
+                    table: tab.object.schema
+                      ? `${tab.object.schema}.${tab.object.table}`
+                      : tab.object.table
+                  }
+                )}
               </p>
             )}
       </div>
