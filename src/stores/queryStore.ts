@@ -721,7 +721,12 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           sql: statement.sql,
           timeoutMs: queryTimeoutMs,
           rowLimit: queryResultRowLimit,
-          byteLimit: QUERY_RESULT_BACKEND_BYTE_LIMIT
+          byteLimit: QUERY_RESULT_BACKEND_BYTE_LIMIT,
+          // **必须带上**：不带的话后端 serde 用默认值 true，于是取消勾选
+          // 「自动提交」对编辑器里的语句毫无作用——界面显示手动事务模式，
+          // 数据库却在自动提交，用户以为能回滚，实际每条都已经落库了。
+          // 后端 `begin_if_needed` 正是靠它决定要不要先发 BEGIN
+          autocommit: get().autocommit
         }
       });
       const executionTime = Date.now() - startTime;

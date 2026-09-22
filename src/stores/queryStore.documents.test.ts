@@ -201,3 +201,59 @@ describe('SQL 文档分片', () => {
     expect(invokeMock).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * 取消勾选「自动提交」之后，编辑器里的语句必须真的落进一个事务里。
+ *
+ * 这条门补的是一个数据安全缺陷：执行请求原来**不带** `autocommit`，后端
+ * `#[serde(default)]` 于是取 true，`begin_if_needed` 直接返回、不发 BEGIN。
+ * 界面上复选框是空的、Begin/Commit/Roll back 三个按钮都在，而每条语句其实
+ * 已经提交了——**人以为能回滚，实际不能**。
+ *
+ * 后端那一侧本来就有测试（`turning_autocommit_off_puts_a_plain_statement_inside_a_transaction`），
+ * 所以坏掉的只是「前端有没有把这个值送出去」。这里盯的就是送出去的那个请求。
+ */
+describe('自动提交开关要真的送到后端', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    resetStore();
+    invokeMock.mockResolvedValue({
+      kind: 'affected',
+      affected_rows: 1,
+      execution_time: 1
+    });
+  });
+
+  function requestOf(command: string): Record<string, unknown> | undefined {
+    const call = invokeMock.mock.calls.find(([name]) => name === command);
+    return (call?.[1] as { request?: Record<string, unknown> })?.request;
+  }
+
+  it('关掉自动提交时，执行请求带的是 false', async () => {
+    const store = useQueryStore.getState();
+    store.setAutocommit(false);
+    store.openDocument('tab-a');
+    store.setSqlInput('DELETE FROM orders;');
+    store.parseStatements();
+
+    const statement = selectActiveSqlDocument(useQueryStore.getState()).statements[0];
+    await useQueryStore.getState().executeStatement(statement.id);
+
+    expect(requestOf('execute_query')?.autocommit).toBe(false);
+  });
+
+  it('开着自动提交时带的是 true，不是靠后端猜', async () => {
+    const store = useQueryStore.getState();
+    store.setAutocommit(true);
+    store.openDocument('tab-a');
+    store.setSqlInput('DELETE FROM orders;');
+    store.parseStatements();
+
+    const statement = selectActiveSqlDocument(useQueryStore.getState()).statements[0];
+    await useQueryStore.getState().executeStatement(statement.id);
+
+    // 显式送出去，而不是「不带、让默认值恰好对」——默认值对的时候没人会发现
+    // 它其实一直在被使用
+    expect(requestOf('execute_query')).toHaveProperty('autocommit', true);
+  });
+});
