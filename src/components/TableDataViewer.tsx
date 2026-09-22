@@ -96,6 +96,7 @@ import {
   visibleColumnIndexes
 } from '../utils/gridColumns';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useTableEditStore, tableEditKey } from '../stores/tableEditStore';
 import { buildFilterClause, isCompleteFilter, type ColumnFilter } from '../utils/tableFilters';
 
 // 编辑模式类型
@@ -141,6 +142,9 @@ type DdlQuery =
 function asRows(value: unknown): Array<Record<string, unknown>> {
   return Array.isArray(value) ? (value as Array<Record<string, unknown>>) : [];
 }
+
+/** selector 返回的空值要是同一个引用，否则每次 render 都算「变了」 */
+const EMPTY_CHANGES: PendingChange[] = [];
 
 export default function TableDataViewer({ 
   connection,
@@ -188,14 +192,23 @@ export default function TableDataViewer({
   const [editState, setEditState] = useState<EditState>({ mode: 'view' });
   const [editingLoading, setEditingLoading] = useState(false);
   const [editingError, setEditingError] = useState<string | null>(null);
-  /** 待提交的变更。改动不再一改一提交，全部先落在这里 */
-  const [changes, setChanges] = useState<PendingChange[]>([]);
   const [showChanges, setShowChanges] = useState(false);
   const [commitFailure, setCommitFailure] = useState<CommitFailure | null>(null);
   const [commitNotice, setCommitNotice] = useState<string | null>(null);
   
   const { database, connectionId } = useQueryStore();
-  const currentTableKey = `${connection.id}:${schema ?? ''}:${tableName}`;
+  const currentTableKey = tableEditKey(connection.id, schema, tableName);
+
+  /** 待提交的变更。改动不再一改一提交，全部先落在这里 */
+  // 待提交的改动放在 store 里，不放在组件里：这个组件切走就卸载，放在
+  // useState 里的话切一下标签改动就没了。见 tableEditStore
+  const changes = useTableEditStore((state) => state.changes[currentTableKey] ?? EMPTY_CHANGES);
+  const setChanges = React.useCallback(
+    (next: PendingChange[] | ((current: PendingChange[]) => PendingChange[])) => {
+      useTableEditStore.getState().setChanges(currentTableKey, next);
+    },
+    [currentTableKey]
+  );
   // 标识符引用方言。此前这行三元式在四个函数里各抄了一份
   const dialect = identifierDialectFor(connection.db_type);
 
@@ -468,9 +481,9 @@ export default function TableDataViewer({
     // 列偏好同理：隐藏集里存的是列名，换表后指的是另一张表的列
     setHiddenColumns(new Set());
     setFrozenCount(0);
-    // 待提交的变更也清掉：它们的键指着另一张表的行，发出去会改错东西。
-    // 这里没法征求同意（换表已经发生了），所以关标签页那一步会先问一次
-    setChanges([]);
+    // 待提交的变更**不**在这里清：它们现在按表存在 store 里，换表就是换一个键，
+    // 「键指着另一张表的行」这种状态已经不存在了。留在这里清反而会把改动删掉——
+    // 这个 effect 挂载时也跑一次，而挂载正是从别的标签切回来的那一刻
     setCommitFailure(null);
     setCommitNotice(null);
   }, [currentTableKey]);

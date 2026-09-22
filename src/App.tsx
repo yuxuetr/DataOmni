@@ -23,6 +23,12 @@ import { tabTitle } from './utils/tabTitle';
 import { useAppStore } from './stores/appStore';
 import { useConnectionStore } from './stores/connectionStore';
 import { selectSqlDocumentHasUnsavedContent, useQueryStore } from './stores/queryStore';
+import {
+  isLastTabForTable,
+  pendingChangeCount,
+  tableKeyOfTab,
+  useTableEditStore
+} from './stores/tableEditStore';
 import { useWorkspaceStore } from './stores/workspaceStore';
 import {
   createErDiagramWorkspaceTab,
@@ -310,6 +316,19 @@ function App() {
     if (tab?.kind === 'sql' && selectSqlDocumentHasUnsavedContent(useQueryStore.getState(), tabId)) {
       setPendingCloseTabId(tabId);
       return;
+    }
+
+    // 表标签的待提交改动此前只活在组件里，标签栏这个叉一按就没了——表视图自己
+    // 那个「关闭」按钮会问一句，而标签栏上的不会。改动挪进 store 之后两条路都要
+    // 问，并且只有这张表的最后一个标签关掉时才清：数据页和结构页是两个标签，
+    // 指的是同一张表，共用同一份改动
+    const tableKey = tab ? tableKeyOfTab(tab) : null;
+    if (tableKey && isLastTabForTable(tabs, tabId)) {
+      const count = pendingChangeCount(tableKey);
+      if (count > 0 && !confirm(t('changes.discardConfirm', { count }))) {
+        return;
+      }
+      useTableEditStore.getState().clearChanges(tableKey);
     }
 
     finishCloseTab(tabId, false);
