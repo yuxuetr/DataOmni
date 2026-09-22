@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_ER_METRICS,
   columnAnchor,
+  erSchemas,
+  filterErDiagram,
+  isErFilterActive,
   layoutErDiagram,
   matchErTables,
+  NO_ER_FILTER,
   toErLinks,
   toErTables,
   truncateLabel,
+  type ErFilter,
   type ErLink,
   type ErTable
 } from './erLayout';
@@ -316,5 +321,145 @@ describe('matchErTables', () => {
     const result = matchErTables(nodes, 'zzz');
     expect(result).not.toBeNull();
     expect(result!.size).toBe(0);
+  });
+});
+
+describe('filterErDiagram', () => {
+  const scoped = (schema: string | null, name: string): ErTable => ({
+    ...table(name, 'id'),
+    schema
+  });
+
+  // orders → customers → countries；audit_log 谁都不连
+  const tables = [
+    scoped('public', 'orders'),
+    scoped('public', 'customers'),
+    scoped('public', 'countries'),
+    scoped('public', 'audit_log'),
+    scoped('sales', 'invoices')
+  ];
+  const links = [
+    link('public.orders', 'customer_id', 'public.customers', 'id'),
+    link('public.customers', 'country_id', 'public.countries', 'id'),
+    link('sales.invoices', 'order_id', 'public.orders', 'id')
+  ];
+
+  const names = (result: { tables: ErTable[] }) =>
+    result.tables.map(item => (item.schema ? `${item.schema}.${item.name}` : item.name)).sort();
+
+  const filter = (overrides: Partial<ErFilter> = {}): ErFilter => ({
+    ...NO_ER_FILTER,
+    ...overrides
+  });
+
+  it('什么都不选时原样返回', () => {
+    const result = filterErDiagram(tables, links, NO_ER_FILTER);
+    expect(result.tables).toHaveLength(5);
+    expect(result.links).toHaveLength(3);
+  });
+
+  it('按 schema 筛掉表，同时收掉断掉的连线', () => {
+    // 留着一条指向已被排掉的表的连线，顶栏那句「N 条关联」就成了假话
+    const result = filterErDiagram(tables, links, filter({ schemas: ['public'] }));
+    expect(names(result)).toEqual([
+      'public.audit_log',
+      'public.countries',
+      'public.customers',
+      'public.orders'
+    ]);
+    expect(result.links.map(item => item.constraintName)).toEqual([
+      'fk_public.orders_customer_id',
+      'fk_public.customers_country_id'
+    ]);
+  });
+
+  it('焦点加一跳只画直接相邻的表', () => {
+    const result = filterErDiagram(tables, links, filter({ focus: 'public.customers', depth: 1 }));
+    expect(names(result)).toEqual(['public.countries', 'public.customers', 'public.orders']);
+  });
+
+  it('关系不分方向——只看一个方向会漏掉一半', () => {
+    // invoices 引用 orders；从 orders 看过去，invoices 也是相邻的
+    const result = filterErDiagram(tables, links, filter({ focus: 'public.orders', depth: 1 }));
+    expect(names(result)).toContain('sales.invoices');
+    expect(names(result)).toContain('public.customers');
+  });
+
+  it('多走一跳能到更远的表', () => {
+    const one = filterErDiagram(tables, links, filter({ focus: 'public.orders', depth: 1 }));
+    const two = filterErDiagram(tables, links, filter({ focus: 'public.orders', depth: 2 }));
+    expect(names(one)).not.toContain('public.countries');
+    expect(names(two)).toContain('public.countries');
+  });
+
+  it('焦点自己被 schema 排掉时返回空图，不是悄悄画出全部', () => {
+    // 悄悄忽略焦点会让人以为过滤没生效
+    const result = filterErDiagram(
+      tables,
+      links,
+      filter({ schemas: ['sales'], focus: 'public.orders' })
+    );
+    expect(result.tables).toEqual([]);
+    expect(result.links).toEqual([]);
+  });
+
+  it('藏掉没有连线的表', () => {
+    const result = filterErDiagram(tables, links, filter({ hideUnlinked: true }));
+    expect(names(result)).not.toContain('audit_log');
+    expect(names(result)).toHaveLength(4);
+  });
+
+  it('判据是「在这张图里没有连线」，不是「在整个库里没有外键」', () => {
+    // invoices 唯一的外键指向 public.orders；只画 sales 时它在这张图里就是孤立的
+    const result = filterErDiagram(
+      tables,
+      links,
+      filter({ schemas: ['sales'], hideUnlinked: true })
+    );
+    expect(result.tables).toEqual([]);
+  });
+
+  it('焦点表自己没有连线时也不会被藏掉', () => {
+    // 把用户刚点中的那张表藏掉，剩下一张空图，没人能理解发生了什么
+    const result = filterErDiagram(
+      tables,
+      links,
+      filter({ focus: 'public.audit_log', hideUnlinked: true })
+    );
+    expect(names(result)).toEqual(['public.audit_log']);
+  });
+});
+
+describe('erSchemas', () => {
+  it('去重并排序', () => {
+    expect(
+      erSchemas([
+        { ...table('b', 'id'), schema: 'sales' },
+        { ...table('a', 'id'), schema: 'public' },
+        { ...table('c', 'id'), schema: 'public' }
+      ])
+    ).toEqual(['public', 'sales']);
+  });
+
+  it('没有 schema 的方言归一成空串，于是只有一项', () => {
+    // 只有一项时界面上根本不给这个选择
+    expect(erSchemas([table('a', 'id'), table('b', 'id')])).toEqual(['']);
+  });
+});
+
+describe('isErFilterActive', () => {
+  it('什么都没选时是不活跃的', () => {
+    expect(isErFilterActive(NO_ER_FILTER)).toBe(false);
+  });
+
+  it('深度本身不算一个筛选条件', () => {
+    // 没有焦点的时候深度什么也不影响，凭它点亮「过滤中」会让人找不到在筛什么
+    expect(isErFilterActive({ ...NO_ER_FILTER, depth: 3 })).toBe(false);
+  });
+
+  it('三个维度各自都能让它活跃', () => {
+    expect(isErFilterActive({ ...NO_ER_FILTER, schemas: ['public'] })).toBe(true);
+    expect(isErFilterActive({ ...NO_ER_FILTER, focus: 'orders' })).toBe(true);
+    expect(isErFilterActive({ ...NO_ER_FILTER, hideUnlinked: true })).toBe(true);
   });
 });

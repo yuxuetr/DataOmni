@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   Download,
+  Filter,
   Loader2,
   Maximize2,
   Minus,
@@ -10,6 +11,7 @@ import {
   Search,
   Undo2
 } from 'lucide-react';
+import { clsx } from 'clsx';
 import { save } from '@tauri-apps/plugin-dialog';
 import {
   rasterizeSvgToJpegBytes,
@@ -26,19 +28,25 @@ import { describeError } from '../utils/describeError';
 import {
   DEFAULT_ER_METRICS,
   columnAnchor,
+  erSchemas,
+  filterErDiagram,
+  isErFilterActive,
   layoutErDiagram,
   matchErTables,
+  NO_ER_FILTER,
   tableKey,
   toErLinks,
   toErTables,
   truncateLabel,
-  type ErLayoutResult,
+  type ErFilter,
   type ErLink,
-  type ErNode
+  type ErNode,
+  type ErTable
 } from '../utils/erLayout';
 import type { ConnectionProfile } from '../contracts';
 import type { TranslationKey } from '../i18n/translate';
 import { requireDatabase } from '../utils/requireDatabase';
+import { SegmentedControl } from './FormControls';
 
 interface ErDiagramQueries {
   columns: string;
@@ -84,7 +92,7 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
   // 我们自己执行过 DDL 就会 +1，图跟着重拉。外部改动靠刷新按钮。
   const schemaVersion = useAppStore((state) => state.schemaVersion);
 
-  const [layout, setLayout] = useState<ErLayoutResult | null>(null);
+  const [tables, setTables] = useState<ErTable[] | null>(null);
   const [links, setLinks] = useState<ErLink[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
@@ -94,7 +102,7 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
 
     const load = async () => {
       setError(null);
-      setLayout(null);
+      setTables(null);
       if (!database) {
         return;
       }
@@ -117,12 +125,12 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
           requireDatabase(database).select(queries.foreign_keys, params)
         ]);
 
-        const tables = toErTables(Array.isArray(columnRows) ? columnRows : []);
+        const diagramTables = toErTables(Array.isArray(columnRows) ? columnRows : []);
         const diagramLinks = toErLinks(Array.isArray(linkRows) ? linkRows : []);
 
         if (!cancelled) {
           setLinks(diagramLinks);
-          setLayout(layoutErDiagram(tables, diagramLinks, METRICS));
+          setTables(diagramTables);
         }
       } catch (cause) {
         if (!cancelled) {
@@ -152,7 +160,7 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
     return <p className="px-4 py-3 text-xs text-fg-subtle">{t('er.needsConnection')}</p>;
   }
 
-  if (!layout) {
+  if (!tables) {
     return (
       <p className="flex items-center gap-2 px-4 py-3 text-xs text-fg-subtle">
         <Loader2 size={14} className="animate-spin" />
@@ -161,13 +169,13 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
     );
   }
 
-  if (layout.nodes.length === 0) {
+  if (tables.length === 0) {
     return <p className="px-4 py-3 text-xs text-fg-subtle">{t('er.empty')}</p>;
   }
 
   return (
     <ErDiagramCanvas
-      layout={layout}
+      tables={tables}
       links={links}
       onRefresh={() => setReloadToken(token => token + 1)}
     />
@@ -179,11 +187,11 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
  * 拆出来是为了能单独喂数据渲染核对版式。
  */
 export function ErDiagramCanvas({
-  layout,
+  tables,
   links,
   onRefresh
 }: {
-  layout: ErLayoutResult;
+  tables: ErTable[];
   links: ErLink[];
   /** 外部改了结构时用：数据库不会推送这件事，只能主动再查一遍 */
   onRefresh?: () => void;
@@ -192,6 +200,8 @@ export function ErDiagramCanvas({
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<ErFilter>(NO_ER_FILTER);
+  const [filterOpen, setFilterOpen] = useState(false);
   /**
    * 手工挪过的框的偏移量，按 key 存。
    *
@@ -207,6 +217,25 @@ export function ErDiagramCanvas({
   const svgRef = useRef<SVGSVGElement>(null);
 
 
+
+  // 过滤在布局之前：它的整个用处就是让图变小，压暗留不住这份收益
+  const visible = useMemo(() => filterErDiagram(tables, links, filter), [tables, links, filter]);
+  const layout = useMemo(
+    () => layoutErDiagram(visible.tables, visible.links, METRICS),
+    [visible]
+  );
+  // 过滤之后图整个换了形状，而平移是「在旧的那张图上的位置」——不归零的话，
+  // 之前往右拖过的人会看到一片空白。缩放不动：那是用户明确选的
+  useEffect(() => {
+    setOffset({ x: 0, y: 0 });
+  }, [filter]);
+
+  const schemas = useMemo(() => erSchemas(tables), [tables]);
+  const allKeys = useMemo(
+    () => tables.map(table => tableKey(table)).sort((a, b) => a.localeCompare(b)),
+    [tables]
+  );
+  const filtering = isErFilterActive(filter);
 
   // null = 没在搜索，全亮；空集合 = 搜了但一个都没命中，全暗
   const matches = useMemo(() => matchErTables(layout.nodes, query), [layout, query]);
@@ -368,19 +397,36 @@ export function ErDiagramCanvas({
   const zoomBy = (factor: number) =>
     setScale(current => Math.min(MAX_SCALE, Math.max(MIN_SCALE, current * factor)));
 
-  const linkedKeys = new Set(links.flatMap(link => [link.from.table, link.to.table]));
+  const linkedKeys = new Set(visible.links.flatMap(link => [link.from.table, link.to.table]));
   const unlinked = layout.nodes.filter(node => !linkedKeys.has(node.key)).length;
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3 border-b border-line bg-surface-sunken px-4 py-2">
         <span className="text-xs text-fg-muted">
-          {t('er.summary', { tables: layout.nodes.length, links: links.length })}
+          {t('er.summary', { tables: layout.nodes.length, links: visible.links.length })}
         </span>
+        {/* 过滤中要说清楚分母，否则「5 张表」读起来像整个库只有五张 */}
+        {filtering && (
+          <span className="text-xs text-accent">
+            {t('er.filteredOf', { total: tables.length })}
+          </span>
+        )}
         {unlinked > 0 && (
           <span className="text-xs text-fg-subtle">{t('er.unlinkedNote', { count: unlinked })}</span>
         )}
         <div className="relative ml-auto">
+          <ErFilterMenu
+            open={filterOpen}
+            onOpenChange={setFilterOpen}
+            filter={filter}
+            onChange={setFilter}
+            schemas={schemas}
+            tableKeys={allKeys}
+            active={filtering}
+          />
+        </div>
+        <div className="relative">
           <Search
             size={12}
             className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-fg-subtle"
@@ -459,6 +505,19 @@ export function ErDiagramCanvas({
         onPointerDown={startPan}
         className="relative min-h-0 flex-1 cursor-grab overflow-hidden bg-canvas active:cursor-grabbing"
       >
+        {/* 过滤到一张不剩时画布是空白的，而空白看起来像加载失败 */}
+        {layout.nodes.length === 0 && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <p className="text-xs text-fg-subtle">{t('er.filteredEmpty')}</p>
+            <button
+              type="button"
+              onClick={() => setFilter(NO_ER_FILTER)}
+              className="rounded-control border border-line px-2 py-1 text-xs text-fg-muted hover:bg-surface-hover"
+            >
+              {t('er.filterClear')}
+            </button>
+          </div>
+        )}
         <svg
           ref={svgRef}
           width={canvas.width * scale}
@@ -469,7 +528,7 @@ export function ErDiagramCanvas({
         >
           {/* 先画线再画框：线从框的边缘出发，压在框下面才不会盖住列名 */}
           <g>
-            {links.map((link, index) => (
+            {visible.links.map((link, index) => (
               <LinkPath
                 key={`${link.constraintName}:${link.from.table}.${link.from.column}:${index}`}
                 link={link}
@@ -694,3 +753,142 @@ function LinkPath({
 }
 
 export { tableKey };
+
+/**
+ * 过滤菜单。
+ *
+ * 与搜索框并排，而它们做的是相反的事：搜索压暗，过滤删掉。所以按钮在过滤
+ * 生效时会亮起来——「图上只有五张表」和「这个库只有五张表」必须一眼分得开。
+ */
+function ErFilterMenu({
+  open,
+  onOpenChange,
+  filter,
+  onChange,
+  schemas,
+  tableKeys,
+  active
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  filter: ErFilter;
+  onChange: (filter: ErFilter) => void;
+  schemas: readonly string[];
+  tableKeys: readonly string[];
+  active: boolean;
+}) {
+  const t = useLanguageStore((state) => state.t);
+
+  const toggleSchema = (schema: string) => {
+    const next = filter.schemas.includes(schema)
+      ? filter.schemas.filter((item) => item !== schema)
+      : [...filter.schemas, schema];
+    onChange({ ...filter, schemas: next });
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => onOpenChange(!open)}
+        aria-label={t('er.filter')}
+        className={clsx(
+          'flex items-center gap-1 rounded-control border px-2 py-1 text-xs transition-colors',
+          active
+            ? 'border-accent-line bg-accent-soft text-accent'
+            : 'border-line text-fg-muted hover:bg-surface-hover'
+        )}
+      >
+        <Filter size={12} />
+        {t('er.filter')}
+      </button>
+
+      {open && (
+        <>
+          {/* 点外面关掉。菜单里有复选框和下拉，失焦关闭会在选到一半时把它收走 */}
+          <div className="fixed inset-0 z-10" onClick={() => onOpenChange(false)} />
+          <div className="absolute right-0 top-full z-20 mt-1 w-72 space-y-3 rounded-panel border border-line bg-surface-raised p-3 shadow-xl">
+            {/* schema 只有一个时这个选择没有意义，不占位置 */}
+            {schemas.length > 1 && (
+              <div>
+                <p className="mb-1 text-xs text-fg-muted">{t('er.filterSchema')}</p>
+                <div className="max-h-32 space-y-0.5 overflow-y-auto">
+                  {schemas.map((schema) => (
+                    <label key={schema} className="flex cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={filter.schemas.includes(schema)}
+                        onChange={() => toggleSchema(schema)}
+                        className="accent-accent"
+                      />
+                      <span className="truncate text-xs text-fg">{schema}</span>
+                    </label>
+                  ))}
+                </div>
+                {filter.schemas.length === 0 && (
+                  <p className="mt-0.5 text-xs text-fg-subtle">{t('er.filterSchemaAll')}</p>
+                )}
+              </div>
+            )}
+
+            <div>
+              <p className="mb-1 text-xs text-fg-muted">{t('er.filterFocus')}</p>
+              <select
+                value={filter.focus ?? ''}
+                onChange={(event) =>
+                  onChange({ ...filter, focus: event.target.value || null })
+                }
+                className="w-full rounded-control border border-line bg-surface px-1.5 py-1 text-xs text-fg"
+              >
+                <option value="">{t('er.filterFocusNone')}</option>
+                {tableKeys.map((key) => (
+                  <option key={key} value={key}>
+                    {key}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-1 flex items-center gap-2">
+                <span className="text-xs text-fg-subtle">{t('er.filterDepth')}</span>
+                <SegmentedControl<string>
+                  value={String(filter.depth)}
+                  options={[1, 2, 3].map((depth) => ({
+                    value: String(depth),
+                    label: String(depth)
+                  }))}
+                  onChange={(value) => onChange({ ...filter, depth: Number(value) })}
+                  disabled={filter.focus === null}
+                />
+              </div>
+            </div>
+
+            <label className="flex cursor-pointer items-start gap-2">
+              <input
+                type="checkbox"
+                checked={filter.hideUnlinked}
+                onChange={(event) =>
+                  onChange({ ...filter, hideUnlinked: event.target.checked })
+                }
+                className="mt-0.5 accent-accent"
+              />
+              <span className="min-w-0">
+                <span className="text-xs text-fg">{t('er.filterHideUnlinked')}</span>
+                <span className="block text-xs text-fg-subtle">
+                  {t('er.filterHideUnlinkedNote')}
+                </span>
+              </span>
+            </label>
+
+            <button
+              type="button"
+              disabled={!active}
+              onClick={() => onChange(NO_ER_FILTER)}
+              className="w-full rounded-control border border-line px-2 py-1 text-xs text-fg-muted hover:bg-surface-hover disabled:opacity-40"
+            >
+              {t('er.filterClear')}
+            </button>
+          </div>
+        </>
+      )}
+    </>
+  );
+}

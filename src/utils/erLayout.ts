@@ -464,3 +464,145 @@ export function matchErTables(
       .map(({ key }) => key)
   );
 }
+
+/**
+ * 画哪些表。
+ *
+ * 与搜索是两件事，而这个区别值得说清楚：**搜索压暗，过滤删掉**。
+ * 搜索要保住图的形状，不然剩下的几张表认不出原来在哪；过滤的整个用处
+ * 恰恰是让图变小——两百张表的库里，把不相干的压暗仍然什么都看不清。
+ */
+export interface ErFilter {
+  /** 要画的 schema。空数组 = 不按 schema 过滤 */
+  schemas: readonly string[];
+  /** 以这张表为中心，只画它和 `depth` 跳以内的表。null = 不按关系过滤 */
+  focus: string | null;
+  depth: number;
+  /** 藏掉在这张图里没有任何连线的表 */
+  hideUnlinked: boolean;
+}
+
+export const NO_ER_FILTER: ErFilter = {
+  schemas: [],
+  focus: null,
+  depth: 1,
+  hideUnlinked: false
+};
+
+export function isErFilterActive(filter: ErFilter): boolean {
+  return filter.schemas.length > 0 || filter.focus !== null || filter.hideUnlinked;
+}
+
+/**
+ * 数据里出现过的 schema，去重后排序。只有一个时界面上不必给这个选择。
+ *
+ * 没有 schema 的方言（MySQL、SQLite）归一成空串，而不是单独开一条 null 分支：
+ * 那种库里 schema 只有一个，这个选择根本不会出现在界面上。
+ */
+export function erSchemas(tables: readonly ErTable[]): string[] {
+  return [...new Set(tables.map(table => table.schema ?? ''))].sort();
+}
+
+/**
+ * 按 schema、表与关系筛出要画的部分。
+ *
+ * 三步依次做，顺序是有意义的：
+ *
+ * 1. **schema**：先把范围划出来。后两步都在这个范围内谈。
+ * 2. **没有连线的表**：判据是「在**这张图里**没有连线」，不是「在整个库里
+ *    没有外键」——一张表的外键指向一个被排掉的 schema，它在这张图里就是孤立的。
+ *    焦点表例外：把用户刚点中的那张表藏掉，剩下一张空图，没人能理解发生了什么。
+ * 3. **焦点**：从焦点出发按连线走 `depth` 跳。方向不算数——「谁引用了我」和
+ *    「我引用了谁」都是关系，只看一个方向会漏掉一半。
+ *
+ * 连线最后统一收一遍：两端都还在才留下。留着一条指向已被排掉的表的连线，
+ * 顶栏上那句「N 条关联」就成了假话。
+ */
+export function filterErDiagram(
+  tables: readonly ErTable[],
+  links: readonly ErLink[],
+  filter: ErFilter
+): { tables: ErTable[]; links: ErLink[] } {
+  const allowedSchemas = new Set(filter.schemas);
+  let kept = new Set(
+    tables
+      .filter(table => allowedSchemas.size === 0 || allowedSchemas.has(table.schema ?? ''))
+      .map(table => tableKey(table))
+  );
+
+  const within = (link: ErLink, keys: Set<string>) =>
+    keys.has(link.from.table) && keys.has(link.to.table);
+
+  if (filter.hideUnlinked) {
+    const linked = new Set<string>();
+    for (const link of links) {
+      if (within(link, kept)) {
+        linked.add(link.from.table);
+        linked.add(link.to.table);
+      }
+    }
+    kept = new Set(
+      [...kept].filter(key => linked.has(key) || key === filter.focus)
+    );
+  }
+
+  const focus = filter.focus;
+  if (focus !== null) {
+    kept = neighbourhood(focus, links, kept, filter.depth);
+  }
+
+  return {
+    tables: tables.filter(table => kept.has(tableKey(table))),
+    links: links.filter(link => within(link, kept))
+  };
+}
+
+/** 从 `focus` 出发，沿连线走最多 `depth` 跳能到的表（含 focus 自己） */
+function neighbourhood(
+  focus: string,
+  links: readonly ErLink[],
+  candidates: Set<string>,
+  depth: number
+): Set<string> {
+  const reached = new Set<string>();
+  if (!candidates.has(focus)) {
+    // 焦点被 schema 这一层排掉了。返回空集合而不是忽略焦点：
+    // 悄悄画出整张图会让人以为焦点没生效
+    return reached;
+  }
+
+  const neighbours = new Map<string, Set<string>>();
+  for (const link of links) {
+    if (!candidates.has(link.from.table) || !candidates.has(link.to.table)) {
+      continue;
+    }
+    for (const [a, b] of [
+      [link.from.table, link.to.table],
+      [link.to.table, link.from.table]
+    ]) {
+      const bucket = neighbours.get(a) ?? new Set<string>();
+      bucket.add(b);
+      neighbours.set(a, bucket);
+    }
+  }
+
+  reached.add(focus);
+  let frontier = [focus];
+  for (let hop = 0; hop < Math.max(0, depth); hop += 1) {
+    const next: string[] = [];
+    for (const key of frontier) {
+      for (const neighbour of neighbours.get(key) ?? []) {
+        if (!reached.has(neighbour)) {
+          reached.add(neighbour);
+          next.push(neighbour);
+        }
+      }
+    }
+    if (next.length === 0) {
+      break;
+    }
+    frontier = next;
+  }
+
+  return reached;
+}
