@@ -260,7 +260,7 @@ export default function TableDataViewer({
       });
 
       // SQLite 的 pragma 表值函数只认一个表名参数，没有 schema 概念
-      const params = connection.db_type === 'sqlite' ? [tableName] : [tableName, schema ?? null];
+      const params = tableColumnsParams(connection.db_type, tableName, schema);
       const [indexRows, foreignKeyRows, checkRows, ddlRows, triggerRows] = await Promise.all([
         requireDatabase(database).select(queries.indexes, params),
         requireDatabase(database).select(queries.foreign_keys, params),
