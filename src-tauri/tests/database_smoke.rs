@@ -1128,6 +1128,423 @@ async fn mysql_accepts_the_parameters_the_ui_actually_sends() {
 }
 
 // ---------------------------------------------------------------------------
+// 目录查询的结果：界面那一侧的解码器认不认
+// ---------------------------------------------------------------------------
+
+/// 目录查询在应用里是前端经 `tauri-plugin-sql` 的 `select` 发的，解码用的是
+/// **插件自己的**类型表，不是 `query_executor`。上面那些用例拿 sqlx 的
+/// `row.get::<T>` 取值，走的是第三套解码——所以「SQL 在真库上跑得通」与
+/// 「界面上显示得出来」之间一直隔着一道没人比过的缝。84495ab 就掉在这道缝里：
+/// MySQL 的 `information_schema` 标识符列是 VARBINARY，查询本身没错，界面报
+/// `unsupported datatype`。
+///
+/// 这里是 `decode/{mysql,postgres,sqlite}.rs` 里**有专门分支**的类型名。
+/// PostgreSQL 那份从 2.4 起对不认识的类型会退回 `try_decode_unchecked::<String>`
+/// 硬解，只打一条 warn——那不算认：二进制协议下一个 OID 是四个字节，按
+/// 字符串硬解出来的不是它的值。所以门按有分支的算，不按「碰巧没报错」算。
+const PLUGIN_SQL_VERSION: &str = "2.4.1";
+const PLUGIN_DECODES_MYSQL: &[&str] = &[
+  "CHAR",
+  "VARCHAR",
+  "TINYTEXT",
+  "TEXT",
+  "MEDIUMTEXT",
+  "LONGTEXT",
+  "ENUM",
+  "FLOAT",
+  "DOUBLE",
+  "TINYINT",
+  "SMALLINT",
+  "INT",
+  "MEDIUMINT",
+  "BIGINT",
+  "TINYINT UNSIGNED",
+  "SMALLINT UNSIGNED",
+  "INT UNSIGNED",
+  "MEDIUMINT UNSIGNED",
+  "BIGINT UNSIGNED",
+  "YEAR",
+  "BOOLEAN",
+  "DATE",
+  "TIME",
+  "DATETIME",
+  "TIMESTAMP",
+  "JSON",
+  "MEDIUMBLOB",
+  "BLOB",
+  "LONGBLOB",
+  "NULL",
+];
+const PLUGIN_DECODES_POSTGRES: &[&str] = &[
+  "CHAR",
+  "VARCHAR",
+  "TEXT",
+  "NAME",
+  "UUID",
+  "FLOAT4",
+  "FLOAT8",
+  "INT2",
+  "INT4",
+  "INT8",
+  "BOOL",
+  "DATE",
+  "TIME",
+  "TIMESTAMP",
+  "TIMESTAMPTZ",
+  "JSON",
+  "JSONB",
+  "BYTEA",
+  "NUMERIC",
+  "VOID",
+];
+const PLUGIN_DECODES_SQLITE: &[&str] =
+  &["TEXT", "REAL", "INTEGER", "NUMERIC", "BOOLEAN", "DATE", "TIME", "DATETIME", "BLOB", "NULL"];
+
+/// 上面三张表是照着某一个版本的源码抄的。插件一升级，这条先红——
+/// 去 `~/.cargo/registry/src/*/tauri-plugin-sql-<新版本>/src/decode/` 重核一遍
+/// 再改版本号，而不是只改版本号。
+#[test]
+fn plugin_decoder_tables_were_read_from_the_locked_version() {
+  let lock = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.lock"))
+    .expect("read Cargo.lock");
+  let locked = lock
+    .split("[[package]]")
+    .find(|package| package.contains("name = \"tauri-plugin-sql\""))
+    .and_then(|package| package.lines().find_map(|line| line.strip_prefix("version = ")))
+    .map(|version| version.trim_matches('"').to_string());
+  assert_eq!(
+    locked.as_deref(),
+    Some(PLUGIN_SQL_VERSION),
+    "tauri-plugin-sql 换了版本：先重核它的 decode/*.rs，再更新这里的类型表"
+  );
+}
+
+/// 界面会发出去的一段目录查询，连同它绑的参数。
+struct CatalogRequest {
+  name: &'static str,
+  sql: String,
+  params: Vec<Option<String>>,
+}
+
+impl CatalogRequest {
+  fn new(name: &'static str, sql: &str, params: Vec<Option<String>>) -> Self {
+    Self { name, sql: sql.to_string(), params }
+  }
+}
+
+/// 界面对一张表、一个视图、整个库发的那几组目录查询。
+///
+/// 参数的造法照前端：表级的按 `parameter_count` 绑「表名 + schema」
+/// （`catalogQueryParams`），库级的把库名重复 `parameter_count` 次。
+/// 例程与序列各方言不同，由调用方补。
+fn ui_catalog_requests(
+  db_type: &dataomni_lib::models::DatabaseType,
+  table: &str,
+  view: &str,
+  schema: Option<&str>,
+  database: Option<&str>,
+  quote: fn(&str) -> String,
+) -> Vec<CatalogRequest> {
+  let metadata = dataomni_lib::services::schema_metadata_queries(db_type).expect("supported");
+  let scoped = |name: &str| -> Vec<Option<String>> {
+    let mut params = vec![Some(name.to_string())];
+    if metadata.parameter_count > 1 {
+      params.push(schema.map(str::to_string));
+    }
+    params
+  };
+  let mut requests = vec![
+    CatalogRequest::new("columns", metadata.columns, scoped(table)),
+    CatalogRequest::new("indexes", metadata.indexes, scoped(table)),
+    CatalogRequest::new("foreign_keys", metadata.foreign_keys, scoped(table)),
+    CatalogRequest::new("triggers", metadata.triggers, scoped(table)),
+  ];
+  if let Some(sql) = metadata.check_constraints {
+    requests.push(CatalogRequest::new("check_constraints", sql, scoped(table)));
+  }
+  // 用视图：PostgreSQL 只对视图给得出定义原文，表上这段本来就是 0 行
+  match metadata.ddl {
+    Some(dataomni_lib::services::DdlQuery::Bound { sql }) => {
+      requests.push(CatalogRequest::new("ddl", sql, scoped(view)));
+    }
+    Some(dataomni_lib::services::DdlQuery::Interpolated { sql }) => {
+      requests.push(CatalogRequest::new("ddl", &sql.replace("{table}", &quote(view)), vec![]));
+    }
+    None => {}
+  }
+
+  let repeated = |count: u8| vec![database.map(str::to_string); usize::from(count)];
+  let objects = dataomni_lib::services::object_catalog_queries(db_type).expect("supported");
+  requests.push(CatalogRequest::new(
+    "objects",
+    objects.objects,
+    repeated(objects.object_parameter_count),
+  ));
+  let er = dataomni_lib::services::er_diagram_queries(db_type).expect("supported");
+  requests.push(CatalogRequest::new("er_columns", er.columns, repeated(er.parameter_count)));
+  requests.push(CatalogRequest::new(
+    "er_foreign_keys",
+    er.foreign_keys,
+    repeated(er.parameter_count),
+  ));
+  let completion = dataomni_lib::services::completion_catalog_query(db_type).expect("supported");
+  requests.push(CatalogRequest::new(
+    "completion",
+    completion.relations,
+    repeated(completion.parameter_count),
+  ));
+  let target = dataomni_lib::services::session_target_query(db_type).expect("supported");
+  requests.push(CatalogRequest::new("session_target", target.sql, vec![]));
+  requests
+}
+
+/// 一段查询的结果里，插件解不了的列（`列名: 类型名`）。
+///
+/// 取类型名的方式与插件一致——`ValueRef::type_info().name()`，空值跳过，
+/// 因为插件对空值一律先返回 null、不看类型。
+fn undecodable_columns<R>(rows: &[R], decodable: &[&str]) -> std::collections::BTreeSet<String>
+where
+  R: Row,
+  usize: sqlx::ColumnIndex<R>,
+{
+  use sqlx::ValueRef;
+  let mut undecodable = std::collections::BTreeSet::new();
+  for row in rows {
+    for (index, column) in row.columns().iter().enumerate() {
+      let Ok(value) = row.try_get_raw(index) else {
+        undecodable.insert(format!("{}: <raw value unavailable>", column.name()));
+        continue;
+      };
+      if value.is_null() {
+        continue;
+      }
+      let type_name = value.type_info().name().to_string();
+      if !decodable.contains(&type_name.as_str()) {
+        undecodable.insert(format!("{}: {type_name}", column.name()));
+      }
+    }
+  }
+  undecodable
+}
+
+/// 每段都必须真的返回了行：0 行时列类型一个都没被检查，这条门就是空转的。
+fn assert_plugin_decodes<R>(dialect: &str, request: &CatalogRequest, rows: &[R], decodable: &[&str])
+where
+  R: Row,
+  usize: sqlx::ColumnIndex<R>,
+{
+  assert!(
+    !rows.is_empty(),
+    "{dialect} 的 {} 返回 0 行，列类型没有被检查到——夹具缺了这类对象",
+    request.name
+  );
+  let undecodable = undecodable_columns(rows, decodable);
+  assert!(
+    undecodable.is_empty(),
+    "{dialect} 的 {} 有插件解不了的列，界面上会报 unsupported datatype：{undecodable:?}",
+    request.name
+  );
+}
+
+#[tokio::test]
+async fn sqlite_catalog_results_are_decodable_by_the_plugin() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("connect to in-memory SQLite");
+
+  let fixture = MetaFixture::new("litedecode");
+  let view = format!("{}_v", fixture.child);
+  for statement in fixture.ddl("sqlite") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare SQLite fixture");
+  }
+  for statement in [
+    format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child),
+    format!(
+      "CREATE TRIGGER {}_trg AFTER INSERT ON {} BEGIN SELECT 1; END",
+      fixture.child, fixture.child
+    ),
+  ] {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare SQLite objects");
+  }
+
+  let requests = ui_catalog_requests(
+    &dataomni_lib::models::DatabaseType::SQLite,
+    &fixture.child,
+    &view,
+    None,
+    None,
+    |name| format!("\"{name}\""),
+  );
+  for request in &requests {
+    let mut query = sqlx::query(&request.sql);
+    for param in &request.params {
+      query = query.bind(param.clone());
+    }
+    let rows = query
+      .fetch_all(&pool)
+      .await
+      .unwrap_or_else(|error| panic!("SQLite 的 {} 跑不通: {error}", request.name));
+    assert_plugin_decodes("SQLite", request, &rows, PLUGIN_DECODES_SQLITE);
+  }
+}
+
+#[tokio::test]
+async fn mysql_catalog_results_are_decodable_by_the_plugin() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+
+  let fixture = MetaFixture::new("mydecode");
+  let view = format!("{}_v", fixture.child);
+  let function = format!("{}_fn", fixture.child);
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  sqlx::raw_sql(&format!("DROP FUNCTION IF EXISTS {function}")).execute(&pool).await.ok();
+  for statement in fixture.ddl("mysql") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
+  }
+  sqlx::query(&format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child))
+    .execute(&pool)
+    .await
+    .expect("create view");
+  // CREATE TRIGGER / FUNCTION 不收预处理协议（1295），走文本协议
+  for statement in [
+    format!(
+      "CREATE TRIGGER {}_trg BEFORE INSERT ON {} FOR EACH ROW SET NEW.score = 1",
+      fixture.child, fixture.child
+    ),
+    format!("CREATE FUNCTION {function}(a INT) RETURNS INT DETERMINISTIC RETURN a + 1"),
+  ] {
+    sqlx::raw_sql(&statement).execute(&pool).await.expect("prepare MySQL objects");
+  }
+  let database: String =
+    sqlx::query_scalar("SELECT DATABASE()").fetch_one(&pool).await.expect("current database");
+
+  let mut requests = ui_catalog_requests(
+    &dataomni_lib::models::DatabaseType::MySQL,
+    &fixture.child,
+    &view,
+    None,
+    Some(&database),
+    |name| format!("`{name}`"),
+  );
+  let objects =
+    dataomni_lib::services::object_catalog_queries(&dataomni_lib::models::DatabaseType::MySQL)
+      .expect("supported");
+  // 与 ObjectDefinitionDialog 一样：例程名加库名
+  requests.push(CatalogRequest::new(
+    "routine_definition",
+    objects.routine_definition,
+    vec![Some(function.clone()), Some(database.clone())],
+  ));
+
+  for request in &requests {
+    let mut query = sqlx::query(&request.sql);
+    for param in &request.params {
+      query = query.bind(param.clone());
+    }
+    let rows = query
+      .fetch_all(&pool)
+      .await
+      .unwrap_or_else(|error| panic!("MySQL 的 {} 跑不通: {error}", request.name));
+    assert_plugin_decodes("MySQL", request, &rows, PLUGIN_DECODES_MYSQL);
+  }
+
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  sqlx::raw_sql(&format!("DROP FUNCTION IF EXISTS {function}")).execute(&pool).await.ok();
+  for table in [&fixture.child, &fixture.parent] {
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  }
+}
+
+#[tokio::test]
+async fn postgres_catalog_results_are_decodable_by_the_plugin() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+
+  let fixture = MetaFixture::new("pgdecode");
+  let view = format!("{}_v", fixture.child);
+  let function = format!("{}_fn", fixture.child);
+  let sequence = format!("{}_seq", fixture.child);
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  for statement in fixture.ddl("postgres") {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare PostgreSQL fixture");
+  }
+  for statement in [
+    format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child),
+    format!("DROP SEQUENCE IF EXISTS {sequence}"),
+    format!("CREATE SEQUENCE {sequence}"),
+    format!(
+      "CREATE OR REPLACE FUNCTION {function}() RETURNS trigger AS $$ BEGIN RETURN NEW; END; $$ LANGUAGE plpgsql"
+    ),
+    format!(
+      "CREATE TRIGGER {}_trg BEFORE INSERT ON {} FOR EACH ROW EXECUTE FUNCTION {function}()",
+      fixture.child, fixture.child
+    ),
+  ] {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare PostgreSQL objects");
+  }
+  let sequence_oid: String =
+    sqlx::query_scalar(&format!("SELECT '{sequence}'::regclass::oid::text"))
+      .fetch_one(&pool)
+      .await
+      .expect("sequence oid");
+  let function_oid: String =
+    sqlx::query_scalar(&format!("SELECT '{function}'::regproc::oid::text"))
+      .fetch_one(&pool)
+      .await
+      .expect("function oid");
+
+  let mut requests = ui_catalog_requests(
+    &dataomni_lib::models::DatabaseType::PostgreSQL,
+    &fixture.child,
+    &view,
+    Some("public"),
+    None,
+    |name| format!("\"{name}\""),
+  );
+  let objects =
+    dataomni_lib::services::object_catalog_queries(&dataomni_lib::models::DatabaseType::PostgreSQL)
+      .expect("supported");
+  // 与 ObjectDefinitionDialog 一样：两段都只绑对象的 oid
+  requests.push(CatalogRequest::new(
+    "routine_definition",
+    objects.routine_definition,
+    vec![Some(function_oid)],
+  ));
+  requests.push(CatalogRequest::new(
+    "sequence_properties",
+    objects.sequence_properties.expect("PostgreSQL has sequences"),
+    vec![Some(sequence_oid)],
+  ));
+
+  for request in &requests {
+    let mut query = sqlx::query(&request.sql);
+    for param in &request.params {
+      query = query.bind(param.clone());
+    }
+    let rows = query
+      .fetch_all(&pool)
+      .await
+      .unwrap_or_else(|error| panic!("PostgreSQL 的 {} 跑不通: {error}", request.name));
+    assert_plugin_decodes("PostgreSQL", request, &rows, PLUGIN_DECODES_POSTGRES);
+  }
+
+  sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+  for table in [&fixture.child, &fixture.parent] {
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  }
+  sqlx::query(&format!("DROP FUNCTION IF EXISTS {function}()")).execute(&pool).await.ok();
+  sqlx::query(&format!("DROP SEQUENCE IF EXISTS {sequence}")).execute(&pool).await.ok();
+}
+
+// ---------------------------------------------------------------------------
 // 视图定义与触发器
 // ---------------------------------------------------------------------------
 
