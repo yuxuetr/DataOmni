@@ -90,4 +90,7 @@ src-tauri/src/
 - **导出的格式化有两份实现**（预览在 `utils/exportResult.ts`，写文件在
   `services/export_writer.rs`），靠 `fixtures/export-conformance.json` 这份共用
   语料钉住。改任何一侧都要同时过两边的测试。
+- **`bun tauri build` 报 `failed to run bundle_dmg.sh` 时先看 `/Volumes`。**
+  上一次失败留下的 `dmg.*` 还挂着就会再失败，而那句报错不说原因。
+  `hdiutil detach /Volumes/dmg.*` 再删掉 `bundle/macos/rw.*.dmg` 即可。
 - 凭据走系统钥匙串（`services/connection_service.rs` 的 keyring），不落盘明文。

@@ -1833,7 +1833,38 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
   - 未做：行数统计（COUNT）仍随卸载丢掉，每次切回来重算一次。它是数据相关的，
     缓存它等于接受一个过期的总行数；而 COUNT 在大表上到底多贵这一轮没有实测，
     按「判据按收益定」的规矩不先动。
-- [ ] Windows、macOS、Linux 完成安装、升级和卸载验证
+- [-] Windows、macOS、Linux 完成安装、升级和卸载验证
+  - **macOS 已验证**（`e2f4bbc`，产物 `DataOmni_0.1.0_aarch64.dmg` 9.3 MB /
+    `DataOmni.app` 25 MB）。这是这个项目第一次真的把打包后的应用跑起来看——
+    此前所有界面验证都在浏览器里、用打桩的 Tauri IPC 做的。
+  - 跑起来是对的：窗口起来了，欢迎页列出钥匙串里那 7 条连接，菜单栏叫
+    DataOmni，`lsappinfo` 报 `type="Foreground"`、`Arch=ARM64`，
+    launch-to-checkin 0.058s。
+  - 顺带验到一条只有真机能验的：`connections.json` 里 **7 条连接一条明文密码
+    都没有**，密码在钥匙串的 `DataOmni` 服务下。凭据不落盘这个承诺在打包后
+    成立。
+  - 撞见并修掉一个启动路径缺陷（`e2f4bbc`）：带任何文件参数启动会直接
+    `exit(1)`，一个窗口都不开。详见提交说明。
+  - **卡在签名上，普通用户装不了**：`codesign` 是 `adhoc, linker-signed`，
+    `Info.plist=not bound`、`Sealed Resources=none`，`spctl -a` 直接拒绝
+    （"code has no resources but signature indicates they must be present"）。
+    换一台 Mac 双击就会被 Gatekeeper 挡住。要过这关需要 Apple Developer ID
+    证书加公证，不是代码能解决的。
+  - **只有 arm64**：`Mach-O thin (arm64)`，Intel Mac 跑不了；而
+    `LSMinimumSystemVersion` 写着 10.13——那个版本从来没在 Apple Silicon 上
+    跑过，这个声明自相矛盾。要覆盖 Intel 得出 universal 包。
+  - **「升级」这一条没有机制可验**：没配 updater 插件，也没有签名，
+    现在的升级路径就是「重新下载一个 dmg 覆盖」。
+  - 卸载会留下的东西已经摸清：`~/Library/Application Support/com.dataomni.app`
+    （connections.json + .window-state.json）、`~/Library/Caches/com.dataomni.app`、
+    `~/Library/WebKit/com.dataomni.app`（localStorage，工作区快照与历史在这里）、
+    以及钥匙串里 `DataOmni` 服务下的条目。注意还有一组
+    `~/Library/{Caches,WebKit}/DataOmni`，是 `tauri dev` 留下的。
+  - 打包本身踩到一次：`bun tauri build` 第一次失败在
+    `failed to run bundle_dmg.sh`，而这句话不说原因。真实原因是上一次的
+    `/Volumes/dmg.*` 还挂着；`hdiutil detach` 加删掉 `rw.*.dmg` 之后连跑两次
+    都成功。
+  - 未做：Windows 与 Linux 的三件事，本机出不了那两个平台的包。
 - [ ] 完成崩溃恢复、异常退出恢复和无网络场景测试
 
 **P5 退出标准**
