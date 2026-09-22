@@ -24,6 +24,7 @@ import {
   ChevronsRight,
   Download,
   Upload,
+  BarChart3 as ChartIcon,
   Lock,
   Filter,
   Columns3,
@@ -46,6 +47,7 @@ import { toPositionalRows } from '../utils/columnWidths';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { ExportResultDialog, type ExportScope } from './ExportResultDialog';
+import { ResultChartDialog } from './ResultChartDialog';
 import { CsvImportDialog } from './CsvImportDialog';
 import { useTaskStore } from '../stores/taskStore';
 import {
@@ -170,6 +172,7 @@ export default function TableDataViewer({
   const appliedFiltersRef = useRef<ColumnFilter[]>([]);
   appliedFiltersRef.current = appliedFilters;
   const [showExport, setShowExport] = useState(false);
+  const [showChart, setShowChart] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [importTaskId, setImportTaskId] = useState<string | null>(null);
   const [schemaObjects, setSchemaObjects] = useState<SchemaObjects | null>(null);
@@ -1140,6 +1143,16 @@ export default function TableDataViewer({
                     </button>
 
                     <button
+                      onClick={() => setShowChart(true)}
+                      disabled={tableData.length === 0}
+                      className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg border border-line-strong rounded-control hover:bg-surface-hover transition-colors disabled:opacity-50"
+                      title={t('result.chartTitle')}
+                    >
+                      <ChartIcon size={14} />
+                      <span>{t('result.chart')}</span>
+                    </button>
+
+                    <button
                       onClick={() => setShowExport(true)}
                       disabled={tableData.length === 0}
                       className="flex items-center space-x-1 px-3 py-1.5 text-sm text-fg border border-line-strong rounded-control hover:bg-surface-hover transition-colors disabled:opacity-50"
@@ -1613,6 +1626,15 @@ export default function TableDataViewer({
           // 话说全：少了哪几列、是这一页还是整张表，用户不该打开文件才发现
           scopes={exportScopes}
           onClose={() => setShowExport(false)}
+        />
+      )}
+
+      {/* 和导出一样跟着可见列与当前这一页走：图上的就是屏幕上的那一份 */}
+      {showChart && (
+        <ResultChartDialog
+          columns={visibleIndexes.map((index) => columnNames[index] ?? '')}
+          rows={visibleRows}
+          onClose={() => setShowChart(false)}
         />
       )}
     </div>

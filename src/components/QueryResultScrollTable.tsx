@@ -8,6 +8,7 @@ import {
   Trash2,
   Edit,
   Download,
+  BarChart3,
   Lock,
   Undo2
 } from 'lucide-react';
@@ -43,6 +44,7 @@ import { useCellSelection } from '../hooks/useCellSelection';
 import { selectionSubset } from '../utils/cellSelection';
 import { useLanguageStore } from '../stores/languageStore';
 import { ExportResultDialog, type ExportScope } from './ExportResultDialog';
+import { ResultChartDialog } from './ResultChartDialog';
 
 interface QueryResultScrollTableProps {
   result: QueryResult;
@@ -79,6 +81,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   const [showAddForm, setShowAddForm] = useState(false);
   const [newRowData, setNewRowData] = useState<Record<string, CellInput>>({});
   const [showExport, setShowExport] = useState(false);
+  const [showChart, setShowChart] = useState(false);
   /** 待提交的变更。这张表和表数据视图共用同一套模型与同一个事务命令 */
   const [changes, setChanges] = useState<PendingChange[]>([]);
   const [showChanges, setShowChanges] = useState(false);
@@ -352,6 +355,15 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
             </button>
           )}
           <button
+            onClick={() => setShowChart(true)}
+            disabled={totalRows === 0}
+            className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover disabled:opacity-50"
+            title={t('result.chartTitle')}
+          >
+            <BarChart3 size={14} />
+            <span>{t('result.chart')}</span>
+          </button>
+          <button
             onClick={() => setShowExport(true)}
             disabled={totalRows === 0}
             className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover disabled:opacity-50"
@@ -399,7 +411,16 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
           onClose={() => setShowExport(false)}
         />
       )}
-      
+
+      {/* 画的也是排序后的整份结果，和导出同一份：图上的次序就是表上的次序 */}
+      {showChart && (
+        <ResultChartDialog
+          columns={result.columns}
+          rows={sortedRows}
+          onClose={() => setShowChart(false)}
+        />
+      )}
+
       {cells.copyError && (
         <div className="border-b border-danger-line bg-danger-soft px-3 py-1.5 text-xs text-danger">
           {t('result.copyFailed', { reason: cells.copyError })}

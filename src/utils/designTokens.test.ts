@@ -66,6 +66,9 @@ describe('设计 token', () => {
       .filter(([name, value]) => dark.get(name) === value)
       // 纯白字只用在实心的危险/成功按钮上，两套主题下底色都够深
       .filter(([name]) => name !== '--dm-fg-on-solid')
+      // 分类色板第 6 槽的绿在浅底与深底上都落在目标亮度带内，两套主题同值
+      // 是验过之后的选择：再挪一次只会让它离相邻槽位更近
+      .filter(([name]) => name !== '--dm-series-6')
       .map(([name]) => name);
 
     expect(identical).toEqual([]);
