@@ -482,6 +482,7 @@ mod tests {
       tags: Vec::new(),
       environment: ConnectionEnvironment::Development,
       credential_ref: None,
+      ssh_tunnel: None,
       created_at: "2026-09-17T00:00:00Z".to_string(),
       updated_at: "2026-09-17T00:00:00Z".to_string(),
     }

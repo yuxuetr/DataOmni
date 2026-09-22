@@ -33,6 +33,10 @@ pub struct ConnectionProfile {
   pub environment: ConnectionEnvironment,
   #[serde(default)]
   pub credential_ref: Option<String>,
+  /// 没有隧道就是 `None`，那时整条隧道代码都不会被碰到，
+  /// `to_connection_string` 仍然是纯函数
+  #[serde(default)]
+  pub ssh_tunnel: Option<SshTunnelConfig>,
   #[serde(default)]
   pub created_at: String,
   #[serde(default)]
@@ -285,6 +289,57 @@ impl ConnectionProfile {
   pub fn effective_tls_mode(&self) -> TlsMode {
     self.tls_mode.unwrap_or(if self.ssl { TlsMode::Required } else { TlsMode::Disabled })
   }
+
+  /// 换一份 host / port，其余照抄。
+  ///
+  /// 有隧道时连接串要指向本地那个转发端口，而不是 profile 里的主机。用换掉
+  /// 地址再走原来的 `to_connection_string` 这个办法，是为了不动每种数据库
+  /// 各自的参数拼装——那里面有 TLS 模式、证书路径、超时一堆分支，复制一份
+  /// 迟早和原件不一致。
+  pub fn redirected_to(&self, host: &str, port: u16) -> Self {
+    Self { host: host.to_string(), port, ..self.clone() }
+  }
+}
+
+/// 一条 SSH 隧道要知道的全部。
+///
+/// 第一个增量只支持**无口令私钥**：口令保护的私钥和口令登录都需要往钥匙串里
+/// 放第二份密钥，而现在的键是一个 profile 一份（`Entry::new("DataOmni", id)`），
+/// 要先改命名方案。见 `rfcs/ssh-tunnel.md` §4。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SshTunnelConfig {
+  pub host: String,
+  #[serde(default = "default_ssh_port")]
+  pub port: u16,
+  pub username: String,
+  pub private_key_path: String,
+  /// 转发到哪，**从跳板机的角度看**的地址。留空取 profile 自己的 host / port
+  #[serde(default)]
+  pub remote_host: Option<String>,
+  #[serde(default)]
+  pub remote_port: Option<u16>,
+}
+
+fn default_ssh_port() -> u16 {
+  22
+}
+
+impl SshTunnelConfig {
+  /// 隧道的另一端接到哪里去。
+  ///
+  /// 留空取 profile 自己的 host / port：最常见的情形是库就跑在跳板机上
+  /// （`127.0.0.1:3306`），或者跳板机能按同一个地址连到库。填了才是
+  /// 「从跳板机看过去和从本机看过去不是同一个地址」那种情况。
+  pub fn target(&self, config: &ConnectionProfile) -> (String, u16) {
+    let host = self
+      .remote_host
+      .as_deref()
+      .filter(|host| !host.is_empty())
+      .unwrap_or(&config.host)
+      .to_string();
+    let port = self.remote_port.filter(|port| *port != 0).unwrap_or(config.port);
+    (host, port)
+  }
 }
 
 fn push_parameter(parameters: &mut Vec<String>, name: &str, value: Option<&str>) {
@@ -314,6 +369,7 @@ impl Default for ConnectionProfile {
       tags: Vec::new(),
       environment: ConnectionEnvironment::Development,
       credential_ref: None,
+      ssh_tunnel: None,
       created_at: chrono::Utc::now().to_rfc3339(),
       updated_at: chrono::Utc::now().to_rfc3339(),
     }
@@ -333,6 +389,73 @@ mod tests {
     super::DatabaseType::ClickHouse,
     super::DatabaseType::Elasticsearch,
   ];
+
+  fn tunnelled_profile(
+    remote_host: Option<&str>,
+    remote_port: Option<u16>,
+  ) -> super::ConnectionProfile {
+    super::ConnectionProfile {
+      db_type: super::DatabaseType::MySQL,
+      host: "db.internal".to_string(),
+      port: 3306,
+      ssh_tunnel: Some(super::SshTunnelConfig {
+        host: "jump.example.com".to_string(),
+        port: 22,
+        username: "ops".to_string(),
+        private_key_path: "/home/me/.ssh/id_rsa".to_string(),
+        remote_host: remote_host.map(str::to_string),
+        remote_port,
+      }),
+      ..Default::default()
+    }
+  }
+
+  /// 转发目标留空时取 profile 自己的地址。
+  ///
+  /// 这是最常见的填法——用户已经在上面填了库的地址，不该再抄一遍。
+  #[test]
+  fn an_empty_forwarding_target_falls_back_to_the_profiles_own_address() {
+    let config = tunnelled_profile(None, None);
+    let Some(tunnel) = config.ssh_tunnel.as_ref() else {
+      panic!("刚构造出来就该有隧道配置");
+    };
+    assert_eq!(tunnel.target(&config), ("db.internal".to_string(), 3306));
+
+    // 空字符串和 0 与「没填」是同一件事：表单清空之后留下的就是它们，
+    // 照字面用会去连 `:0`，报出来的是一个看不懂的驱动错误
+    let config = tunnelled_profile(Some(""), Some(0));
+    let Some(tunnel) = config.ssh_tunnel.as_ref() else {
+      panic!("刚构造出来就该有隧道配置");
+    };
+    assert_eq!(tunnel.target(&config), ("db.internal".to_string(), 3306));
+  }
+
+  /// 填了就用填的——这才是「从跳板机看过去不是同一个地址」那种情况。
+  #[test]
+  fn an_explicit_forwarding_target_wins() {
+    let config = tunnelled_profile(Some("127.0.0.1"), Some(23306));
+    let Some(tunnel) = config.ssh_tunnel.as_ref() else {
+      panic!("刚构造出来就该有隧道配置");
+    };
+    assert_eq!(tunnel.target(&config), ("127.0.0.1".to_string(), 23306));
+  }
+
+  /// 连接串必须指向本地转发端口，而不是 profile 里的主机。
+  ///
+  /// 写错这一条的表现最难发现：隧道建起来了但没人走它，而连接照样成功——
+  /// 因为测试用的库往往也能直连，于是这个功能看起来是好的。
+  #[test]
+  fn a_tunnelled_connection_string_points_at_the_local_end() {
+    let config = tunnelled_profile(Some("127.0.0.1"), Some(23306));
+    let local = config.redirected_to("127.0.0.1", 49201);
+    let url = local.db_type.to_connection_string(&local);
+
+    assert!(url.contains("127.0.0.1:49201"), "{url}");
+    assert!(!url.contains("db.internal"), "连接串里不该还留着原来的主机: {url}");
+    // 其余参数照旧：换地址不该顺手改掉 TLS 或超时
+    assert!(url.contains("ssl-mode="), "{url}");
+    assert!(url.contains("connectTimeout=30000"), "{url}");
+  }
 
   /// 「有驱动」和「有元数据查询」必须是同一批类型。
   ///
