@@ -30,10 +30,12 @@
 ### 🔗 数据库支持
 
 - **可连接并执行查询**: MySQL, PostgreSQL, SQLite
-- **仅有连接表单，尚不能执行查询**: MongoDB, Redis, Neo4j, DuckDB, ClickHouse, Elasticsearch
+- **计划中，当前版本连不上**: MongoDB, Redis, Neo4j, DuckDB, ClickHouse, Elasticsearch
 
-  这些类型目前只有连接串拼装和字段校验，查询执行层（`DbPool`）仅实现了
-  SQLite / MySQL / PostgreSQL 三种，选择其它类型无法真正读写数据。
+  不是「能连上但不能查」——`tauri-plugin-sql` 与 `sqlx` 都只编入了
+  sqlite / mysql / postgres 三个驱动，这些 scheme 建连这一步就认不出来。
+  连接表单里它们可见但置灰，选中不了；后端 `test_connection` 也会直接拒绝，
+  免得手改过的存档绕过界面去撞一句驱动层的报错。
 
 ### ⚡ 查询执行
 
