@@ -91,6 +91,20 @@ pub enum DatabaseType {
 }
 
 impl DatabaseType {
+  /// 这个类型现在能不能真的连上。
+  ///
+  /// 唯一依据是编进去的驱动：`Cargo.toml` 里 `tauri-plugin-sql` 与 `sqlx` 都只开了
+  /// `sqlite, mysql, postgres`。其余类型有连接表单、有默认端口、也能拼出 URL，
+  /// 但 `Database.load` 认不出那个 scheme——不在这里挡住，用户看到的就是驱动层
+  /// 的一句 "unsupported URL scheme"，而真正的原因是「这个版本没做」。
+  ///
+  /// 前端有一份对应的 `SUPPORTED_DATABASE_TYPES`，用来把类型按钮置灰；两边
+  /// 都由测试钉在 `Cargo.toml` 的 features 上。界面那份是提前告知，这份是
+  /// 最终裁决——任何绕过界面的路径（老配置、手改存档）都过不去。
+  pub fn has_driver(&self) -> bool {
+    matches!(self, DatabaseType::MySQL | DatabaseType::PostgreSQL | DatabaseType::SQLite)
+  }
+
   pub fn get_default_port(&self) -> u16 {
     match self {
       DatabaseType::MySQL => 3306,
@@ -308,6 +322,60 @@ impl Default for ConnectionProfile {
 
 #[cfg(test)]
 mod tests {
+  const ALL_DATABASE_TYPES: [super::DatabaseType; 9] = [
+    super::DatabaseType::MySQL,
+    super::DatabaseType::PostgreSQL,
+    super::DatabaseType::SQLite,
+    super::DatabaseType::MongoDB,
+    super::DatabaseType::Redis,
+    super::DatabaseType::Neo4j,
+    super::DatabaseType::DuckDB,
+    super::DatabaseType::ClickHouse,
+    super::DatabaseType::Elasticsearch,
+  ];
+
+  /// 「有驱动」和「有元数据查询」必须是同一批类型。
+  ///
+  /// 两边分开维护会出两种局面，都很难从界面上看出来：说支持但一进去就没有
+  /// 对象树（查询表缺了它），或者写好了整套 SQL 却连不上（驱动没编进去）。
+  /// 这条门反向也成立——把任一张查询表加上第四种方言，它会立刻红。
+  #[test]
+  fn driver_support_and_metadata_queries_cover_the_same_types() {
+    for db_type in ALL_DATABASE_TYPES {
+      let has_driver = db_type.has_driver();
+
+      for (table, present) in [
+        ("schema_metadata", crate::services::schema_metadata_queries(&db_type).is_some()),
+        ("object_catalog", crate::services::object_catalog_queries(&db_type).is_some()),
+        ("completion_catalog", crate::services::completion_catalog_query(&db_type).is_some()),
+        ("er_diagram", crate::services::er_diagram_queries(&db_type).is_some()),
+        ("session_target", crate::services::session_target_query(&db_type).is_some()),
+      ] {
+        assert_eq!(
+          has_driver, present,
+          "{db_type:?}：has_driver={has_driver} 而 {table} 查询表 present={present}，两者必须一致"
+        );
+      }
+    }
+  }
+
+  /// 执行计划是唯一一处「有驱动但不一定支持」的能力：MySQL 与 SQLite 能取
+  /// 计划但不能真的跑一遍。这条把它和上一条区分开，免得哪天被顺手统一掉
+  #[test]
+  fn every_supported_type_can_produce_a_plan_even_if_it_cannot_analyze() {
+    for db_type in ALL_DATABASE_TYPES {
+      assert_eq!(
+        db_type.has_driver(),
+        crate::services::explain_statement(&db_type, "SELECT 1", false).is_ok(),
+        "{db_type:?} 的执行计划支持要跟驱动一致"
+      );
+    }
+
+    assert!(super::DatabaseType::PostgreSQL.has_driver());
+    assert!(crate::services::supports_analyze(&super::DatabaseType::PostgreSQL));
+    assert!(!crate::services::supports_analyze(&super::DatabaseType::MySQL));
+  }
+
   #[test]
   fn draft_connection_without_id_deserializes() {
     // 新建连接表单送来的草稿：还没保存，所以没有 id / created_at / updated_at。

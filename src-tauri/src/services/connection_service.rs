@@ -232,6 +232,13 @@ impl ConnectionService {
 
   /// 测试数据库连接 - 实际尝试连接并返回连接字符串
   pub fn test_connection(&self, config: &ConnectionProfile) -> Result<String, String> {
+    // 第一道，也是这个方法里唯一一件与配置内容无关的事：这个类型有没有驱动。
+    // 放在最前面，是因为后面每一步——读钥匙串、拼 URL、校验字段——对一个
+    // 连不上的类型来说都是白做，而且做了还会给出「配置验证通过」的假象
+    if !config.db_type.has_driver() {
+      return Err(unsupported_database_message(&config.db_type));
+    }
+
     validate_tls_configuration(config)?;
 
     let mut resolved_config = config.clone();
@@ -244,59 +251,31 @@ impl ConnectionService {
         })?;
     }
 
-    let connection_string = resolved_config.db_type.to_connection_string(&resolved_config);
-    println!("🔗 准备测试数据库连接: {}", redact_connection_string(&connection_string));
-
-    // 基本验证
-    match config.db_type {
-      DatabaseType::SQLite | DatabaseType::DuckDB => {
-        if config.database.is_none() || config.database.as_ref().unwrap().is_empty() {
-          return Err("数据库文件路径不能为空".to_string());
-        }
+    // 基本验证。过了上面那道门只剩三种类型，真正的差别只有一个：
+    // SQLite 的「库」是一个文件路径，另两种要主机、端口、账号和库名
+    let database_is_blank = config.database.as_deref().unwrap_or("").is_empty();
+    if matches!(config.db_type, DatabaseType::SQLite) {
+      if database_is_blank {
+        return Err("数据库文件路径不能为空".to_string());
       }
-      DatabaseType::MySQL | DatabaseType::PostgreSQL | DatabaseType::ClickHouse => {
-        if config.host.is_empty() {
-          return Err("主机地址不能为空".to_string());
-        }
-        if config.username.is_empty() {
-          return Err("用户名不能为空".to_string());
-        }
-        if config.port == 0 {
-          return Err("端口号无效，必须在1-65535范围内".to_string());
-        }
-        if config.database.is_none() || config.database.as_ref().unwrap().is_empty() {
-          return Err("数据库名不能为空".to_string());
-        }
+    } else {
+      if config.host.is_empty() {
+        return Err("主机地址不能为空".to_string());
       }
-      DatabaseType::MongoDB | DatabaseType::Neo4j => {
-        if config.host.is_empty() {
-          return Err("主机地址不能为空".to_string());
-        }
-        if config.port == 0 {
-          return Err("端口号无效，必须在1-65535范围内".to_string());
-        }
-        // MongoDB 和 Neo4j 可以不需要用户名密码
+      if config.username.is_empty() {
+        return Err("用户名不能为空".to_string());
       }
-      DatabaseType::Redis => {
-        if config.host.is_empty() {
-          return Err("主机地址不能为空".to_string());
-        }
-        if config.port == 0 {
-          return Err("端口号无效，必须在1-65535范围内".to_string());
-        }
-        // Redis 可以不需要用户名密码
+      if config.port == 0 {
+        return Err("端口号无效，必须在1-65535范围内".to_string());
       }
-      DatabaseType::Elasticsearch => {
-        if config.host.is_empty() {
-          return Err("主机地址不能为空".to_string());
-        }
-        if config.port == 0 {
-          return Err("端口号无效，必须在1-65535范围内".to_string());
-        }
-        // Elasticsearch 可以不需要用户名密码
+      if database_is_blank {
+        return Err("数据库名不能为空".to_string());
       }
     }
 
+    // 拼 URL 放在校验之后：校验不过的配置不该被拼成串打进日志
+    let connection_string = resolved_config.db_type.to_connection_string(&resolved_config);
+    println!("🔗 准备测试数据库连接: {}", redact_connection_string(&connection_string));
     println!("✅ 连接配置验证通过，返回连接字符串用于前端测试");
     Ok(connection_string)
   }
@@ -361,6 +340,14 @@ fn credential_entry(profile_id: &str) -> Result<Entry, String> {
 
 fn credential_ref(profile_id: &str) -> String {
   format!("{CREDENTIAL_REF_PREFIX}{profile_id}")
+}
+
+/// 没驱动时给出的那句话。
+///
+/// 说清三件事：哪个类型、为什么不行、现在能用什么。只说「不支持」会让用户
+/// 反复检查主机和密码——那是配置问题的症状，而这里根本没走到配置。
+fn unsupported_database_message(db_type: &DatabaseType) -> String {
+  format!("{db_type:?} 在当前版本还没有可用驱动，无法连接；已支持的是 MySQL、PostgreSQL 和 SQLite")
 }
 
 fn validate_tls_configuration(config: &ConnectionProfile) -> Result<(), String> {
@@ -597,5 +584,54 @@ mod tests {
       validate_tls_configuration(&config),
       Err("客户端证书和私钥必须同时配置".to_string())
     );
+  }
+
+  /// 界面已经把这些类型的按钮置灰了，但存档里可能留着更早版本存下的配置，
+  /// 而配置文件是纯文本、用户改得动。这条断言的是「界面不是唯一的门」
+  #[test]
+  fn refuses_database_types_that_have_no_driver() {
+    let config_path = temporary_config_path();
+    let service =
+      ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()).unwrap();
+
+    for db_type in [
+      DatabaseType::MongoDB,
+      DatabaseType::Redis,
+      DatabaseType::Neo4j,
+      DatabaseType::DuckDB,
+      DatabaseType::ClickHouse,
+      DatabaseType::Elasticsearch,
+    ] {
+      let mut config = profile("profile-1", "secret");
+      config.db_type = db_type.clone();
+
+      let error = service.test_connection(&config).expect_err("没有驱动就不该通过");
+      assert!(
+        error.contains(&format!("{db_type:?}")) && error.contains("还没有可用驱动"),
+        "{db_type:?} 的拒绝理由要说清是哪个类型、为什么：{error}"
+      );
+    }
+  }
+
+  /// 反向：三种有驱动的类型必须仍然走完原来的校验，而不是被这道门顺手挡掉
+  #[test]
+  fn keeps_validating_the_three_supported_types() {
+    let config_path = temporary_config_path();
+    let service =
+      ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()).unwrap();
+
+    let mut sqlite = profile("profile-1", "");
+    sqlite.db_type = DatabaseType::SQLite;
+    sqlite.database = None;
+    assert_eq!(
+      service.test_connection(&sqlite),
+      Err("数据库文件路径不能为空".to_string()),
+      "SQLite 缺文件路径要报路径，不能报成「没有驱动」"
+    );
+
+    let mut mysql = profile("profile-1", "secret");
+    mysql.db_type = DatabaseType::MySQL;
+    mysql.host = String::new();
+    assert_eq!(service.test_connection(&mysql), Err("主机地址不能为空".to_string()));
   }
 }
