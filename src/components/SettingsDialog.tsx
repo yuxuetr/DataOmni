@@ -7,6 +7,7 @@ import {
   type ConfirmationThreshold
 } from '../utils/confirmationPolicy';
 import { useSettingsStore } from '../stores/settingsStore';
+import { GRID_DENSITIES, type GridDensity } from '../utils/gridColumns';
 import { useHistoryStore } from '../stores/historyStore';
 import {
   RETENTION_DAY_CHOICES,
@@ -51,6 +52,8 @@ const ENVIRONMENT_LABEL_KEYS: Record<ConnectionEnvironment, TranslationKey> = {
 export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const t = useLanguageStore((state) => state.t);
   const confirmationPolicy = useSettingsStore((state) => state.confirmationPolicy);
+  const gridDensity = useSettingsStore((state) => state.gridDensity);
+  const setGridDensity = useSettingsStore((state) => state.setGridDensity);
   const setConfirmationThreshold = useSettingsStore((state) => state.setConfirmationThreshold);
   const retention = useHistoryStore((state) => state.retention);
   const setRetention = useHistoryStore((state) => state.setRetention);
@@ -146,6 +149,32 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                 );
               })}
             </div>
+        </div>
+
+        <div className="border-t border-line px-5 py-4">
+          <h3 className="text-sm font-medium text-fg">{t('settings.appearance.title')}</h3>
+          {/* 行高在表数据网格的列菜单里也能调，但查询结果那张网格没有列菜单，
+              没有这里的话它那档就只能跟着别处改 */}
+          <p className="mt-1 text-xs leading-relaxed text-fg-muted">
+            {t('settings.density.description')}
+          </p>
+
+          <div className="mt-3">
+            <label className="flex items-center justify-between gap-3 rounded-control px-2 py-1.5 hover:bg-surface-hover">
+              <span className="text-sm text-fg">{t('columns.density')}</span>
+              <select
+                value={gridDensity}
+                onChange={(event) => setGridDensity(event.target.value as GridDensity)}
+                className="shrink-0 rounded-control border border-line-strong bg-surface px-2 py-1 text-sm text-fg"
+              >
+                {GRID_DENSITIES.map((density) => (
+                  <option key={density} value={density}>
+                    {t(`columns.density.${density}` as TranslationKey)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
 
         <div className="border-t border-line px-5 py-4">

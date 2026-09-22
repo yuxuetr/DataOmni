@@ -9,12 +9,50 @@ export type GridDensity = 'compact' | 'default' | 'comfortable';
 
 export const GRID_DENSITIES: readonly GridDensity[] = ['compact', 'default', 'comfortable'];
 
-/** 单元格内边距。行高跟着内容走，只调 padding 就够，不去钉死 height */
+export const DEFAULT_GRID_DENSITY: GridDensity = 'default';
+
+/**
+ * 单元格内边距。行高跟着内容走，只调 padding 就够，不去钉死 height。
+ *
+ * **这里只许出现 padding，不许出现字号。** 列宽由 `columnWidths.ts` 按
+ * `charWidth: 7.9` 估算，那个数是照 13px 等宽字体量出来的；密度一旦改字号，
+ * 每一列的宽度都会跟着错，而表现是「某些列莫名其妙被截断」——没人会想到
+ * 去怪行高。`gridColumns.test.ts` 有一道门守着这条。
+ */
 export const DENSITY_CELL_CLASS: Record<GridDensity, string> = {
   compact: 'px-2 py-0',
   default: 'px-2 py-1',
   comfortable: 'px-3 py-2'
 };
+
+const DENSITY_STORAGE_KEY = 'dataomni.grid-density';
+
+export function isGridDensity(value: unknown): value is GridDensity {
+  return typeof value === 'string' && GRID_DENSITIES.includes(value as GridDensity);
+}
+
+/**
+ * 密度是**应用级**偏好，不是某张表的局部状态。
+ *
+ * 此前它是 `TableDataViewer` 里的一个 `useState`：换个表、关掉标签再开，
+ * 挑好的行高就没了——一个每次都要重挑的设置等于没有。
+ */
+export function loadGridDensity(): GridDensity {
+  try {
+    const raw = localStorage.getItem(DENSITY_STORAGE_KEY);
+    return isGridDensity(raw) ? raw : DEFAULT_GRID_DENSITY;
+  } catch {
+    return DEFAULT_GRID_DENSITY;
+  }
+}
+
+export function saveGridDensity(density: GridDensity): void {
+  try {
+    localStorage.setItem(DENSITY_STORAGE_KEY, density);
+  } catch {
+    // 存储不可用时这一轮仍然生效，只是重启后回到默认
+  }
+}
 
 /**
  * 可见列在原始列表里的下标。

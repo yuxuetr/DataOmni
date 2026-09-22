@@ -1,11 +1,21 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  DEFAULT_GRID_DENSITY,
   DENSITY_CELL_CLASS,
   GRID_DENSITIES,
   frozenLeftOffsets,
+  isGridDensity,
+  loadGridDensity,
+  saveGridDensity,
   toggleHiddenColumn,
   visibleColumnIndexes
 } from './gridColumns';
+import { COLUMN_WIDTH_DEFAULTS } from './columnWidths';
+
+/** Tailwind 的间距刻度：1 = 0.25rem = 4px */
+function spacingToPixels(step: number): number {
+  return step * 4;
+}
 
 const COLUMNS = ['id', 'name', 'note'];
 
@@ -89,5 +99,70 @@ describe('密度', () => {
     });
     expect(padding).toEqual([...padding].sort((left, right) => left - right));
     expect(new Set(padding).size).toBe(padding.length);
+  });
+});
+
+describe('密度不许动列宽模型依赖的那几个量', () => {
+  it('哪一档都不许带字号', () => {
+    // 列宽按 charWidth 7.9 估算，那个数是照 13px 等宽字体量的。
+    // 密度改字号 = 每一列都算错，而表现只是「有些列被截断了」，
+    // 没人会把它和行高联系起来
+    for (const density of GRID_DENSITIES) {
+      expect(DENSITY_CELL_CLASS[density]).not.toMatch(/\btext-/);
+    }
+  });
+
+  it('左右内边距不许超过列宽模型里算的那份', () => {
+    // 模型里 padding 是「左右内边距 + 边框」的总和。实际比它大，
+    // 列宽就不够放内容——而估算是按字符数算的，看不出这一段差额
+    for (const density of GRID_DENSITIES) {
+      const match = /px-([\d.]+)/.exec(DENSITY_CELL_CLASS[density]);
+      expect(match).not.toBeNull();
+      const horizontal = spacingToPixels(Number(match?.[1])) * 2 + 2;
+      expect(horizontal).toBeLessThanOrEqual(COLUMN_WIDTH_DEFAULTS.padding);
+    }
+  });
+});
+
+describe('密度的存取', () => {
+  beforeEach(() => {
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        store.set(key, value);
+      }
+    });
+  });
+
+  it('没存过就是默认档', () => {
+    expect(loadGridDensity()).toBe(DEFAULT_GRID_DENSITY);
+  });
+
+  it('往返保存与读取', () => {
+    saveGridDensity('comfortable');
+    expect(loadGridDensity()).toBe('comfortable');
+  });
+
+  it('存着的值不是已知的档位时回落到默认，而不是给出一个空的 class', () => {
+    // 认了一个不存在的档，DENSITY_CELL_CLASS[density] 会是 undefined，
+    // 单元格连内边距都没有
+    localStorage.setItem('dataomni.grid-density', 'cozy');
+    expect(loadGridDensity()).toBe(DEFAULT_GRID_DENSITY);
+    expect(isGridDensity('cozy')).toBe(false);
+  });
+
+  it('localStorage 抛错时回落到默认、写入不抛', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('storage disabled');
+      },
+      setItem: () => {
+        throw new Error('quota exceeded');
+      }
+    });
+
+    expect(loadGridDensity()).toBe(DEFAULT_GRID_DENSITY);
+    expect(() => saveGridDensity('compact')).not.toThrow();
   });
 });

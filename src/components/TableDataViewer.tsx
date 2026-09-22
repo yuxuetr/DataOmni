@@ -93,9 +93,9 @@ import {
   DENSITY_CELL_CLASS,
   frozenLeftOffsets,
   toggleHiddenColumn,
-  visibleColumnIndexes,
-  type GridDensity
+  visibleColumnIndexes
 } from '../utils/gridColumns';
+import { useSettingsStore } from '../stores/settingsStore';
 import { buildFilterClause, isCompleteFilter, type ColumnFilter } from '../utils/tableFilters';
 
 // 编辑模式类型
@@ -165,7 +165,9 @@ export default function TableDataViewer({
   const [showFilters, setShowFilters] = useState(false);
   const [hiddenColumns, setHiddenColumns] = useState<ReadonlySet<string>>(new Set());
   const [frozenCount, setFrozenCount] = useState(0);
-  const [density, setDensity] = useState<GridDensity>('default');
+  // 行高是应用级偏好：换张表、关掉标签再开，挑好的那档还在
+  const density = useSettingsStore((state) => state.gridDensity);
+  const setDensity = useSettingsStore((state) => state.setGridDensity);
   const [showColumnMenu, setShowColumnMenu] = useState(false);
   const [contextTarget, setContextTarget] = useState<GridContextTarget | null>(null);
   // 与 sortRef 同理：loadTableData 的闭包里读不到刚 set 进去的新值

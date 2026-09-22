@@ -38,7 +38,11 @@ export interface ColumnWidthOptions {
   headerExtra?: number;
 }
 
-const DEFAULTS: Required<ColumnWidthOptions> = {
+/**
+ * 导出是为了让密度那道门能拿 `padding` 做对照：密度改了单元格的左右内边距，
+ * 而列宽是照这个数算出来的，两边对不上就是静默截断。见 `gridColumns.test.ts`。
+ */
+export const COLUMN_WIDTH_DEFAULTS: Required<ColumnWidthOptions> = {
   minWidth: 64,
   maxWidth: 360,
   sampleRows: 200,
@@ -85,9 +89,9 @@ export function clampColumnWidth(
   width: number,
   options: Pick<ColumnWidthOptions, 'minWidth' | 'maxWidth'> = {}
 ): number {
-  const minWidth = options.minWidth ?? DEFAULTS.minWidth;
+  const minWidth = options.minWidth ?? COLUMN_WIDTH_DEFAULTS.minWidth;
   // 手动拖宽可以超过自动估算的上限：用户明确要求看更宽的一列时不该拦着
-  const maxWidth = options.maxWidth ?? DEFAULTS.maxWidth;
+  const maxWidth = options.maxWidth ?? COLUMN_WIDTH_DEFAULTS.maxWidth;
   return Math.min(maxWidth, Math.max(minWidth, Math.round(width)));
 }
 
@@ -102,7 +106,7 @@ export function measureColumnWidths(
   options: ColumnWidthOptions = {}
 ): number[] {
   const { minWidth, maxWidth, sampleRows, charWidth, padding, headerExtra } =
-    { ...DEFAULTS, ...options };
+    { ...COLUMN_WIDTH_DEFAULTS, ...options };
   const sample = rows.length > sampleRows ? rows.slice(0, sampleRows) : rows;
 
   return columns.map((column, index) => {
@@ -147,7 +151,7 @@ export function measureColumnAlignments(
   rows: readonly (readonly SerializedResultValue[])[],
   options: Pick<ColumnWidthOptions, 'sampleRows'> = {}
 ): ColumnAlignment[] {
-  const sampleRows = options.sampleRows ?? DEFAULTS.sampleRows;
+  const sampleRows = options.sampleRows ?? COLUMN_WIDTH_DEFAULTS.sampleRows;
   const sample = rows.length > sampleRows ? rows.slice(0, sampleRows) : rows;
 
   return columns.map((_column, index) => {

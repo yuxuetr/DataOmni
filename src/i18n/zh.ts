@@ -604,6 +604,8 @@ export const zh = {
   'settings.history.current.one': '当前有 {count} 条记录。',
   'settings.title': '设置',
   'settings.open': '设置',
+  'settings.appearance.title': '外观',
+  'settings.density.description': '行高对两张数据网格同时生效，重启后保留。',
   'settings.confirmation.title': '危险语句确认',
   'settings.confirmation.description': '按连接所在环境分别设定：风险达到这一级及以上的语句，执行前先确认。确认只是给你一次停下来的机会，不能代替数据库权限——真正该只读的账号要在数据库里配。',
   'settings.confirmation.environment': '环境',

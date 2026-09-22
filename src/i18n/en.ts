@@ -585,6 +585,8 @@ export const en: Translations = {
   'settings.history.current.one': 'Currently holding {count} entry.',
   'settings.title': 'Settings',
   'settings.open': 'Settings',
+  'settings.appearance.title': 'Appearance',
+  'settings.density.description': 'Row height applies to both data grids and is kept across restarts.',
   'settings.confirmation.title': 'Confirm risky statements',
   'settings.confirmation.description': 'Set this per environment: statements at or above the chosen risk level ask for confirmation first. A confirmation only gives you a chance to stop — it is not a substitute for database permissions. An account that should be read-only has to be configured that way in the database.',
   'settings.confirmation.environment': 'Environment',
