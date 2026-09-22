@@ -128,11 +128,17 @@ function App() {
 
   // 活动标签决定当前编辑的是哪一份 SQL 文档；非 SQL 标签不改变它，
   // 这样在表标签里看数据不会影响后台仍在执行的查询写回哪个文档。
+  //
+  // 依赖里必须有 `activeConnection`：断开时下面那个 effect 会把活动文档清成
+  // null，而重新连上时**标签 id 没变**，只看 id 的话这个 effect 不会再跑一次，
+  // 活动文档就永远是 null 了。恢复工作区正是这条路径——重启应用、点连接、
+  // 在编辑器里打字，字能打出来（那是 CodeMirror 自己的状态），但写不进 store，
+  // 工具栏一直是「未解析出语句」，执行按钮一直是灰的。
   useEffect(() => {
-    if (activeTab?.kind === 'sql') {
+    if (activeTab?.kind === 'sql' && activeConnection) {
       openDocument(activeTab.id);
     }
-  }, [activeTab?.id, activeTab?.kind, openDocument]);
+  }, [activeTab?.id, activeTab?.kind, activeConnection, openDocument]);
 
   // 每个连接有一个 SQL 标签，连接就绪后按需创建；id 由连接决定，重复注册会被去重
   useEffect(() => {
