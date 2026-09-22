@@ -1,13 +1,21 @@
 import { DatabaseSession } from './session';
 
-export type QueryExecutionStatus =
-  | 'queued'
-  | 'running'
-  | 'cancel-requested'
-  | 'succeeded'
-  | 'failed'
-  | 'cancelled'
-  | 'timed-out';
+/**
+ * 类型从数组推出来，好让门能在运行期遍历所有档位。
+ * 见 `utils/backgroundTasks.test.ts` 里那条跨状态机的断言：这五档
+ * 运行中 / 取消请求中 / 已取消 / 成功 / 失败，两套状态机必须同名。
+ */
+export const QUERY_EXECUTION_STATUSES = [
+  'queued',
+  'running',
+  'cancel-requested',
+  'succeeded',
+  'failed',
+  'cancelled',
+  'timed-out'
+] as const;
+
+export type QueryExecutionStatus = (typeof QUERY_EXECUTION_STATUSES)[number];
 
 export type SqlDialect = 'mysql' | 'postgresql' | 'sqlite';
 

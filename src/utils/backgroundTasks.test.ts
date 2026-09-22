@@ -5,8 +5,10 @@ import {
   describeTask,
   formatTaskElapsed,
   MAX_LOG_ENTRIES,
+  TASK_STATUSES,
   type BackgroundTask
 } from './backgroundTasks';
+import { QUERY_EXECUTION_STATUSES } from '../contracts/queryExecution';
 
 const NOW = 1_800_000_000_000;
 
@@ -36,7 +38,7 @@ describe('describeTask', () => {
   it('暂停着的任务能继续，也还能取消', () => {
     const display = describeTask(task({ status: 'paused' }), NOW);
     expect(display.canResume).toBe(true);
-    expect(display.canCancel).toBe(true);
+    expect(display.cancel).toBe('available');
     expect(display.canPause).toBe(false);
   });
 
@@ -55,6 +57,29 @@ describe('describeTask', () => {
     expect(
       describeTask(task({ status: 'succeeded', finishedAt: NOW, leftBehind: true }), NOW).canRetry
     ).toBe(false);
+  });
+
+  it('请求取消之后：转圈继续转，取消按钮变成等待态', () => {
+    // 那一批要先收尾，任务并没有停。转圈停下来会让人以为已经停了，
+    // 而这时候去关窗口、去改表，撞上的是一个还在写的事务
+    const display = describeTask(task({ status: 'cancel-requested' }), NOW);
+    expect(display.tone).toBe('running');
+    expect(display.cancel).toBe('pending');
+    expect(display.labelKey).toBe('task.status.cancel-requested');
+  });
+
+  it('请求取消之后不给暂停、继续、重试和划掉', () => {
+    // 暂停一个正在关门的循环，要么无效，要么把取消又拖长一批
+    const display = describeTask(task({ status: 'cancel-requested' }), NOW);
+    expect(display.canPause).toBe(false);
+    expect(display.canResume).toBe(false);
+    expect(display.canRetry).toBe(false);
+    expect(display.canDismiss).toBe(false);
+  });
+
+  it('结束之后取消按钮就不在了', () => {
+    expect(describeTask(task({ status: 'succeeded', finishedAt: NOW }), NOW).cancel).toBe('none');
+    expect(describeTask(task({ status: 'cancelled', finishedAt: NOW }), NOW).cancel).toBe('none');
   });
 
   it('跑着的任务不能重试也不能划掉', () => {
@@ -102,16 +127,43 @@ describe('appendLog', () => {
 });
 
 describe('activeTaskCount', () => {
-  it('暂停的也算在跑', () => {
-    // 暂停不是结束：那个事务还开着
+  it('暂停的、正在取消的都算在跑', () => {
+    // 暂停不是结束：那个事务还开着。请求取消也不是结束：那一批还在写
     expect(
       activeTaskCount([
         task({ status: 'running' }),
         task({ status: 'paused' }),
+        task({ status: 'cancel-requested' }),
         task({ status: 'succeeded' }),
-        task({ status: 'failed' })
+        task({ status: 'failed' }),
+        task({ status: 'cancelled' })
       ])
-    ).toBe(2);
+    ).toBe(3);
+  });
+});
+
+describe('两套状态机在这五档上必须同名', () => {
+  // 「长任务统一显示运行中、取消请求中、已取消、成功和失败」。此前它们不统一：
+  // 查询执行有 cancel-requested，导入导出没有——点了取消，界面还写着「运行中」。
+  // 两边各自演进得很容易再次漂开，所以把这五个名字钉在这里。
+  const SHARED = ['running', 'cancel-requested', 'cancelled', 'succeeded', 'failed'] as const;
+
+  it('导入导出这边都有', () => {
+    for (const status of SHARED) {
+      expect(TASK_STATUSES, status).toContain(status);
+    }
+  });
+
+  it('查询执行那边都有', () => {
+    for (const status of SHARED) {
+      expect(QUERY_EXECUTION_STATUSES, status).toContain(status);
+    }
+  });
+
+  it('每一档都有自己的文案，不许两档共用一句', () => {
+    // 共用一句就等于没有这一档：界面上看不出区别
+    const labels = TASK_STATUSES.map((status) => describeTask(task({ status }), NOW).labelKey);
+    expect(new Set(labels).size).toBe(TASK_STATUSES.length);
   });
 });
 

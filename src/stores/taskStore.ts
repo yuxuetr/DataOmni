@@ -3,6 +3,7 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import type { ExportOptions } from '../utils/exportResult';
 import {
   appendLog,
+  isTaskActive,
   type BackgroundTask,
   type TaskKind,
   type TaskLogEntry
@@ -270,6 +271,12 @@ export const useTaskStore = create<TaskState>((set, get) => {
         patch(id, (current) => ({ ...current, status: 'running' }));
       }
       log(id, [entry('warn', translateNow('task.log.cancelRequested'))]);
+      // 状态**先**翻，不等后端应答：取消要跨过当前这一批才生效，而在那之前
+      // 界面如果还写着「运行中」、取消按钮还亮着，人只会再点一次。
+      // 翻到 cancel-requested 之后 `describeTask` 会把按钮改成禁用的等待态
+      patch(id, (current) =>
+        isTaskActive(current.status) ? { ...current, status: 'cancel-requested' } : current
+      );
       const command = task.kind === 'import' ? 'cancel_import' : 'cancel_export';
       const key = task.kind === 'import' ? 'importId' : 'exportId';
       await invoke<boolean>(command, { [key]: id }).catch(() => undefined);
@@ -289,9 +296,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
 
     clearFinished: () => {
       set((state) => {
-        const kept = state.tasks.filter(
-          (task) => task.status === 'running' || task.status === 'paused'
-        );
+        const kept = state.tasks.filter((task) => isTaskActive(task.status));
         for (const task of state.tasks) {
           if (!kept.includes(task)) {
             requests.delete(task.id);

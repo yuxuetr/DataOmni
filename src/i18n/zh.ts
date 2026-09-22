@@ -272,6 +272,7 @@ export const zh = {
   'task.status.paused': '已暂停',
   'task.status.succeeded': '已完成',
   'task.status.failed': '失败',
+  'task.status.cancel-requested': '取消请求中',
   'task.status.cancelled': '已取消',
   'task.detail.import': '已读 {read} 行 · 写入 {inserted} · 失败 {failed}',
   'task.detail.export': '已写 {rows} 行 · {bytes}',

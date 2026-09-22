@@ -256,6 +256,7 @@ export const en: Translations = {
   'task.status.paused': 'Paused',
   'task.status.succeeded': 'Finished',
   'task.status.failed': 'Failed',
+  'task.status.cancel-requested': 'Cancelling',
   'task.status.cancelled': 'Cancelled',
   'task.detail.import': '{read} rows read · {inserted} written · {failed} failed',
   'task.detail.export': '{rows} rows written · {bytes}',

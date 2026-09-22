@@ -121,8 +121,15 @@ function TaskRow({ task }: { task: BackgroundTask }) {
               <Play size={13} />
             </IconButton>
           )}
-          {display.canCancel && (
-            <IconButton label={t('common.cancel')} onClick={() => void cancel(task.id)} danger>
+          {/* 请求取消之后按钮**留在原地变灰**，不是消失：那一下点击落在哪个
+              控件上，反馈就该出现在哪个控件上。控件消失了人只会怀疑自己点歪了 */}
+          {display.cancel !== 'none' && (
+            <IconButton
+              label={display.cancel === 'pending' ? t('task.status.cancel-requested') : t('common.cancel')}
+              onClick={() => void cancel(task.id)}
+              disabled={display.cancel === 'pending'}
+              danger
+            >
               <X size={13} />
             </IconButton>
           )}

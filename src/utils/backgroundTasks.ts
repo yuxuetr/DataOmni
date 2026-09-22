@@ -1,7 +1,25 @@
 import type { TranslationKey } from '../i18n/translate';
 
 export type TaskKind = 'import' | 'export';
-export type TaskStatus = 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled';
+
+/**
+ * 类型从数组推出来，不是各写一遍：跨状态机的那道门要能在运行期遍历所有档位，
+ * 而一份「手写的类型 + 手写的清单」迟早会对不上。
+ *
+ * `cancel-requested` 这一档和查询执行（`contracts/queryExecution.ts`）同名
+ * 是刻意的。此前导入导出根本没有它：点了取消，状态还是「运行中」，转圈还在
+ * 转，取消按钮还亮着——于是人会再点一次，再点一次。
+ */
+export const TASK_STATUSES = [
+  'running',
+  'paused',
+  'cancel-requested',
+  'succeeded',
+  'failed',
+  'cancelled'
+] as const;
+
+export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export interface TaskLogEntry {
   at: number;
@@ -58,7 +76,13 @@ export interface TaskDisplay {
   tone: 'running' | 'success' | 'warning' | 'danger';
   canPause: boolean;
   canResume: boolean;
-  canCancel: boolean;
+  /**
+   * 取消这个控件此刻的形态。
+   *
+   * 三值而不是两个布尔：「能点」和「已请求」互斥，写成两个布尔就允许出现
+   * 一个同时成立的组合，而那个组合没有含义。
+   */
+  cancel: 'none' | 'available' | 'pending';
   /** 能不能原样再跑一遍 */
   canRetry: boolean;
   /** 能不能从列表里划掉 */
@@ -69,6 +93,7 @@ export interface TaskDisplay {
 const STATUS_LABELS: Record<TaskStatus, TranslationKey> = {
   running: 'task.status.running',
   paused: 'task.status.paused',
+  'cancel-requested': 'task.status.cancel-requested',
   succeeded: 'task.status.succeeded',
   failed: 'task.status.failed',
   cancelled: 'task.status.cancelled'
@@ -77,10 +102,18 @@ const STATUS_LABELS: Record<TaskStatus, TranslationKey> = {
 const STATUS_TONES: Record<TaskStatus, TaskDisplay['tone']> = {
   running: 'running',
   paused: 'warning',
+  // 请求取消之后它**还在跑**——当前这一批要先收尾。转圈停下来会让人以为
+  // 已经停了，而这时候去关窗口、去改表，撞上的是一个还在写的事务
+  'cancel-requested': 'running',
   succeeded: 'success',
   failed: 'danger',
   cancelled: 'warning'
 };
+
+/** 还没走到终局：仍占着角标上的数字，也仍不能被划掉或重试 */
+export function isTaskActive(status: TaskStatus): boolean {
+  return status === 'running' || status === 'paused' || status === 'cancel-requested';
+}
 
 /**
  * 一个任务此刻能做什么。
@@ -94,22 +127,25 @@ const STATUS_TONES: Record<TaskStatus, TaskDisplay['tone']> = {
  *   的那一次才谈得上「再来一遍」。
  */
 export function describeTask(task: BackgroundTask, now: number = Date.now()): TaskDisplay {
-  const active = task.status === 'running' || task.status === 'paused';
+  const active = isTaskActive(task.status);
+  const pendingCancel = task.status === 'cancel-requested';
   return {
     labelKey: STATUS_LABELS[task.status],
     tone: STATUS_TONES[task.status],
+    // 已经在收尾的任务不给暂停也不给继续：那两个动作都是在跟一个正在关门的
+    // 循环讨价还价，按下去要么无效，要么把取消又拖长一批
     canPause: task.kind === 'import' && task.status === 'running',
     canResume: task.status === 'paused',
-    canCancel: active,
+    cancel: pendingCancel ? 'pending' : active ? 'available' : 'none',
     canRetry: !active && !task.leftBehind,
     canDismiss: !active,
     elapsedMs: Math.max(0, (task.finishedAt ?? now) - task.startedAt)
   };
 }
 
-/** 角标上的数字：正在跑的（含暂停的）有几个 */
+/** 角标上的数字：还没走到终局的有几个 */
 export function activeTaskCount(tasks: readonly BackgroundTask[]): number {
-  return tasks.filter((task) => task.status === 'running' || task.status === 'paused').length;
+  return tasks.filter((task) => isTaskActive(task.status)).length;
 }
 
 export function formatTaskElapsed(elapsedMs: number): string {
