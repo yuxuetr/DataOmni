@@ -889,6 +889,14 @@ export const en: Translations = {
   'error.backend.sessionBoundElsewhere': 'This database session is already bound to another connection; disconnect and connect again.',
   'error.backend.unsupportedColumnType': 'This column type cannot be decoded: {detail}. Cast it to text in the query to read it.',
   'error.backend.unsupportedParameterType': 'This value type cannot be sent to the database as a parameter: {detail}',
+  'error.backend.queryTimeout': 'The query exceeded the {detail} ms timeout and was stopped. Raise the timeout in the toolbar, or narrow the query first.',
+  'error.backend.columnDecodeFailed': 'This column could not be decoded (name · type · reason): {detail}. Cast it to text in the query to read it.',
+  'error.backend.nonQuery': 'This statement returns no result set, so there is nothing to export.',
+  'error.backend.csvColumnTypeInvalid': 'The target column type is not a valid type name (column · type): {detail}',
+  'error.backend.csvRowTooShort': 'This row has too few fields (actual · requested index · mapped column): {detail}. The delimiter is probably wrong.',
+  'error.backend.rowCountMismatch': 'This statement affected an unexpected number of rows (expected · actual): {detail}. The whole batch was rolled back — that row may have been changed or deleted by someone else.',
+  'error.backend.fileTooLarge': 'The file is larger than the read limit (path · size · limit): {detail}',
+  'error.backend.credentialStoreRejected': 'The system keychain refused access: {detail}. The usual cause is that the entry was written by a different build of this app (unsigned development builds change signing identity on every rebuild). Re-enter and save the password in the connection settings to recreate it.',
   'error.backend.dbSessionNotConnected':
     'No database session. Connect to this database before running statements; if the UI still shows it as connected, the session has gone stale — disconnect and connect again.',
   'error.backend.sshAuthRejected':
@@ -949,6 +957,13 @@ export const en: Translations = {
   'diagnosis.step.file': 'Database file',
   'diagnosis.step.unknown': 'Unknown step',
   'diagnosis.conclusion.resolveFailed': 'The host name resolves to no address. Check the spelling first, then whether this machine can resolve it at all — an internal name will not resolve against public DNS.',
+  'diagnosis.conclusion.missingPath': 'No database file path was given.',
+  'diagnosis.conclusion.notAFile': 'That path is a directory, not a database file.',
+  'diagnosis.conclusion.hostMissing': 'No host was given.',
+  'diagnosis.conclusion.portMissing': 'No port was given.',
+  'diagnosis.conclusion.resolveTimeout': 'DNS resolution timed out — the resolver is unreachable or blocked by a network policy.',
+  'diagnosis.conclusion.resolveEmpty': 'The name resolved but returned no addresses.',
+  'diagnosis.conclusion.tcpTimeout': 'The port did not respond before the timeout — a firewall is probably dropping packets rather than refusing them.',
   'diagnosis.conclusion.reachable': 'The network side is fine: the address resolved and the port accepted a connection. If connecting still fails, the cause is the credentials, the TLS settings or the database name — not the network.',
   'diagnosis.conclusion.tcpFailed': 'The address resolved, but nothing is accepting connections on that port. Usually the service is not running, the port is wrong, or a firewall or security group is blocking it.',
   'diagnosis.conclusion.tcpDropped':

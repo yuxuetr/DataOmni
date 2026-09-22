@@ -42,6 +42,9 @@ pub const CONFIG_DIR_UNAVAILABLE: &str = "DATAOMNI_CONFIG_DIR_UNAVAILABLE";
 /// 连接配置写盘失败。增删改共用一条：对用户来说都是「这次改动没存住」
 pub const CONFIG_SAVE_FAILED: &str = "DATAOMNI_CONFIG_SAVE_FAILED";
 pub const CONNECTION_NOT_FOUND: &str = "DATAOMNI_CONNECTION_NOT_FOUND";
+/// 钥匙串拒绝访问。最常见的成因是条目由另一个签名身份写入（未签名的开发构建
+/// 每次重建都换身份），这句解释放在前端文案里
+pub const CREDENTIAL_STORE_REJECTED: &str = "DATAOMNI_CREDENTIAL_STORE_REJECTED";
 
 trait CredentialStore: Send + Sync {
   fn set_password(&self, profile_id: &str, password: &str) -> Result<(), String>;
@@ -56,13 +59,9 @@ trait CredentialStore: Send + Sync {
 /// 构建每次重建都换一个代码签名身份，旧条目因此拒绝访问，这是最常见的成因。
 fn describe_credential_read_failure(error: &keyring::Error) -> String {
   match error {
-    keyring::Error::NoEntry => {
-      "系统凭据库中没有这个连接的密码，请在连接配置中重新输入并保存。".to_string()
-    }
-    keyring::Error::PlatformFailure(cause) => format!(
-      "系统凭据库拒绝了访问：{cause}。\n       常见原因是该条目由另一个版本的应用写入（未签名的开发构建每次重建都会更换签名身份），\n       在连接配置中重新输入并保存密码即可重建条目。"
-    ),
-    other => format!("无法从系统凭据库读取凭据: {other}"),
+    keyring::Error::NoEntry => CREDENTIAL_MISSING.to_string(),
+    keyring::Error::PlatformFailure(cause) => format!("{CREDENTIAL_STORE_REJECTED}: {cause}"),
+    other => format!("{CREDENTIAL_STORE_UNAVAILABLE}: {other}"),
   }
 }
 
@@ -314,10 +313,11 @@ impl ConnectionService {
     if resolved_config.password.is_empty() && resolved_config.credential_ref.is_some() {
       resolved_config.password = self.credential_store.get_password(&resolved_config.id)?;
     } else if resolved_config.password.is_empty() && !resolved_config.save_password {
-      resolved_config.password =
-        self.session_passwords.get(&resolved_config.id).cloned().ok_or_else(|| {
-          format!("{SESSION_PASSWORD_REQUIRED}: 此连接未保存密码，请输入本次会话密码")
-        })?;
+      resolved_config.password = self
+        .session_passwords
+        .get(&resolved_config.id)
+        .cloned()
+        .ok_or_else(|| SESSION_PASSWORD_REQUIRED.to_string())?;
     }
 
     // 基本验证。过了上面那道门只剩三种类型，真正的差别只有一个：

@@ -1,3 +1,4 @@
+use crate::services::query_executor::QUERY_TIMEOUT;
 use crate::services::{
   transaction_state::TransactionState, QueryError, QueryExecutionResult, QueryExecutionSummary,
   QueryResultBatch, SessionConnection, StreamOptions, QUERY_TIMEOUT_CODE,
@@ -107,7 +108,7 @@ impl QuerySessionState {
     .map_err(|_| {
       QueryError::with_code(
         QUERY_TIMEOUT_CODE,
-        format!("查询执行超过 {} 毫秒", timeout_duration.as_millis()),
+        format!("{QUERY_TIMEOUT}: {}", timeout_duration.as_millis()),
       )
     })?
   }
@@ -168,7 +169,7 @@ impl QuerySessionState {
     .map_err(|_| {
       QueryError::with_code(
         QUERY_TIMEOUT_CODE,
-        format!("查询执行超过 {} 毫秒", options.timeout_duration.as_millis()),
+        format!("{QUERY_TIMEOUT}: {}", options.timeout_duration.as_millis()),
       )
     })?
   }

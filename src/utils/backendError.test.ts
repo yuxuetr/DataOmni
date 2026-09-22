@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { zh } from '../i18n/zh';
 import { parseBackendError } from './backendError';
 
+
 describe('backendError', () => {
   it('带数据的码拆成文案键和数据两半', () => {
     const parsed = parseBackendError('DATAOMNI_UNSUPPORTED_DATABASE: MongoDB');
@@ -69,14 +70,22 @@ describe('backendError', () => {
 
 
   /**
-   * 这道门挡的是**还没改成码**的那些：上面那条只看 `pub const`，
-   * 而一句写死的中文 `Err("连接不存在")` 它一个都看不见——门开着，
-   * 而英文界面上照样印中文。
+   * 这道门挡的是**还没改成码**的那些：另一条只看 `pub const`，
+   * 而一句写死的中文 `Err("连接不存在")` 它一个都看不见。
    *
-   * 只扫生产代码：`#[cfg(test)]` 之后的断言消息、`panic!`、`unreachable!`
-   * 都不进界面，用中文写反而更好读。
+   * 写到第四版才对。前三版都栽在同一件事上——**门自己有 bug，而它是静默的**：
+   *
+   * 1. 按行判「这一行既有 `QueryError::message` 又有中文」→ 跨行的写法全漏，
+   *    `with_code(\n  CODE,\n  format!("超过 …"),\n)` 里中文在续行上。
+   * 2. 改判字符串字面量，但 `println!` 括号配平算错 → 一个文件里出现第一个
+   *    println 之后，后面整段都被跳过。
+   * 3. 按行剥注释 → `'"'` 这种字符字面量把扫描器带进「字符串里」再也出不来，
+   *    从那行起整个文件失效。
+   *
+   * 所以注释剥离必须放进字符遍历里，并且认得出字符字面量与生命周期标注。
+   * `println!` 打终端、打包后没人看得见，中文反而好读——唯一的例外。
    */
-  it('后端的错误串里一个中文字都不许有', () => {
+  it('后端的字符串字面量里一个中文字都不许有', () => {
     const root = fileURLToPath(new URL('../../src-tauri/src', import.meta.url));
     const files = readdirSync(root, { recursive: true, encoding: 'utf8' })
       .filter((entry) => entry.endsWith('.rs'));
@@ -85,23 +94,73 @@ describe('backendError', () => {
     for (const file of files) {
       const lines = readFileSync(join(root, file), 'utf8').split('\n');
       const testsFrom = lines.findIndex((line) => line.trim().startsWith('#[cfg(test)]'));
-      const production = testsFrom === -1 ? lines : lines.slice(0, testsFrom);
+      const source = (testsFrom === -1 ? lines : lines.slice(0, testsFrom)).join('\n');
 
-      production.forEach((line, index) => {
-        const code = line.trim();
-        if (code.startsWith('//') || code.startsWith('*')) {
-          return;
+      let depth = 0;
+      /** print 宏是在哪个括号深度上开始的；不在宏里就是 null */
+      let printAt: number | null = null;
+      let line = 1;
+      let recent = '';
+
+      for (let i = 0; i < source.length; i += 1) {
+        const character = source[i];
+        recent = (recent + character).slice(-12);
+
+        if (character === '\n') {
+          line += 1;
+          continue;
         }
-        // 构造错误的那些写法。`println!` 不算：它进的是终端，不是界面
-        if (!/(Err\(|map_err|ok_or_else|ok_or\(|QueryError::message|QueryError::with_code)/.test(line)) {
-          return;
+        if (character === '/' && source[i + 1] === '/') {
+          while (i < source.length && source[i] !== '\n') i += 1;
+          line += 1;
+          continue;
         }
-        if (/[\u4e00-\u9fff]/.test(line)) {
-          offenders.push(`${file}:${index + 1} ${code}`);
+        if (character === '/' && source[i + 1] === '*') {
+          while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) {
+            if (source[i] === '\n') line += 1;
+            i += 1;
+          }
+          i += 1;
+          continue;
         }
-      });
+        // `'"'` 这类字符字面量里的引号不是字符串边界；`&'a str` 的撇号则不成对
+        if (character === "'") {
+          if (source[i + 1] === '\\') {
+            i += 2;
+            while (i < source.length && source[i] !== "'") i += 1;
+          } else if (source[i + 2] === "'") {
+            i += 2;
+          }
+          continue;
+        }
+        if (character === '"') {
+          const from = i;
+          i += 1;
+          while (i < source.length && source[i] !== '"') {
+            if (source[i] === '\\') i += 1;
+            i += 1;
+          }
+          const literal = source.slice(from, i + 1);
+          if (printAt === null && /[一-鿿]/.test(literal)) {
+            offenders.push(`${file}:${line} ${literal.slice(0, 50)}`);
+          }
+          line += (literal.match(/\n/g) ?? []).length;
+          continue;
+        }
+        if (character === '(') {
+          if (printAt === null && /\b(eprintln|println|eprint|print)!\s*$/.test(recent.slice(0, -1))) {
+            printAt = depth;
+          }
+          depth += 1;
+          continue;
+        }
+        if (character === ')') {
+          depth -= 1;
+          if (printAt !== null && depth <= printAt) printAt = null;
+        }
+      }
     }
 
-    expect(offenders, '这些错误串会原样印到英文界面上').toEqual([]);
+    expect(offenders, '这些字符串会原样印到英文界面上').toEqual([]);
   });
 });

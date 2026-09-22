@@ -48,7 +48,8 @@ pub struct DiagnosisStep {
   pub name: &'static str,
   pub ok: bool,
   /// 事实本身：解析到的地址、耗时、操作系统给的失败原因。
-  /// 不在这里写结论，结论由前端按 `name` + `ok` 组合出来
+  /// 不在这里写结论，结论由前端按 `name` + `ok` 组合出来——**也不写句子**，
+  /// 否则英文界面上会原样印出中文。要区分的情况多开一个 `name`，不是多写一句话
   pub detail: String,
   pub elapsed_ms: u64,
 }
@@ -83,7 +84,7 @@ fn inspect_sqlite_file(database: Option<&str>) -> DiagnosisStep {
   let started = Instant::now();
 
   let Some(path) = database.filter(|path| !path.is_empty()) else {
-    return DiagnosisStep::new("sqliteFile", false, "未填写数据库文件路径".to_string(), started);
+    return DiagnosisStep::new("sqliteMissingPath", false, String::new(), started);
   };
 
   if path == ":memory:" {
@@ -98,7 +99,7 @@ fn inspect_sqlite_file(database: Option<&str>) -> DiagnosisStep {
   };
 
   if metadata.is_dir() {
-    return DiagnosisStep::new("sqliteFile", false, format!("{path} 是一个目录"), started);
+    return DiagnosisStep::new("sqliteDirectory", false, path.to_string(), started);
   }
 
   // 空文件是合法的新库：sqlx 会在第一次写入时补上文件头。
@@ -111,7 +112,7 @@ fn inspect_sqlite_file(database: Option<&str>) -> DiagnosisStep {
   match read_header(path, &mut header) {
     Err(error) => DiagnosisStep::new("sqliteFile", false, format!("{path}：{error}"), started),
     Ok(read) if read == header.len() && header == SQLITE_MAGIC => {
-      DiagnosisStep::new("sqliteFile", true, format!("{path}（{} 字节）", metadata.len()), started)
+      DiagnosisStep::new("sqliteFile", true, format!("{path} · {} B", metadata.len()), started)
     }
     Ok(_) => DiagnosisStep::new("sqliteMagic", false, path.to_string(), started),
   }
@@ -136,11 +137,11 @@ fn read_header(path: &str, buffer: &mut [u8]) -> std::io::Result<usize> {
 async fn probe_host(host: &str, port: u16) -> Vec<DiagnosisStep> {
   if host.is_empty() {
     let started = Instant::now();
-    return vec![DiagnosisStep::new("resolve", false, "未填写主机地址".to_string(), started)];
+    return vec![DiagnosisStep::new("hostMissing", false, String::new(), started)];
   }
   if port == 0 {
     let started = Instant::now();
-    return vec![DiagnosisStep::new("tcp", false, "未填写端口".to_string(), started)];
+    return vec![DiagnosisStep::new("portMissing", false, String::new(), started)];
   }
 
   let started = Instant::now();
@@ -148,9 +149,9 @@ async fn probe_host(host: &str, port: u16) -> Vec<DiagnosisStep> {
     match tokio::time::timeout(STEP_TIMEOUT, tokio::net::lookup_host((host, port))).await {
       Err(_) => {
         return vec![DiagnosisStep::new(
-          "resolve",
+          "resolveTimeout",
           false,
-          format!("{host}：{} 秒内没有结果", STEP_TIMEOUT.as_secs()),
+          format!("{host} · {}s", STEP_TIMEOUT.as_secs()),
           started,
         )]
       }
@@ -163,7 +164,7 @@ async fn probe_host(host: &str, port: u16) -> Vec<DiagnosisStep> {
   let Some(&target) = addresses.first() else {
     // 解析成功但一个地址都没有：少见，但报「解析成功」再接一个连接失败
     // 会让人以为是端口问题
-    return vec![DiagnosisStep::new("resolve", false, format!("{host}：没有解析到地址"), started)];
+    return vec![DiagnosisStep::new("resolveEmpty", false, host.to_string(), started)];
   };
 
   let resolved = DiagnosisStep::new(
@@ -176,9 +177,9 @@ async fn probe_host(host: &str, port: u16) -> Vec<DiagnosisStep> {
   let started = Instant::now();
   let connected = match tokio::time::timeout(STEP_TIMEOUT, TcpStream::connect(target)).await {
     Err(_) => DiagnosisStep::new(
-      "tcp",
+      "tcpTimeout",
       false,
-      format!("{target}：{} 秒内没有响应", STEP_TIMEOUT.as_secs()),
+      format!("{target} · {}s", STEP_TIMEOUT.as_secs()),
       started,
     ),
     Ok(Err(error)) => DiagnosisStep::new("tcp", false, format!("{target}：{error}"), started),
@@ -357,7 +358,9 @@ mod tests {
     config.database = Some(std::env::temp_dir().to_string_lossy().to_string());
     let diagnosis = diagnose(&config).await;
     assert!(!diagnosis.steps[0].ok);
-    assert!(diagnosis.steps[0].detail.contains("目录"));
+    // 「是个目录」是一个单独的步骤名，不是 detail 里的一句话——
+    // detail 只放事实，句子在前端按 name 选
+    assert_eq!(diagnosis.steps[0].name, "sqliteDirectory");
 
     std::fs::remove_file(real).expect("cleanup");
     std::fs::remove_file(wrong).expect("cleanup");
@@ -382,17 +385,17 @@ mod tests {
   #[tokio::test]
   async fn missing_fields_are_named_instead_of_probed() {
     let diagnosis = diagnose(&profile(DatabaseType::SQLite)).await;
-    assert_eq!(diagnosis.steps[0].name, "sqliteFile");
-    assert!(diagnosis.steps[0].detail.contains("未填写"));
+    assert_eq!(diagnosis.steps[0].name, "sqliteMissingPath");
+    assert!(diagnosis.steps[0].detail.is_empty(), "没填的东西没有事实可报");
 
     let diagnosis = diagnose(&profile(DatabaseType::PostgreSQL)).await;
-    assert_eq!(diagnosis.steps[0].name, "resolve");
-    assert!(diagnosis.steps[0].detail.contains("未填写"));
+    assert_eq!(diagnosis.steps[0].name, "hostMissing");
+    assert!(diagnosis.steps[0].detail.is_empty(), "没填的东西没有事实可报");
 
     let mut no_port = profile(DatabaseType::PostgreSQL);
     no_port.host = "127.0.0.1".to_string();
     let diagnosis = diagnose(&no_port).await;
-    assert_eq!(diagnosis.steps[0].name, "tcp");
-    assert!(diagnosis.steps[0].detail.contains("未填写"));
+    assert_eq!(diagnosis.steps[0].name, "portMissing");
+    assert!(diagnosis.steps[0].detail.is_empty(), "没填的东西没有事实可报");
   }
 }

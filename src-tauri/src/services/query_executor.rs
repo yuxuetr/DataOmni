@@ -14,6 +14,13 @@ use tauri_plugin_sql::DbPool;
 use time::{Date, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::time::{timeout, Duration};
 
+/// 查询超时。数据是配置的毫秒数——`code` 字段另有 `QUERY_TIMEOUT_CODE`，
+/// 这里管的是**消息**，此前它是一句中文
+pub const QUERY_TIMEOUT: &str = "DATAOMNI_QUERY_TIMEOUT";
+/// 某一列解码不出来。数据是 `列名 · 数据库给的类型 · 驱动的原因`。
+/// 三种库共用一条：对用户来说「这一列读不出来」是同一件事
+pub const COLUMN_DECODE_FAILED: &str = "DATAOMNI_COLUMN_DECODE_FAILED";
+
 /// 解码不了的列类型。数据里带的是数据库给的类型名——三种库共用一条：
 /// 对用户来说「这一列读不出来」是同一件事，而类型名已经说明了是哪种库
 pub const UNSUPPORTED_COLUMN_TYPE: &str = "DATAOMNI_UNSUPPORTED_COLUMN_TYPE";
@@ -311,7 +318,7 @@ where
   timeout(timeout_duration, future).await.map_err(|_| {
     QueryError::with_code(
       QUERY_TIMEOUT_CODE,
-      format!("查询执行超过 {} 毫秒", timeout_duration.as_millis()),
+      format!("{QUERY_TIMEOUT}: {}", timeout_duration.as_millis()),
     )
   })?
 }
@@ -735,7 +742,7 @@ fn admit_row_bytes(
 
 /// 不返回结果集时给出的话。导出路径有两处会说这句（先探列、再流式读），
 /// 同一件事说两种话会让人以为是两个不同的问题。
-pub const NON_QUERY_MESSAGE: &str = "这条语句不返回结果集，没有可导出的内容";
+pub const NON_QUERY_MESSAGE: &str = "DATAOMNI_NON_QUERY";
 
 /// 导出路径遇到不返回结果集的语句时提前退出，不让它执行。
 fn refuse_non_query(handling: NonQueryHandling) -> Result<(), QueryError> {
@@ -850,7 +857,7 @@ fn decode_sqlite_row(row: &SqliteRow) -> Result<Map<String, JsonValue>, QueryErr
   for (index, column) in row.columns().iter().enumerate() {
     let value = row.try_get_raw(index).map_err(QueryError::from)?;
     let decoded = decode_sqlite(value).map_err(|error| {
-      format!("SQLite 列 {} ({}) 解码失败: {error}", column.name(), column.type_info().name())
+      format!("{COLUMN_DECODE_FAILED}: {} · {} · {error}", column.name(), column.type_info().name())
     })?;
     values.insert(column.name().to_string(), decoded);
   }
@@ -862,7 +869,7 @@ fn decode_mysql_row(row: &MySqlRow) -> Result<Map<String, JsonValue>, QueryError
   for (index, column) in row.columns().iter().enumerate() {
     let value = row.try_get_raw(index).map_err(QueryError::from)?;
     let decoded = decode_mysql(value).map_err(|error| {
-      format!("MySQL 列 {} ({}) 解码失败: {error}", column.name(), column.type_info().name())
+      format!("{COLUMN_DECODE_FAILED}: {} · {} · {error}", column.name(), column.type_info().name())
     })?;
     values.insert(column.name().to_string(), decoded);
   }
@@ -874,7 +881,7 @@ fn decode_postgres_row(row: &PgRow) -> Result<Map<String, JsonValue>, QueryError
   for (index, column) in row.columns().iter().enumerate() {
     let value = row.try_get_raw(index).map_err(QueryError::from)?;
     let decoded = decode_postgres(value).map_err(|error| {
-      format!("PostgreSQL 列 {} ({}) 解码失败: {error}", column.name(), column.type_info().name())
+      format!("{COLUMN_DECODE_FAILED}: {} · {} · {error}", column.name(), column.type_info().name())
     })?;
     values.insert(column.name().to_string(), decoded);
   }
@@ -1285,6 +1292,6 @@ mod tests {
     // 码单独成一个字段，不再拼在消息前缀里：消息是要翻译的，
     // 按前缀匹配等于把「这是超时」的判断绑在某一种语言上
     assert_eq!(error.code.as_deref(), Some(QUERY_TIMEOUT_CODE));
-    assert_eq!(error.message, "查询执行超过 1 毫秒");
+    assert_eq!(error.message, format!("{QUERY_TIMEOUT}: 1"));
   }
 }

@@ -369,7 +369,8 @@ impl Default for ConnectionProfile {
   fn default() -> Self {
     Self {
       id: uuid::Uuid::new_v4().to_string(),
-      name: "新连接".to_string(),
+      // 名字由建它的人给：这里塞一个中文默认值，英文界面上会直接印出来
+      name: String::new(),
       db_type: DatabaseType::SQLite,
       host: "localhost".to_string(),
       port: 0,

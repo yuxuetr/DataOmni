@@ -22,6 +22,10 @@ pub const CSV_DELIMITER_INVALID: &str = "DATAOMNI_CSV_DELIMITER_INVALID";
 pub const CSV_PARSE_FAILED: &str = "DATAOMNI_CSV_PARSE_FAILED";
 /// 一列都没映射到目标表——导进去什么都不会写
 pub const CSV_NO_COLUMN_MAPPED: &str = "DATAOMNI_CSV_NO_COLUMN_MAPPED";
+/// 列类型名不合法。数据是 `列名 · 填的类型`
+pub const CSV_COLUMN_TYPE_INVALID: &str = "DATAOMNI_CSV_COLUMN_TYPE_INVALID";
+/// 这一行字段数不够。数据是 `实际字段数 · 要取第几个 · 映射到哪一列`
+pub const CSV_ROW_TOO_SHORT: &str = "DATAOMNI_CSV_ROW_TOO_SHORT";
 pub const FILE_OPEN_FAILED: &str = "DATAOMNI_FILE_OPEN_FAILED";
 pub const FILE_READ_FAILED: &str = "DATAOMNI_FILE_READ_FAILED";
 
@@ -383,7 +387,7 @@ fn build_insert(
         Dialect::Postgres => {
           if !valid_type_name(&column.target_type) {
             return Err(QueryError::message(format!(
-              "列 {} 的类型名不合法: {}",
+              "{CSV_COLUMN_TYPE_INVALID}: {} · {}",
               column.target, column.target_type
             )));
           }
@@ -427,7 +431,7 @@ fn row_params(
       Some(field) => params.push(options.to_value(field)),
       None => {
         return Err(format!(
-          "这一行只有 {} 个字段，取不到第 {} 个（映射到列 {}）",
+          "{CSV_ROW_TOO_SHORT}: {} · {} · {}",
           record.len(),
           column.source + 1,
           column.target
@@ -1041,7 +1045,9 @@ mod tests {
     let summary = run(&pool, &request).await;
 
     assert_eq!(summary.rows_failed, 1);
-    assert!(summary.errors[0].message.contains("只有 1 个字段"), "{:?}", summary.errors[0]);
+    assert!(summary.errors[0].message.starts_with(CSV_ROW_TOO_SHORT), "{:?}", summary.errors[0]);
+    // 数据里要带上「实际有几个字段」，否则看不出差在哪
+    assert!(summary.errors[0].message.contains(": 1 ·"), "{:?}", summary.errors[0]);
     assert_eq!(rows_in(&pool).await, vec![(1, "alice".into())]);
   }
 

@@ -16,7 +16,15 @@ const STEP_TITLES: Readonly<Record<string, TranslationKey>> = {
   sqliteFile: 'diagnosis.step.file',
   sqliteMemory: 'diagnosis.step.file',
   sqliteEmpty: 'diagnosis.step.file',
-  sqliteMagic: 'diagnosis.step.file'
+  sqliteMagic: 'diagnosis.step.file',
+  // 后端把「要区分的情况」做成了新的步骤名而不是新写一句中文，所以这里跟着长
+  sqliteMissingPath: 'diagnosis.step.file',
+  sqliteDirectory: 'diagnosis.step.file',
+  hostMissing: 'diagnosis.step.resolve',
+  portMissing: 'diagnosis.step.tcp',
+  resolveTimeout: 'diagnosis.step.resolve',
+  resolveEmpty: 'diagnosis.step.resolve',
+  tcpTimeout: 'diagnosis.step.tcp'
 };
 
 /**
@@ -35,7 +43,14 @@ const CONCLUSIONS: Readonly<Record<string, TranslationKey>> = {
   'sqliteFile:false': 'diagnosis.conclusion.fileFailed',
   'sqliteMemory:true': 'diagnosis.conclusion.memory',
   'sqliteEmpty:true': 'diagnosis.conclusion.emptyFile',
-  'sqliteMagic:false': 'diagnosis.conclusion.notSqlite'
+  'sqliteMagic:false': 'diagnosis.conclusion.notSqlite',
+  'sqliteMissingPath:false': 'diagnosis.conclusion.missingPath',
+  'sqliteDirectory:false': 'diagnosis.conclusion.notAFile',
+  'hostMissing:false': 'diagnosis.conclusion.hostMissing',
+  'portMissing:false': 'diagnosis.conclusion.portMissing',
+  'resolveTimeout:false': 'diagnosis.conclusion.resolveTimeout',
+  'resolveEmpty:false': 'diagnosis.conclusion.resolveEmpty',
+  'tcpTimeout:false': 'diagnosis.conclusion.tcpTimeout'
 };
 
 export interface DiagnosisLine {

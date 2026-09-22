@@ -76,7 +76,15 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_SESSION_ID_EMPTY: 'error.backend.sessionIdEmpty',
   DATAOMNI_SESSION_BOUND_ELSEWHERE: 'error.backend.sessionBoundElsewhere',
   DATAOMNI_UNSUPPORTED_COLUMN_TYPE: 'error.backend.unsupportedColumnType',
-  DATAOMNI_UNSUPPORTED_PARAMETER_TYPE: 'error.backend.unsupportedParameterType'
+  DATAOMNI_UNSUPPORTED_PARAMETER_TYPE: 'error.backend.unsupportedParameterType',
+  DATAOMNI_QUERY_TIMEOUT: 'error.backend.queryTimeout',
+  DATAOMNI_COLUMN_DECODE_FAILED: 'error.backend.columnDecodeFailed',
+  DATAOMNI_NON_QUERY: 'error.backend.nonQuery',
+  DATAOMNI_CSV_COLUMN_TYPE_INVALID: 'error.backend.csvColumnTypeInvalid',
+  DATAOMNI_CSV_ROW_TOO_SHORT: 'error.backend.csvRowTooShort',
+  DATAOMNI_ROW_COUNT_MISMATCH: 'error.backend.rowCountMismatch',
+  DATAOMNI_FILE_TOO_LARGE: 'error.backend.fileTooLarge',
+  DATAOMNI_CREDENTIAL_STORE_REJECTED: 'error.backend.credentialStoreRejected'
 };
 
 export interface BackendError {

@@ -15,6 +15,8 @@ use tauri_plugin_sql::DbPool;
 
 /// 绑不上去的参数类型。数据里带的是那个值的类型
 pub const UNSUPPORTED_PARAMETER_TYPE: &str = "DATAOMNI_UNSUPPORTED_PARAMETER_TYPE";
+/// 一条本该改 N 行的语句改到了别的行数。数据是 `应当影响 · 实际影响`
+pub const ROW_COUNT_MISMATCH: &str = "DATAOMNI_ROW_COUNT_MISMATCH";
 
 /// 这条语句必须影响的行数。
 ///
@@ -97,7 +99,7 @@ macro_rules! run_in_transaction {
             index,
             QueryError::with_code(
               ROW_COUNT_MISMATCH_CODE,
-              format!("这条语句应当影响 {expected} 行，实际影响 {rows} 行"),
+              format!("{ROW_COUNT_MISMATCH}: {expected} · {rows}"),
             ),
           ));
         }

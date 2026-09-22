@@ -11,6 +11,8 @@ pub const FILE_SIZE_FAILED: &str = "DATAOMNI_FILE_SIZE_FAILED";
 pub const BASE64_INVALID: &str = "DATAOMNI_BASE64_INVALID";
 /// 打开的 SQL 文件不是 UTF-8。数据里带的是路径
 pub const FILE_NOT_UTF8: &str = "DATAOMNI_FILE_NOT_UTF8";
+/// 文件超过读取上限。数据是 `路径 · 实际大小 · 上限`
+pub const FILE_TOO_LARGE: &str = "DATAOMNI_FILE_TOO_LARGE";
 
 /// 把导出内容写到用户在保存对话框里选定的路径。
 ///
@@ -80,7 +82,7 @@ pub async fn read_text_file(path: String) -> Result<String, String> {
   let size = file_size(&target)?;
   if size > MAX_TEXT_FILE_BYTES {
     return Err(format!(
-      "{} 有 {:.1} MB，超过了 {} MB 的上限",
+      "{FILE_TOO_LARGE}: {} · {:.1} MB · {} MB",
       target.display(),
       size as f64 / (1024.0 * 1024.0),
       MAX_TEXT_FILE_BYTES / (1024 * 1024)
@@ -172,7 +174,9 @@ mod tests {
 
     let error =
       read_text_file(target.to_string_lossy().to_string()).await.expect_err("should refuse");
-    assert!(error.contains("上限"), "错误要说清是大小的问题并给出限额: {}", error);
+    assert!(error.starts_with(FILE_TOO_LARGE), "要带错误码: {error}");
+    // 码后面要带上实际大小和限额，否则用户不知道差多少
+    assert!(error.contains("MB"), "错误里要给出大小和限额: {error}");
 
     std::fs::remove_dir_all(&dir).ok();
   }
