@@ -1605,7 +1605,29 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
 > 下反而下沉——typecheck、lint、单测全绿，只有截图能发现。
 
 
-- [ ] 完整支持 macOS `Cmd` 与 Windows/Linux `Ctrl` 快捷键
+- [x] 完整支持 macOS `Cmd` 与 Windows/Linux `Ctrl` 快捷键
+  - 已完成（`5ad05dc`）。动手前先分清了两件事：**判定**本来就是对的
+    （处处写 `metaKey || ctrlKey`，两个平台都按得出来），**提示**是错的——
+    `⌘C` 直接写进了文案，于是 Windows 上界面写着 ⌘C、要按的是 Ctrl+C。
+    能用但写着假的，不报错，只有在那台机器上才看得见。
+  - `utils/shortcuts.ts`：一份 `SHORTCUTS` 清单加 `matchesShortcut` /
+    `formatShortcut`。mac 画 `⇧⌘⏎`，其余平台画 `Ctrl+Shift+Enter`。
+  - 判定改成按平台**独占**：macOS 上 ⌃K 是文本框「删到行尾」的系统绑定，
+    Windows 上 Win+K 是投屏，`metaKey || ctrlKey` 把两边都抢了。修饰键也
+    精确比对，⌘⇧K 不再顺带命中 ⌘K。
+  - 两道门，都反向验证过：
+    - **别处不许直接读 `metaKey` / `ctrlKey`**——「完整支持两个平台」这句话
+      只有在快捷键数得清时才检查得了，散在组件里的 `metaKey ||` 是数不清的。
+      往 `Sidebar.tsx` 塞一个 `e.metaKey` 确认门红并点名了它。
+    - **文案里不许写死 macOS 符号**。这条的第一版只认字面量，而 `en.ts` 的
+      `editor.formatTitle` 恰恰写成 `\u2318\u21e7F`，门开着却放它过去了——
+      **一条只认一种写法的门，等于只挡得住写得明显的那些**。改成两种写法
+      一起扫之后，字面量和转义各造一个都红。
+  - 渲染核对过两个平台两种语言（`?platform=win` 在加载前改掉 `navigator`）：
+    Windows 下右键菜单从 `min-w-48`(192px) 自然长到 260px，提示列不换行，
+    六条文案没有 `{shortcut}` 漏出。
+  - **没做**：命令面板没有给每一条加快捷键提示。清单已经在了，加起来很便宜，
+    但那是「命令面板」那一条的工作，不该借这条顺手做掉。
 - [-] 增加应用菜单和命令面板
   - 命令面板已完成（`cd19ca8`）：⌘K / Ctrl+K 打开，模糊搜索连接、当前连接
     已加载出来的表，以及新建查询标签 / 新建连接 / 打开 SQLite 文件 /
