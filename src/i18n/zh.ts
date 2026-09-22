@@ -748,6 +748,7 @@ export const zh = {
   'offline.profileInactive': '连接「{name}」当前未激活，此标签无法执行查询。',
   'offline.draftKept': '下面是保留下来的草稿，可以选中复制走。',
   'offline.draftReadonly': '下面是这个标签的草稿，只读。在左侧重新选择该连接即可继续执行，标签不会改到当前连接上执行。',
+  'offline.reconnectHint': '在左侧重新选择该连接即可继续，标签不会改到当前连接上。',
   'offline.emptyDraft': '这个查询标签还没有写过内容。',
   'offline.erNeedsConnection': 'ER 关系图需要连接后才能读取。',
   'offline.tableNeedsConnection': '表「{table}」的数据需要连接后才能读取。',

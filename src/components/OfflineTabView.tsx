@@ -18,6 +18,10 @@ export function OfflineTabView({ tab, profileName, draft }: OfflineTabViewProps)
   const profileDeleted = tab.availability === 'profile-deleted';
   const connectionLabel = profileName ?? t('offline.thisConnection');
 
+  const secondLine = profileDeleted
+    ? (tab.kind === 'sql' ? t('offline.draftKept') : null)
+    : t(tab.kind === 'sql' ? 'offline.draftReadonly' : 'offline.reconnectHint');
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div
@@ -37,11 +41,14 @@ export function OfflineTabView({ tab, profileName, draft }: OfflineTabViewProps)
               ? t('offline.profileDeleted', { name: connectionLabel })
               : t('offline.profileInactive', { name: connectionLabel })}
           </p>
-          <p className={profileDeleted ? 'mt-1 text-xs text-danger' : 'mt-1 text-xs text-warning'}>
-            {profileDeleted
-              ? t('offline.draftKept')
-              : t('offline.draftReadonly')}
-          </p>
+          {/* 「草稿」只有 SQL 标签才有。对着一个表结构标签说「下面是保留下来的
+              草稿」，说的是一个下面根本不存在的东西——而它此前对三种标签都这么说。
+              连接被删掉时表标签这里没有第二句可说：第一句已经说完了 */}
+          {secondLine && (
+            <p className={profileDeleted ? 'mt-1 text-xs text-danger' : 'mt-1 text-xs text-warning'}>
+              {secondLine}
+            </p>
+          )}
         </div>
       </div>
 

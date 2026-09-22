@@ -724,6 +724,7 @@ export const en: Translations = {
   'offline.profileInactive': 'The connection "{name}" is not active, so this tab cannot run queries.',
   'offline.draftKept': 'The draft below was kept; you can select and copy it.',
   'offline.draftReadonly': 'This tab\'s draft is shown read-only. Select that connection on the left to continue; the tab will not switch to the current connection.',
+  'offline.reconnectHint': 'Select that connection on the left to continue; the tab will not switch to the current connection.',
   'offline.emptyDraft': 'Nothing has been written in this query tab yet.',
   'offline.erNeedsConnection': 'The ER diagram requires a connection.',
   'offline.tableNeedsConnection': 'Reading data from "{table}" requires a connection.',
