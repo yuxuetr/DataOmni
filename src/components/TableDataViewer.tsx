@@ -97,6 +97,7 @@ import {
 } from '../utils/gridColumns';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useTableEditStore, tableEditKey } from '../stores/tableEditStore';
+import { selectTableStructure, useAppStore } from '../stores/appStore';
 import { buildFilterClause, isCompleteFilter, type ColumnFilter } from '../utils/tableFilters';
 
 // 编辑模式类型
@@ -202,6 +203,7 @@ export default function TableDataViewer({
   /** 待提交的变更。改动不再一改一提交，全部先落在这里 */
   // 待提交的改动放在 store 里，不放在组件里：这个组件切走就卸载，放在
   // useState 里的话切一下标签改动就没了。见 tableEditStore
+  const cacheTableStructure = useAppStore((state) => state.cacheTableStructure);
   const changes = useTableEditStore((state) => state.changes[currentTableKey] ?? EMPTY_CHANGES);
   const setChanges = React.useCallback(
     (next: PendingChange[] | ((current: PendingChange[]) => PendingChange[])) => {
@@ -290,13 +292,15 @@ export default function TableDataViewer({
         requireDatabase(database).select(queries.triggers, params)
       ]);
 
-      setSchemaObjects({
+      const objects: SchemaObjects = {
         indexes: groupIndexRows(asRows(indexRows), t('schema.expressionColumn')),
         foreignKeys: groupForeignKeyRows(asRows(foreignKeyRows)),
         checkConstraints: checkRows === null ? null : toCheckConstraints(asRows(checkRows)),
         ddl: ddlRows === null ? null : joinDdlStatements(extractDdlStatements(asRows(ddlRows))),
         triggers: toTriggers(asRows(triggerRows))
-      });
+      };
+      setSchemaObjects(objects);
+      cacheTableStructure(currentTableKey, connection.id, { objects });
     } catch (err) {
       // 结构对象读失败不该把已经拿到的列信息一起打掉：列是主体，这里是补充
       console.error('加载索引与约束失败:', err);
@@ -312,9 +316,27 @@ export default function TableDataViewer({
   };
 
   // 加载表结构信息
-  const loadTableSchema = async (): Promise<TableSchema | null> => {
+  const loadTableSchema = async (forceRefresh = false): Promise<TableSchema | null> => {
+    // 表结构切走不会变。缓存命中时这里省掉的是列目录、索引、外键、触发器
+    // 四条目录查询——切回一个表标签此前会把它们原样再发一遍
+    if (!forceRefresh) {
+      const cached = selectTableStructure(useAppStore.getState(), currentTableKey);
+      if (cached) {
+        const loadedSchema = { columns: cached.columns };
+        setTableSchema(loadedSchema);
+        setTableSchemaKey(currentTableKey);
+        setSchemaObjects(cached.objects);
+        setPaginationOrder(createTablePaginationOrder(cached.columns, dialect));
+        // 索引等还没缓存上（列先到那一次就切走了）就补一次
+        if (!cached.objects) {
+          void loadSchemaObjects();
+        }
+        return loadedSchema;
+      }
+    }
+
     if (!await ensureDatabaseConnection()) return null;
-    
+
     try {
       const queries = await invoke<SchemaMetadataQueries>('get_schema_metadata_queries', {
         dbType: connection.db_type
@@ -336,6 +358,7 @@ export default function TableDataViewer({
       const loadedSchema = { columns };
       setTableSchema(loadedSchema);
       setTableSchemaKey(currentTableKey);
+      cacheTableStructure(currentTableKey, connection.id, { columns });
       // 排序在这里就定下来：结构页上从没取过数，但「导出整表」在那儿也要能用
       setPaginationOrder(createTablePaginationOrder(columns, dialect));
       // 不 await：列已经可以画了，索引和约束到了再补上
@@ -1002,9 +1025,12 @@ export default function TableDataViewer({
             <button
               onClick={() => {
                 if (activeTab === 'schema') {
-                  loadTableSchema();
+                  // 结构页的刷新绕过缓存：外部改过的结构靠这个入口追上
+                  void loadTableSchema(true);
                 } else if (activeTab === 'data') {
-                  // 刷新是用户显式要求读取最新数据，行数也要重新统计
+                  // 数据页的刷新只重读数据。这里不顺手把结构也刷了：
+                  // loadTableData 用的是这一轮 render 闭包里的 tableSchema，
+                  // await 之后它并不会变成刚取回来的那份，那样只会读到旧列
                   rowCountCacheRef.current = null;
                   loadTableData(currentPage);
                 }
@@ -1018,14 +1044,10 @@ export default function TableDataViewer({
             
             {onClose && (
               <button
-                onClick={() => {
-                  // 待提交的变更只活在这个组件里，关掉就没了
-                  if (changes.length > 0
-                    && !confirm(t('changes.discardConfirm', { count: changes.length }))) {
-                    return;
-                  }
-                  onClose();
-                }}
+                // 这里不再自己问一次「变更没提交」：改动挪进 store 之后，
+                // 关闭这条路统一由 App 的 closeWorkspaceTab 把关（标签栏那个叉
+                // 走的也是它）。两处各问一次的结果是连点两下确认
+                onClick={onClose}
                 className="px-3 py-1.5 text-sm text-fg-muted border border-line-strong rounded-control hover:bg-surface-hover transition-colors"
               >
                 {t('table.close')}

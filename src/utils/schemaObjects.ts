@@ -14,6 +14,23 @@
  */
 export const DEFAULT_EXPRESSION_COLUMN_PLACEHOLDER = '<expression>';
 
+/**
+ * 一张表的结构对象。
+ *
+ * 定义放在这里而不是画它的组件里：它同时被 `appStore` 的结构缓存引用，
+ * 而 store 不该反过来依赖组件。
+ */
+export interface SchemaObjects {
+  indexes: IndexInfo[];
+  foreignKeys: ForeignKeyInfo[];
+  /** null = 该方言没有检查约束目录，不是「没有检查约束」 */
+  checkConstraints: CheckConstraintInfo[] | null;
+  /** 对象定义原文；空 = 数据库不提供（PostgreSQL 的表） */
+  ddl: string | null;
+  triggers: TriggerInfo[];
+  error?: string;
+}
+
 export interface IndexInfo {
   name: string;
   columns: string[];

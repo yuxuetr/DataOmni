@@ -5,23 +5,9 @@ import { describeError } from '../utils/describeError';
 import clsx from 'clsx';
 import { DatabaseType } from '../contracts/connection';
 import type { ConnectionProfile } from '../contracts';
-import type {
-  CheckConstraintInfo,
-  ForeignKeyInfo,
-  IndexInfo,
-  TriggerInfo
-} from '../utils/schemaObjects';
+import type { SchemaObjects } from '../utils/schemaObjects';
 
-export interface SchemaObjects {
-  indexes: IndexInfo[];
-  foreignKeys: ForeignKeyInfo[];
-  /** null = 该方言没有检查约束目录，不是「没有检查约束」 */
-  checkConstraints: CheckConstraintInfo[] | null;
-  /** 对象定义原文；空 = 数据库不提供（PostgreSQL 的表） */
-  ddl: string | null;
-  triggers: TriggerInfo[];
-  error?: string;
-}
+export type { SchemaObjects };
 
 /**
  * 索引 / 外键 / 检查约束三块。

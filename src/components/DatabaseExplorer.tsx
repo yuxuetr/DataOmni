@@ -38,7 +38,7 @@ import { qualifiedObjectName, type ObjectMenuAction } from '../utils/objectMenu'
 import { describeError } from '../utils/describeError';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useQueryStore } from '../stores/queryStore';
-import { useAppStore } from '../stores/appStore';
+import { METADATA_TTL_MS, useAppStore } from '../stores/appStore';
 import { validateDatabaseConnection } from '../utils/stateSync';
 
 interface DatabaseExplorerProps {
@@ -92,7 +92,7 @@ export default function DatabaseExplorer({
 
   // 检查是否有缓存的元数据
   const cachedMetadata = databaseMetadata[connectionId];
-  const isMetadataStale = cachedMetadata && (Date.now() - cachedMetadata.lastUpdated) > 5 * 60 * 1000; // 5分钟过期
+  const isMetadataStale = cachedMetadata && (Date.now() - cachedMetadata.lastUpdated) > METADATA_TTL_MS;
 
   // 加载数据库元数据
   const loadDatabaseMetadata = async (forceRefresh = false) => {
