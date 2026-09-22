@@ -16,7 +16,8 @@ import {
   Search,
   BarChart3,
   FolderOpen,
-  Stethoscope
+  Stethoscope,
+  Lock
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -28,6 +29,13 @@ import {
   diagnosisPassed
 } from '../utils/connectionDiagnosis';
 import { describeError } from '../utils/describeError';
+import {
+  createDefaultSshTunnel,
+  isSshTunnelBlank,
+  normalizeSshTunnel,
+  sshTunnelProblems,
+  supportsSshTunnel
+} from '../utils/sshTunnel';
 import { clsx } from 'clsx';
 import { 
   ConnectionConfig, 
@@ -245,10 +253,54 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     }
   };
 
+  const tunnel = formData.ssh_tunnel ?? null;
+  // 一格都没填时不提示：刚勾开就红着一片，读起来像是用户做错了什么
+  const tunnelGaps = tunnel && !isSshTunnelBlank(tunnel) ? sshTunnelProblems(tunnel) : [];
+
+  const updateTunnel = (patch: Partial<NonNullable<ConnectionConfig['ssh_tunnel']>>) => {
+    setFormData((previous) => ({
+      ...previous,
+      ssh_tunnel: { ...(previous.ssh_tunnel ?? createDefaultSshTunnel()), ...patch }
+    }));
+  };
+
+  // 关掉隧道就把整份配置去掉，而不是留一个 enabled: false 的字段。
+  // 后端靠 `Option` 判断有没有隧道，留着一份填了一半的配置会让
+  // 「关掉了」和「填错了」在存档里长得一样
+  const toggleTunnel = (enabled: boolean) => {
+    setFormData((previous) => ({
+      ...previous,
+      ssh_tunnel: enabled ? (previous.ssh_tunnel ?? createDefaultSshTunnel()) : null
+    }));
+  };
+
+  // 选私钥文件。`~/.ssh` 下的文件在 macOS 的选择器里默认是隐藏的，
+  // 所以路径框仍然要能手填——这里只是省一次打字
+  const handleBrowsePrivateKey = async () => {
+    const selected = await open({ multiple: false, directory: false });
+    if (typeof selected === 'string') {
+      updateTunnel({ private_key_path: selected });
+    }
+  };
+
   // 处理端口变化
   const handlePortChange = (port: string) => {
     const portNumber = parseInt(port, 10);
     setFormData(prev => ({ ...prev, port: isNaN(portNumber) ? 0 : portNumber }));
+  };
+
+  /**
+   * 交给后端之前收拾一遍隧道配置：去掉两端空格，转发目标留空就不传。
+   *
+   * 放在提交处而不是每次 onChange：边打字边 trim 会让人打不出中间的空格，
+   * 而路径里的空格是合法的。
+   */
+  const submittableConfig = (): ConnectionConfig => {
+    const config = formData as ConnectionConfig;
+    if (!config.ssh_tunnel) {
+      return config;
+    }
+    return { ...config, ssh_tunnel: normalizeSshTunnel(config.ssh_tunnel) };
   };
 
   // 测试连接
@@ -260,7 +312,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     setDiagnosisError(null);
 
     try {
-      await testConnection(formData as ConnectionConfig);
+      await testConnection(submittableConfig());
     } catch {
       // 错误已在store中处理
     }
@@ -295,9 +347,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
     try {
       if (mode === 'create') {
-        await createConnection(formData as Omit<ConnectionConfig, 'id' | 'created_at' | 'updated_at'>);
+        await createConnection(
+          submittableConfig() as Omit<ConnectionConfig, 'id' | 'created_at' | 'updated_at'>
+        );
       } else if (connection) {
-        await updateConnection(connection.id, formData as ConnectionConfig);
+        await updateConnection(connection.id, submittableConfig());
       }
       onClose();
     } catch {
@@ -701,6 +755,151 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
                           />
                         </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* SSH 隧道。默认收起：绝大多数连接不需要它，而它有五个格子 */}
+                {formData.db_type && supportsSshTunnel(formData.db_type) && (
+                  <div className="space-y-3">
+                    <div className="flex items-start">
+                      <input
+                        id="ssh-tunnel-enabled"
+                        type="checkbox"
+                        checked={Boolean(tunnel)}
+                        onChange={(event) => toggleTunnel(event.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded-control border-line-strong text-accent focus:ring-accent"
+                      />
+                      <label htmlFor="ssh-tunnel-enabled" className="ml-2 text-sm text-fg">
+                        <span className="inline-flex items-center gap-1.5">
+                          <Lock size={13} />
+                          {t('sshTunnel.enable')}
+                        </span>
+                        <span className="block text-xs text-fg-muted">
+                          {t('sshTunnel.enableHint')}
+                        </span>
+                      </label>
+                    </div>
+
+                    {tunnel && (
+                      <div className="space-y-3 rounded-control border border-line bg-surface-sunken p-3">
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="col-span-2">
+                            <label htmlFor="ssh-host" className="block text-sm font-medium text-fg mb-1">
+                              {t('sshTunnel.host')} *
+                            </label>
+                            <input
+                              id="ssh-host"
+                              type="text"
+                              value={tunnel.host}
+                              onChange={(event) => updateTunnel({ host: event.target.value })}
+                              placeholder="jump.example.com"
+                              className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                            />
+                          </div>
+                          <div>
+                            <label htmlFor="ssh-port" className="block text-sm font-medium text-fg mb-1">
+                              {t('sshTunnel.port')}
+                            </label>
+                            <input
+                              id="ssh-port"
+                              type="number"
+                              value={tunnel.port}
+                              onChange={(event) =>
+                                updateTunnel({ port: parseInt(event.target.value, 10) || 0 })
+                              }
+                              placeholder="22"
+                              className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label htmlFor="ssh-username" className="block text-sm font-medium text-fg mb-1">
+                            {t('sshTunnel.username')} *
+                          </label>
+                          <input
+                            id="ssh-username"
+                            type="text"
+                            value={tunnel.username}
+                            onChange={(event) => updateTunnel({ username: event.target.value })}
+                            placeholder="ops"
+                            className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                          />
+                        </div>
+
+                        <div>
+                          <label htmlFor="ssh-private-key" className="block text-sm font-medium text-fg mb-1">
+                            {t('sshTunnel.privateKey')} *
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              id="ssh-private-key"
+                              type="text"
+                              value={tunnel.private_key_path}
+                              onChange={(event) =>
+                                updateTunnel({ private_key_path: event.target.value })
+                              }
+                              placeholder="~/.ssh/id_rsa"
+                              className="min-w-0 flex-1 px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleBrowsePrivateKey}
+                              className="shrink-0 rounded-control border border-line-strong px-3 py-2 text-sm text-fg transition-colors hover:bg-surface-hover"
+                            >
+                              {t('form.choose')}
+                            </button>
+                          </div>
+                          <p className="mt-1 text-xs text-fg-muted">
+                            {t('sshTunnel.privateKeyHint')}
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="col-span-2">
+                            <label htmlFor="ssh-remote-host" className="block text-sm font-medium text-fg mb-1">
+                              {t('sshTunnel.remoteHost')}
+                            </label>
+                            <input
+                              id="ssh-remote-host"
+                              type="text"
+                              value={tunnel.remote_host ?? ''}
+                              onChange={(event) => updateTunnel({ remote_host: event.target.value })}
+                              placeholder={formData.host || '127.0.0.1'}
+                              className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                            />
+                          </div>
+                          <div>
+                            <label htmlFor="ssh-remote-port" className="block text-sm font-medium text-fg mb-1">
+                              {t('sshTunnel.remotePort')}
+                            </label>
+                            <input
+                              id="ssh-remote-port"
+                              type="number"
+                              value={tunnel.remote_port ?? ''}
+                              onChange={(event) =>
+                                updateTunnel({ remote_port: parseInt(event.target.value, 10) || undefined })
+                              }
+                              placeholder={String(formData.port ?? '')}
+                              className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                            />
+                          </div>
+                        </div>
+                        <p className="text-xs text-fg-muted">{t('sshTunnel.remoteHint')}</p>
+
+                        {tunnelGaps.length > 0 && (
+                          <p className="text-xs text-danger">
+                            {t('sshTunnel.incomplete', {
+                              fields: tunnelGaps
+                                .map((gap) => t(`sshTunnel.field.${gap}`))
+                                .join(t('sshTunnel.fieldSeparator'))
+                            })}
+                          </p>
+                        )}
+
+                        <p className="text-xs text-fg-muted">{t('sshTunnel.hostKeyHint')}</p>
                       </div>
                     )}
                   </div>

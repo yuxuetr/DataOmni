@@ -173,6 +173,15 @@ impl ActiveTunnel {
   }
 }
 
+/// 用户自己的 `~/.ssh/known_hosts`——和命令行 `ssh` 读的是同一份。
+///
+/// 应用另存一份的后果是「ssh 连得上但这里连不上」，而且用户在两处各信任
+/// 一次同一台主机。拿不到 home 时返回 `None`：那时报「读不到 known_hosts」，
+/// 而不是拿一个空路径去校验然后把每台主机都当成没见过。
+pub fn default_known_hosts() -> Option<PathBuf> {
+  std::env::home_dir().map(|home| home.join(".ssh").join("known_hosts"))
+}
+
 /// 建一条隧道：连上跳板机、校验主机密钥、认证，然后在本地开一个端口转发。
 pub async fn open(
   config: &ConnectionProfile,

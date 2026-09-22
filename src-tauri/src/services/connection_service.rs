@@ -232,6 +232,25 @@ impl ConnectionService {
 
   /// 测试数据库连接 - 实际尝试连接并返回连接字符串
   pub fn test_connection(&self, config: &ConnectionProfile) -> Result<String, String> {
+    let resolved_config = self.resolve_for_connection(config)?;
+
+    // 拼 URL 放在校验之后：校验不过的配置不该被拼成串打进日志
+    let connection_string = resolved_config.db_type.to_connection_string(&resolved_config);
+    println!("🔗 准备测试数据库连接: {}", redact_connection_string(&connection_string));
+    println!("✅ 连接配置验证通过，返回连接字符串用于前端测试");
+    Ok(connection_string)
+  }
+
+  /// 校验配置、补上凭据，返回一份可以直接拼 URL 的 profile。
+  ///
+  /// 和 `test_connection` 分开是 SSH 隧道要的：有隧道时 URL 必须指向本地
+  /// 转发端口，而那个端口要先把隧道建起来才知道——建隧道是异步的，而这里
+  /// 全是同步的校验与钥匙串读取。分开之后调用方可以「先校验、再建隧道、
+  /// 最后拼串」，而校验规则只有这一份。
+  pub fn resolve_for_connection(
+    &self,
+    config: &ConnectionProfile,
+  ) -> Result<ConnectionProfile, String> {
     // 第一道，也是这个方法里唯一一件与配置内容无关的事：这个类型有没有驱动。
     // 放在最前面，是因为后面每一步——读钥匙串、拼 URL、校验字段——对一个
     // 连不上的类型来说都是白做，而且做了还会给出「配置验证通过」的假象
@@ -273,11 +292,7 @@ impl ConnectionService {
       }
     }
 
-    // 拼 URL 放在校验之后：校验不过的配置不该被拼成串打进日志
-    let connection_string = resolved_config.db_type.to_connection_string(&resolved_config);
-    println!("🔗 准备测试数据库连接: {}", redact_connection_string(&connection_string));
-    println!("✅ 连接配置验证通过，返回连接字符串用于前端测试");
-    Ok(connection_string)
+    Ok(resolved_config)
   }
 
   fn persist_submitted_password(&mut self, config: &mut ConnectionProfile) -> Result<(), String> {

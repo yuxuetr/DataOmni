@@ -430,6 +430,18 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       }
     }
 
+    // 拆掉 SSH 隧道。没有隧道也要调：这里只有 connectionId，不知道那条连接
+    // 有没有隧道，让后端判断比在前端再存一份状态可靠
+    if (currentState.connectionId) {
+      try {
+        await invoke('close_ssh_tunnel', { connectionId: currentState.connectionId });
+      } catch (error) {
+        // 隧道拆不掉不该挡住断开连接：库那边已经关了，这里最多是留一条
+        // 空跑的 SSH 会话，下次连同一个 profile 时会被判死重建
+        console.warn('关闭 SSH 隧道失败:', error);
+      }
+    }
+
     set({
       database: null,
       connectionString: null,

@@ -820,6 +820,27 @@ export const en: Translations = {
   'connect.testFailed': 'Connection test failed: {reason}',
   'connect.timeout': 'No response from {target} after {seconds}s. The port may be open while the handshake never completes — check the credentials, TLS settings and firewall.',
 
+  'sshTunnel.enable': 'Connect through an SSH tunnel',
+  'sshTunnel.enableHint':
+    'Use this when the database only listens on a private network and you have to go through a jump host first. The app opens a local port and forwards it for you.',
+  'sshTunnel.host': 'Jump host',
+  'sshTunnel.port': 'SSH port',
+  'sshTunnel.username': 'SSH user name',
+  'sshTunnel.privateKey': 'Private key file',
+  'sshTunnel.privateKeyHint':
+    'This version supports keys without a passphrase only. A passphrase would have to be stored in the keyring, and that step is not built yet.',
+  'sshTunnel.remoteHost': 'Forward to host',
+  'sshTunnel.remotePort': 'Port',
+  'sshTunnel.remoteHint':
+    'Where the database is, as seen from the jump host. Leave it empty to reuse the address above — put 127.0.0.1 here when the database runs on the jump host itself.',
+  'sshTunnel.incomplete': 'Still missing: {fields}',
+  'sshTunnel.fieldSeparator': ', ',
+  'sshTunnel.field.host': 'jump host',
+  'sshTunnel.field.port': 'SSH port',
+  'sshTunnel.field.username': 'SSH user name',
+  'sshTunnel.field.privateKeyPath': 'private key file',
+  'sshTunnel.hostKeyHint':
+    "The jump host's host key is checked against ~/.ssh/known_hosts, the same file the ssh command uses. A missing entry and a mismatched one both refuse the connection.",
   'diagnosis.run': 'Diagnose',
   'diagnosis.running': 'Diagnosing…',
   'diagnosis.title': 'Diagnosis',

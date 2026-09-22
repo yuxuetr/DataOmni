@@ -23,6 +23,7 @@ pub fn run() {
     .manage(QueryCancellationState::default())
     .manage(ImportPauseState::default())
     .manage(services::QuerySessionState::default())
+    .manage(services::TunnelRegistry::default())
     .setup(|app| {
       println!("🎯 DataOmni应用启动成功");
 
@@ -92,6 +93,7 @@ pub fn run() {
       get_connections,
       test_connection,
       diagnose_connection,
+      close_ssh_tunnel,
       // 数据库操作命令
       execute_query,
       execute_write_batch,
