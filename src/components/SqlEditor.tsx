@@ -676,7 +676,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
       )}
 
       {/* SQL语句列表和结果 */}
-      <div className="flex-1 overflow-y-auto">
+      {/* `query-result-pane` 是给结果表量可用空间用的锚点：它要知道自己
+          底下还剩多少地方，而那取决于这块区域有多高。见 resultTableHeight */}
+      <div className="query-result-pane flex-1 overflow-y-auto">
         {statements.length === 0 ? (
           /* 空状态：保持安静。编辑器占位文字已经说明了怎么写，
              结果区在有结果之前不需要占据视线 */

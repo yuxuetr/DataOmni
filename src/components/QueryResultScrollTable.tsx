@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useLayoutEffect, useState, useRef } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -13,6 +13,10 @@ import {
   Undo2
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import {
+  FALLBACK_RESULT_TABLE_HEIGHT,
+  resultTableHeight
+} from '../utils/resultTableHeight';
 import type { QueryResult } from '../contracts/query';
 import { selectSqlDialect, useQueryStore } from '../stores/queryStore';
 import { unwrapResultValue } from '../utils/resultValues';
@@ -48,6 +52,13 @@ import { ResultChartDialog } from './ResultChartDialog';
 import { DENSITY_CELL_CLASS } from '../utils/gridColumns';
 import { useSettingsStore } from '../stores/settingsStore';
 import { SHORTCUTS, formatShortcut } from '../utils/shortcuts';
+
+/**
+ * 结果区底边要留出的余量。
+ *
+ * 不留的话表格正好贴着底边，看上去像是被切掉了一截而不是滚到头了。
+ */
+const RESULT_PANE_BOTTOM_GAP = 12;
 
 interface QueryResultScrollTableProps {
   result: QueryResult;
@@ -95,6 +106,10 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   const [commitError, setCommitError] = useState<string | null>(null);
   
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  /** 表格本身的高度。量它而不是量滚动容器的 scrollHeight——后者会被我们
+      刚设上去的高度影响，自己量自己就成了循环 */
+  const tableContentRef = useRef<HTMLDivElement>(null);
+  const [tableHeight, setTableHeight] = useState(FALLBACK_RESULT_TABLE_HEIGHT);
   
   // 计算分页数据
   const totalRows = result.rows.length;
@@ -319,6 +334,43 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
     setNewRowData(prev => ({ ...prev, [column]: value }));
   };
   
+  // 可用空间 = 这张表的顶边到结果区底边之间还剩多少。
+  //
+  // 量这个而不是量结果区的总高：表上面还压着语句头、工具条、分页条，
+  // 它们各自多高会随文案和语言变，减一串常数迟早对不上。
+  useLayoutEffect(() => {
+    const scroller = scrollContainerRef.current;
+    const content = tableContentRef.current;
+    if (!scroller || !content) {
+      return;
+    }
+    const pane = scroller.closest('.query-result-pane');
+    if (!pane) {
+      // 没有结果区（比如被别处复用）就退回写死的那个数，行为和改之前一样
+      setTableHeight(FALLBACK_RESULT_TABLE_HEIGHT);
+      return;
+    }
+
+    const measure = () => {
+      const available = pane.getBoundingClientRect().bottom
+        - scroller.getBoundingClientRect().top
+        - RESULT_PANE_BOTTOM_GAP;
+      setTableHeight(resultTableHeight(available, content.offsetHeight));
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(pane);
+    observer.observe(content);
+    return () => observer.disconnect();
+    // 换一份结果、翻页、改列宽都会让内容高度变，ResizeObserver 会跟着报，
+    // 这里只需要在组件换了结果时重新挂一次。
+    //
+    // 不区分「一条语句」和「多条语句」：这个公式自带上限——永远不超过内容
+    // 本身的高度，所以多条结果里的第一条也只会长到它自己那么高，不会为了
+    // 占满而撑出空白把后面的推出视野
+  }, [result]);
+
   return (
     <div className="border rounded-panel overflow-hidden bg-surface relative">
       {/* 头部信息栏 */}
@@ -439,11 +491,11 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
           {...cells.gridProps}
           className="overflow-auto query-result-scroll focus:outline-none"
           style={{
-            maxHeight: '600px',
+            maxHeight: `${tableHeight}px`,
             width: '100%'
           }}
         >
-        <div style={{ width: `${tableWidth}px`, minWidth: '100%' }}>
+        <div ref={tableContentRef} style={{ width: `${tableWidth}px`, minWidth: '100%' }}>
           {/* 按量出来的宽度铺，不用 w-full：w-full 会把富余宽度按比例摊给
               各列，量出来的列宽就失去意义了 */}
           <table className="table-fixed border-collapse" style={{ width: `${tableWidth}px` }}>
