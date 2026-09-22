@@ -2,7 +2,7 @@ use dataomni_lib::services::{
   execute_query, execute_query_with_limit, execute_query_with_limits, execute_query_with_timeout,
   export_query, ExportFormat, ExportOptions, ExportSummary, QueryError, QueryExecutionResult,
   QueryExecutionSummary, QuerySessionState, QueryTruncationReason, StreamingQueryOptions,
-  QUERY_TIMEOUT_CODE,
+  NON_QUERY_MESSAGE, QUERY_TIMEOUT_CODE,
 };
 use sqlx::{
   mysql::MySqlPoolOptions, postgres::PgPoolOptions, sqlite::SqlitePoolOptions, Column, Row,
@@ -2267,7 +2267,10 @@ async fn postgres_exports_every_row_and_refuses_a_non_query() {
 
   // 点「导出」不该让一条 DELETE 真把数据删掉
   let error = export_error(&DbPool::Postgres(pool.clone()), &format!("DELETE FROM {table}")).await;
-  assert!(error.message.contains("不返回结果集"), "错误要说清原因: {}", error.message);
+  // 后端给的是**错误码**，文案由前端按当前语言翻（`utils/backendError.ts`）。
+  // 这里断言中文原句的写法在错误码化之后就一直是红的，只是网络用例平时跳过，
+  // 没人看见——断言码才是这条路真正要钉住的东西
+  assert_eq!(error.message, NON_QUERY_MESSAGE, "点「导出」不该让一条 DELETE 真执行");
   let remaining: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
     .fetch_one(&pool)
     .await
@@ -2328,7 +2331,10 @@ async fn mysql_exports_every_row_and_refuses_a_non_query() {
   assert_eq!(lines[1], "1,\"row,1\",0xdeadbeef,");
 
   let error = export_error(&DbPool::MySql(pool.clone()), &format!("DELETE FROM `{table}`")).await;
-  assert!(error.message.contains("不返回结果集"), "错误要说清原因: {}", error.message);
+  // 后端给的是**错误码**，文案由前端按当前语言翻（`utils/backendError.ts`）。
+  // 这里断言中文原句的写法在错误码化之后就一直是红的，只是网络用例平时跳过，
+  // 没人看见——断言码才是这条路真正要钉住的东西
+  assert_eq!(error.message, NON_QUERY_MESSAGE, "点「导出」不该让一条 DELETE 真执行");
   let remaining: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM `{table}`"))
     .fetch_one(&pool)
     .await
