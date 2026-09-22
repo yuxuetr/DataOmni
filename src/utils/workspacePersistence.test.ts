@@ -52,6 +52,34 @@ describe('工作区快照', () => {
     expect(tab.title).toBe('users');
   });
 
+  /**
+   * 这一条是「欢迎页不做最近工作区」那个决定的判据。
+   *
+   * 不做的理由不是「暂时不需要」，是**多工作区这个概念不存在**：快照就一份，
+   * 存在一个固定的键上，没有 id 也没有名字。列一个只有一项、而且每次启动都会
+   * 自动恢复的「最近工作区」，是在给一个不存在的选择做界面。
+   *
+   * 哪天快照改成按 id 存多份，这条会红——那时候欢迎页才真的有东西可列。
+   */
+  it('同一时刻只有一份工作区，所以没有「最近工作区」可列', () => {
+    saveWorkspaceSnapshot({
+      tabs: [createSqlWorkspaceTab('profile-1')],
+      activeTabId: null,
+      drafts: {},
+      closedTabs: []
+    });
+    saveWorkspaceSnapshot({
+      tabs: [createSqlWorkspaceTab('profile-2')],
+      activeTabId: null,
+      drafts: {},
+      closedTabs: []
+    });
+
+    // 后写的覆盖前一份，不是并存两份
+    expect([...storage.keys()]).toEqual([STORAGE_KEY]);
+    expect(loadWorkspaceSnapshot()?.tabs[0].binding.profileId).toBe('profile-2');
+  });
+
   it('往返保存与读取标签、活动标签和草稿', () => {
     const sqlTab = createSqlWorkspaceTab('profile-a', { id: 'sql-1' });
     const tableTab = createTableWorkspaceTab('profile-a', 'users', {
