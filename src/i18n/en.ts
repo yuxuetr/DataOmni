@@ -691,7 +691,7 @@ export const en: Translations = {
 
   'prompt.configurable': 'You can change when this dialog appears under Settings \u2192 Confirm risky statements.',
 
-  'risk.destructive': 'discards data and cannot be undone',
+  'risk.destructive': 'discards data',
   'risk.bulk-write': 'has no WHERE clause and will affect the whole table',
   'risk.scoped-write': 'modifies data',
   'risk.append': 'inserts data',
@@ -700,6 +700,12 @@ export const en: Translations = {
   'risk.targetConnection': 'Target connection',
   'risk.batchNote': 'This runs {count} statements; the riskiest one is shown below.',
   'risk.runAnyway': 'Run anyway',
+  'risk.reversible': 'This can be rolled back: the statement joins the open transaction, so Roll back undoes it.',
+  'risk.irreversibleAutocommit': 'Autocommit is on, so this is committed the moment it runs and cannot be undone.',
+  'risk.atomicBatch': 'These statements commit as one unit: a failure partway changes nothing, but once committed it cannot be undone.',
+  'risk.irreversibleDialect': '{keyword} is not protected by transactions on {database}; opening one will not help.',
+  'risk.runInTransaction': 'Run in a transaction',
+
 
   'grid.sortAscHint': '{column}: ascending, click for descending',
   'grid.sortDescHint': '{column}: descending, click to clear sorting',

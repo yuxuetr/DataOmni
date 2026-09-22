@@ -7,6 +7,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useAppStore } from '../stores/appStore';
 import { describeError } from '../utils/describeError';
 import { requiresConfirmation, type StatementRisk } from '../utils/statementRisk';
+import { batchReversibility } from '../utils/statementReversibility';
 import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
 import {
   buildTableDdl,
@@ -278,6 +279,8 @@ export function TableStructureEditor({
           statementCount={preview.statements.length}
           connectionName={connectionName}
           environment={environment}
+          databaseLabel={dialect}
+          reversibility={batchReversibility(preview.statements, dialect)}
           impacts={preview.impacts.map((impact) =>
             t('ddl.impact.dropColumn', { column: impact.column }))}
           onCancel={() => setPendingRisk(null)}

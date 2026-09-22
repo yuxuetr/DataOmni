@@ -32,6 +32,8 @@ import { SHORTCUTS, formatShortcut, matchesShortcut } from '../utils/shortcuts';
 import { DestructiveStatementPrompt } from './DestructiveStatementPrompt';
 import { QueryPlanDialog } from './QueryPlanDialog';
 import { highestRiskNeedingConfirmation, type StatementRisk } from '../utils/statementRisk';
+import { statementReversibility } from '../utils/statementReversibility';
+import { identifierDialectFor } from '../utils/sqlIdentifiers';
 import { useSettingsStore } from '../stores/settingsStore';
 import type { ConnectionProfile } from '../contracts';
 import {
@@ -87,13 +89,16 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
     setQueryResultRowLimit,
     clearResults,
     removeStatement,
-    setError
+    setError,
+    autocommit,
+    setAutocommit,
+    session
   } = useQueryStore();
 
   const [autoParseEnabled, setAutoParseEnabled] = useState(true);
   // 等待确认的一次执行。run 留着原本要做的事，确认后原样放行。
   const [pendingRun, setPendingRun] = useState<
-    { sql: string; risk: StatementRisk; statementCount: number; run: () => void } | null
+    { sql: string; risk: StatementRisk; statements: string[]; run: () => void } | null
   >(null);
 
   /**
@@ -107,7 +112,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
       return;
     }
 
-    setPendingRun({ ...worst, statementCount: candidates.length, run });
+    setPendingRun({ ...worst, statements: candidates, run });
   };
   // 编辑器高度此前写死 200px，结果区再长也抢不到空间
   const editorPanel = useResizablePanel({
@@ -353,13 +358,28 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
         <DestructiveStatementPrompt
           sql={pendingRun.sql}
           risk={pendingRun.risk}
-          statementCount={pendingRun.statementCount}
+          statementCount={pendingRun.statements.length}
           connectionName={connection.name}
           environment={environment}
+          databaseLabel={connection.db_type}
+          reversibility={statementReversibility(
+            pendingRun.statements,
+            identifierDialectFor(connection.db_type),
+            autocommit,
+            session?.transaction.status ?? 'idle'
+          )}
           onCancel={() => setPendingRun(null)}
           onConfirm={() => {
             const run = pendingRun.run;
             setPendingRun(null);
+            run();
+          }}
+          onRunInTransaction={() => {
+            const run = pendingRun.run;
+            setPendingRun(null);
+            // 开关一关，后端的 begin_if_needed 就会在这条语句前补上 BEGIN。
+            // 不关回去：关回去等于在事务还开着的时候谎报状态
+            setAutocommit(false);
             run();
           }}
         />

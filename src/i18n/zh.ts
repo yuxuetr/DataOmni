@@ -712,7 +712,7 @@ export const zh = {
   // 语句风险
   'prompt.configurable': '可在「设置 → 危险语句确认」里调整什么时候弹出这个框。',
 
-  'risk.destructive': '会丢掉数据，且撤不回来',
+  'risk.destructive': '会丢掉数据',
   'risk.bulk-write': '没有 WHERE 条件，将影响整张表',
   'risk.scoped-write': '会修改数据',
   'risk.append': '会新增数据',
@@ -721,6 +721,12 @@ export const zh = {
   'risk.targetConnection': '目标连接',
   'risk.batchNote': '本次共执行 {count} 条语句，下面是其中风险最高的一条。',
   'risk.runAnyway': '仍然执行',
+  'risk.reversible': '执行后可以回滚：语句会进当前这个事务，反悔就按「回滚」。',
+  'risk.irreversibleAutocommit': '现在是自动提交，执行完就落库了，撤不回来。',
+  'risk.atomicBatch': '这批语句会作为一个整体提交：中途出错什么都不会改，但提交之后撤不回来。',
+  'risk.irreversibleDialect': '{keyword} 在 {database} 上不受事务保护，开事务也救不回来。',
+  'risk.runInTransaction': '在事务里执行',
+
 
   // 网格与面板
   'grid.sortAscHint': '{column}：当前升序，点击改为降序',
