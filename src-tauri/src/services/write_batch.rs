@@ -13,6 +13,9 @@ use serde_json::Value as JsonValue;
 use sqlx::{Executor, MySql, Postgres, Sqlite, Transaction};
 use tauri_plugin_sql::DbPool;
 
+/// 绑不上去的参数类型。数据里带的是那个值的类型
+pub const UNSUPPORTED_PARAMETER_TYPE: &str = "DATAOMNI_UNSUPPORTED_PARAMETER_TYPE";
+
 /// 这条语句必须影响的行数。
 ///
 /// 检查放在**事务里**做，不是拿回执之后在前端判：一条本该改一行的 UPDATE
@@ -68,7 +71,7 @@ macro_rules! bind_params {
         other => {
           return Err(WriteBatchError::at(
             $index,
-            QueryError::message(format!("不支持的参数类型: {other}")),
+            QueryError::message(format!("{UNSUPPORTED_PARAMETER_TYPE}: {other}")),
           ))
         }
       };

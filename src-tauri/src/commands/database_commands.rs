@@ -1,4 +1,5 @@
-use crate::commands::connection_commands::ConnectionServiceState;
+use crate::commands::connection_commands::{ConnectionServiceState, SERVICE_STATE_UNAVAILABLE};
+use crate::services::connection_service::CONNECTION_NOT_FOUND;
 use crate::services::{
   csv_import, export_writer, write_batch, CsvPreview, ExportOptions, ExportProgress, ExportSummary,
   ImportProgress, ImportRequest, ImportSummary, QueryExecutionSummary, QueryResultBatch,
@@ -19,6 +20,24 @@ use crate::services::{QueryError, TunnelRegistry};
 /// 池子按连接串做键，查不到说明前端 `Database.load` 用的串和这里算的不是
 /// 同一个。写成码是为了英文界面上不要印中文——见 `utils/backendError.ts`。
 pub const DB_SESSION_NOT_CONNECTED: &str = "DATAOMNI_DB_SESSION_NOT_CONNECTED";
+/// 同一个执行 ID 又来了一次。这是前端的 bug，用户无从下手，但也不该看见中文
+pub const EXECUTION_ID_IN_USE: &str = "DATAOMNI_EXECUTION_ID_IN_USE";
+pub const TIMEOUT_OUT_OF_RANGE: &str = "DATAOMNI_TIMEOUT_OUT_OF_RANGE";
+pub const ROW_LIMIT_OUT_OF_RANGE: &str = "DATAOMNI_ROW_LIMIT_OUT_OF_RANGE";
+pub const BYTE_LIMIT_OUT_OF_RANGE: &str = "DATAOMNI_BYTE_LIMIT_OUT_OF_RANGE";
+/// 连接服务的锁拿不到 / 还没建起来
+pub const SERVICE_NOT_READY: &str = "DATAOMNI_SERVICE_NOT_READY";
+/// 用户按了取消。不是失败，界面上不该标红
+pub const QUERY_CANCELLED: &str = "DATAOMNI_QUERY_CANCELLED";
+pub const CSV_DELIMITER_INVALID: &str = "DATAOMNI_CSV_DELIMITER_INVALID";
+pub const CSV_PREVIEW_FAILED: &str = "DATAOMNI_CSV_PREVIEW_FAILED";
+/// 这几条的数据都是数据库类型名。分成五条而不是一条带「功能」数据：
+/// 功能名本身就是要翻译的句子，塞进数据里等于又把中文搬回了后端
+pub const SCHEMA_BROWSE_UNSUPPORTED: &str = "DATAOMNI_SCHEMA_BROWSE_UNSUPPORTED";
+pub const OBJECT_BROWSE_UNSUPPORTED: &str = "DATAOMNI_OBJECT_BROWSE_UNSUPPORTED";
+pub const ER_DIAGRAM_UNSUPPORTED: &str = "DATAOMNI_ER_DIAGRAM_UNSUPPORTED";
+pub const COMPLETION_CATALOG_UNSUPPORTED: &str = "DATAOMNI_COMPLETION_CATALOG_UNSUPPORTED";
+pub const SESSION_TARGET_UNSUPPORTED: &str = "DATAOMNI_SESSION_TARGET_UNSUPPORTED";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,7 +71,7 @@ impl QueryCancellationState {
     let (sender, receiver) = oneshot::channel();
     let mut senders = self.senders.lock().await;
     if senders.contains_key(execution_id) {
-      return Err("查询执行 ID 已存在".to_string());
+      return Err(EXECUTION_ID_IN_USE.to_string());
     }
     senders.insert(execution_id.to_string(), sender);
     Ok(receiver)
@@ -84,13 +103,13 @@ pub async fn execute_query(
   query_session_state: State<'_, QuerySessionState>,
 ) -> Result<QueryExecutionSummary, QueryError> {
   if !(100..=3_600_000).contains(&request.timeout_ms) {
-    return Err(QueryError::message("查询超时必须在 100 毫秒到 1 小时之间"));
+    return Err(QueryError::message(TIMEOUT_OUT_OF_RANGE));
   }
   if !(1..=100_000).contains(&request.row_limit) {
-    return Err(QueryError::message("结果行数上限必须在 1 到 100000 之间"));
+    return Err(QueryError::message(ROW_LIMIT_OUT_OF_RANGE));
   }
   if !(1_048_576..=67_108_864).contains(&request.byte_limit) {
-    return Err(QueryError::message("结果内存上限必须在 1 MiB 到 64 MiB 之间"));
+    return Err(QueryError::message(BYTE_LIMIT_OUT_OF_RANGE));
   }
 
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
@@ -98,9 +117,9 @@ pub async fn execute_query(
   let connection_string = {
     let connection_service_guard = connection_service_state
       .lock()
-      .map_err(|e| QueryError::message(format!("获取连接服务状态失败: {e}")))?;
+      .map_err(|e| QueryError::message(format!("{SERVICE_STATE_UNAVAILABLE}: {e}")))?;
     let service =
-      connection_service_guard.as_ref().ok_or_else(|| QueryError::message("连接服务未初始化"))?;
+      connection_service_guard.as_ref().ok_or_else(|| QueryError::message(SERVICE_NOT_READY))?;
     service
       .resolve_connection_string(&request.connection_id, tunnel_port)
       .map_err(QueryError::message)?
@@ -131,7 +150,7 @@ pub async fn execute_query(
       },
       &mut send_batch
     ) => result,
-    _ = receiver => Err(QueryError::with_code(QUERY_CANCELLED_CODE, "查询已取消")),
+    _ = receiver => Err(QueryError::with_code(QUERY_CANCELLED_CODE, QUERY_CANCELLED)),
   };
   cancellation_state.finish(&request.execution_id).await;
   result
@@ -155,9 +174,9 @@ pub async fn execute_write_batch(
   let connection_string = {
     let connection_service_guard = connection_service_state
       .lock()
-      .map_err(|e| batch_error(format!("获取连接服务状态失败: {e}")))?;
+      .map_err(|e| batch_error(format!("{SERVICE_STATE_UNAVAILABLE}: {e}")))?;
     let service =
-      connection_service_guard.as_ref().ok_or_else(|| batch_error("连接服务未初始化"))?;
+      connection_service_guard.as_ref().ok_or_else(|| batch_error(SERVICE_NOT_READY))?;
     service.resolve_connection_string(&connection_id, tunnel_port).map_err(batch_error)?
   };
 
@@ -202,9 +221,9 @@ pub async fn export_query_to_file(
   let connection_string = {
     let connection_service_guard = connection_service_state
       .lock()
-      .map_err(|e| QueryError::message(format!("获取连接服务状态失败: {e}")))?;
+      .map_err(|e| QueryError::message(format!("{SERVICE_STATE_UNAVAILABLE}: {e}")))?;
     let service =
-      connection_service_guard.as_ref().ok_or_else(|| QueryError::message("连接服务未初始化"))?;
+      connection_service_guard.as_ref().ok_or_else(|| QueryError::message(SERVICE_NOT_READY))?;
     service
       .resolve_connection_string(&request.connection_id, tunnel_port)
       .map_err(QueryError::message)?
@@ -289,7 +308,7 @@ pub async fn preview_csv_file(request: CsvPreviewRequest) -> Result<CsvPreview, 
   let delimiter = match request.delimiter.as_deref() {
     Some(text) => match text.as_bytes() {
       [single] => Some(*single),
-      _ => return Err(QueryError::message(format!("分隔符必须是一个字符: {text:?}"))),
+      _ => return Err(QueryError::message(format!("{CSV_DELIMITER_INVALID}: {text:?}"))),
     },
     None => None,
   };
@@ -300,7 +319,7 @@ pub async fn preview_csv_file(request: CsvPreviewRequest) -> Result<CsvPreview, 
     csv_import::preview_csv(&path, delimiter, request.has_header, csv_import::PREVIEW_ROWS)
   })
   .await
-  .map_err(|error| QueryError::message(format!("预览 CSV 失败: {error}")))?
+  .map_err(|error| QueryError::message(format!("{CSV_PREVIEW_FAILED}: {error}")))?
 }
 
 #[derive(Deserialize)]
@@ -328,9 +347,9 @@ pub async fn import_csv_file(
   let connection_string = {
     let connection_service_guard = connection_service_state
       .lock()
-      .map_err(|e| QueryError::message(format!("获取连接服务状态失败: {e}")))?;
+      .map_err(|e| QueryError::message(format!("{SERVICE_STATE_UNAVAILABLE}: {e}")))?;
     let service =
-      connection_service_guard.as_ref().ok_or_else(|| QueryError::message("连接服务未初始化"))?;
+      connection_service_guard.as_ref().ok_or_else(|| QueryError::message(SERVICE_NOT_READY))?;
     service
       .resolve_connection_string(&request.connection_id, tunnel_port)
       .map_err(QueryError::message)?
@@ -424,7 +443,7 @@ pub fn get_schema_metadata_queries(
   db_type: crate::models::DatabaseType,
 ) -> Result<crate::services::SchemaMetadataQueries, String> {
   crate::services::schema_metadata_queries(&db_type)
-    .ok_or_else(|| format!("{:?} 尚未支持结构浏览", db_type))
+    .ok_or_else(|| format!("{SCHEMA_BROWSE_UNSUPPORTED}: {db_type:?}"))
 }
 
 #[derive(Debug, Deserialize)]
@@ -460,12 +479,12 @@ pub async fn explain_query(
   let (connection_string, db_type) = {
     let connection_service_guard = connection_service_state
       .lock()
-      .map_err(|e| QueryError::message(format!("获取连接服务状态失败: {e}")))?;
+      .map_err(|e| QueryError::message(format!("{SERVICE_STATE_UNAVAILABLE}: {e}")))?;
     let service =
-      connection_service_guard.as_ref().ok_or_else(|| QueryError::message("连接服务未初始化"))?;
+      connection_service_guard.as_ref().ok_or_else(|| QueryError::message(SERVICE_NOT_READY))?;
     let connection = service
       .get_connection(&request.connection_id)
-      .ok_or_else(|| QueryError::message("找不到这个连接"))?;
+      .ok_or_else(|| QueryError::message(CONNECTION_NOT_FOUND))?;
     let db_type = connection.db_type.clone();
     (
       service
@@ -536,7 +555,7 @@ pub fn get_object_catalog_queries(
   db_type: crate::models::DatabaseType,
 ) -> Result<crate::services::ObjectCatalogQueries, String> {
   crate::services::object_catalog_queries(&db_type)
-    .ok_or_else(|| format!("{:?} 尚未支持对象浏览", db_type))
+    .ok_or_else(|| format!("{OBJECT_BROWSE_UNSUPPORTED}: {db_type:?}"))
 }
 
 /// 取该方言的整库 ER 图查询。与另外两个目录命令一样只回 SQL 文本。
@@ -545,7 +564,7 @@ pub fn get_er_diagram_queries(
   db_type: crate::models::DatabaseType,
 ) -> Result<crate::services::ErDiagramQueries, String> {
   crate::services::er_diagram_queries(&db_type)
-    .ok_or_else(|| format!("{:?} 尚未支持 ER 关系图", db_type))
+    .ok_or_else(|| format!("{ER_DIAGRAM_UNSUPPORTED}: {db_type:?}"))
 }
 
 /// 取该方言的补全目录查询。与另外三个目录命令一样只回 SQL 文本。
@@ -554,7 +573,7 @@ pub fn get_completion_catalog_query(
   db_type: crate::models::DatabaseType,
 ) -> Result<crate::services::CompletionCatalogQuery, String> {
   crate::services::completion_catalog_query(&db_type)
-    .ok_or_else(|| format!("{:?} 尚未支持 SQL 补全目录", db_type))
+    .ok_or_else(|| format!("{COMPLETION_CATALOG_UNSUPPORTED}: {db_type:?}"))
 }
 
 /// 取该方言的会话目标查询。与另外几个目录命令一样只回 SQL 文本。
@@ -563,5 +582,5 @@ pub fn get_session_target_query(
   db_type: crate::models::DatabaseType,
 ) -> Result<crate::services::SessionTargetQuery, String> {
   crate::services::session_target_query(&db_type)
-    .ok_or_else(|| format!("{:?} 尚未支持会话目标查询", db_type))
+    .ok_or_else(|| format!("{SESSION_TARGET_UNSUPPORTED}: {db_type:?}"))
 }

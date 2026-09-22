@@ -17,6 +17,14 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tauri_plugin_sql::DbPool;
 
+/// 分隔符不是一个字符。数据里带的是用户填的那一串
+pub const CSV_DELIMITER_INVALID: &str = "DATAOMNI_CSV_DELIMITER_INVALID";
+pub const CSV_PARSE_FAILED: &str = "DATAOMNI_CSV_PARSE_FAILED";
+/// 一列都没映射到目标表——导进去什么都不会写
+pub const CSV_NO_COLUMN_MAPPED: &str = "DATAOMNI_CSV_NO_COLUMN_MAPPED";
+pub const FILE_OPEN_FAILED: &str = "DATAOMNI_FILE_OPEN_FAILED";
+pub const FILE_READ_FAILED: &str = "DATAOMNI_FILE_READ_FAILED";
+
 /// 预览读多少行。够看清映射对不对，又不至于为了看一眼而读完整个文件。
 pub const PREVIEW_ROWS: usize = 50;
 
@@ -57,7 +65,7 @@ impl CsvOptions {
     let bytes = self.delimiter.as_bytes();
     match bytes {
       [single] => Ok(*single),
-      _ => Err(QueryError::message(format!("分隔符必须是一个字符: {:?}", self.delimiter))),
+      _ => Err(QueryError::message(format!("{CSV_DELIMITER_INVALID}: {:?}", self.delimiter))),
     }
   }
 
@@ -147,7 +155,9 @@ pub fn preview_csv(
   max_rows: usize,
 ) -> Result<CsvPreview, QueryError> {
   let total_bytes = std::fs::metadata(path)
-    .map_err(|error| QueryError::message(format!("读取 {} 失败: {error}", path.display())))?
+    .map_err(|error| {
+      QueryError::message(format!("{FILE_READ_FAILED}: {} · {error}", path.display()))
+    })?
     .len();
 
   let delimiter = match delimiter {
@@ -164,7 +174,9 @@ pub fn preview_csv(
     .has_headers(has_header)
     .flexible(true)
     .from_path(path)
-    .map_err(|error| QueryError::message(format!("打开 {} 失败: {error}", path.display())))?;
+    .map_err(|error| {
+      QueryError::message(format!("{FILE_OPEN_FAILED}: {} · {error}", path.display()))
+    })?;
 
   let headers = if has_header {
     reader.headers().map_err(csv_error)?.iter().map(|field| field.to_string()).collect::<Vec<_>>()
@@ -211,18 +223,18 @@ pub fn preview_csv(
 
 fn read_head(path: &Path, limit: usize) -> Result<Vec<u8>, QueryError> {
   use std::io::Read;
-  let file = std::fs::File::open(path)
-    .map_err(|error| QueryError::message(format!("打开 {} 失败: {error}", path.display())))?;
+  let file = std::fs::File::open(path).map_err(|error| {
+    QueryError::message(format!("{FILE_OPEN_FAILED}: {} · {error}", path.display()))
+  })?;
   let mut head = Vec::new();
-  std::io::BufReader::new(file)
-    .take(limit as u64)
-    .read_to_end(&mut head)
-    .map_err(|error| QueryError::message(format!("读取 {} 失败: {error}", path.display())))?;
+  std::io::BufReader::new(file).take(limit as u64).read_to_end(&mut head).map_err(|error| {
+    QueryError::message(format!("{FILE_READ_FAILED}: {} · {error}", path.display()))
+  })?;
   Ok(head)
 }
 
 fn csv_error(error: csv::Error) -> QueryError {
-  QueryError::message(format!("解析 CSV 失败: {error}"))
+  QueryError::message(format!("{CSV_PARSE_FAILED}: {error}"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -444,7 +456,7 @@ pub async fn import_csv(
   paused: &mut (dyn FnMut() -> bool + Send),
 ) -> Result<ImportSummary, QueryError> {
   if request.columns.is_empty() {
-    return Err(QueryError::message("至少要把一列映射到目标表"));
+    return Err(QueryError::message(CSV_NO_COLUMN_MAPPED));
   }
 
   let delimiter = request.csv.delimiter_byte()?;
@@ -454,7 +466,9 @@ pub async fn import_csv(
     .has_headers(request.csv.has_header)
     .flexible(true)
     .from_path(&path)
-    .map_err(|error| QueryError::message(format!("打开 {} 失败: {error}", path.display())))?;
+    .map_err(|error| {
+      QueryError::message(format!("{FILE_OPEN_FAILED}: {} · {error}", path.display()))
+    })?;
 
   let mut connection = SessionConnection::acquire(pool).await?;
   let dialect = Dialect::of(&connection);

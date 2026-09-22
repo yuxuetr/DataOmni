@@ -67,4 +67,41 @@ describe('backendError', () => {
     }
   });
 
+
+  /**
+   * 这道门挡的是**还没改成码**的那些：上面那条只看 `pub const`，
+   * 而一句写死的中文 `Err("连接不存在")` 它一个都看不见——门开着，
+   * 而英文界面上照样印中文。
+   *
+   * 只扫生产代码：`#[cfg(test)]` 之后的断言消息、`panic!`、`unreachable!`
+   * 都不进界面，用中文写反而更好读。
+   */
+  it('后端的错误串里一个中文字都不许有', () => {
+    const root = fileURLToPath(new URL('../../src-tauri/src', import.meta.url));
+    const files = readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .filter((entry) => entry.endsWith('.rs'));
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      const lines = readFileSync(join(root, file), 'utf8').split('\n');
+      const testsFrom = lines.findIndex((line) => line.trim().startsWith('#[cfg(test)]'));
+      const production = testsFrom === -1 ? lines : lines.slice(0, testsFrom);
+
+      production.forEach((line, index) => {
+        const code = line.trim();
+        if (code.startsWith('//') || code.startsWith('*')) {
+          return;
+        }
+        // 构造错误的那些写法。`println!` 不算：它进的是终端，不是界面
+        if (!/(Err\(|map_err|ok_or_else|ok_or\(|QueryError::message|QueryError::with_code)/.test(line)) {
+          return;
+        }
+        if (/[\u4e00-\u9fff]/.test(line)) {
+          offenders.push(`${file}:${index + 1} ${code}`);
+        }
+      });
+    }
+
+    expect(offenders, '这些错误串会原样印到英文界面上').toEqual([]);
+  });
 });

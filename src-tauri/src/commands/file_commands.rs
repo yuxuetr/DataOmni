@@ -2,6 +2,16 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use std::path::{Path, PathBuf};
 
+/// 要写进去的目录不存在。数据里带的是目录路径
+pub const DIRECTORY_MISSING: &str = "DATAOMNI_DIRECTORY_MISSING";
+/// 写文件失败。数据是 `路径 · 操作系统给的原因`
+pub const FILE_WRITE_FAILED: &str = "DATAOMNI_FILE_WRITE_FAILED";
+pub const FILE_READ_FAILED: &str = "DATAOMNI_FILE_READ_FAILED";
+pub const FILE_SIZE_FAILED: &str = "DATAOMNI_FILE_SIZE_FAILED";
+pub const BASE64_INVALID: &str = "DATAOMNI_BASE64_INVALID";
+/// 打开的 SQL 文件不是 UTF-8。数据里带的是路径
+pub const FILE_NOT_UTF8: &str = "DATAOMNI_FILE_NOT_UTF8";
+
 /// 把导出内容写到用户在保存对话框里选定的路径。
 ///
 /// 没有引入 `tauri-plugin-fs`：保存对话框返回的是任意路径，用插件就得把
@@ -14,12 +24,12 @@ pub async fn write_text_file(path: String, contents: String) -> Result<u64, Stri
   // 指向的却是文件本身，看的人会以为路径拼错了。先点名说是父目录。
   if let Some(parent) = target.parent() {
     if !parent.as_os_str().is_empty() && !parent.exists() {
-      return Err(format!("目录不存在: {}", parent.display()));
+      return Err(format!("{DIRECTORY_MISSING}: {}", parent.display()));
     }
   }
 
   std::fs::write(&target, contents.as_bytes())
-    .map_err(|e| format!("写入 {} 失败: {}", target.display(), e))?;
+    .map_err(|e| format!("{FILE_WRITE_FAILED}: {} · {e}", target.display()))?;
 
   file_size(&target)
 }
@@ -27,7 +37,7 @@ pub async fn write_text_file(path: String, contents: String) -> Result<u64, Stri
 fn file_size(path: &Path) -> Result<u64, String> {
   std::fs::metadata(path)
     .map(|metadata| metadata.len())
-    .map_err(|e| format!("读取 {} 大小失败: {}", path.display(), e))
+    .map_err(|e| format!("{FILE_SIZE_FAILED}: {} · {e}", path.display()))
 }
 
 /// 把 base64 编码的二进制内容写到用户选定的路径。
@@ -36,18 +46,18 @@ fn file_size(path: &Path) -> Result<u64, String> {
 /// JS 数字数组：后者经 IPC 序列化成 JSON 会把体积撑到四倍左右。
 #[tauri::command]
 pub async fn write_binary_file(path: String, contents_base64: String) -> Result<u64, String> {
-  let bytes = STANDARD
-    .decode(contents_base64.as_bytes())
-    .map_err(|e| format!("内容不是合法的 base64: {}", e))?;
+  let bytes =
+    STANDARD.decode(contents_base64.as_bytes()).map_err(|e| format!("{BASE64_INVALID}: {e}"))?;
 
   let target = PathBuf::from(&path);
   if let Some(parent) = target.parent() {
     if !parent.as_os_str().is_empty() && !parent.exists() {
-      return Err(format!("目录不存在: {}", parent.display()));
+      return Err(format!("{DIRECTORY_MISSING}: {}", parent.display()));
     }
   }
 
-  std::fs::write(&target, &bytes).map_err(|e| format!("写入 {} 失败: {}", target.display(), e))?;
+  std::fs::write(&target, &bytes)
+    .map_err(|e| format!("{FILE_WRITE_FAILED}: {} · {e}", target.display()))?;
 
   file_size(&target)
 }
@@ -79,11 +89,11 @@ pub async fn read_text_file(path: String) -> Result<String, String> {
 
   // 不是 UTF-8 时点名说是编码问题。`read_to_string` 的原话是
   // "stream did not contain valid UTF-8"，看的人会以为文件坏了
-  std::fs::read(&target).map_err(|e| format!("读取 {} 失败: {}", target.display(), e)).and_then(
-    |bytes| {
-      String::from_utf8(bytes).map_err(|_| format!("{} 不是 UTF-8 编码的文本", target.display()))
-    },
-  )
+  std::fs::read(&target)
+    .map_err(|e| format!("{FILE_READ_FAILED}: {} · {e}", target.display()))
+    .and_then(|bytes| {
+      String::from_utf8(bytes).map_err(|_| format!("{FILE_NOT_UTF8}: {}", target.display()))
+    })
 }
 
 #[cfg(test)]
@@ -135,7 +145,7 @@ mod tests {
     let error = write_binary_file(target.to_string_lossy().to_string(), "not base64!!".into())
       .await
       .expect_err("should fail");
-    assert!(error.contains("base64"), "错误要说清是编码的问题: {}", error);
+    assert!(error.starts_with(BASE64_INVALID), "错误要说清是编码的问题: {error}");
     assert!(!target.exists(), "解码失败时不该留下半个文件");
   }
 
@@ -177,7 +187,7 @@ mod tests {
 
     let error =
       read_text_file(target.to_string_lossy().to_string()).await.expect_err("should refuse");
-    assert!(error.contains("UTF-8"), "错误要点名编码而不是说文件坏了: {}", error);
+    assert!(error.starts_with(FILE_NOT_UTF8), "错误要点名编码而不是说文件坏了: {error}");
 
     std::fs::remove_dir_all(&dir).ok();
   }
@@ -191,6 +201,8 @@ mod tests {
       .await
       .expect_err("should fail");
 
-    assert!(error.contains("目录不存在"), "错误里要点名目录: {}", error);
+    assert!(error.starts_with(DIRECTORY_MISSING), "要带错误码: {error}");
+    // 码后面必须跟上是哪个目录，否则用户只知道「有个目录不存在」
+    assert!(error.contains("dataomni-no-such-dir"), "错误里要点名目录: {error}");
   }
 }

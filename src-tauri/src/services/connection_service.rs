@@ -30,6 +30,18 @@ pub const PORT_INVALID: &str = "DATAOMNI_PORT_INVALID";
 pub const DATABASE_REQUIRED: &str = "DATAOMNI_DATABASE_REQUIRED";
 pub const KNOWN_HOSTS_NO_HOME: &str = "DATAOMNI_KNOWN_HOSTS_NO_HOME";
 pub const SSH_TUNNEL_NOT_ESTABLISHED: &str = "DATAOMNI_SSH_TUNNEL_NOT_ESTABLISHED";
+/// 系统钥匙串打不开：Linux 上没装 Secret Service、或者会话不带钥匙串
+pub const CREDENTIAL_STORE_UNAVAILABLE: &str = "DATAOMNI_CREDENTIAL_STORE_UNAVAILABLE";
+pub const CREDENTIAL_SAVE_FAILED: &str = "DATAOMNI_CREDENTIAL_SAVE_FAILED";
+pub const CREDENTIAL_DELETE_FAILED: &str = "DATAOMNI_CREDENTIAL_DELETE_FAILED";
+/// 钥匙串里没有这条连接的密码。保存过密码的连接才会走到这里
+pub const CREDENTIAL_MISSING: &str = "DATAOMNI_CREDENTIAL_MISSING";
+/// 把明文密码迁进钥匙串时失败。数据里带的是连接名
+pub const CREDENTIAL_MIGRATION_FAILED: &str = "DATAOMNI_CREDENTIAL_MIGRATION_FAILED";
+pub const CONFIG_DIR_UNAVAILABLE: &str = "DATAOMNI_CONFIG_DIR_UNAVAILABLE";
+/// 连接配置写盘失败。增删改共用一条：对用户来说都是「这次改动没存住」
+pub const CONFIG_SAVE_FAILED: &str = "DATAOMNI_CONFIG_SAVE_FAILED";
+pub const CONNECTION_NOT_FOUND: &str = "DATAOMNI_CONNECTION_NOT_FOUND";
 
 trait CredentialStore: Send + Sync {
   fn set_password(&self, profile_id: &str, password: &str) -> Result<(), String>;
@@ -60,7 +72,7 @@ impl CredentialStore for SystemCredentialStore {
   fn set_password(&self, profile_id: &str, password: &str) -> Result<(), String> {
     credential_entry(profile_id)?
       .set_password(password)
-      .map_err(|error| format!("无法将凭据保存到系统凭据库: {error}"))
+      .map_err(|error| format!("{CREDENTIAL_SAVE_FAILED}: {error}"))
   }
 
   fn get_password(&self, profile_id: &str) -> Result<String, String> {
@@ -72,7 +84,7 @@ impl CredentialStore for SystemCredentialStore {
   fn delete_password(&self, profile_id: &str) -> Result<(), String> {
     match credential_entry(profile_id)?.delete_credential() {
       Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-      Err(error) => Err(format!("无法从系统凭据库删除凭据: {error}")),
+      Err(error) => Err(format!("{CREDENTIAL_DELETE_FAILED}: {error}")),
     }
   }
 }
@@ -87,7 +99,7 @@ pub struct ConnectionService {
 impl ConnectionService {
   pub fn new(app_handle: &tauri::AppHandle) -> Result<Self, Box<dyn std::error::Error>> {
     let app_dir =
-      app_handle.path().app_config_dir().map_err(|e| format!("无法获取应用配置目录: {}", e))?;
+      app_handle.path().app_config_dir().map_err(|e| format!("{CONFIG_DIR_UNAVAILABLE}: {e}"))?;
 
     // 确保配置目录存在
     if !app_dir.exists() {
@@ -135,7 +147,7 @@ impl ConnectionService {
       if !conn.password.is_empty() {
         credential_store
           .set_password(&conn.id, &conn.password)
-          .map_err(|error| format!("迁移连接 {} 的凭据失败: {error}", conn.name))?;
+          .map_err(|error| format!("{CREDENTIAL_MIGRATION_FAILED}: {} · {error}", conn.name))?;
         conn.credential_ref = Some(credential_ref(&conn.id));
         conn.password.clear();
         migrated = true;
@@ -184,7 +196,7 @@ impl ConnectionService {
     self.persist_submitted_password(&mut config)?;
     self.connections.insert(id.clone(), config);
 
-    self.save_connections().map_err(|e| format!("保存连接配置失败: {}", e))?;
+    self.save_connections().map_err(|e| format!("{CONFIG_SAVE_FAILED}: {e}"))?;
 
     Ok(id)
   }
@@ -196,7 +208,7 @@ impl ConnectionService {
     mut config: ConnectionProfile,
   ) -> Result<(), String> {
     let Some(existing) = self.connections.get(id).cloned() else {
-      return Err("连接不存在".to_string());
+      return Err(CONNECTION_NOT_FOUND.to_string());
     };
 
     config.id = id.to_string();
@@ -209,7 +221,7 @@ impl ConnectionService {
 
     self.connections.insert(id.to_string(), config);
 
-    self.save_connections().map_err(|e| format!("更新连接配置失败: {}", e))?;
+    self.save_connections().map_err(|e| format!("{CONFIG_SAVE_FAILED}: {e}"))?;
 
     Ok(())
   }
@@ -217,7 +229,7 @@ impl ConnectionService {
   /// 删除数据库连接配置
   pub fn delete_connection(&mut self, id: &str) -> Result<(), String> {
     let Some(connection) = self.connections.remove(id) else {
-      return Err("连接不存在".to_string());
+      return Err(CONNECTION_NOT_FOUND.to_string());
     };
 
     if connection.credential_ref.is_some() {
@@ -230,7 +242,7 @@ impl ConnectionService {
 
     if let Err(error) = self.save_connections() {
       self.connections.insert(id.to_string(), connection);
-      return Err(format!("删除连接配置失败: {error}"));
+      return Err(format!("{CONFIG_SAVE_FAILED}: {error}"));
     }
 
     Ok(())
@@ -256,7 +268,7 @@ impl ConnectionService {
     id: &str,
     tunnel_port: Option<u16>,
   ) -> Result<String, String> {
-    let connection = self.connections.get(id).ok_or_else(|| "连接不存在".to_string())?;
+    let connection = self.connections.get(id).ok_or_else(|| CONNECTION_NOT_FOUND.to_string())?;
     let resolved = self.resolve_for_connection(connection)?;
 
     // 配了隧道却没有活着的隧道：这时按原地址拼串会拼出一个连得上但不是
@@ -370,7 +382,7 @@ impl ConnectionService {
         .session_passwords
         .get(&config.id)
         .cloned()
-        .ok_or_else(|| format!("{SESSION_PASSWORD_REQUIRED}: 保存密码前请重新输入密码"))?;
+        .ok_or_else(|| SESSION_PASSWORD_REQUIRED.to_string())?;
       self.credential_store.set_password(&config.id, &password)?;
       self.session_passwords.remove(&config.id);
       config.credential_ref = Some(credential_ref(&config.id));
@@ -388,7 +400,8 @@ impl ConnectionService {
 }
 
 fn credential_entry(profile_id: &str) -> Result<Entry, String> {
-  Entry::new(CREDENTIAL_SERVICE, profile_id).map_err(|error| format!("无法访问系统凭据库: {error}"))
+  Entry::new(CREDENTIAL_SERVICE, profile_id)
+    .map_err(|error| format!("{CREDENTIAL_STORE_UNAVAILABLE}: {error}"))
 }
 
 fn credential_ref(profile_id: &str) -> String {
@@ -506,7 +519,7 @@ mod tests {
         .map_err(|error| error.to_string())?
         .get(profile_id)
         .cloned()
-        .ok_or_else(|| "凭据不存在".to_string())
+        .ok_or_else(|| CREDENTIAL_MISSING.to_string())
     }
 
     fn delete_password(&self, profile_id: &str) -> Result<(), String> {

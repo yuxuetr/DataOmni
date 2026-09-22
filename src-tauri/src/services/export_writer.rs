@@ -13,6 +13,13 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use tauri_plugin_sql::DbPool;
 
+pub const EXPORT_WRITE_FAILED: &str = "DATAOMNI_EXPORT_WRITE_FAILED";
+pub const DIRECTORY_MISSING: &str = "DATAOMNI_DIRECTORY_MISSING";
+pub const FILE_CREATE_FAILED: &str = "DATAOMNI_FILE_CREATE_FAILED";
+pub const FILE_RENAME_FAILED: &str = "DATAOMNI_FILE_RENAME_FAILED";
+/// 用户按了取消。不是失败，界面上不该标红
+pub const EXPORT_CANCELLED: &str = "DATAOMNI_EXPORT_CANCELLED";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExportFormat {
@@ -171,7 +178,7 @@ impl<W: Write> ExportWriter<W> {
     self
       .inner
       .write_all(text.as_bytes())
-      .map_err(|error| QueryError::message(format!("写入失败: {error}")))?;
+      .map_err(|error| QueryError::message(format!("{EXPORT_WRITE_FAILED}: {error}")))?;
     self.bytes_written += text.len() as u64;
     Ok(())
   }
@@ -371,7 +378,7 @@ pub async fn export_query(
 ) -> Result<ExportSummary, QueryError> {
   if let Some(parent) = path.parent() {
     if !parent.as_os_str().is_empty() && !parent.exists() {
-      return Err(QueryError::message(format!("目录不存在: {}", parent.display())));
+      return Err(QueryError::message(format!("{DIRECTORY_MISSING}: {}", parent.display())));
     }
   }
 
@@ -390,8 +397,9 @@ pub async fn export_query(
 
   let part_path = part_path_for(path);
   let mut guard = PartFile { path: part_path.clone(), armed: true };
-  let file = std::fs::File::create(&part_path)
-    .map_err(|error| QueryError::message(format!("创建 {} 失败: {error}", part_path.display())))?;
+  let file = std::fs::File::create(&part_path).map_err(|error| {
+    QueryError::message(format!("{FILE_CREATE_FAILED}: {} · {error}", part_path.display()))
+  })?;
   let mut writer = ExportWriter::begin(BufWriter::new(file), columns, options)?;
 
   {
@@ -402,7 +410,7 @@ pub async fn export_query(
       // 行常常是立刻就绪的，整趟导出可以在**一次 poll 里跑完**，期间运行时
       // 根本没机会轮询取消那一侧——按下取消要等导出自己结束才生效。
       if cancelled() {
-        return Err(QueryError::with_code(EXPORT_CANCELLED_CODE, "导出已取消"));
+        return Err(QueryError::with_code(EXPORT_CANCELLED_CODE, EXPORT_CANCELLED));
       }
       for row in &batch.rows {
         writer.write_row(row)?;
@@ -419,8 +427,9 @@ pub async fn export_query(
   }
 
   let (rows_written, bytes_written) = writer.finish()?;
-  std::fs::rename(&part_path, path)
-    .map_err(|error| QueryError::message(format!("重命名到 {} 失败: {error}", path.display())))?;
+  std::fs::rename(&part_path, path).map_err(|error| {
+    QueryError::message(format!("{FILE_RENAME_FAILED}: {} · {error}", path.display()))
+  })?;
   guard.armed = false;
 
   progress(ExportProgress { rows_written, bytes_written });

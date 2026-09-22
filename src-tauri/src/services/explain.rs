@@ -14,6 +14,13 @@ use crate::services::query_error::QueryError;
 use serde::Serialize;
 use serde_json::{Map, Value as JsonValue};
 
+/// 数据里带的都是数据库类型名
+pub const EXPLAIN_UNSUPPORTED: &str = "DATAOMNI_EXPLAIN_UNSUPPORTED";
+pub const EXPLAIN_ANALYZE_UNSUPPORTED: &str = "DATAOMNI_EXPLAIN_ANALYZE_UNSUPPORTED";
+/// 查询跑了，但计划是空的。当成错误而不是一棵空树——空树会让人以为计划就是空的
+pub const EXPLAIN_EMPTY: &str = "DATAOMNI_EXPLAIN_EMPTY";
+pub const EXPLAIN_NOT_JSON: &str = "DATAOMNI_EXPLAIN_NOT_JSON";
+
 /// 计划树上的一个节点。
 ///
 /// 字段是三家的**交集**，其余一律原样进 `detail`——把 MySQL 的
@@ -98,7 +105,7 @@ pub fn explain_statement(
   if analyze && !supports_analyze(db_type) {
     // 悄悄降级成普通 EXPLAIN 才是最糟的：界面说「真的跑了一遍」，
     // 而给出的是估算值
-    return Err(QueryError::message(format!("{db_type:?} 不支持真实执行的执行计划")));
+    return Err(QueryError::message(format!("{EXPLAIN_ANALYZE_UNSUPPORTED}: {db_type:?}")));
   }
   let sql = sql.trim().trim_end_matches(';');
   match db_type {
@@ -110,7 +117,7 @@ pub fn explain_statement(
     }),
     DatabaseType::MySQL => Ok(format!("EXPLAIN FORMAT=JSON {sql}")),
     DatabaseType::SQLite => Ok(format!("EXPLAIN QUERY PLAN {sql}")),
-    other => Err(QueryError::message(format!("{other:?} 暂不支持执行计划"))),
+    other => Err(QueryError::message(format!("{EXPLAIN_UNSUPPORTED}: {other:?}"))),
   }
 }
 
@@ -168,7 +175,7 @@ pub fn parse_plan(
     DatabaseType::PostgreSQL => parse_postgres(rows, analyze),
     DatabaseType::MySQL => parse_mysql(rows),
     DatabaseType::SQLite => Ok(parse_sqlite(rows)),
-    other => Err(QueryError::message(format!("{other:?} 暂不支持执行计划"))),
+    other => Err(QueryError::message(format!("{EXPLAIN_UNSUPPORTED}: {other:?}"))),
   }
 }
 
@@ -176,10 +183,10 @@ fn parse_json_payload(rows: &[Map<String, JsonValue>]) -> Result<(JsonValue, Str
   // MySQL 的 JSON 计划偶尔跨多行返回，拼起来再解析
   let text: String = rows.iter().filter_map(first_cell).collect::<Vec<_>>().join("");
   if text.trim().is_empty() {
-    return Err(QueryError::message("数据库没有返回执行计划"));
+    return Err(QueryError::message(EXPLAIN_EMPTY));
   }
   let parsed: JsonValue = serde_json::from_str(&text)
-    .map_err(|error| QueryError::message(format!("执行计划不是合法 JSON: {error}")))?;
+    .map_err(|error| QueryError::message(format!("{EXPLAIN_NOT_JSON}: {error}")))?;
   let pretty = serde_json::to_string_pretty(&parsed).unwrap_or(text);
   Ok((parsed, pretty))
 }

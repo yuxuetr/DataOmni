@@ -9,6 +9,10 @@ use tokio::{
   time::{timeout, Duration},
 };
 
+/// 这两条都是前端传错了参数，用户无从下手，但也不该看见中文
+pub const SESSION_ID_EMPTY: &str = "DATAOMNI_SESSION_ID_EMPTY";
+pub const SESSION_BOUND_ELSEWHERE: &str = "DATAOMNI_SESSION_BOUND_ELSEWHERE";
+
 /// 连接和它的事务状态必须一起锁。
 ///
 /// 分成两把锁，就可能读到「语句已经 COMMIT 了、状态还写着事务中」的中间态，
@@ -85,12 +89,12 @@ impl QuerySessionState {
     timeout_duration: Duration,
   ) -> Result<QueryExecutionResult, QueryError> {
     if session_id.trim().is_empty() {
-      return Err(QueryError::message("数据库 Session ID 不能为空"));
+      return Err(QueryError::message(SESSION_ID_EMPTY));
     }
 
     let entry = self.get_or_create(session_id, pool_key, pool).await?;
     if entry.pool_key != pool_key {
-      return Err(QueryError::message("数据库 Session 已绑定到其他连接"));
+      return Err(QueryError::message(SESSION_BOUND_ELSEWHERE));
     }
 
     timeout(timeout_duration, async {
@@ -130,12 +134,12 @@ impl QuerySessionState {
     sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
   ) -> Result<QueryExecutionSummary, QueryError> {
     if options.session_id.trim().is_empty() {
-      return Err(QueryError::message("数据库 Session ID 不能为空"));
+      return Err(QueryError::message(SESSION_ID_EMPTY));
     }
 
     let entry = self.get_or_create(options.session_id, options.pool_key, options.pool).await?;
     if entry.pool_key != options.pool_key {
-      return Err(QueryError::message("数据库 Session 已绑定到其他连接"));
+      return Err(QueryError::message(SESSION_BOUND_ELSEWHERE));
     }
 
     timeout(options.timeout_duration, async {
@@ -386,6 +390,6 @@ mod tests {
       .await
       .expect_err("reject another pool");
 
-    assert_eq!(error.message, "数据库 Session 已绑定到其他连接");
+    assert_eq!(error.message, SESSION_BOUND_ELSEWHERE);
   }
 }

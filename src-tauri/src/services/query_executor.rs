@@ -14,6 +14,10 @@ use tauri_plugin_sql::DbPool;
 use time::{Date, OffsetDateTime, PrimitiveDateTime, Time};
 use tokio::time::{timeout, Duration};
 
+/// 解码不了的列类型。数据里带的是数据库给的类型名——三种库共用一条：
+/// 对用户来说「这一列读不出来」是同一件事，而类型名已经说明了是哪种库
+pub const UNSUPPORTED_COLUMN_TYPE: &str = "DATAOMNI_UNSUPPORTED_COLUMN_TYPE";
+
 pub use crate::services::query_error::{QueryError, QUERY_TIMEOUT_CODE};
 pub const DEFAULT_QUERY_ROW_LIMIT: usize = 1_000;
 pub const DEFAULT_QUERY_BATCH_SIZE: usize = 250;
@@ -896,7 +900,7 @@ fn decode_sqlite(value: SqliteValueRef<'_>) -> Result<JsonValue, QueryError> {
     }
     "BLOB" => tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>()),
     "NULL" => Ok(JsonValue::Null),
-    type_name => Err(QueryError::message(format!("不支持的 SQLite 数据类型: {type_name}"))),
+    type_name => Err(QueryError::message(format!("{UNSUPPORTED_COLUMN_TYPE}: {type_name}"))),
   }
 }
 
@@ -945,7 +949,7 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, QueryError> {
       tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>())
     }
     "NULL" => Ok(JsonValue::Null),
-    _ => Err(QueryError::message(format!("不支持的 MySQL 数据类型: {type_name}"))),
+    _ => Err(QueryError::message(format!("{UNSUPPORTED_COLUMN_TYPE}: {type_name}"))),
   }
 }
 
@@ -998,7 +1002,7 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
       Ok(tagged_value("time", format_pg_interval(&interval)))
     }
     "VOID" => Ok(JsonValue::Null),
-    _ => Err(QueryError::message(format!("不支持的 PostgreSQL 数据类型: {type_name}"))),
+    _ => Err(QueryError::message(format!("{UNSUPPORTED_COLUMN_TYPE}: {type_name}"))),
   }
 }
 
