@@ -816,7 +816,14 @@ export const en: Translations = {
   'error.backend.sshHostKeyUnknown':
     'known_hosts has no entry for this jump host. Its fingerprint is {detail}. Verify it through a trusted channel before adding it to known_hosts.',
   'error.backend.sshPrivateKeyUnreadable':
-    'The private key could not be read: {detail}. This version supports keys without a passphrase only, and the path must be written out in full — no ~.',
+    'The private key could not be read: {detail}. This version supports keys without a passphrase only.',
+  'error.backend.sshHostKeyCertificate':
+    'This jump host uses a certificate host key, which has to be checked against a CA. That is not implemented in this version.',
+  'error.backend.sshKnownHostsUnreadable':
+    'Could not read ~/.ssh/known_hosts: {detail}. Without it the jump host key cannot be verified, so the connection stops here.',
+  'error.backend.sshConnectTimeout':
+    'The jump host did not answer within {detail}s. Check the address and port, and whether this machine can reach it at all.',
+  'error.backend.sshLocalPortUnavailable': 'Could not open a local forwarding port: {detail}',
   'error.backend.sshAuthRejected':
     'The jump host rejected this private key. Check that the SSH user name matches the key, and that the matching public key is in the server\'s authorized_keys.',
   'error.backend.sshFailed': 'SSH connection failed: {detail}',

@@ -25,7 +25,11 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_SSH_HOST_KEY_UNKNOWN: 'error.backend.sshHostKeyUnknown',
   DATAOMNI_SSH_PRIVATE_KEY_UNREADABLE: 'error.backend.sshPrivateKeyUnreadable',
   DATAOMNI_SSH_AUTH_REJECTED: 'error.backend.sshAuthRejected',
-  DATAOMNI_SSH_FAILED: 'error.backend.sshFailed'
+  DATAOMNI_SSH_FAILED: 'error.backend.sshFailed',
+  DATAOMNI_SSH_HOST_KEY_CERTIFICATE: 'error.backend.sshHostKeyCertificate',
+  DATAOMNI_SSH_KNOWN_HOSTS_UNREADABLE: 'error.backend.sshKnownHostsUnreadable',
+  DATAOMNI_SSH_CONNECT_TIMEOUT: 'error.backend.sshConnectTimeout',
+  DATAOMNI_SSH_LOCAL_PORT_UNAVAILABLE: 'error.backend.sshLocalPortUnavailable'
 };
 
 export interface BackendError {

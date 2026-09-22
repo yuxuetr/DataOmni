@@ -73,6 +73,10 @@ pub const SSH_HOST_KEY_UNKNOWN: &str = "DATAOMNI_SSH_HOST_KEY_UNKNOWN";
 pub const SSH_PRIVATE_KEY_UNREADABLE: &str = "DATAOMNI_SSH_PRIVATE_KEY_UNREADABLE";
 pub const SSH_AUTH_REJECTED: &str = "DATAOMNI_SSH_AUTH_REJECTED";
 pub const SSH_FAILED: &str = "DATAOMNI_SSH_FAILED";
+pub const SSH_HOST_KEY_CERTIFICATE: &str = "DATAOMNI_SSH_HOST_KEY_CERTIFICATE";
+pub const SSH_KNOWN_HOSTS_UNREADABLE: &str = "DATAOMNI_SSH_KNOWN_HOSTS_UNREADABLE";
+pub const SSH_CONNECT_TIMEOUT: &str = "DATAOMNI_SSH_CONNECT_TIMEOUT";
+pub const SSH_LOCAL_PORT_UNAVAILABLE: &str = "DATAOMNI_SSH_LOCAL_PORT_UNAVAILABLE";
 
 impl std::fmt::Display for TunnelError {
   fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -89,6 +93,12 @@ impl std::fmt::Display for TunnelError {
         write!(formatter, "{SSH_PRIVATE_KEY_UNREADABLE}: {message}")
       }
       TunnelError::AuthRejected => write!(formatter, "{SSH_AUTH_REJECTED}"),
+      // `message` 本身可能已经是一个码（超时、本地端口、known_hosts 读不了
+      // 都是自己产生的），那时不要再套一层 `SSH_FAILED:`——前端只认开头那个码，
+      // 套两层的结果是里面那个永远查不到
+      TunnelError::Ssh { message } if message.starts_with("DATAOMNI_") => {
+        write!(formatter, "{message}")
+      }
       TunnelError::Ssh { message } => write!(formatter, "{SSH_FAILED}: {message}"),
     }
   }
@@ -113,9 +123,7 @@ impl client::Handler for HostKeyCheck {
   ) -> Result<bool, Self::Error> {
     let PublicKeyOrCertificate::PublicKey { key, .. } = server_public_key else {
       // 证书型主机密钥要按 CA 校验，是另一套机制。没有实现就不要假装通过
-      return Err(TunnelError::Ssh {
-        message: "这台跳板机用的是证书型主机密钥，当前版本没有实现对它的校验".to_string(),
-      });
+      return Err(TunnelError::Ssh { message: SSH_HOST_KEY_CERTIFICATE.to_string() });
     };
 
     verify_host_key(&self.host, self.port, key, &self.known_hosts).map(|()| true)
@@ -137,8 +145,9 @@ fn verify_host_key(
   known_hosts: &Path,
 ) -> Result<(), TunnelError> {
   let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
-  let recorded = known_host_keys_path(host, port, known_hosts)
-    .map_err(|error| TunnelError::Ssh { message: format!("读 known_hosts 失败: {error}") })?;
+  let recorded = known_host_keys_path(host, port, known_hosts).map_err(|error| {
+    TunnelError::Ssh { message: format!("{SSH_KNOWN_HOSTS_UNREADABLE}: {error}") }
+  })?;
 
   if recorded.iter().any(|(_, candidate)| candidate == key) {
     return Ok(());
@@ -177,6 +186,28 @@ impl ActiveTunnel {
   }
 }
 
+/// 把开头的 `~` 换成当前用户的主目录。
+///
+/// 不展开的后果是一句「文件不存在」，而用户填的正是界面上占位符提示的
+/// `~/.ssh/id_rsa`——命令行 `ssh` 认这个写法，没有理由这里不认。曾经的做法
+/// 是在错误里写「路径不能用 ~」，那是让用户去迁就一个本该由程序做的展开。
+///
+/// `~other/…`（别人的主目录）**不展开**：那要查 passwd，而且几乎没人这么填。
+/// 原样交给文件系统去报「不存在」，好过猜一个路径然后读到别的文件。
+fn expand_home(path: &str) -> String {
+  let Some(rest) = path.strip_prefix('~') else {
+    return path.to_string();
+  };
+  // `~` 单独一个，或者 `~/…`；`~name` 的下一个字符不是分隔符，不动它
+  if !rest.is_empty() && !rest.starts_with('/') {
+    return path.to_string();
+  }
+  let Some(home) = std::env::home_dir() else {
+    return path.to_string();
+  };
+  format!("{}{rest}", home.display())
+}
+
 /// 用户自己的 `~/.ssh/known_hosts`——和命令行 `ssh` 读的是同一份。
 ///
 /// 应用另存一份的后果是「ssh 连得上但这里连不上」，而且用户在两处各信任
@@ -192,8 +223,9 @@ pub async fn open(
   tunnel: &SshTunnelConfig,
   known_hosts: &Path,
 ) -> Result<ActiveTunnel, TunnelError> {
-  let key = load_secret_key(&tunnel.private_key_path, None)
-    .map_err(|error| TunnelError::PrivateKey { message: error.to_string() })?;
+  let key_path = expand_home(&tunnel.private_key_path);
+  let key = load_secret_key(&key_path, None)
+    .map_err(|error| TunnelError::PrivateKey { message: format!("{key_path}: {error}") })?;
 
   let ssh_config = Arc::new(client::Config {
     inactivity_timeout: None,
@@ -210,7 +242,7 @@ pub async fn open(
   let mut session = match tokio::time::timeout(CONNECT_TIMEOUT, connecting).await {
     Err(_) => {
       return Err(TunnelError::Ssh {
-        message: format!("{} 秒内没有连上跳板机", CONNECT_TIMEOUT.as_secs()),
+        message: format!("{SSH_CONNECT_TIMEOUT}: {}", CONNECT_TIMEOUT.as_secs()),
       })
     }
     Ok(session) => session?,
@@ -229,12 +261,14 @@ pub async fn open(
 
   // 只绑 127.0.0.1，端口交给操作系统挑。端口范围不再是问题——
   // 见 `f6464ae`：上限是 65535，不是曾经写在四处的 32767
-  let listener = TcpListener::bind(("127.0.0.1", 0))
-    .await
-    .map_err(|error| TunnelError::Ssh { message: format!("本地端口开不出来: {error}") })?;
+  let listener = TcpListener::bind(("127.0.0.1", 0)).await.map_err(|error| TunnelError::Ssh {
+    message: format!("{SSH_LOCAL_PORT_UNAVAILABLE}: {error}"),
+  })?;
   let local_port = listener
     .local_addr()
-    .map_err(|error| TunnelError::Ssh { message: format!("拿不到本地端口: {error}") })?
+    .map_err(|error| TunnelError::Ssh {
+      message: format!("{SSH_LOCAL_PORT_UNAVAILABLE}: {error}"),
+    })?
     .port();
 
   let (target_host, target_port) = tunnel.target(config);
@@ -363,6 +397,33 @@ mod tests {
       }
     }
     path
+  }
+
+  /// `~` 要像命令行 ssh 那样展开。
+  ///
+  /// 这一条是被界面上的占位符逼出来的：那里写着 `~/.ssh/id_rsa`，照着填
+  /// 得到的是「文件不存在」。
+  #[test]
+  fn a_leading_tilde_expands_to_the_home_directory() {
+    let Some(home) = std::env::home_dir() else {
+      // 拿不到 home 时展开无从谈起，这条用例也就没有意义
+      return;
+    };
+    let home = home.display().to_string();
+
+    assert_eq!(expand_home("~/.ssh/id_rsa"), format!("{home}/.ssh/id_rsa"));
+    assert_eq!(expand_home("~"), home);
+
+    // 绝对路径与相对路径原样通过
+    assert_eq!(expand_home("/Users/someone/.ssh/id_rsa"), "/Users/someone/.ssh/id_rsa");
+    assert_eq!(expand_home("keys/id_rsa"), "keys/id_rsa");
+
+    // `~other` 是别人的主目录，要查 passwd 才知道在哪。猜一个路径可能读到
+    // 完全不相干的文件，不如原样交给文件系统去报「不存在」
+    assert_eq!(expand_home("~deploy/.ssh/id_rsa"), "~deploy/.ssh/id_rsa");
+
+    // `~` 不在开头就不是主目录的意思
+    assert_eq!(expand_home("./~/id_rsa"), "./~/id_rsa");
   }
 
   /// 有记录且匹配——唯一一种可以继续的情形。
