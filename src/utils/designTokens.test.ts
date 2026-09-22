@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -87,5 +88,57 @@ describe('设计 token', () => {
   it('两套主题都声明 color-scheme，原生滚动条和表单控件才会跟着变', () => {
     expect(light.get('color-scheme')).toBe('light');
     expect(dark.get('color-scheme')).toBe('dark');
+  });
+});
+
+/**
+ * 层级不是靠 token 管的，是靠一套**只有五档**的约定管的。量过一次：32 处
+ * z-index 里 21 处是 `z-50`，其余是 10/20/30/40。也就是说对话框、菜单、命令
+ * 面板彼此之间的先后完全由 DOM 顺序决定——而它们不会同时开着，所以今天是对的。
+ *
+ * 真正会坏的是**跨层**那一条：任务中心是常驻的，它和模态可以同时在屏幕上。
+ * 它要是爬到模态之上，确认框上就会压着一个任务提示，而「确定」按不到。
+ *
+ * 所以这道门只守两件事，不去 token 化 1192 处间距那种没有消费者的事：
+ * 档位不许变多（`z-[9999]` 这种「先盖住再说」的写法挡在这里），
+ * 以及常驻层必须严格低于模态层。
+ */
+const LAYERS = [10, 20, 30, 40, 50];
+const OVERLAY_LAYER = 50;
+
+function tsxFiles(): string[] {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  return readdirSync(root, { recursive: true, encoding: 'utf8' })
+    .filter((entry) => entry.endsWith('.tsx'))
+    .map((entry) => join(root, entry));
+}
+
+function layersIn(source: string): number[] {
+  return [...source.matchAll(/\bz-\[?(\d+)\]?\b/g)].map(([, value]) => Number(value));
+}
+
+describe('层级', () => {
+  it('只有约定的那几档，没有人靠加大数字压过别人', () => {
+    const offenders: string[] = [];
+    for (const file of tsxFiles()) {
+      for (const layer of layersIn(readFileSync(file, 'utf8'))) {
+        if (!LAYERS.includes(layer)) {
+          offenders.push(`${file.split('/src/')[1]}: z-${layer}`);
+        }
+      }
+    }
+    expect(offenders, '新档位要先想清楚它排在谁上面、谁下面').toEqual([]);
+  });
+
+  it('任务中心是常驻的，必须严格低于模态层', () => {
+    // 这两者可以同时在屏幕上。任务提示压住确认框的话，「确定」就按不到
+    const root = fileURLToPath(new URL('..', import.meta.url));
+    const taskCenter = readFileSync(join(root, 'components/TaskCenter.tsx'), 'utf8');
+    const used = layersIn(taskCenter);
+
+    expect(used.length, '任务中心没有层级了？这条门就失效了').toBeGreaterThan(0);
+    for (const layer of used) {
+      expect(layer, `任务中心用了 z-${layer}`).toBeLessThan(OVERLAY_LAYER);
+    }
   });
 });
