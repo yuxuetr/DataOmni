@@ -46,6 +46,9 @@ import { useConnectionStore } from '../stores/connectionStore';
 import { useQueryStore } from '../stores/queryStore';
 import { METADATA_TTL_MS, useAppStore } from '../stores/appStore';
 import { validateDatabaseConnection } from '../utils/stateSync';
+import { clsx } from 'clsx';
+import type { TranslationKey } from '../i18n/translate';
+import { connectionHealth, type ConnectionHealth } from '../utils/connectionHealth';
 
 interface DatabaseExplorerProps {
   connectionId: string;
@@ -63,6 +66,20 @@ export interface ObjectCatalogQueries {
   object_parameter_count: number;
 }
 
+/**
+ * 连接状态 → 那个小标记长什么样。
+ *
+ * 写成完整的 Record：多一种连接状态时这里编译不过，而不是继续用旧的两分法
+ * 把「断了」画成「连接中」——那正是它此前做的事。
+ */
+const HEALTH_BADGE: Record<ConnectionHealth, { labelKey: TranslationKey; className: string }> = {
+  connected: { labelKey: 'explorer.connected', className: 'text-success bg-success-soft' },
+  connecting: { labelKey: 'explorer.connecting', className: 'text-warning bg-warning-soft' },
+  lost: { labelKey: 'explorer.connectionLost', className: 'text-danger bg-danger-soft' },
+  failed: { labelKey: 'explorer.connectFailed', className: 'text-danger bg-danger-soft' },
+  disconnected: { labelKey: 'explorer.notConnected', className: 'text-fg-muted bg-surface-sunken' }
+};
+
 export default function DatabaseExplorer({
   connectionId,
   onTableSelect,
@@ -70,7 +87,13 @@ export default function DatabaseExplorer({
   onOpenErDiagram
 }: DatabaseExplorerProps) {
   const { connections } = useConnectionStore();
-  const { database } = useQueryStore();
+  const {
+    database,
+    isConnecting,
+    connectionLost,
+    // 局部的 error 是「对象列表没读出来」，和连接死没死是两回事
+    error: connectionError
+  } = useQueryStore();
   const {
     databaseMetadata,
     setDatabaseMetadata,
@@ -78,6 +101,14 @@ export default function DatabaseExplorer({
     schemaVersion
   } = useAppStore();
   
+  const health = connectionHealth({
+    isConnecting,
+    connectionLost,
+    hasSession: database !== null,
+    connectionReady,
+    error: connectionError
+  });
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 展开状态按节点 key 存；schema 与类型分组共用一套
@@ -315,15 +346,10 @@ export default function DatabaseExplorer({
         <div className="flex items-center space-x-2">
           <Database className="text-accent" size={16} />
           <h2 className="text-sm font-semibold text-fg">{t('explorer.title')}</h2>
-          {connectionReady ? (
-            <span className="text-xs text-success bg-success-soft px-2 py-0.5 rounded-control">
-              {t('explorer.connected')}
-            </span>
-          ) : (
-            <span className="text-xs text-warning bg-warning-soft px-2 py-0.5 rounded-control">
-              {t('explorer.connecting')}
-            </span>
-          )}
+          {/* 和工作台头部同一个纯函数：两处各判各的时候它们真的会说不一样的话 */}
+          <span className={clsx('text-xs px-2 py-0.5 rounded-control', HEALTH_BADGE[health].className)}>
+            {t(HEALTH_BADGE[health].labelKey)}
+          </span>
           {cachedMetadata && !isMetadataStale && (
             <span className="text-xs text-accent bg-accent-soft px-2 py-0.5 rounded-control">
               {t('explorer.cached')}

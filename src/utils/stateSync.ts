@@ -11,8 +11,7 @@ import {
   classifyConnectionFailure,
   createConnectionLifecycleState,
   transitionConnectionLifecycle,
-  type ConnectionFailureKind,
-  type ConnectionLifecycleState
+  type ConnectionFailureKind
 } from '../contracts/connectionLifecycle';
 import { describeError } from './describeError';
 import { translateNow } from '../stores/languageStore';
@@ -24,6 +23,15 @@ export class SessionManager {
   private static instance: SessionManager;
   private connectionPromises: Map<string, Promise<void>> = new Map();
   private shutdownPromise: Promise<void> | null = null;
+  /**
+   * 断线 / 认证过期 / 重连的状态机。**只服务于自动重连**，界面上没有消费者：
+   * 界面读的是 `queryStore.connectionLost`，它同时被驱动报的 CONNECTION_LOST
+   * 和设备掉网两条路写。
+   *
+   * 两套表示并存是有意的——这套机器知道「重试了几次」「是认证过期还是网络」，
+   * 而界面此刻只需要回答「还能不能用」。什么时候合并：这个字段真的要显示
+   * 出来的那天。
+   */
   private lifecycle = createConnectionLifecycleState();
   private reconnectTarget: {
     connection: ConnectionConfig;
@@ -118,10 +126,9 @@ export class SessionManager {
       error
     });
     useAppStore.getState().setConnectionReady(false);
-  }
-
-  getConnectionState(): ConnectionLifecycleState {
-    return this.lifecycle;
+    // 界面上那个「已连接」标记读的是 queryStore：`connectionReady` 翻成 false
+    // 只会让它显示「连接中」，而此刻没有任何连接动作在进行
+    useQueryStore.getState().reportConnectionLost();
   }
 
   private async connect(connection: ConnectionConfig, connectionString: string): Promise<void> {
@@ -341,30 +348,6 @@ export class SessionManager {
  */
 export function useSessionManager(): SessionManager {
   return SessionManager.getInstance();
-}
-
-/**
- * 等待连接就绪的工具函数
- */
-export async function waitForConnectionReady(timeoutMs: number = 5000): Promise<boolean> {
-  const startTime = Date.now();
-  const manager = SessionManager.getInstance();
-
-  while (Date.now() - startTime < timeoutMs) {
-    const { status } = manager.getConnectionState();
-    
-    if (status === 'connected') {
-      return true;
-    }
-    
-    if (status === 'error' || status === 'offline' || status === 'authentication-expired') {
-      return false;
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-
-  return false;
 }
 
 /**

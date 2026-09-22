@@ -17,6 +17,11 @@ import { TransactionBar } from './TransactionBar';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
 import { useSessionTarget } from '../hooks/useSessionTarget';
+import {
+  connectionHealth,
+  offersReconnect,
+  type ConnectionHealth
+} from '../utils/connectionHealth';
 
 interface SqlWorkbenchProps {
   connection: ConnectionConfig;
@@ -39,6 +44,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
     database,
     session,
     isConnecting,
+    connectionLost,
     error,
     setError,
     setSqlInput,
@@ -46,28 +52,23 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
     executeStatement,
   } = useQueryStore();
 
-  const { selectTable, clearSelectedTable } = useAppStore();
+  const { selectTable, clearSelectedTable, connectionReady } = useAppStore();
 
-  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'error'>('disconnected');
+  // 算出来的，不存在 state 里：存一份就意味着它可能和来源不一致，而这里
+  // 要回答的恰恰是「界面说的和实际情况是不是一回事」
+  const health = connectionHealth({
+    isConnecting,
+    connectionLost,
+    hasSession: database !== null,
+    connectionReady,
+    error
+  });
   // 服务端说的执行目标。问不出来时退回连接配置里的库名
   const target = useSessionTarget(connection);
 
-  // 监听连接状态
-  useEffect(() => {
-    if (isConnecting) {
-      setConnectionStatus('connecting');
-    } else if (database) {
-      setConnectionStatus('connected');
-    } else if (error) {
-      setConnectionStatus('error');
-    } else {
-      setConnectionStatus('disconnected');
-    }
-  }, [isConnecting, database, error]);
-
   // 处理选中的表格
   useEffect(() => {
-    if (selectedTable && database && connectionStatus === 'connected') {
+    if (selectedTable && database && health === 'connected') {
       // 更新全局状态
       selectTable(selectedTable.name, selectedTable.schema);
       
@@ -90,7 +91,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
       // 清除表选择
       clearSelectedTable();
     }
-  }, [selectedTable, database, connectionStatus]);
+  }, [selectedTable, database, health]);
 
   // 重新连接
   const handleReconnect = async () => {
@@ -103,9 +104,15 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
     await onDisconnect();
   };
 
-  // 获取连接状态显示
-  const getConnectionStatusDisplay = () => {
-    switch (connectionStatus) {
+  // 获取连接状态显示。写成穷举的 switch：多一种连接状态时这里编译不过，
+  // 而不是悄悄落到「未连接」上
+  const getConnectionStatusDisplay = (): {
+    icon: React.ReactNode;
+    text: string;
+    color: string;
+    bg: string;
+  } => {
+    switch (health satisfies ConnectionHealth) {
       case 'connecting':
         return {
           icon: <RefreshCw className="animate-spin text-accent" size={16} />,
@@ -120,14 +127,23 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
           color: 'text-success',
           bg: 'bg-success-soft'
         };
-      case 'error':
+      // 连上过、然后没了。和「连接失败」分开说：用户刚才还在用它，
+      // 「失败」会让人以为是自己配错了，而该做的事其实只是重连
+      case 'lost':
+        return {
+          icon: <WifiOff className="text-danger" size={16} />,
+          text: t('workbench.connectionLost'),
+          color: 'text-danger',
+          bg: 'bg-danger-soft'
+        };
+      case 'failed':
         return {
           icon: <WifiOff className="text-danger" size={16} />,
           text: t('workbench.connectFailed'),
           color: 'text-danger',
           bg: 'bg-danger-soft'
         };
-      default:
+      case 'disconnected':
         return {
           icon: <WifiOff className="text-fg-muted" size={16} />,
           text: t('workbench.disconnected'),
@@ -193,7 +209,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
           </button>
 
           {/* 重新连接按钮 */}
-          {connectionStatus === 'error' && (
+          {offersReconnect(health) && (
             <button
               onClick={handleReconnect}
               className="flex items-center space-x-1 px-3 py-1.5 text-sm text-accent border border-accent-line rounded-control hover:bg-accent-soft transition-colors"
@@ -216,7 +232,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
       </div>
 
       {/* 连接错误提示 */}
-      {error && connectionStatus === 'error' && (
+      {error && health === 'failed' && (
         <div className="p-4 bg-danger-soft border-b border-danger-line">
           <div className="flex items-start space-x-2">
             <WifiOff className="text-danger mt-0.5" size={16} />

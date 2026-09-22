@@ -87,6 +87,15 @@ export interface QueryState {
    */
   autocommit: boolean;
   isConnecting: boolean;
+  /**
+   * 驱动告诉我们这条连接已经没了（`CONNECTION_LOST`），或者设备掉了网。
+   *
+   * 不能用 `database` 判：它是 `Database.load` 的返回值，连接死掉之后句柄
+   * 照样在那儿。少了这个标记，界面会在连接已经没了的时候印「已连接」，
+   * 而 `connectToDatabase` 会因为「已经有正常的连接」直接返回，于是**重连
+   * 按钮按下去什么也不会发生**。
+   */
+  connectionLost: boolean;
   error: string | null;
 }
 
@@ -120,6 +129,8 @@ interface QueryActions {
 
   // 事务
   setAutocommit: (autocommit: boolean) => void;
+  /** 设备掉网那条路用：驱动没说话，但这条连接一样用不了了 */
+  reportConnectionLost: () => void;
   /** 从后端读一次事务状态写回 session；后端是权威，这里不自己推 */
   refreshTransaction: () => Promise<void>;
   /** 开始 / 提交 / 回滚。不进文档也不过风险确认——按钮本身就是确认 */
@@ -332,6 +343,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   queryTimeoutMs: 30_000,
   queryResultRowLimit: 1_000,
   isConnecting: false,
+  connectionLost: false,
   error: null,
 
   // Actions
@@ -342,8 +354,15 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   ) => {
     const currentState = get();
     
-    // 如果连接ID相同，且已经有正常的连接，则直接返回
-    if (currentState.connectionId === connectionId && currentState.database && !currentState.error) {
+    // 如果连接ID相同，且已经有正常的连接，则直接返回。
+    // `connectionLost` 必须算进来：断线之后句柄还在、错误也不在这一层，
+    // 少了它这里会直接返回，重连按钮就成了摆设
+    if (
+      currentState.connectionId === connectionId
+      && currentState.database
+      && !currentState.error
+      && !currentState.connectionLost
+    ) {
       console.log('✅ 使用现有数据库连接:', connectionId);
       return;
     }
@@ -369,6 +388,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     set({
       isConnecting: true,
       error: null,
+      connectionLost: false,
       database: null // 清空旧连接
     });
     
@@ -448,6 +468,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       connectionString: null,
       connectionId: null,
       session: null,
+      connectionLost: false,
       error: null
     });
     console.log('🔌 已断开数据库连接');
@@ -523,6 +544,14 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     // 开着的事务不因为开关翻回去就自动提交：它是用户开的，只能由用户结束。
     // psql 的 AUTOCOMMIT 也是这个行为
     set({ autocommit });
+  },
+
+  reportConnectionLost: () => {
+    // 没连过就没什么可断的。没有这道判断，启动时断一次网会让一个空工作台
+    // 显示「连接已断开」
+    if (get().database) {
+      set({ connectionLost: true });
+    }
   },
 
   refreshTransaction: async () => {
@@ -867,7 +896,10 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         })),
         executions: state.executions.map((candidate) =>
           candidate.id === execution.id ? finished : candidate
-        )
+        ),
+        // 驱动说连接没了。这一句是界面知道该显示「已断开」并摆出重连按钮的
+        // 唯一来源——在此之前它照样印「已连接」，而下一条语句还是同样的错
+        ...(connectionLost ? { connectionLost: true } : {})
       }));
       // 失败、取消、超时一样要记：「那条跑崩的语句到底是什么」正是事后最想
       // 翻出来的一条，只记成功等于历史里永远没有出问题的那次

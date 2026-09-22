@@ -38,6 +38,8 @@ export const en: Translations = {
   'explorer.title': 'Database',
   'explorer.connected': 'Connected',
   'explorer.connecting': 'Connecting…',
+  'explorer.connectionLost': 'Connection lost',
+  'explorer.connectFailed': 'Connection failed',
   'explorer.cached': 'Cached',
   'explorer.refresh': 'Refresh',
   'explorer.loading': 'Loading…',
@@ -678,6 +680,7 @@ export const en: Translations = {
 
   'workbench.connecting': 'Connecting',
   'workbench.connected': 'Connected',
+  'workbench.connectionLost': 'Connection lost',
   'workbench.connectFailed': 'Connection failed',
   'workbench.disconnected': 'Not connected',
   'workbench.noDatabase': ' · no database selected',
