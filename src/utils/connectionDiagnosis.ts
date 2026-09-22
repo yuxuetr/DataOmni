@@ -12,6 +12,7 @@ import type { TranslationKey } from '../i18n/translate';
 const STEP_TITLES: Readonly<Record<string, TranslationKey>> = {
   resolve: 'diagnosis.step.resolve',
   tcp: 'diagnosis.step.tcp',
+  tcpDropped: 'diagnosis.step.tcp',
   sqliteFile: 'diagnosis.step.file',
   sqliteMemory: 'diagnosis.step.file',
   sqliteEmpty: 'diagnosis.step.file',
@@ -29,6 +30,7 @@ const CONCLUSIONS: Readonly<Record<string, TranslationKey>> = {
   'resolve:false': 'diagnosis.conclusion.resolveFailed',
   'tcp:true': 'diagnosis.conclusion.reachable',
   'tcp:false': 'diagnosis.conclusion.tcpFailed',
+  'tcpDropped:false': 'diagnosis.conclusion.tcpDropped',
   'sqliteFile:true': 'diagnosis.conclusion.fileOk',
   'sqliteFile:false': 'diagnosis.conclusion.fileFailed',
   'sqliteMemory:true': 'diagnosis.conclusion.memory',

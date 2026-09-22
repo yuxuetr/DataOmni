@@ -862,6 +862,7 @@ export const zh = {
   'diagnosis.conclusion.resolveFailed': '主机名解析不出地址。先检查拼写，再确认这台机器的 DNS 能查到它——内网域名在公网 DNS 下查不到。',
   'diagnosis.conclusion.reachable': '网络这一段没有问题：地址解析得出、端口也连上了。连接仍然失败的话，原因在账号密码、TLS 设置或库名，不在网络。',
   'diagnosis.conclusion.tcpFailed': '地址解析出来了，但这个端口没有接受连接。通常是服务没在跑、端口填错，或者被防火墙 / 安全组挡住。',
+  'diagnosis.conclusion.tcpDropped': '端口接受了连接，随后立刻断开，那头没有数据库在应答。两种常见情况：本机开着 TUN 模式的代理，它会让被代理网段的任何端口都握手成功；或者这个端口上是别的服务，它不认数据库协议。',
   'diagnosis.conclusion.fileOk': '文件在，而且是一个 SQLite 数据库。打不开的话看文件权限。',
   'diagnosis.conclusion.fileFailed': '这个路径上的文件读不到。检查路径拼写与所在目录的权限。',
   'diagnosis.conclusion.memory': '内存数据库：不读写任何文件，关掉应用后内容就没了。',

@@ -834,6 +834,8 @@ export const en: Translations = {
   'diagnosis.conclusion.resolveFailed': 'The host name resolves to no address. Check the spelling first, then whether this machine can resolve it at all — an internal name will not resolve against public DNS.',
   'diagnosis.conclusion.reachable': 'The network side is fine: the address resolved and the port accepted a connection. If connecting still fails, the cause is the credentials, the TLS settings or the database name — not the network.',
   'diagnosis.conclusion.tcpFailed': 'The address resolved, but nothing is accepting connections on that port. Usually the service is not running, the port is wrong, or a firewall or security group is blocking it.',
+  'diagnosis.conclusion.tcpDropped':
+    'The port accepted the connection and then closed it immediately, so nothing on the other side answered as a database. Two common causes: a TUN-mode proxy on this machine, which completes the handshake for any port in the proxied range; or a different service listening on that port that does not speak the database protocol.',
   'diagnosis.conclusion.fileOk': 'The file exists and is a SQLite database. If it still fails to open, check the file permissions.',
   'diagnosis.conclusion.fileFailed': 'No readable file at that path. Check the spelling and the permissions on the containing directory.',
   'diagnosis.conclusion.memory': 'In-memory database: it touches no file, and its contents are gone once the app closes.',

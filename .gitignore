@@ -24,3 +24,6 @@ fix_docs
 *.sln
 *.sw?
 
+
+# Playwright MCP 的截图与快照：渲染验证时的一次性产物
+.playwright-mcp/

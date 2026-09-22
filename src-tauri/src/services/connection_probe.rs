@@ -15,6 +15,7 @@
 
 use crate::models::{ConnectionProfile, DatabaseType};
 use serde::Serialize;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 
@@ -26,6 +27,12 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// SQLite 文件头。见 https://www.sqlite.org/fileformat.html
 const SQLITE_MAGIC: &[u8] = b"SQLite format 3\0";
+
+/// 连上端口之后，愿意为「那头到底有没有服务」多等多久。
+///
+/// PostgreSQL 这一侧每次都会等满这段时间（服务端沉默，等客户端先开口），
+/// 所以它是直接加在诊断耗时上的。半秒换一个可信的结论值得。
+const PEEK_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -175,10 +182,39 @@ async fn probe_host(host: &str, port: u16) -> Vec<DiagnosisStep> {
       started,
     ),
     Ok(Err(error)) => DiagnosisStep::new("tcp", false, format!("{target}：{error}"), started),
-    Ok(Ok(_stream)) => DiagnosisStep::new("tcp", true, target.to_string(), started),
+    Ok(Ok(stream)) => confirm_someone_is_listening(&stream, target, started).await,
   };
 
   vec![resolved, connected]
+}
+
+/// 连上之后再听一小会儿，确认那头真有服务在。
+///
+/// `connect()` 成功不等于端口上有东西。开了 TUN 模式代理的机器（macOS 上
+/// Clash / V2Ray 很常见）会替被代理网段完成握手：实测本机到一台 VPS 的
+/// 33306、35432、49999 三个端口全部「连上」并收到 0 字节，而其中只有 33306
+/// 上真有数据库，且它只监听 127.0.0.1。照 `connect()` 的结果报「端口可达」，
+/// 用户就会按结论去查账号、TLS 和库名——而真正的原因是这个端口没有服务。
+///
+/// 三种情形分得开，且不需要知道对面说什么协议：
+/// - 收到字节：服务端先开口（MySQL 一连上就发握手包）——通。
+/// - 等到超时还连着：沉默的服务端在等客户端先说（PostgreSQL 是这样）——通。
+/// - 读到 0 字节或出错：接受了连接又立刻关掉——不通。
+async fn confirm_someone_is_listening(
+  stream: &TcpStream,
+  target: SocketAddr,
+  started: Instant,
+) -> DiagnosisStep {
+  let mut first_byte = [0u8; 1];
+  match tokio::time::timeout(PEEK_TIMEOUT, stream.peek(&mut first_byte)).await {
+    // 超时是好消息：连接还在，只是对面在等我们先说话
+    Err(_) => DiagnosisStep::new("tcp", true, target.to_string(), started),
+    Ok(Ok(0)) => DiagnosisStep::new("tcpDropped", false, target.to_string(), started),
+    Ok(Ok(_)) => DiagnosisStep::new("tcp", true, target.to_string(), started),
+    Ok(Err(error)) => {
+      DiagnosisStep::new("tcpDropped", false, format!("{target}：{error}"), started)
+    }
+  }
 }
 
 #[cfg(test)]
@@ -232,6 +268,29 @@ mod tests {
     assert_eq!(names, vec!["resolve", "tcp"]);
     assert!(diagnosis.steps.iter().all(|step| step.ok), "{:?}", diagnosis.steps);
     assert!(diagnosis.steps[1].detail.contains(&port.to_string()));
+  }
+
+  #[tokio::test]
+  async fn a_port_that_accepts_then_hangs_up_is_not_a_reachable_port() {
+    // TUN 模式代理的行为：替对面完成握手，随后立刻断开。
+    // 该绿的那一侧是 `reports_the_port_it_actually_reached`——监听着但不说话。
+    // 反向验证过：把 `confirm_someone_is_listening` 换回直接报 ok，这一条变红
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    tokio::spawn(async move {
+      while let Ok((stream, _)) = listener.accept().await {
+        drop(stream);
+      }
+    });
+
+    let mut config = profile(DatabaseType::MySQL);
+    config.host = "127.0.0.1".to_string();
+    config.port = port;
+
+    let diagnosis = diagnose(&config).await;
+    assert_eq!(diagnosis.steps.len(), 2, "{:?}", diagnosis.steps);
+    assert_eq!(diagnosis.steps[1].name, "tcpDropped");
+    assert!(!diagnosis.steps[1].ok, "接受了连接又断开，不能报成端口可达");
   }
 
   #[tokio::test]

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { zh } from '../i18n/zh';
 import type { ConnectionDiagnosis } from '../contracts/connectionDiagnosis';
@@ -85,36 +87,37 @@ describe('connectionDiagnosis', () => {
    * TypeScript 已经保证了字面量，这条守住「表被改成动态拼键」之后的情况——
    * 那时缺的文案会在界面上变成一个键名，而没有任何测试会红
    */
-  it('用到的文案键都在目录里', () => {
-    const used = [
-      ...diagnosisLines(
-        diagnosis(
-          ['resolve', true],
-          ['tcp', true],
-          ['sqliteFile', true],
-          ['sqliteMemory', true],
-          ['sqliteEmpty', true],
-          ['sqliteMagic', false],
-          ['unknownStep', false]
-        )
-      ).map((line) => line.titleKey),
-      ...(
-        [
-          diagnosis(['resolve', false]),
-          diagnosis(['resolve', true], ['tcp', true]),
-          diagnosis(['resolve', true], ['tcp', false]),
-          diagnosis(['sqliteFile', true]),
-          diagnosis(['sqliteFile', false]),
-          diagnosis(['sqliteMemory', true]),
-          diagnosis(['sqliteEmpty', true]),
-          diagnosis(['sqliteMagic', false])
-        ].map(diagnosisConclusionKey)
-      )
-    ];
+  it('后端能报出的每一种步骤，前端都认得', () => {
+    // 手写一份步骤清单会过期，而过期的样子是界面上多出一行「未知步骤」、
+    // 末尾少一句结论——单测不看界面，所以清单直接从后端源码里取
+    const probe = readFileSync(
+      fileURLToPath(new URL('../../src-tauri/src/services/connection_probe.rs', import.meta.url)),
+      'utf8'
+    );
+    const pairs = [...probe.matchAll(/DiagnosisStep::new\(\s*"(\w+)",\s*(true|false)\s*,/g)].map(
+      ([, name, ok]) => ({ name, ok: ok === 'true' })
+    );
+    expect(pairs.length, '一条都没匹配到说明后端的写法变了，这道门已经失效').toBeGreaterThan(5);
 
-    for (const key of used) {
-      expect(key, `${key} 不在翻译目录里`).not.toBeNull();
-      expect(zh).toHaveProperty(key as string);
+    // 唯一允许没有结论的组合：`probe_host` 永远返回 [resolve, tcp] 两步，
+    // 所以解析成功之后一定还有下一步，它当不了最后一步
+    const neverLast = new Set(['resolve:true']);
+
+    for (const { name, ok } of pairs) {
+      const single = diagnosis([name, ok]);
+
+      const [line] = diagnosisLines(single);
+      expect(line.titleKey, `后端的步骤 ${name} 在前端没有标题`).not.toBe(
+        'diagnosis.step.unknown'
+      );
+      expect(zh).toHaveProperty(line.titleKey);
+
+      if (neverLast.has(`${name}:${ok}`)) {
+        continue;
+      }
+      const conclusion = diagnosisConclusionKey(single);
+      expect(conclusion, `${name}:${ok} 结束的诊断没有结论`).not.toBeNull();
+      expect(zh).toHaveProperty(conclusion as string);
     }
   });
 });
