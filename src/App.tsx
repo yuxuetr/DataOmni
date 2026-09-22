@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { clsx } from 'clsx';
+import { PanelLeftOpen } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Sidebar } from './components/Sidebar';
 import { TaskCenter } from './components/TaskCenter';
@@ -164,6 +166,14 @@ function App() {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         setPaletteOpen((open) => !open);
+        return;
+      }
+
+      // Cmd/Ctrl+B 折叠侧边栏。不带 shift——带 shift 的 B 在 CodeMirror 里没占用，
+      // 但这个组合在别处普遍就是「收起侧栏」，改掉只会让人多试一次
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 'b') {
+        event.preventDefault();
+        sidebar.toggleCollapsed();
       }
     };
 
@@ -523,6 +533,12 @@ function App() {
         run: () => reopenClosedTab()
       },
       {
+        id: 'action:toggle-sidebar',
+        title: t('palette.action.toggleSidebar'),
+        group: t('palette.group.action'),
+        run: () => sidebar.toggleCollapsed()
+      },
+      {
         id: 'action:theme-light',
         title: t('palette.action.themeLight'),
         group: t('palette.group.action'),
@@ -628,8 +644,15 @@ function App() {
   return (
     <div className="h-screen flex bg-canvas text-fg">
       {/* 左侧侧边栏 - 包含连接选择和数据库浏览器 */}
+      {/* 折叠用 display:none 而不是卸载：对象树的展开节点、滚动位置、已取回的
+          元数据全是 DatabaseExplorer 的局部状态，卸载一次「恢复」就名不副实了。
+          display 类写成三元而不是叠一个 `hidden`——两个都是单类选择器，
+          谁赢取决于 Tailwind 输出的先后，不该赌 */}
       <div
-        className="flex shrink-0 flex-col bg-surface"
+        className={clsx(
+          'shrink-0 flex-col bg-surface',
+          sidebar.collapsed ? 'hidden' : 'flex'
+        )}
         style={{ width: `${sidebar.size}px` }}
       >
         <Sidebar
@@ -638,16 +661,32 @@ function App() {
           onTableSelect={openTableTab}
           onOpenErDiagram={openErDiagramTab}
           onOpenHistory={() => setShowHistory(true)}
+          onCollapse={sidebar.toggleCollapsed}
         />
       </div>
 
-      <PanelResizeHandle
-        axis="x"
-        active={sidebar.isResizing}
-        onPointerDown={sidebar.startResize}
-        onDoubleClick={sidebar.resetSize}
-        label={t('tab.resizeSidebar')}
-      />
+      {/* 折叠后留一条窄轨。折叠的入口只有快捷键的话，按错一次就找不回来了 */}
+      {sidebar.collapsed ? (
+        <div className="flex shrink-0 flex-col items-center border-r border-line bg-surface-sunken px-1.5 py-2">
+          <button
+            type="button"
+            onClick={sidebar.toggleCollapsed}
+            aria-label={t('panel.expandSidebar')}
+            title={t('panel.expandSidebar')}
+            className="rounded-control p-1.5 text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg"
+          >
+            <PanelLeftOpen size={16} />
+          </button>
+        </div>
+      ) : (
+        <PanelResizeHandle
+          axis="x"
+          active={sidebar.isResizing}
+          onPointerDown={sidebar.startResize}
+          onDoubleClick={sidebar.resetSize}
+          label={t('tab.resizeSidebar')}
+        />
+      )}
 
       {/* 右侧主内容区域 */}
       <div className="flex-1 flex flex-col overflow-hidden">

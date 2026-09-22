@@ -12,7 +12,9 @@ import {
   Loader,
   Square,
   AlignLeft,
-  Save
+  Save,
+  PanelTopClose,
+  PanelTopOpen
 } from 'lucide-react';
 import { selectActiveSqlDocument, useQueryStore, SqlStatement } from '../stores/queryStore';
 import type { QueryExecution } from '../contracts/queryExecution';
@@ -378,6 +380,17 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
       {/* SQL编辑器头部 */}
       <div className="flex items-center justify-between gap-3 border-b border-line bg-surface-sunken px-3 py-1.5">
         <div className="flex shrink-0 items-center gap-2">
+          {/* 折叠按钮放这里而不是分隔条上：折叠之后分隔条就不渲染了，
+              入口得留在一直看得见的头部 */}
+          <button
+            type="button"
+            onClick={() => editorPanel.toggleCollapsed()}
+            aria-label={editorPanel.collapsed ? t('panel.expandEditor') : t('panel.collapseEditor')}
+            title={editorPanel.collapsed ? t('panel.expandEditor') : t('panel.collapseEditor')}
+            className="rounded-control p-1 text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg"
+          >
+            {editorPanel.collapsed ? <PanelTopOpen size={15} /> : <PanelTopClose size={15} />}
+          </button>
           {/* 不再用「SQL编辑器」大标题：标签栏已经标明这是查询标签 */}
           <span className="text-xs text-fg-subtle">
             {statements.length > 0
@@ -609,7 +622,17 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
       )}
 
       {/* SQL输入区域 - 使用CodeMirror */}
-      <div className="shrink-0 px-3 pb-2 pt-3">
+      {/* 折叠用 display:none 而不是卸载：卸载会连撤销历史和光标一起丢掉，
+          而这正是「恢复」该保住的东西。本来还加了一个展开时 `requestMeasure()`
+          的 effect，去掉之后实测行为不变——CodeMirror 自己的 ResizeObserver
+          会在 0 高度变回来时重量，展开后点击落点仍然准确（565px 点下、
+          光标落在 565px） */}
+      <div
+        className={clsx(
+          'shrink-0 px-3 pb-2 pt-3',
+          editorPanel.collapsed && 'hidden'
+        )}
+      >
         <div className="overflow-hidden rounded-control border border-line-strong">
           <CodeMirror
             value={sqlInput}
@@ -645,13 +668,15 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
         </div>
       </div>
 
-      <PanelResizeHandle
-        axis="y"
-        active={editorPanel.isResizing}
-        onPointerDown={editorPanel.startResize}
-        onDoubleClick={editorPanel.resetSize}
-        label={t('editor.resizeHeight')}
-      />
+      {!editorPanel.collapsed && (
+        <PanelResizeHandle
+          axis="y"
+          active={editorPanel.isResizing}
+          onPointerDown={editorPanel.startResize}
+          onDoubleClick={editorPanel.resetSize}
+          label={t('editor.resizeHeight')}
+        />
+      )}
 
       {/* SQL语句列表和结果 */}
       <div className="flex-1 overflow-y-auto">

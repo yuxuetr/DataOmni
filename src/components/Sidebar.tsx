@@ -8,7 +8,8 @@ import {
   AlertCircle,
   X,
   SlidersHorizontal,
-  History
+  History,
+  PanelLeftClose
 } from 'lucide-react';
 import { ConnectionConfig, useConnectionStore } from '../stores/connectionStore';
 import DatabaseExplorer from './DatabaseExplorer';
@@ -30,6 +31,8 @@ interface SidebarProps {
   onOpenErDiagram?: () => void;
   /** 历史对话框由 App 渲染：它要能把一条语句开进新标签，而建标签是 App 的事 */
   onOpenHistory?: () => void;
+  /** 折叠按钮。折叠后侧边栏只剩一条窄轨，展开的入口在 App 那边 */
+  onCollapse?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -37,7 +40,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onConnectionDeleted,
   onTableSelect,
   onOpenErDiagram,
-  onOpenHistory
+  onOpenHistory,
+  onCollapse
 }) => {
   const t = useLanguageStore((state) => state.t);
   const { connections, loadConnections, deleteConnection } = useConnectionStore();
@@ -121,7 +125,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <div className="h-full flex flex-col bg-surface border-r border-line">
       {/* 头部 - 连接选择器 */}
       <div className="px-4 py-4 border-b border-line bg-surface-sunken">
-        <div className="relative">
+        <div className="flex items-center gap-2">
+        <div className="relative min-w-0 flex-1">
           <button
             onClick={() => setShowConnectionMenu(!showConnectionMenu)}
             className="flex w-full items-center justify-between rounded-control border border-line bg-surface px-2.5 py-1.5 text-sm transition-colors hover:bg-surface-hover"
@@ -222,6 +227,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
           )}
+        </div>
+
+        {onCollapse && (
+          <button
+            type="button"
+            onClick={onCollapse}
+            aria-label={t('panel.collapseSidebar')}
+            title={t('panel.collapseSidebar')}
+            className="shrink-0 rounded-control border border-line p-1.5 text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg"
+          >
+            <PanelLeftClose size={14} />
+          </button>
+        )}
         </div>
       </div>
 

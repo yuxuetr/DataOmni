@@ -715,6 +715,10 @@ export const zh = {
   'grid.resizeColumn': '调整列宽',
   'grid.resizeColumnTitle': '拖动调整列宽，双击恢复自适应',
   'panel.resetHint': '{label}（双击恢复默认）',
+  'panel.collapseSidebar': '折叠侧边栏',
+  'panel.expandSidebar': '展开侧边栏',
+  'panel.collapseEditor': '折叠编辑器',
+  'panel.expandEditor': '展开编辑器',
 
   // 标签页
   'tab.pin': '固定标签',
@@ -956,6 +960,7 @@ export const zh = {
   'palette.action.newConnection': '新建连接',
   'palette.action.openSqlite': '打开 SQLite 文件',
   'palette.action.reopenTab': '重新打开最近关闭的标签',
+  'palette.action.toggleSidebar': '折叠 / 展开侧边栏',
   'palette.action.toggleTheme': '切换外观',
   'palette.action.toggleLanguage': '切换语言'
 } as const;

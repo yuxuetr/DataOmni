@@ -693,6 +693,10 @@ export const en: Translations = {
   'grid.resizeColumn': 'Resize column',
   'grid.resizeColumnTitle': 'Drag to resize, double-click to auto-fit',
   'panel.resetHint': '{label} (double-click to reset)',
+  'panel.collapseSidebar': 'Collapse the sidebar',
+  'panel.expandSidebar': 'Expand the sidebar',
+  'panel.collapseEditor': 'Collapse the editor',
+  'panel.expandEditor': 'Expand the editor',
 
   'tab.pin': 'Pin tab',
   'tab.unpin': 'Unpin tab',
@@ -945,6 +949,7 @@ export const en: Translations = {
   'palette.action.newConnection': 'New connection',
   'palette.action.openSqlite': 'Open a SQLite file',
   'palette.action.reopenTab': 'Reopen the last closed tab',
+  'palette.action.toggleSidebar': 'Collapse or expand the sidebar',
   'palette.action.toggleTheme': 'Toggle appearance',
   'palette.action.toggleLanguage': 'Toggle language'
 };

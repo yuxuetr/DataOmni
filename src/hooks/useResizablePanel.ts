@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { clampPanelSize, loadPanelSize, savePanelSize } from '../utils/panelLayout';
+import {
+  clampPanelSize,
+  loadPanelCollapsed,
+  loadPanelSize,
+  savePanelCollapsed,
+  savePanelSize
+} from '../utils/panelLayout';
 
 export interface ResizablePanelOptions {
   /** localStorage 里的标识，每个分栏一个 */
@@ -17,6 +23,9 @@ export interface ResizablePanel {
   isResizing: boolean;
   /** 双击分隔条恢复默认尺寸 */
   resetSize: () => void;
+  /** 折叠中。`size` 不受影响，展开时拿回的就是折叠前那个宽度 */
+  collapsed: boolean;
+  toggleCollapsed: () => void;
 }
 
 export function useResizablePanel({
@@ -30,6 +39,7 @@ export function useResizablePanel({
     () => loadPanelSize(storageKey, defaultSize, minSize, maxSize)
   );
   const [isResizing, setIsResizing] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => loadPanelCollapsed(storageKey));
 
   const dragRef = useRef<{ start: number; startSize: number } | null>(null);
   const detachRef = useRef<(() => void) | null>(null);
@@ -86,6 +96,18 @@ export function useResizablePanel({
     savePanelSize(storageKey, size);
   }, [isResizing, size, storageKey]);
 
+  useEffect(() => {
+    savePanelCollapsed(storageKey, collapsed);
+  }, [collapsed, storageKey]);
+
+  const toggleCollapsed = useCallback(() => {
+    // 展开时再夹一次：折叠期间窗口可能被拖小了，记着的那个宽度会超出上限
+    if (collapsed) {
+      setSize((remembered) => clampPanelSize(remembered, minSize, maxSize));
+    }
+    setCollapsed(!collapsed);
+  }, [collapsed, minSize, maxSize]);
+
   return {
     size,
     startResize,
@@ -93,6 +115,8 @@ export function useResizablePanel({
     resetSize: useCallback(
       () => setSize(clampPanelSize(defaultSize, minSize, maxSize)),
       [defaultSize, minSize, maxSize]
-    )
+    ),
+    collapsed,
+    toggleCollapsed
   };
 }

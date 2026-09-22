@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { clampPanelSize, loadPanelSize, savePanelSize } from './panelLayout';
+import {
+  clampPanelSize,
+  loadPanelCollapsed,
+  loadPanelSize,
+  savePanelCollapsed,
+  savePanelSize
+} from './panelLayout';
 
 function installMemoryStorage(): Map<string, string> {
   const store = new Map<string, string>();
@@ -80,5 +86,63 @@ describe('分栏尺寸存取', () => {
 
     expect(loadPanelSize('sidebar', 320, 200, 500)).toBe(320);
     expect(() => savePanelSize('sidebar', 400)).not.toThrow();
+  });
+});
+
+describe('折叠状态', () => {
+  let storage: Map<string, string>;
+
+  beforeEach(() => {
+    storage = installMemoryStorage();
+  });
+
+  it('默认是展开的', () => {
+    expect(loadPanelCollapsed('sidebar')).toBe(false);
+  });
+
+  it('往返保存与读取', () => {
+    savePanelCollapsed('sidebar', true);
+    expect(loadPanelCollapsed('sidebar')).toBe(true);
+    savePanelCollapsed('sidebar', false);
+    expect(loadPanelCollapsed('sidebar')).toBe(false);
+  });
+
+  it('折叠不动尺寸——「恢复」拿回的就是折叠前那个数', () => {
+    savePanelSize('sidebar', 420);
+    savePanelCollapsed('sidebar', true);
+    expect(loadPanelSize('sidebar', 320, 200, 500)).toBe(420);
+  });
+
+  it('存着的内容不认识时按展开处理，而不是让面板凭空消失', () => {
+    storage.set('dataomni_panel:sidebar:collapsed', 'yes');
+    expect(loadPanelCollapsed('sidebar')).toBe(false);
+  });
+
+  it('尺寸和折叠用的是两个键，互不覆盖', () => {
+    savePanelSize('sidebar', 420);
+    savePanelCollapsed('sidebar', true);
+    expect(storage.get('dataomni_panel:sidebar')).toBe('420');
+    expect(storage.get('dataomni_panel:sidebar:collapsed')).toBe('1');
+  });
+
+  it('不同面板互不影响', () => {
+    savePanelCollapsed('sidebar', true);
+    savePanelCollapsed('sql-editor-height', false);
+    expect(loadPanelCollapsed('sidebar')).toBe(true);
+    expect(loadPanelCollapsed('sql-editor-height')).toBe(false);
+  });
+
+  it('localStorage 抛错时按展开处理、写入不抛', () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => {
+        throw new Error('storage disabled');
+      },
+      setItem: () => {
+        throw new Error('quota exceeded');
+      }
+    });
+
+    expect(loadPanelCollapsed('sidebar')).toBe(false);
+    expect(() => savePanelCollapsed('sidebar', true)).not.toThrow();
   });
 });
