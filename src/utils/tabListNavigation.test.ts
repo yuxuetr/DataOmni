@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { activatesFocusedTab, nextTabIndex } from './tabListNavigation';
+import {
+  activatesFocusedTab,
+  nextTabIndex,
+  workspaceTabDomId,
+  WORKSPACE_PANEL_DOM_ID
+} from './tabListNavigation';
 
 describe('标签栏的方向键', () => {
   it('左右各走一格', () => {
@@ -46,5 +51,22 @@ describe('标签栏的方向键', () => {
     expect(activatesFocusedTab(' ')).toBe(true);
     expect(activatesFocusedTab('ArrowRight')).toBe(false);
     expect(activatesFocusedTab('Spacebar')).toBe(false);
+  });
+});
+
+describe('标签与内容区互相指', () => {
+  /**
+   * 两边分属 `WorkspaceTabBar` 与 `App`，各写一遍字符串迟早写岔。写岔了界面上
+   * 看不出任何异样——只有读屏会报不出「这块内容属于哪个标签」，所以钉在这里。
+   */
+  it('同一个标签 id 永远算出同一个 DOM id', () => {
+    expect(workspaceTabDomId('c1:sql:7')).toBe(workspaceTabDomId('c1:sql:7'));
+    expect(workspaceTabDomId('c1:sql:7')).not.toBe(workspaceTabDomId('c1:sql:8'));
+  });
+
+  it('DOM id 带前缀，不会和页面上别的 id 撞', () => {
+    // 标签 id 是 `连接:类型:对象` 这种，直接拿来当 DOM id 容易撞上别处
+    expect(workspaceTabDomId('x')).toBe('workspace-tab-x');
+    expect(WORKSPACE_PANEL_DOM_ID).toBe('workspace-panel');
   });
 });

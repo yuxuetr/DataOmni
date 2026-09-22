@@ -17,6 +17,7 @@ import {
 import { OfflineTabView } from './components/OfflineTabView';
 import { WorkspaceTabMenu } from './components/WorkspaceTabMenu';
 import { WorkspaceTabBar } from './components/WorkspaceTabBar';
+import { workspaceTabDomId, WORKSPACE_PANEL_DOM_ID } from './utils/tabListNavigation';
 import { isBrowsableKind, KIND_LABEL_KEYS } from './utils/databaseObjects';
 import { useLanguageStore, translateNow } from './stores/languageStore';
 import { tabTitle } from './utils/tabTitle';
@@ -760,7 +761,15 @@ function App() {
             </button>
           </div>
         )}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div
+          id={WORKSPACE_PANEL_DOM_ID}
+          role="tabpanel"
+          aria-labelledby={activeTab ? workspaceTabDomId(activeTab.id) : undefined}
+          // **不**给它 tabIndex：ARIA 只在面板里没有可聚焦元素时才要求加，
+          // 而这里的面板永远有（编辑器、网格、按钮）。多一个停靠点意味着
+          // Tab 过来要先空按一下才进得了编辑器
+          className="flex-1 flex flex-col overflow-hidden"
+        >
           {renderActiveTab()}
         </div>
       </div>

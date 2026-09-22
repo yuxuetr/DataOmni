@@ -8,7 +8,12 @@ import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
 import { tabTitle } from '../utils/tabTitle';
 import { SHORTCUTS, formatShortcut } from '../utils/shortcuts';
-import { activatesFocusedTab, nextTabIndex } from '../utils/tabListNavigation';
+import {
+  activatesFocusedTab,
+  nextTabIndex,
+  workspaceTabDomId,
+  WORKSPACE_PANEL_DOM_ID
+} from '../utils/tabListNavigation';
 
 interface WorkspaceTabBarProps {
   tabs: WorkspaceTab[];
@@ -122,8 +127,12 @@ export function WorkspaceTabBar({
                 tabRefs.current.delete(tab.id);
               }
             }}
+            id={workspaceTabDomId(tab.id)}
             role="tab"
             aria-selected={isActive}
+            // 只有选中的标签指内容区：同一时刻只画一块内容，让没选中的标签去
+            // 指一个不存在的 id，比不指更糟
+            aria-controls={isActive ? WORKSPACE_PANEL_DOM_ID : undefined}
             // roving tabindex：整条标签栏只有一个 Tab 停靠点，进来之后用方向键走。
             // 每个标签各留一个停靠点的话，开十个标签就要按十次 Tab 才能走过去
             tabIndex={tab.id === rovingTabId ? 0 : -1}

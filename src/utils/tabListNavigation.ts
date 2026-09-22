@@ -1,4 +1,18 @@
 /**
+ * 标签在 DOM 里的 id，以及内容区那一块的 id。
+ *
+ * 两个东西要互相指：标签上 `aria-controls` 指着内容区，内容区
+ * `aria-labelledby` 指回标签。而它们分属两个组件（`WorkspaceTabBar` 与 `App`），
+ * 各写一遍字符串迟早写岔——写岔的后果是读屏报不出「这块内容属于哪个标签」，
+ * 而界面上看不出任何异样。
+ */
+export const WORKSPACE_PANEL_DOM_ID = 'workspace-panel';
+
+export function workspaceTabDomId(tabId: string): string {
+  return `workspace-tab-${tabId}`;
+}
+
+/**
  * 标签栏上按一次方向键，焦点落到第几个。
  *
  * **只移动焦点，不切换标签。** ARIA 把这叫 manual activation，正是给「切换有
