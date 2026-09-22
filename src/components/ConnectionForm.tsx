@@ -162,6 +162,17 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   const [diagnosisError, setDiagnosisError] = useState<string | null>(null);
   const [diagnosing, setDiagnosing] = useState(false);
   const diagnosisConclusion = diagnosis ? diagnosisConclusionKey(diagnosis) : null;
+  /**
+   * 测试失败时 store 同时写 `error` 和 `testResult`，而后者就是把前者包进
+   * 「连接测试失败: …」里——两条一起画，同一句话在底栏上出现两遍。
+   *
+   * 按**内容**判断而不是按「有没有 testResult」判断：保存失败时 `error` 换成了
+   * 另一句话，而上一次测试的 `testResult` 可能还留在屏幕上，那两条说的不是
+   * 一件事，都要显示。
+   */
+  const errorIsRepeatedByTestResult = Boolean(
+    error && testResult && testResult.message.includes(error)
+  );
 
   // 清除测试结果当组件卸载时
   useEffect(() => {
@@ -702,7 +713,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         {/* 底栏：反馈紧挨着产生它的按钮。整张卡此前一起滚动，点「测试连接」
             要先滚到底，结果却画在顶部，等于看不见。 */}
         <div className="shrink-0 border-t border-line bg-surface-sunken">
-          {error && (
+          {error && !errorIsRepeatedByTestResult && (
             <div className="flex items-start gap-2 border-b border-danger-line bg-danger-soft px-5 py-2 text-sm text-danger">
               <AlertCircle size={15} className="mt-0.5 shrink-0" />
               <span className="min-w-0 flex-1 break-words">{error}</span>
