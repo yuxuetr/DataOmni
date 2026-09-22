@@ -13,6 +13,15 @@ export const QUERY_CANCELLED_CODE = 'QUERY_CANCELLED';
 export const ROW_COUNT_MISMATCH_CODE = 'ROW_COUNT_MISMATCH';
 
 /**
+ * 这条连接已经没用了——TCP 断了、池关了、驱动后台线程没了。
+ *
+ * 和「数据库报的错」严格分开：后者说明连接是好的，只是这条语句不行。
+ * 分错任何一侧都有代价——把语法错当断线，用户会去重连而不是改语句；
+ * 把断线当普通错误，用户会一遍遍重试一条永远不会成功的查询。
+ */
+export const CONNECTION_LOST_CODE = 'CONNECTION_LOST';
+
+/**
  * 把 `invoke` reject 出来的东西变成结构化错误。
  *
  * 后端的 `execute_query` 现在 reject 一个对象；其余命令仍然 reject 一个字符串，

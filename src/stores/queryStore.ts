@@ -13,6 +13,7 @@ import {
 } from '../contracts/queryExecution';
 import { describeError } from '../utils/describeError';
 import {
+  CONNECTION_LOST_CODE,
   QUERY_CANCELLED_CODE,
   QUERY_TIMEOUT_CODE,
   toQueryExecutionError
@@ -823,13 +824,16 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       // 「这是超时」的判断绑在某一种语言上
       const timedOut = queryError.code === QUERY_TIMEOUT_CODE;
       const cancelled = queryError.code === QUERY_CANCELLED_CODE;
+      // 连接断了：数据库一个字都没说过，所以下面不给它挂任何「数据库报的」结构。
+      // 界面要说的是「重连」，不是「看看这条语句哪里错了」
+      const connectionLost = queryError.code === CONNECTION_LOST_CODE;
       const errorMessage = cancelled
         ? translateNow('error.queryCancelled')
         : timedOut
           ? translateNow('error.queryTimedOut', { duration: formatExecutionTime(queryTimeoutMs) })
           : queryError.message;
-      // 超时与取消是我们自己造的错，数据库没说过话，不该带上任何结构
-      const errorDetails = timedOut || cancelled ? undefined : queryError;
+      // 超时、取消、断线都是我们自己判出来的，数据库没说过话，不该带上任何结构
+      const errorDetails = timedOut || cancelled || connectionLost ? undefined : queryError;
       
       const pending = get().executions.find((candidate) => candidate.id === execution.id) ?? execution;
       const finished = cancelled

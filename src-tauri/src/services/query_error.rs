@@ -11,6 +11,12 @@ use serde::Serialize;
 /// 前端按 `code` 判断，不再按消息前缀去匹配字符串。
 pub const QUERY_TIMEOUT_CODE: &str = "QUERY_TIMEOUT";
 
+/// 连接断了。`code` 字段用它，前端按码判断——消息是要翻译的，
+/// 按消息前缀判等于把这个判断绑在某一种语言上
+pub const CONNECTION_LOST_CODE: &str = "CONNECTION_LOST";
+/// 消息侧的码，冒号后面是驱动的原话（"error communicating with database: …"）
+pub const CONNECTION_LOST: &str = "DATAOMNI_CONNECTION_LOST";
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct QueryError {
   pub message: String,
@@ -87,7 +93,19 @@ impl From<&str> for QueryError {
 impl From<sqlx::Error> for QueryError {
   fn from(error: sqlx::Error) -> Self {
     let Some(database_error) = error.as_database_error() else {
-      // 连接断了、解码失败这类：没有数据库侧的结构可取，只有一句话
+      // 传输层断了和「解码失败」不是一回事：前者说明**这条连接已经没用了**，
+      // 后面每一次执行都会同样失败，用户该做的是重连而不是改语句。
+      //
+      // 按 sqlx 的枚举分，不按英文措辞猜：`Io` 是 socket 断了，`PoolClosed`
+      // 是池已经关了，`WorkerCrashed` 是驱动后台线程没了。三种都回不去。
+      //
+      // **`PoolTimedOut` 不算**：它也可能只是连接都在忙（一条长查询占着），
+      // 那时候连接是好的。把它算进来，一次慢查询就会让人以为断线了
+      if matches!(error, sqlx::Error::Io(_) | sqlx::Error::PoolClosed | sqlx::Error::WorkerCrashed)
+      {
+        return Self::with_code(CONNECTION_LOST_CODE, format!("{CONNECTION_LOST}: {error}"));
+      }
+      // 剩下的没有数据库侧结构可取，只有一句话
       return Self::message(error.to_string());
     };
 
@@ -140,6 +158,44 @@ mod tests {
     // 按它匹配等于把判断逻辑绑在某一种语言上
     let error = QueryError::with_code(QUERY_TIMEOUT_CODE, "查询执行超过 5000 毫秒");
     assert_eq!(error.code.as_deref(), Some(QUERY_TIMEOUT_CODE));
+  }
+
+  /// 这三条钉的是「断线」和「数据库报错」必须分开。
+  ///
+  /// 分错任何一侧都有代价：把语法错当断线，用户会去重连而不是改语句；
+  /// 把断线当普通错误，用户会一遍遍重试一条永远不会成功的查询。
+  #[test]
+  fn a_dead_socket_is_a_lost_connection() {
+    let error = QueryError::from(sqlx::Error::Io(std::io::Error::new(
+      std::io::ErrorKind::ConnectionReset,
+      "Connection reset by peer (os error 54)",
+    )));
+
+    assert_eq!(error.code.as_deref(), Some(CONNECTION_LOST_CODE));
+    assert!(error.message.starts_with(CONNECTION_LOST), "{}", error.message);
+    // 驱动的原话要留着：那是唯一说得清「到底断在哪」的东西
+    assert!(error.message.contains("os error 54"), "{}", error.message);
+  }
+
+  #[test]
+  fn a_closed_pool_and_a_crashed_worker_are_lost_connections_too() {
+    for error in [sqlx::Error::PoolClosed, sqlx::Error::WorkerCrashed] {
+      assert_eq!(QueryError::from(error).code.as_deref(), Some(CONNECTION_LOST_CODE));
+    }
+  }
+
+  /// 反向的那一侧：池里连接都在忙，和连接断了是两回事。
+  /// 一条长查询占着连接时就是这个错，那时重连只会打断它
+  #[test]
+  fn a_busy_pool_is_not_a_lost_connection() {
+    assert_eq!(QueryError::from(sqlx::Error::PoolTimedOut).code, None);
+  }
+
+  /// 数据库开口说话了，就说明连接是好的——哪怕说的是「语法错误」
+  #[test]
+  fn an_error_the_database_reported_is_not_a_lost_connection() {
+    let error = QueryError::from(sqlx::Error::RowNotFound);
+    assert_ne!(error.code.as_deref(), Some(CONNECTION_LOST_CODE));
   }
 
   #[test]

@@ -897,6 +897,7 @@ export const en: Translations = {
   'error.backend.rowCountMismatch': 'This statement affected an unexpected number of rows (expected · actual): {detail}. The whole batch was rolled back — that row may have been changed or deleted by someone else.',
   'error.backend.fileTooLarge': 'The file is larger than the read limit (path · size · limit): {detail}',
   'error.backend.credentialStoreRejected': 'The system keychain refused access: {detail}. The usual cause is that the entry was written by a different build of this app (unsigned development builds change signing identity on every rebuild). Re-enter and save the password in the connection settings to recreate it.',
+  'error.backend.connectionLost': 'The connection to the database was lost, so this query did not run. Reconnect and try again. Details: {detail}',
   'error.backend.dbSessionNotConnected':
     'No database session. Connect to this database before running statements; if the UI still shows it as connected, the session has gone stale — disconnect and connect again.',
   'error.backend.sshAuthRejected':

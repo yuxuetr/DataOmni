@@ -912,6 +912,7 @@ export const zh = {
   'error.backend.rowCountMismatch': '这条语句影响的行数和预期不一致（预期 · 实际）：{detail}。整批已回滚——那一行可能已被别人改过或删掉。',
   'error.backend.fileTooLarge': '文件太大，超过了读取上限（路径 · 大小 · 上限）：{detail}',
   'error.backend.credentialStoreRejected': '系统钥匙串拒绝了访问：{detail}。最常见的原因是这条密码由另一个版本的应用写入（未签名的开发构建每次重建都会更换签名身份）；在连接配置里重新输入并保存密码即可重建条目。',
+  'error.backend.connectionLost': '与数据库的连接已经断开，这条查询没有执行。请重新连接后再试。技术细节：{detail}',
   'error.backend.dbSessionNotConnected': '数据库会话未连接。先连接这个数据库再执行；如果界面上显示已连接，说明会话已经失效，断开后重连一次。',
   'error.backend.sshAuthRejected': '跳板机拒绝了这把私钥。确认 SSH 用户名与私钥对得上，且对应的公钥已经在服务器的 authorized_keys 里。',
   'error.backend.sshFailed': 'SSH 连接失败: {detail}',
