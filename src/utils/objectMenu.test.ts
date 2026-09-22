@@ -20,10 +20,13 @@ describe('每种对象右键能做什么', () => {
     }
   });
 
-  it('有行的对象不给「查看定义」', () => {
-    // 后端取定义走 pg_get_functiondef，只认例程；喂视图的 oid 会直接报错
-    for (const kind of KINDS.filter(isBrowsableKind)) {
-      expect(OBJECT_MENU_ACTIONS[kind].includes('view-definition'), kind).toBe(false);
+  it('每种对象恰好有一条看它是什么的路', () => {
+    // 表走结构页（顺带给列、索引、外键），其余走定义弹窗。两条都没有的那一种
+    // 就是此前的视图：它的 SELECT 原文在界面上根本读不到
+    for (const kind of KINDS) {
+      const actions = OBJECT_MENU_ACTIONS[kind];
+      const paths = Number(actions.includes('open-structure')) + Number(actions.includes('view-definition'));
+      expect(paths, `${kind} 有 ${paths} 条看定义的路`).toBe(1);
     }
   });
 

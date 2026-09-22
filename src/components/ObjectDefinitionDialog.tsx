@@ -8,6 +8,9 @@ import { useLanguageStore } from '../stores/languageStore';
 import type { ConnectionProfile } from '../contracts';
 import type { ObjectCatalogQueries } from './DatabaseExplorer';
 import { requireDatabase } from '../utils/requireDatabase';
+import { ddlRequest, type SchemaMetadataQueries } from '../utils/catalogQueries';
+import { extractDdlStatements, joinDdlStatements } from '../utils/schemaObjects';
+import { identifierDialectFor } from '../utils/sqlIdentifiers';
 
 interface ObjectDefinitionDialogProps {
   object: DatabaseObject;
@@ -16,13 +19,18 @@ interface ObjectDefinitionDialogProps {
 }
 
 /**
- * 函数、存储过程、序列的定义。
+ * 除了表以外，每种对象的定义都在这里看。
  *
- * 这些对象没有行，用表视图打开只会查询失败；它们真正能看的就是定义本身，
- * 所以给一个只读弹窗而不是新开一个标签页。
+ * 函数、存储过程、序列**没有行**，用表视图打开只会查询失败；它们真正能看的
+ * 就是定义本身。视图有行，但它的主体同样是那段 SELECT——而结构页是个可编辑
+ * 的编辑器，不认视图，于是视图在此之前**一条看定义的路都没有**。
  *
- * 序列没有 `CREATE SEQUENCE` 的反解函数，但 `pg_sequences` 直接给出定义它的
- * 全部属性——如实列属性，不去拼一条可能不等价的 CREATE SEQUENCE。
+ * 三类各有各的来源，都是数据库自己吐出来的原文，不是我们从目录拼的：
+ * - 例程：`pg_get_functiondef` / `INFORMATION_SCHEMA.ROUTINES`
+ * - 视图与物化视图：`pg_get_viewdef` / `SHOW CREATE TABLE` / `sqlite_master`，
+ *   和结构页里那段「对象定义」走的是同一条查询
+ * - 序列没有 `CREATE SEQUENCE` 的反解函数，但 `pg_sequences` 直接给出定义它的
+ *   全部属性——如实列属性，不去拼一条可能不等价的 CREATE SEQUENCE
  */
 export function ObjectDefinitionDialog({
   object,
@@ -57,6 +65,28 @@ export function ObjectDefinitionDialog({
 
     const load = async () => {
       try {
+        if (object.kind === 'view' || object.kind === 'materialized-view') {
+          const metadata = await invoke<SchemaMetadataQueries>('get_schema_metadata_queries', {
+            dbType: connection.db_type
+          });
+          // ddl 为 null 表示这个方言给不出定义原文。留空让下面显示「数据库没有
+          // 返回定义」——那是实话，而拼一段我们自己的 CREATE VIEW 不是
+          const request = metadata.ddl && ddlRequest(
+            metadata.ddl,
+            metadata.parameter_count,
+            object.name,
+            object.schema,
+            identifierDialectFor(connection.db_type)
+          );
+          const rows = request
+            ? await requireDatabase(database).select(request.sql, request.params)
+            : [];
+          if (!cancelled) {
+            setDefinition(joinDdlStatements(extractDdlStatements(Array.isArray(rows) ? rows : [])));
+          }
+          return;
+        }
+
         const queries = await invoke<ObjectCatalogQueries>('get_object_catalog_queries', {
           dbType: connection.db_type
         });

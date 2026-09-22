@@ -18,14 +18,17 @@ export type ObjectMenuAction =
  * - **视图不给「打开结构」**：结构页是个可编辑的编辑器（`TableStructureEditor`），
  *   它不知道自己打开的是不是视图，改列会生成对视图无效的 DDL。
  *   让结构页认得视图是另一件事，不在这条里顺手做。
- * - **表和视图不给「查看定义」**：后端取定义走的是 `pg_get_functiondef`，
- *   只认例程；把视图的 oid 喂进去会直接报错。视图的 DDL 要另加
- *   `pg_get_viewdef`，同样是另一件事。
+ * - **表不给「查看定义」**：表的定义就在结构页里，它同时还给列、索引、外键。
+ *
+ * 由此来的不变量：**每种对象恰好有一条看它是什么的路**——表走结构页，
+ * 其余走定义弹窗。视图此前两条都没有：不给结构页，也不给查看定义，
+ * 于是一个视图的 SELECT 原文在界面上根本读不到（`pg_get_viewdef` 明明已经
+ * 在 `schema_metadata.rs` 里了，只是没有入口）。
  */
 export const OBJECT_MENU_ACTIONS: Record<DatabaseObjectKind, readonly ObjectMenuAction[]> = {
   table: ['open-data', 'open-structure', 'copy-name'],
-  view: ['open-data', 'copy-name'],
-  'materialized-view': ['open-data', 'copy-name'],
+  view: ['open-data', 'view-definition', 'copy-name'],
+  'materialized-view': ['open-data', 'view-definition', 'copy-name'],
   function: ['view-definition', 'copy-name'],
   procedure: ['view-definition', 'copy-name'],
   sequence: ['view-definition', 'copy-name']
