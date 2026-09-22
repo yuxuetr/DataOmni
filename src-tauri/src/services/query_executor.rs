@@ -283,6 +283,14 @@ impl SessionConnection {
     matches!(self, Self::Postgres(_))
   }
 
+  /// 这个方言的 DDL 会不会隐式提交当前事务。
+  ///
+  /// 只有 MySQL 是。PostgreSQL 与 SQLite 的 DDL 在事务里，`DROP TABLE`
+  /// 能回滚。见 `transaction_state::commits_implicitly`。
+  pub fn commits_implicitly_on_ddl(&self) -> bool {
+    matches!(self, Self::MySql(_))
+  }
+
   pub async fn execute_streaming(
     &mut self,
     sql: &str,

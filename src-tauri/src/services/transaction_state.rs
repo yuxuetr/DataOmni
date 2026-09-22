@@ -49,7 +49,16 @@ impl TransactionState {
   }
 
   /// 语句跑成功之后。`now` 由调用方给，这样这段逻辑能被直接测。
-  pub fn after_success(&mut self, sql: &str, now: &str) {
+  ///
+  /// `ddl_commits` 只有 MySQL 是真，见 [`commits_implicitly`]。
+  pub fn after_success(&mut self, sql: &str, now: &str, ddl_commits: bool) {
+    if ddl_commits && commits_implicitly(sql) {
+      // 事务到此为止了，不管我们发没发过 COMMIT
+      self.status = TransactionStatus::Idle;
+      self.started_at = None;
+      return;
+    }
+
     match transaction_effect(sql) {
       TransactionEffect::Begin => {
         // 已经在事务里又 BEGIN：PostgreSQL 只是警告，开始时间仍是最初那次。
@@ -83,6 +92,28 @@ impl TransactionState {
       self.status = TransactionStatus::Failed;
     }
   }
+}
+
+/// 这条语句会不会**隐式提交**当前事务。
+///
+/// MySQL 的 DDL 与权限语句都会：`BEGIN; UPDATE …; DROP TABLE t;` 里那条
+/// DROP 不只是自己撤不回来，它会把前面那条 UPDATE 一起提交掉。
+/// PostgreSQL 与 SQLite 的 DDL 是事务性的，没有这回事。
+///
+/// 不认出来的后果不只是状态栏说假话：`begin_if_needed` 靠
+/// `in_transaction()` 决定要不要补 BEGIN，状态停在 Active 的话，DDL 之后
+/// 的下一条写入**不会**被放进事务，而界面仍然显示「事务中」。
+///
+/// 前端有一份同样的表（`src/utils/statementReversibility.ts`），回答的是
+/// 另一个问题——执行**之前**要不要向用户承诺可以回滚。两处都照 MySQL 文档
+/// 的隐式提交清单写。
+fn commits_implicitly(sql: &str) -> bool {
+  const IMPLICIT_COMMIT: [&str; 13] = [
+    "CREATE", "ALTER", "DROP", "RENAME", "TRUNCATE", "GRANT", "REVOKE", "ANALYZE", "OPTIMIZE",
+    "REPAIR", "FLUSH", "LOCK", "UNLOCK",
+  ];
+  let (first, _) = leading_keywords(sql);
+  IMPLICIT_COMMIT.contains(&first.as_str())
 }
 
 /// 只看开头的一两个关键字。
@@ -174,20 +205,20 @@ mod tests {
   fn a_second_begin_keeps_the_original_start_time() {
     // 覆盖成现在会让状态栏上的计时凭空归零，而事务其实已经开了很久
     let mut state = TransactionState::default();
-    state.after_success("BEGIN", NOW);
-    state.after_success("BEGIN", "2026-09-21T01:00:00Z");
+    state.after_success("BEGIN", NOW, false);
+    state.after_success("BEGIN", "2026-09-21T01:00:00Z", false);
     assert_eq!(state.started_at.as_deref(), Some(NOW));
   }
 
   #[test]
   fn postgres_marks_the_transaction_failed_but_the_others_do_not() {
     let mut postgres = TransactionState::default();
-    postgres.after_success("BEGIN", NOW);
+    postgres.after_success("BEGIN", NOW, false);
     postgres.after_failure(true);
     assert_eq!(postgres.status, TransactionStatus::Failed);
 
     let mut mysql = TransactionState::default();
-    mysql.after_success("BEGIN", NOW);
+    mysql.after_success("BEGIN", NOW, true);
     mysql.after_failure(false);
     assert_eq!(mysql.status, TransactionStatus::Active);
   }
@@ -203,18 +234,58 @@ mod tests {
   #[test]
   fn succeeding_again_clears_the_failed_state_without_ending_the_transaction() {
     let mut state = TransactionState::default();
-    state.after_success("BEGIN", NOW);
+    state.after_success("BEGIN", NOW, false);
     state.after_failure(true);
-    state.after_success("ROLLBACK TO SAVEPOINT s", "2026-09-21T02:00:00Z");
+    state.after_success("ROLLBACK TO SAVEPOINT s", "2026-09-21T02:00:00Z", false);
     assert_eq!(state.status, TransactionStatus::Active);
     assert_eq!(state.started_at.as_deref(), Some(NOW), "回到保存点不重开事务");
+  }
+
+  /// MySQL 的 DDL 会隐式提交。状态停在 Active 的话，`begin_if_needed` 会以为
+  /// 还在事务里，于是 DDL 之后的下一条写入**不会**被放进事务，而状态栏仍然
+  /// 写着「事务中」——用户以为能回滚，实际每条都已经落库
+  #[test]
+  fn mysql_ddl_ends_the_transaction_even_though_nobody_sent_commit() {
+    // 带注释的那条也要认出来：`leading_keywords` 会跳过它，
+    // 而按 `split_whitespace` 取第一个词的话第一个词是 `/*`
+    for sql in
+      ["DROP TABLE orders", "alter table orders add column note text", "/* 收尾 */ TRUNCATE t"]
+    {
+      let mut state = TransactionState::default();
+      state.after_success("BEGIN", NOW, true);
+      state.after_success(sql, "2026-09-21T02:00:00Z", true);
+      assert_eq!(state, TransactionState::default(), "{sql}");
+    }
+  }
+
+  /// 同一条语句在 PostgreSQL / SQLite 上是事务性的，`DROP TABLE` 能回滚。
+  /// 在那两家把事务标成结束，回滚按钮会在还能回滚的时候变灰
+  #[test]
+  fn the_same_ddl_stays_inside_the_transaction_on_the_other_two() {
+    let mut state = TransactionState::default();
+    state.after_success("BEGIN", NOW, false);
+    state.after_success("DROP TABLE orders", "2026-09-21T02:00:00Z", false);
+    assert_eq!(state.status, TransactionStatus::Active);
+    assert_eq!(state.started_at.as_deref(), Some(NOW));
+  }
+
+  /// DDL 之外的写入不隐式提交——把它们也算进去，回滚按钮会在真的能回滚的
+  /// 时候变灰，而这正是一批 DELETE 改错之后最需要它的时刻
+  #[test]
+  fn ordinary_writes_are_not_implicit_commits() {
+    for sql in ["DELETE FROM orders", "UPDATE t SET note = 'x'", "INSERT INTO t VALUES (1)"] {
+      let mut state = TransactionState::default();
+      state.after_success("BEGIN", NOW, true);
+      state.after_success(sql, "2026-09-21T02:00:00Z", true);
+      assert_eq!(state.status, TransactionStatus::Active, "{sql}");
+    }
   }
 
   #[test]
   fn ending_clears_the_start_time() {
     let mut state = TransactionState::default();
-    state.after_success("BEGIN", NOW);
-    state.after_success("COMMIT", NOW);
+    state.after_success("BEGIN", NOW, false);
+    state.after_success("COMMIT", NOW, false);
     assert_eq!(state, TransactionState::default());
   }
 }

@@ -48,7 +48,11 @@ impl SessionRuntime {
 
   fn record(&mut self, sql: &str, succeeded: bool) {
     if succeeded {
-      self.transaction.after_success(sql, &chrono::Utc::now().to_rfc3339());
+      self.transaction.after_success(
+        sql,
+        &chrono::Utc::now().to_rfc3339(),
+        self.connection.commits_implicitly_on_ddl(),
+      );
     } else {
       self.transaction.after_failure(self.connection.aborts_transaction_on_error());
     }
