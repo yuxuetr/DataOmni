@@ -779,7 +779,7 @@ export const en: Translations = {
   'form.db.gaps.tidb': 'A few things do not work on TiDB: query plans (it rejects EXPLAIN FORMAT=JSON); check constraints are not shown on the structure page; there are no triggers or stored procedures; changing a column and renaming the table in one save is rejected as a whole, so save them separately.',
   'form.db.gaps.cockroachdb': 'A few things do not work on CockroachDB: query plans (it rejects EXPLAIN (FORMAT JSON)); triggers cannot be read on the structure page; errors carry no position or table name.',
   'form.db.sqlserver.desc': 'Microsoft\'s relational database',
-  'form.db.pendingFeatures': '{database} support is arriving in stages: you can connect, run SQL, browse objects and table structure, and page through table data. Not available yet: {features}.',
+  'form.db.pendingFeatures': '{database} support is arriving in stages. Not available yet: {features}.',
   'feature.dataEditing': 'editing data in the grid',
   'feature.transactions': 'transaction controls',
   'feature.explain': 'query plans',

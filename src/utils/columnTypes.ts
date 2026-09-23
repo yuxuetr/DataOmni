@@ -1,3 +1,5 @@
+import type { SqlDialect } from '../contracts/queryExecution';
+
 /**
  * 列的声明类型能告诉我们的那一点点事。
  *
@@ -49,6 +51,22 @@ const COMPARABLE_TYPE_TOKENS = new Set([
   'uuid'
 ]);
 
-export function isConcurrencyComparable(dataType: string): boolean {
-  return COMPARABLE_TYPE_TOKENS.has(columnTypeToken(dataType));
+/**
+ * SQL Server 与另外三家不同的几处：
+ *
+ * - `text` / `ntext` 根本不能拿 `=` 比（402），整条语句报错。
+ * - `time` 与 `datetime2` 精确到 100 纳秒，读回来只留到微秒，比不上。
+ *   `datetime` 的 1/300 秒按毫秒写出，读回来是同一个刻度，比得上。
+ * - 另外三家没有的 `nvarchar` / `nchar` / `uniqueidentifier` / `bit` 比得准。
+ */
+const SQL_SERVER_INCOMPARABLE = new Set(['text', 'time']);
+const SQL_SERVER_COMPARABLE = new Set(['nvarchar', 'nchar', 'uniqueidentifier', 'bit']);
+
+export function isConcurrencyComparable(dataType: string, dialect?: SqlDialect): boolean {
+  const token = columnTypeToken(dataType);
+  if (dialect === 'sqlserver') {
+    return SQL_SERVER_COMPARABLE.has(token)
+      || (COMPARABLE_TYPE_TOKENS.has(token) && !SQL_SERVER_INCOMPARABLE.has(token));
+  }
+  return COMPARABLE_TYPE_TOKENS.has(token);
 }

@@ -806,7 +806,7 @@ export const zh = {
   'form.db.gaps.tidb': 'TiDB 上有几项用不了：执行计划（不认 EXPLAIN FORMAT=JSON）；结构页不显示检查约束；没有触发器与存储过程；改结构时改列和改表名同时做会被整条拒绝，分两次保存即可。',
   'form.db.gaps.cockroachdb': 'CockroachDB 上有几项用不了：执行计划（不认 EXPLAIN (FORMAT JSON)）；结构页读不到触发器；错误信息里没有出错位置和表名。',
   'form.db.sqlserver.desc': '微软的关系型数据库',
-  'form.db.pendingFeatures': '{database} 还在分阶段接入：能连接、执行 SQL、浏览对象与表结构、翻看表数据；这些暂时还用不了：{features}。',
+  'form.db.pendingFeatures': '{database} 还在分阶段接入，这些暂时还用不了：{features}。',
   'feature.dataEditing': '在表格里改数据',
   'feature.transactions': '事务控制',
   'feature.explain': '执行计划',

@@ -64,6 +64,10 @@ describe('binaryLiteral', () => {
   it('PostgreSQL 用 bytea 的 \\x 形式', () => {
     expect(binaryLiteral('DEADBEEF', 'postgresql')).toBe("'\\xdeadbeef'::bytea");
   });
+
+  it('SQL Server 用 0x，它不认 X\'...\'', () => {
+    expect(binaryLiteral('DE AD', 'sqlserver')).toBe('0xdead');
+  });
 });
 
 describe('prettyJson', () => {

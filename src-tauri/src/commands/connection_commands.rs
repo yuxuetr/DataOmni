@@ -141,7 +141,8 @@ pub async fn test_connection(
     };
     let target = SqlServerTarget::from_profile(&reachable);
     let client = sql_server::connect(&target).await.map_err(|error| error.message)?;
-    sql_server_registry.insert(connection_string.clone(), SqlServerPool::new(target, client));
+    let pool = SqlServerPool::new(target, client).await.map_err(|error| error.message)?;
+    sql_server_registry.insert(connection_string.clone(), pool);
   }
   Ok(connection_string)
 }

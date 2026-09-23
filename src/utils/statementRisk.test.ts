@@ -31,6 +31,19 @@ describe('语句风险判定', () => {
     expect(classifyStatementRisk('UPDATE users SET active = 0')).toBe('bulk-write');
   });
 
+  it('MERGE 的影响面由数据决定，按整表操作算', () => {
+    // WHEN NOT MATCHED BY SOURCE THEN DELETE 会删掉所有对不上的行
+    expect(classifyStatementRisk(
+      'MERGE INTO t USING s ON t.id = s.id WHEN NOT MATCHED BY SOURCE THEN DELETE;'
+    )).toBe('bulk-write');
+  });
+
+  it('SELECT … INTO 是建表或写文件，不是读', () => {
+    expect(classifyStatementRisk('SELECT * INTO backup_t FROM t')).toBe('scoped-write');
+    // 子查询里的 INTO 不算
+    expect(classifyStatementRisk("SELECT (SELECT 1) AS n FROM t WHERE note = 'into'")).toBe('read');
+  });
+
   it('DROP 和 TRUNCATE 是破坏性的', () => {
     expect(classifyStatementRisk('DROP TABLE users')).toBe('destructive');
     expect(classifyStatementRisk('TRUNCATE TABLE users')).toBe('destructive');

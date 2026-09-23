@@ -10,10 +10,13 @@
 //! - **被放弃的查询不会在服务端停下。** tiberius 不发 TDS 的 attention 包，
 //!   同一条连接上的下一条要等它跑完。所以超时与取消要**关掉那条连接**，
 //!   服务端据此中止；见 [`SqlServerConnection`] 上的说明。
-//! - **结果流不报影响行数。** 语句原样发；没有结果集的，在同一条连接上
-//!   紧接着另发一批 `SELECT @@ROWCOUNT` 取回来（它跨批保留）。**不**把这一句
-//!   拼在用户的语句后面：那样一条没写完的语句报的是「`;` 附近有语法错误」，
-//!   指着一段用户根本没写过的文字，而 `CREATE PROCEDURE` 会把它存进过程体。
+//! - **结果流不报影响行数。** 语句原样发；之后在同一条连接上另发一批，
+//!   问 `@@ROWCOUNT`（它跨批保留）与事务深度。**不**把这一句拼在用户的语句
+//!   后面：那样一条没写完的语句报的是「`;` 附近有语法错误」，指着一段用户
+//!   根本没写过的文字，而 `CREATE PROCEDURE` 会把它存进过程体。
+//! - **事务状态问服务端，不从语句推。** 一条类型转换错误（245）会把整个事务
+//!   回滚掉，而语句本身只是 `SELECT`；按语句推，状态栏会一直说「事务中」，
+//!   关掉自动提交时后面的写入也不会再被放进事务。
 
 use crate::models::{ConnectionProfile, TlsMode};
 use crate::services::query_error::QueryErrorDetails;
@@ -22,6 +25,11 @@ use crate::services::query_executor::{
   admit_row_bytes, flush_full_batch, flush_remaining_batch, format_date, format_datetime,
   format_time, tagged_value, NonQueryHandling, QueryColumnMetadata, QueryExecutionSummary,
   QueryResultBatch, QueryRow, QueryTruncationReason, StreamOptions,
+};
+use crate::services::transaction_state::{TransactionState, TransactionStatus};
+use crate::services::write_batch::{
+  WriteBatchError, WriteStatement, ROW_COUNT_MISMATCH, ROW_COUNT_MISMATCH_CODE,
+  UNSUPPORTED_PARAMETER_TYPE,
 };
 use crate::services::QueryError;
 use futures_util::{FutureExt, TryStreamExt};
@@ -80,6 +88,13 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 空闲连接留几条。目录查询是短而零星的，多留没用
 const MAX_IDLE: usize = 4;
+
+/// 池子里的连接等锁最多等多久。
+///
+/// SQL Server 默认的读已提交是**加锁读**，不是另外两家那样的多版本读：编辑器
+/// 里开着一个改过某张表的事务，表数据页、目录查询与网格的提交在这张表上会
+/// 一直等下去，界面停在「加载中」。等满了报 1222，至少说得出是在等锁。
+const POOL_LOCK_TIMEOUT: &str = "SET LOCK_TIMEOUT 5000";
 
 /// 连上一台 SQL Server 需要知道的全部。
 #[derive(Clone)]
@@ -164,8 +179,12 @@ pub struct SqlServerPool {
 
 impl SqlServerPool {
   /// `first` 是测试连接时连上的那一条，直接留着用，省一次登录
-  pub fn new(target: SqlServerTarget, first: SqlServerClient) -> Arc<Self> {
-    Arc::new(Self { target, idle: Mutex::new(vec![first]) })
+  pub async fn new(
+    target: SqlServerTarget,
+    mut first: SqlServerClient,
+  ) -> Result<Arc<Self>, QueryError> {
+    run_simple(&mut first, POOL_LOCK_TIMEOUT).await?;
+    Ok(Arc::new(Self { target, idle: Mutex::new(vec![first]) }))
   }
 
   /// 给一个会话用的连接：用完**不放回**。
@@ -177,6 +196,7 @@ impl SqlServerPool {
       client: Some(connect(&self.target).await?),
       target: self.target.clone(),
       pool: None,
+      transaction: TransactionState::default(),
     })
   }
 
@@ -185,12 +205,17 @@ impl SqlServerPool {
     let idle = self.idle.lock().ok().and_then(|mut idle| idle.pop());
     let client = match idle {
       Some(client) => client,
-      None => connect(&self.target).await?,
+      None => {
+        let mut client = connect(&self.target).await?;
+        run_simple(&mut client, POOL_LOCK_TIMEOUT).await?;
+        client
+      }
     };
     Ok(SqlServerConnection {
       client: Some(client),
       target: self.target.clone(),
       pool: Some(Arc::clone(self)),
+      transaction: TransactionState::default(),
     })
   }
 }
@@ -206,6 +231,8 @@ pub struct SqlServerConnection {
   target: SqlServerTarget,
   /// 目录查询的连接用完放回这里；会话连接是 `None`
   pool: Option<Arc<SqlServerPool>>,
+  /// 上一条语句之后服务端报的事务状态
+  transaction: TransactionState,
 }
 
 impl SqlServerConnection {
@@ -231,27 +258,116 @@ impl SqlServerConnection {
     // 和 MySQL 同一个理由：会话连接换了库，对象树与表数据还在原来那个库上读
     crate::services::query_executor::refuse_use_statement(sql)?;
     let mut client = self.take_client().await?;
-    let result = guarded(stream_first_result(&mut client, sql, options, sink)).await;
-    // 连接本身断了、或者驱动在半路失败了，就不放回：下一次用的时候重连
-    if keeps_connection(&result) {
-      self.client = Some(client);
-    }
-    result
+    let outcome = guarded(stream_first_result(&mut client, sql, options, sink)).await;
+    self
+      .finish(client, outcome, |summary, rows_affected| match summary {
+        QueryExecutionSummary::Affected { .. } => QueryExecutionSummary::Affected { rows_affected },
+        rows => rows,
+      })
+      .await
   }
 
   /// 一次没有结果集可言的执行（事务控制这类）。
   pub async fn execute_batch(&mut self, sql: &str) -> Result<u64, QueryError> {
     let mut client = self.take_client().await?;
-    let result: Result<u64, QueryError> = guarded(async {
+    let outcome = guarded(async {
       let stream = client.simple_query(sql).await.map_err(|error| query_error(error, Some(sql)))?;
       stream.into_results().await.map_err(|error| query_error(error, Some(sql)))?;
       Ok(0)
     })
     .await;
-    if keeps_connection(&result) {
-      self.client = Some(client);
+    self.finish(client, outcome, |_, rows_affected| rows_affected).await
+  }
+
+  /// 一次执行之后：问服务端这条语句留下了什么，再决定连接留不留。
+  ///
+  /// 失败了也要问——失败的那一条可能已经把整个事务回滚了。连接断了、驱动
+  /// 半路失败了就不问也不留：连接随 `client` 一起丢掉，服务端据此回滚，
+  /// 事务状态也就回到了空闲。
+  async fn finish<T>(
+    &mut self,
+    mut client: SqlServerClient,
+    outcome: Result<T, QueryError>,
+    with_row_count: impl FnOnce(T, u64) -> T,
+  ) -> Result<T, QueryError> {
+    let started_at = std::mem::take(&mut self.transaction).started_at;
+    if !keeps_connection(&outcome) {
+      return outcome;
     }
-    result
+    let after = match guarded(after_statement(&mut client)).await {
+      Ok(after) => after,
+      // 语句本身的错优先：那是用户要看的
+      Err(error) => return outcome.and(Err(error)),
+    };
+    self.client = Some(client);
+    self.transaction = after.transaction(started_at);
+    outcome.map(|value| with_row_count(value, after.row_count))
+  }
+
+  /// 服务端上一次报的事务状态。
+  ///
+  /// 连接被放弃过（超时、取消）就是空闲：那条连接已经关了，服务端回滚了它上面
+  /// 的事务。
+  pub fn transaction(&self) -> TransactionState {
+    match self.client {
+      Some(_) => self.transaction.clone(),
+      None => TransactionState::default(),
+    }
+  }
+}
+
+/// 一条语句之后，会话里留下的东西
+struct AfterStatement {
+  row_count: u64,
+  /// `@@TRANCOUNT`：嵌套的 `BEGIN TRANSACTION` 各加一层，`COMMIT` 减一层，
+  /// `ROLLBACK` 一次清零。
+  ///
+  /// 不问 `XACT_STATE()`：「开着但只能回滚」的事务活不过一批——批结束时服务端
+  /// 自己把它回滚掉（3998），而这里问的时候总是在下一批。
+  depth: i32,
+}
+
+impl AfterStatement {
+  fn transaction(&self, started_at: Option<String>) -> TransactionState {
+    if self.depth <= 0 {
+      return TransactionState::default();
+    }
+    TransactionState {
+      status: TransactionStatus::Active,
+      // 还是同一个事务就沿用开始时间，否则状态栏上的计时每条语句都归零
+      started_at: started_at.or_else(|| Some(chrono::Utc::now().to_rfc3339())),
+    }
+  }
+}
+
+async fn after_statement(client: &mut SqlServerClient) -> Result<AfterStatement, QueryError> {
+  // `@@ROWCOUNT` 必须是这一批里第一个被求值的：任何一条语句都会改掉它
+  let row = client
+    .simple_query("SELECT CAST(@@ROWCOUNT AS BIGINT), CAST(@@TRANCOUNT AS INT)")
+    .await
+    .map_err(|error| query_error(error, None))?
+    .into_row()
+    .await
+    .map_err(|error| query_error(error, None))?;
+  let (count, depth) = match &row {
+    Some(row) => (row.get::<i64, _>(0).unwrap_or(0), row.get::<i32, _>(1).unwrap_or(0)),
+    None => (0, 0),
+  };
+  Ok(AfterStatement { row_count: u64::try_from(count).unwrap_or(0), depth })
+}
+
+/// 这条语句是不是在开、关事务——关掉自动提交时，这种语句前面不补
+/// `BEGIN TRANSACTION`。
+///
+/// 不能照另外三家只看第一个词：T-SQL 里 `BEGIN` 还开语句块（`BEGIN TRY`、
+/// `BEGIN … END`），把 `BEGIN TRY DELETE …` 当成开事务，那条 DELETE 就在
+/// 「自动提交已关闭」之下自动提交了。
+pub fn controls_transaction(sql: &str) -> bool {
+  let (first, second) = crate::services::transaction_state::leading_keywords(sql);
+  match first.as_str() {
+    "BEGIN" => matches!(second.as_str(), "TRAN" | "TRANSACTION" | "DISTRIBUTED"),
+    "COMMIT" | "ROLLBACK" => true,
+    _ => false,
   }
 }
 
@@ -318,18 +434,7 @@ async fn select_rows(
   params: &[JsonValue],
 ) -> Result<Vec<QueryRow>, QueryError> {
   let mut query = tiberius::Query::new(sql);
-  for param in params {
-    match param {
-      JsonValue::Null => query.bind(Option::<String>::None),
-      JsonValue::Bool(value) => query.bind(*value),
-      JsonValue::Number(number) => match number.as_i64() {
-        Some(integer) => query.bind(integer),
-        None => query.bind(number.as_f64()),
-      },
-      JsonValue::String(text) => query.bind(text.clone()),
-      other => query.bind(other.to_string()),
-    }
-  }
+  bind_params(&mut query, params)?;
   let stream = query.query(client).await.map_err(|error| query_error(error, Some(sql)))?;
   let rows = stream.into_first_result().await.map_err(|error| query_error(error, Some(sql)))?;
   rows
@@ -343,6 +448,116 @@ async fn select_rows(
       Ok(values)
     })
     .collect()
+}
+
+/// 绑定参数。只认标量，理由同 `write_batch` 的 `bind_params!`：数组和对象走到
+/// 这里说明两边漂开了，绑成一段 JSON 文本会悄悄存进去一串像数据的字符。
+fn bind_params(query: &mut tiberius::Query<'_>, params: &[JsonValue]) -> Result<(), QueryError> {
+  for param in params {
+    match param {
+      JsonValue::Null => query.bind(Option::<String>::None),
+      JsonValue::Bool(value) => query.bind(*value),
+      JsonValue::Number(number) => match number.as_i64() {
+        Some(integer) => query.bind(integer),
+        None => query.bind(number.as_f64()),
+      },
+      JsonValue::String(text) => query.bind(text.clone()),
+      other => return Err(QueryError::message(format!("{UNSUPPORTED_PARAMETER_TYPE}: {other}"))),
+    }
+  }
+  Ok(())
+}
+
+async fn run_simple(client: &mut SqlServerClient, sql: &str) -> Result<(), QueryError> {
+  guarded(async {
+    let stream = client.simple_query(sql).await.map_err(|error| query_error(error, Some(sql)))?;
+    stream.into_results().await.map_err(|error| query_error(error, Some(sql)))?;
+    Ok(())
+  })
+  .await
+}
+
+impl SqlServerPool {
+  /// 一批写入，在一个事务里，要么全成要么全不成。约定与 sqlx 那三家的
+  /// `write_batch::execute_write_batch` 相同。
+  ///
+  /// 影响行数用同一批里紧跟的 `SELECT @@ROWCOUNT` 取，不用驱动报的 DONE 计数：
+  /// 表上的触发器每写一次都会多报一个计数（一条 UPDATE 触发三行审计插入，
+  /// 驱动报的是 1 和 3），「必须恰好改一行」的核对就永远不过，那张表一行也
+  /// 改不了。`@@ROWCOUNT` 只算这条语句自己。
+  ///
+  /// 这里拼接没有问题：语句是网格生成的，不是用户在编辑器里写的原文。
+  pub async fn write_batch(
+    self: &Arc<Self>,
+    statements: &[WriteStatement],
+  ) -> Result<Vec<u64>, WriteBatchError> {
+    if statements.is_empty() {
+      return Ok(Vec::new());
+    }
+    let mut connection =
+      self.acquire_reusable().await.map_err(|error| WriteBatchError::at(0, error))?;
+    let mut client =
+      connection.take_client().await.map_err(|error| WriteBatchError::at(0, error))?;
+
+    let mut index = 0;
+    let outcome = guarded(write_in_transaction(&mut client, statements, &mut index)).await;
+    // 连接要回到池子里给目录查询用，上面不能留着事务。失败时回滚不掉
+    // （连接断了），这条连接就不要了——服务端会在断开时回滚
+    let reusable = match &outcome {
+      Ok(_) => true,
+      Err(error) => {
+        !breaks_connection(error)
+          && run_simple(&mut client, "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION").await.is_ok()
+      }
+    };
+    if reusable {
+      connection.client = Some(client);
+    }
+    outcome.map_err(|error| WriteBatchError::at(index, error))
+  }
+}
+
+/// `index` 记着做到了第几条，出错时由调用方标在那一条上；提交失败标在
+/// `statements.len()`，和 sqlx 那边一样
+async fn write_in_transaction(
+  client: &mut SqlServerClient,
+  statements: &[WriteStatement],
+  index: &mut usize,
+) -> Result<Vec<u64>, QueryError> {
+  run_simple(client, "BEGIN TRANSACTION").await?;
+  let mut affected = Vec::with_capacity(statements.len());
+  for (position, statement) in statements.iter().enumerate() {
+    *index = position;
+    let sql = format!("{};\nSELECT CAST(@@ROWCOUNT AS BIGINT)", statement.sql);
+    let mut query = tiberius::Query::new(sql.as_str());
+    bind_params(&mut query, &statement.params)?;
+    let results = query
+      .query(client)
+      .await
+      .map_err(|error| query_error(error, Some(&statement.sql)))?
+      .into_results()
+      .await
+      .map_err(|error| query_error(error, Some(&statement.sql)))?;
+    // 触发器也可能返回结果集，行数在最后一个里
+    let rows = results
+      .last()
+      .and_then(|set| set.first())
+      .and_then(|row| row.get::<i64, _>(0))
+      .and_then(|count| u64::try_from(count).ok())
+      .unwrap_or(0);
+    if let Some(expected) = statement.expect_rows {
+      if rows != expected {
+        return Err(QueryError::with_code(
+          ROW_COUNT_MISMATCH_CODE,
+          format!("{ROW_COUNT_MISMATCH}: {expected} · {rows}"),
+        ));
+      }
+    }
+    affected.push(rows);
+  }
+  *index = statements.len();
+  run_simple(client, "COMMIT TRANSACTION").await?;
+  Ok(affected)
 }
 
 /// 插件的解码器返回的是裸值；我们的解码器给精度敏感的类型挂了标签
@@ -423,8 +638,9 @@ async fn stream_first_result(
   }
   drop(stream);
 
+  // 影响行数由调用方随后问 `@@ROWCOUNT` 填上，见 `SqlServerConnection::finish`
   let Some((_, column_metadata, columns)) = first else {
-    return Ok(QueryExecutionSummary::Affected { rows_affected: last_row_count(client).await? });
+    return Ok(QueryExecutionSummary::Affected { rows_affected: 0 });
   };
   flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
   Ok(QueryExecutionSummary::Rows {
@@ -438,20 +654,6 @@ async fn stream_first_result(
     byte_limit: options.byte_limit,
     bytes_read,
   })
-}
-
-/// 上一条语句影响了几行。必须紧接着在**同一条连接**上问：`@@ROWCOUNT`
-/// 属于会话，跨批保留，下一条语句一执行就变了。
-async fn last_row_count(client: &mut SqlServerClient) -> Result<u64, QueryError> {
-  let row = client
-    .simple_query("SELECT CAST(@@ROWCOUNT AS BIGINT)")
-    .await
-    .map_err(|error| query_error(error, None))?
-    .into_row()
-    .await
-    .map_err(|error| query_error(error, None))?;
-  let count = row.and_then(|row| row.get::<i64, _>(0)).unwrap_or(0);
-  Ok(u64::try_from(count).unwrap_or(0))
 }
 
 /// 列名。SQL Server 的表达式列没有名字（SSMS 显示「(No column name)」），而
@@ -580,7 +782,13 @@ fn decode(column_type: ColumnType, data: &ColumnData<'static>) -> Result<JsonVal
       value.map(|numeric| tagged_value("decimal", format_numeric(numeric.value(), numeric.scale())))
     }
     ColumnData::Xml(value) => value.as_ref().map(|xml| JsonValue::from(xml.to_string())),
-    ColumnData::DateTime(_) | ColumnData::SmallDateTime(_) | ColumnData::DateTime2(_) => {
+    // 老的 datetime 以 1/300 秒为刻度，照原样换算是 `.003333`：SQL Server 从
+    // 字符串转 datetime 最多收三位小数，这个值写回去或拿去比较会报 241。
+    // 按毫秒写（SSMS 也这么显示），转回去落在同一个刻度上
+    ColumnData::DateTime(_) => time::PrimitiveDateTime::from_sql(data)
+      .map_err(|error| query_error(error, None))?
+      .map(|value| tagged_value("datetime", format_datetime(round_to_millisecond(value)))),
+    ColumnData::SmallDateTime(_) | ColumnData::DateTime2(_) => {
       time::PrimitiveDateTime::from_sql(data)
         .map_err(|error| query_error(error, None))?
         .map(|value| tagged_value("datetime", format_datetime(value)))
@@ -596,6 +804,12 @@ fn decode(column_type: ColumnType, data: &ColumnData<'static>) -> Result<JsonVal
       .map(|value| tagged_value("datetime", format_offset_datetime(value))),
   };
   Ok(value.unwrap_or(JsonValue::Null))
+}
+
+/// 刻度最大是 299/300 秒，四舍五入到 997 毫秒，不会进位到下一秒
+fn round_to_millisecond(value: time::PrimitiveDateTime) -> time::PrimitiveDateTime {
+  let millis = (value.nanosecond() + 500_000) / 1_000_000;
+  value.replace_nanosecond(millis.min(999) * 1_000_000).unwrap_or(value)
 }
 
 /// `datetimeoffset` 照 SQL Server 自己的写法：本地时间加偏移，`+08:00`。
@@ -649,10 +863,11 @@ async fn guarded<T>(future: impl Future<Output = Result<T, QueryError>>) -> Resu
 
 /// 这次执行之后连接还能不能接着用：服务端报的错可以，断线与驱动失败不行
 fn keeps_connection<T>(result: &Result<T, QueryError>) -> bool {
-  !matches!(
-    result,
-    Err(error) if matches!(error.code.as_deref(), Some(CONNECTION_LOST_CODE | DRIVER_FAILURE_CODE))
-  )
+  !matches!(result, Err(error) if breaks_connection(error))
+}
+
+fn breaks_connection(error: &QueryError) -> bool {
+  matches!(error.code.as_deref(), Some(CONNECTION_LOST_CODE | DRIVER_FAILURE_CODE))
 }
 
 fn connection_lost(error: impl std::fmt::Display) -> QueryError {

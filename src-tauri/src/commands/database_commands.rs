@@ -76,7 +76,7 @@ impl ResolvedPool<'_> {
   }
 }
 
-/// 写入、导出、导入还没接到 SQL Server 上（第三、第四阶段）。不在这里拦的话，
+/// 导出、导入还没接到 SQL Server 上（第四阶段）。不在这里拦的话，
 /// 它们去插件的 `DbInstances` 里找池子找不到，报的是「会话未连接」——
 /// 而界面上连接明明是绿的
 fn refuse_sql_server(connection_string: &str, operation: &str) -> Result<(), QueryError> {
@@ -217,6 +217,7 @@ pub async fn execute_write_batch(
   connection_service_state: State<'_, ConnectionServiceState>,
   tunnels: State<'_, TunnelRegistry>,
   database_instances: State<'_, DbInstances>,
+  sql_server: State<'_, SqlServerRegistry>,
 ) -> Result<Vec<u64>, WriteBatchError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&connection_id).await;
@@ -229,11 +230,10 @@ pub async fn execute_write_batch(
     service.resolve_connection_string(&connection_id, tunnel_port).map_err(batch_error)?
   };
 
-  refuse_sql_server(&connection_string, "write")
+  let resolved = ResolvedPool::resolve(connection_string, &database_instances, &sql_server)
+    .await
     .map_err(|error| WriteBatchError { statement_index: 0, error })?;
-  let instances = database_instances.0.read().await;
-  let pool =
-    instances.get(&connection_string).ok_or_else(|| batch_error(DB_SESSION_NOT_CONNECTED))?;
+  let pool = resolved.pool_ref().map_err(|error| WriteBatchError { statement_index: 0, error })?;
   write_batch::execute_write_batch(pool, &statements).await
 }
 

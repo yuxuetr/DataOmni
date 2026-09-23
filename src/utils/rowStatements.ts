@@ -41,12 +41,18 @@ export interface RowKey {
   values: Readonly<Record<string, BoundValue>>;
 }
 
-/** 按方言发占位符。PostgreSQL 的 `$n` 是按出现次序编号的，不能各自为政 */
+/**
+ * 按方言发占位符。PostgreSQL 的 `$n` 是按出现次序编号的，不能各自为政；
+ * SQL Server 的 `@Pn` 是 tiberius 给参数起的名字，同样按次序编号
+ */
 function createPlaceholderAllocator(dialect: SqlIdentifierDialect): () => string {
   let index = 0;
   return () => {
     index += 1;
-    return dialect === 'postgresql' ? `$${index}` : '?';
+    if (dialect === 'postgresql') {
+      return `$${index}`;
+    }
+    return dialect === 'sqlserver' ? `@P${index}` : '?';
   };
 }
 
@@ -131,6 +137,11 @@ function assignmentTerm(
       // 用户明确选择「表达式」时才走到这里，原样写进语句正是它的意思
       return input.sql;
     case 'null':
+      // SQL Server 的空参数也带类型（绑成 nvarchar），而 nvarchar 不能隐式
+      // 转成 varbinary：把二进制列置空会报 257。字面的 NULL 没有类型
+      if (dialect === 'sqlserver') {
+        return 'NULL';
+      }
       params.push(null);
       return placeholder();
     case 'value':
@@ -178,7 +189,7 @@ function guardConditions(
       return [];
     }
     const column = byName.get(name);
-    if (!column || !isConcurrencyComparable(column.data_type)) {
+    if (!column || !isConcurrencyComparable(column.data_type, target.dialect)) {
       return [];
     }
     const quoted = quoteSqlIdentifier(name, target.dialect);
@@ -298,7 +309,7 @@ export function renderStatementForDisplay(
   dialect: SqlIdentifierDialect
 ): string {
   let index = 0;
-  return statement.sql.replace(/\$\d+|\?/g, () => {
+  return statement.sql.replace(/\$\d+|@P\d+|\?/g, () => {
     const value = statement.params[index];
     index += 1;
     if (value === null || value === undefined) {
@@ -308,6 +319,10 @@ export function renderStatementForDisplay(
       return String(value);
     }
     if (typeof value === 'boolean') {
+      // T-SQL 没有布尔字面量，bit 列写 1 / 0
+      if (dialect === 'sqlserver') {
+        return value ? '1' : '0';
+      }
       return value ? 'TRUE' : 'FALSE';
     }
     return quoteSqlStringLiteral(value, dialect);

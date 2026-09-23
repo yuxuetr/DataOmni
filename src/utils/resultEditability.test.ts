@@ -35,6 +35,19 @@ describe('parseSingleTableSelect', () => {
     expect(parseSingleTableSelect('SELECT * FROM Users', 'mysql')?.table).toBe('Users');
   });
 
+  it('SQL Server 的方括号与 TOP n 可以认', () => {
+    // SSMS 的「选择前 1000 行」就是这个形状，编辑器里「查询这张表」也生成它
+    expect(parseSingleTableSelect('SELECT TOP 100 * FROM [dbo].[Order]]s]', 'sqlserver')).toEqual({
+      schema: 'dbo',
+      table: 'Order]s',
+      projection: null
+    });
+    expect(parseSingleTableSelect('select top (5) [id], name from t', 'sqlserver')?.projection)
+      .toEqual(['id', 'name']);
+    // PERCENT / WITH TIES 不是「前 n 行」，认不出就只读
+    expect(parseSingleTableSelect('SELECT TOP 10 PERCENT * FROM t', 'sqlserver')).toBeNull();
+  });
+
   it('列清单里的裸列名可以认', () => {
     expect(parseSingleTableSelect('SELECT id, `name` FROM t', 'mysql')?.projection)
       .toEqual(['id', 'name']);

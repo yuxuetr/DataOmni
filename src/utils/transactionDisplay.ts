@@ -1,3 +1,4 @@
+import type { SqlDialect } from '../contracts/queryExecution';
 import type { TransactionContext } from '../contracts/session';
 import type { TranslationKey } from '../i18n/translate';
 
@@ -66,4 +67,16 @@ export function formatTransactionElapsed(elapsedMs: number): string {
   return hours > 0
     ? `${hours}:${String(minutes).padStart(2, '0')}:${seconds}`
     : `${String(minutes).padStart(2, '0')}:${seconds}`;
+}
+
+export type TransactionCommand = 'BEGIN' | 'COMMIT' | 'ROLLBACK';
+
+/**
+ * 事务栏按钮真正发出去的语句。
+ *
+ * T-SQL 里单独一个 `BEGIN` 是语句块 `BEGIN … END` 的开头，发出去是语法错误，
+ * 开事务要写全 `BEGIN TRANSACTION`。`COMMIT` 与 `ROLLBACK` 各家都认。
+ */
+export function transactionStatement(command: TransactionCommand, dialect: SqlDialect): string {
+  return command === 'BEGIN' && dialect === 'sqlserver' ? 'BEGIN TRANSACTION' : command;
 }

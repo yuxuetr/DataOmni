@@ -346,6 +346,35 @@ impl SessionConnection {
     matches!(self, Self::MySql(_))
   }
 
+  /// 关掉自动提交时补的那一句。T-SQL 里单独一个 `BEGIN` 是语句块的开头，
+  /// 不开事务
+  pub fn begin_statement(&self) -> &'static str {
+    match self {
+      Self::SqlServer(_) => "BEGIN TRANSACTION",
+      _ => "BEGIN",
+    }
+  }
+
+  /// 这条语句自己就在开、关事务，前面不用补 `BEGIN`
+  pub fn controls_transaction(&self, sql: &str) -> bool {
+    use crate::services::transaction_state::{transaction_effect, TransactionEffect};
+    match self {
+      Self::SqlServer(_) => crate::services::sql_server::controls_transaction(sql),
+      _ => transaction_effect(sql) != TransactionEffect::None,
+    }
+  }
+
+  /// 服务端报的事务状态。只有 SQL Server 有（`@@TRANCOUNT`）；另外三家
+  /// 没有可移植的查法，状态由 `TransactionState` 从语句推出来
+  pub fn observed_transaction(
+    &self,
+  ) -> Option<crate::services::transaction_state::TransactionState> {
+    match self {
+      Self::SqlServer(connection) => Some(connection.transaction()),
+      _ => None,
+    }
+  }
+
   pub async fn execute_streaming(
     &mut self,
     sql: &str,

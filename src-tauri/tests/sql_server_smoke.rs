@@ -11,11 +11,12 @@
 use dataomni_lib::models::ConnectionProfile;
 use dataomni_lib::models::DatabaseType;
 use dataomni_lib::services::{completion_catalog_query, er_diagram_queries, session_target_query};
+use dataomni_lib::services::{execute_write_batch, ROW_COUNT_MISMATCH_CODE};
 use dataomni_lib::services::{
   object_catalog_queries, schema_metadata_queries, sql_server, DdlQuery, PoolRef,
   QueryExecutionResult, QueryExecutionSummary, QueryRow, QuerySessionState, QueryTruncationReason,
   SessionConnection, SqlServerPool, SqlServerTarget, StreamOptions, StreamingQueryOptions,
-  QUERY_TIMEOUT_CODE,
+  TransactionStatus, WriteStatement, QUERY_TIMEOUT_CODE,
 };
 use serde_json::{json, Value as JsonValue};
 use std::sync::Arc;
@@ -59,7 +60,7 @@ async fn pool() -> Option<Arc<SqlServerPool>> {
   let profile = profile_from_env()?;
   let target = SqlServerTarget::from_profile(&profile);
   let client = sql_server::connect(&target).await.expect("connect to SQL Server");
-  Some(SqlServerPool::new(target, client))
+  Some(SqlServerPool::new(target, client).await.expect("prepare pool"))
 }
 
 async fn session(pool: &Arc<SqlServerPool>) -> SessionConnection {
@@ -114,6 +115,7 @@ async fn sql_server_decodes_values_the_way_the_other_dialects_do() {
            N'中文' AS s,
            CAST('2026-09-20 07:04:05.25' AS datetime2(2)) AS dt2,
            CAST('2026-09-20 07:04:05' AS datetime) AS dt,
+           CAST('2026-09-20 07:04:05.003' AS datetime) AS dt_tick,
            CAST('2026-09-20' AS date) AS d,
            CAST('07:04:05' AS time(0)) AS t,
            CAST('2026-09-20 07:04:05 +08:00' AS datetimeoffset(0)) AS dto,
@@ -150,6 +152,8 @@ async fn sql_server_decodes_values_the_way_the_other_dialects_do() {
   for (column, value_type, expected) in [
     ("dt2", "datetime", "2026-09-20 07:04:05.25"),
     ("dt", "datetime", "2026-09-20 07:04:05"),
+    // 1/300 秒的刻度按毫秒写：`.003333` 写回 datetime 列会转换失败（241）
+    ("dt_tick", "datetime", "2026-09-20 07:04:05.003"),
     ("d", "date", "2026-09-20"),
     ("t", "time", "07:04:05"),
     ("dto", "datetime", "2026-09-20 07:04:05 +08:00"),
@@ -629,4 +633,222 @@ async fn sql_server_driver_panics_become_errors_and_the_session_recovers() {
       .starts_with(dataomni_lib::services::sql_server::SQL_SERVER_DRIVER_FAILURE),
     "{catalog_error:?}"
   );
+}
+
+// ---------------------------------------------------------------------------
+// 第三阶段：网格的写入批次、会话事务、锁等待
+// ---------------------------------------------------------------------------
+
+/// 带一个每次更新都往审计表插三行的触发器。驱动报的 DONE 计数会是 1 和 3，
+/// 「必须恰好改一行」按那个核对，这张表一行都改不了。
+async fn write_fixture(pool: &Arc<SqlServerPool>) {
+  run_all(
+    pool,
+    &[
+      "IF OBJECT_ID('dbo.dataomni_write_audit') IS NOT NULL DROP TABLE dbo.dataomni_write_audit",
+      "IF OBJECT_ID('dbo.dataomni_write') IS NOT NULL DROP TABLE dbo.dataomni_write",
+      "CREATE TABLE dbo.dataomni_write (id int PRIMARY KEY, name nvarchar(20) NOT NULL, note nvarchar(20) NULL)",
+      "CREATE TABLE dbo.dataomni_write_audit (id int IDENTITY PRIMARY KEY, note nvarchar(20))",
+      "CREATE TRIGGER dbo.dataomni_write_trg ON dbo.dataomni_write AFTER UPDATE AS
+       BEGIN INSERT INTO dbo.dataomni_write_audit (note) VALUES ('a'), ('b'), ('c') END",
+      "INSERT INTO dbo.dataomni_write (id, name) VALUES (1, N'甲'), (2, N'乙')",
+    ],
+  )
+  .await;
+}
+
+fn write(sql: &str, params: Vec<JsonValue>, expect_rows: Option<u64>) -> WriteStatement {
+  WriteStatement { sql: sql.to_string(), params, expect_rows }
+}
+
+async fn names(pool: &Arc<SqlServerPool>) -> Vec<String> {
+  pool
+    .select("SELECT name FROM dbo.dataomni_write ORDER BY id", &[])
+    .await
+    .expect("read back")
+    .iter()
+    .map(|row| text(&row["name"]))
+    .collect()
+}
+
+#[tokio::test]
+async fn sql_server_write_batches_count_only_their_own_rows_and_roll_back_as_a_whole() {
+  let Some(pool) = pool().await else { return };
+  write_fixture(&pool).await;
+
+  // 触发器插的三行不算：核对的是这条 UPDATE 自己改了几行
+  let affected = execute_write_batch(
+    PoolRef::SqlServer(&pool),
+    &[
+      write(
+        "UPDATE [dbo].[dataomni_write] SET [name] = @P1 WHERE [id] = 1 AND [name] = @P2",
+        vec![json!("丙"), json!("甲")],
+        Some(1),
+      ),
+      write(
+        "INSERT INTO [dbo].[dataomni_write] ([id], [name], [note]) VALUES (@P1, @P2, NULL)",
+        vec![json!(3), json!("丁")],
+        None,
+      ),
+    ],
+  )
+  .await
+  .expect("batch commits");
+  assert_eq!(affected, vec![1, 1]);
+  assert_eq!(names(&pool).await, ["丙", "乙", "丁"]);
+
+  // 第二条违反 NOT NULL：第一条也不能留下
+  let error = execute_write_batch(
+    PoolRef::SqlServer(&pool),
+    &[
+      write("DELETE FROM [dbo].[dataomni_write] WHERE [id] = 3", vec![], Some(1)),
+      write("UPDATE [dbo].[dataomni_write] SET [name] = NULL WHERE [id] = 2", vec![], Some(1)),
+    ],
+  )
+  .await
+  .expect_err("second statement fails");
+  assert_eq!(error.statement_index, 1);
+  assert_eq!(error.error.code.as_deref(), Some("515"), "{:?}", error.error);
+  assert_eq!(names(&pool).await, ["丙", "乙", "丁"], "第一条的 DELETE 必须回滚");
+
+  // 那一行已经被别人改掉：零行匹配，整批回滚
+  let error = execute_write_batch(
+    PoolRef::SqlServer(&pool),
+    &[
+      write("DELETE FROM [dbo].[dataomni_write] WHERE [id] = 3", vec![], Some(1)),
+      write(
+        "UPDATE [dbo].[dataomni_write] SET [note] = N'x' WHERE [id] = 1 AND [name] = @P1",
+        vec![json!("甲")],
+        Some(1),
+      ),
+    ],
+  )
+  .await
+  .expect_err("stale row");
+  assert_eq!(error.statement_index, 1);
+  assert_eq!(error.error.code.as_deref(), Some(ROW_COUNT_MISMATCH_CODE));
+  assert_eq!(names(&pool).await, ["丙", "乙", "丁"]);
+
+  // 用过的连接回到池子里，上面不能还开着事务——否则后面的目录查询都在
+  // 一个没人会提交的事务里读
+  let open = pool.select("SELECT CAST(@@TRANCOUNT AS int) AS n", &[]).await.expect("trancount");
+  assert_eq!(open[0]["n"], json!(0));
+}
+
+fn session_options<'a>(
+  pool: &'a Arc<SqlServerPool>,
+  session_id: &'a str,
+  sql: &'a str,
+  autocommit: bool,
+) -> StreamingQueryOptions<'a> {
+  StreamingQueryOptions {
+    session_id,
+    pool_key: "sqlserver://smoke",
+    pool: PoolRef::SqlServer(pool),
+    sql,
+    autocommit,
+    assume_rows: false,
+    row_limit: 100,
+    byte_limit: 16 * 1024 * 1024,
+    batch_size: 100,
+    timeout_duration: Duration::from_secs(20),
+  }
+}
+
+async fn run_in(
+  sessions: &QuerySessionState,
+  pool: &Arc<SqlServerPool>,
+  session_id: &str,
+  sql: &str,
+  autocommit: bool,
+) -> Result<QueryExecutionSummary, dataomni_lib::services::QueryError> {
+  sessions
+    .execute_streaming(session_options(pool, session_id, sql, autocommit), &mut |_| Ok(()))
+    .await
+}
+
+/// 事务状态是服务端说的，不是从语句推的。
+#[tokio::test]
+async fn sql_server_session_transaction_state_follows_the_server() {
+  let Some(pool) = pool().await else { return };
+  write_fixture(&pool).await;
+  let sessions = QuerySessionState::default();
+  let id = "sql-server-transaction";
+
+  run_in(&sessions, &pool, id, "BEGIN TRANSACTION", true).await.expect("begin");
+  let begun = sessions.transaction(id).await;
+  assert_eq!(begun.status, TransactionStatus::Active);
+  assert!(begun.started_at.is_some());
+
+  // 嵌套一层再提交一层：@@TRANCOUNT 还是 1，事务还开着，开始时间不变
+  run_in(&sessions, &pool, id, "BEGIN TRAN", true).await.expect("nested begin");
+  run_in(&sessions, &pool, id, "COMMIT", true).await.expect("inner commit");
+  assert_eq!(sessions.transaction(id).await, begun);
+
+  // 类型转换错误把整个事务回滚掉了，语句本身只是一条 SELECT。按语句推的
+  // 状态会停在「事务中」
+  run_in(&sessions, &pool, id, "UPDATE dbo.dataomni_write SET note = N'x' WHERE id = 1", true)
+    .await
+    .expect("update");
+  run_in(&sessions, &pool, id, "SELECT CAST('abc' AS int)", true).await.expect_err("245");
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Idle);
+  let notes =
+    pool.select("SELECT note FROM dbo.dataomni_write WHERE id = 1", &[]).await.expect("n");
+  assert_eq!(notes[0]["note"], JsonValue::Null, "服务端确实回滚了");
+
+  // 关掉自动提交：`BEGIN TRY` 不是开事务，里面那条 DELETE 要被放进事务
+  run_in(
+    &sessions,
+    &pool,
+    id,
+    "BEGIN TRY DELETE FROM dbo.dataomni_write WHERE id = 2 END TRY BEGIN CATCH END CATCH",
+    false,
+  )
+  .await
+  .expect("delete in try");
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Active);
+  run_in(&sessions, &pool, id, "ROLLBACK", false).await.expect("rollback");
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Idle);
+  assert_eq!(names(&pool).await, ["甲", "乙"], "那条 DELETE 该被回滚掉");
+
+  // 事务里超时：连接被关掉，服务端回滚，状态也得回到空闲
+  run_in(&sessions, &pool, id, "BEGIN TRANSACTION", true).await.expect("begin again");
+  let error = sessions
+    .execute_streaming(
+      StreamingQueryOptions {
+        timeout_duration: Duration::from_millis(300),
+        ..session_options(&pool, id, "WAITFOR DELAY '00:00:10'", true)
+      },
+      &mut |_| Ok(()),
+    )
+    .await
+    .expect_err("times out");
+  assert_eq!(error.code.as_deref(), Some(QUERY_TIMEOUT_CODE));
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Idle);
+}
+
+/// SQL Server 的读已提交是加锁读：编辑器里开着一个改过这张表的事务时，表数据页
+/// 的查询会一直等。等满了要报出来，而不是让界面停在「加载中」。
+#[tokio::test]
+async fn sql_server_catalog_reads_give_up_on_a_lock_instead_of_hanging() {
+  let Some(pool) = pool().await else { return };
+  write_fixture(&pool).await;
+  let sessions = QuerySessionState::default();
+  let id = "sql-server-lock-holder";
+
+  run_in(&sessions, &pool, id, "BEGIN TRANSACTION", true).await.expect("begin");
+  run_in(&sessions, &pool, id, "UPDATE dbo.dataomni_write SET note = N'held' WHERE id = 1", true)
+    .await
+    .expect("update");
+
+  let started = Instant::now();
+  let error = pool
+    .select("SELECT * FROM dbo.dataomni_write ORDER BY id", &[])
+    .await
+    .expect_err("blocked read gives up");
+  assert_eq!(error.code.as_deref(), Some("1222"), "{error:?}");
+  assert!(started.elapsed() < Duration::from_secs(15), "{:?}", started.elapsed());
+
+  run_in(&sessions, &pool, id, "ROLLBACK", true).await.expect("rollback");
+  assert_eq!(names(&pool).await, ["甲", "乙"], "锁放开之后照常能读");
 }

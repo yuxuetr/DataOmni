@@ -49,8 +49,6 @@ export type PendingFeature =
 export const PENDING_FEATURES: Readonly<Partial<Record<DatabaseType, readonly PendingFeature[]>>> = {
   // 见 TODOs 4.2「SQL Server」的四个阶段
   [DatabaseType.SqlServer]: [
-    'dataEditing',
-    'transactions',
     'explain',
     'structureEditing',
     'import',

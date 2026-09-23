@@ -5,7 +5,8 @@ import { useLanguageStore } from '../stores/languageStore';
 import { useQueryStore } from '../stores/queryStore';
 import {
   describeTransaction,
-  formatTransactionElapsed
+  formatTransactionElapsed,
+  type TransactionCommand
 } from '../utils/transactionDisplay';
 
 const TONE_CLASS = {
@@ -48,10 +49,10 @@ export function TransactionBar() {
     return null;
   }
 
-  const run = async (sql: 'BEGIN' | 'COMMIT' | 'ROLLBACK') => {
+  const run = async (command: TransactionCommand) => {
     setBusy(true);
     try {
-      await runTransactionStatement(sql);
+      await runTransactionStatement(command);
     } finally {
       setBusy(false);
     }

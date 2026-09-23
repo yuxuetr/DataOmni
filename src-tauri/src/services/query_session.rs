@@ -35,19 +35,27 @@ impl SessionRuntime {
   /// 只在语句本身与事务无关时补：用户自己写的 `BEGIN` 不需要前面再来一条，
   /// 而在 `COMMIT` 前面补一条 `BEGIN` 是开一个立刻提交的空事务。
   async fn begin_if_needed(&mut self, autocommit: bool, sql: &str) -> Result<(), QueryError> {
-    use crate::services::transaction_state::{transaction_effect, TransactionEffect};
     if autocommit
-      || self.transaction.in_transaction()
-      || transaction_effect(sql) != TransactionEffect::None
+      || self.current_transaction().in_transaction()
+      || self.connection.controls_transaction(sql)
     {
       return Ok(());
     }
-    self.connection.execute("BEGIN", 1).await?;
-    self.record("BEGIN", true);
+    let begin = self.connection.begin_statement();
+    self.connection.execute(begin, 1).await?;
+    self.record(begin, true);
     Ok(())
   }
 
+  /// 服务端报得出就用服务端的，否则用从语句推出来的
+  fn current_transaction(&self) -> TransactionState {
+    self.connection.observed_transaction().unwrap_or_else(|| self.transaction.clone())
+  }
+
   fn record(&mut self, sql: &str, succeeded: bool) {
+    if self.connection.observed_transaction().is_some() {
+      return;
+    }
     if succeeded {
       self.transaction.after_success(
         sql,
@@ -129,7 +137,7 @@ impl QuerySessionState {
   pub async fn transaction(&self, session_id: &str) -> TransactionState {
     let entry = self.sessions.lock().await.get(session_id).cloned();
     match entry {
-      Some(entry) => entry.runtime.lock().await.transaction.clone(),
+      Some(entry) => entry.runtime.lock().await.current_transaction(),
       None => TransactionState::default(),
     }
   }

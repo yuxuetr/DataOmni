@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { describeTransaction, formatTransactionElapsed } from './transactionDisplay';
+import {
+  describeTransaction,
+  formatTransactionElapsed,
+  transactionStatement
+} from './transactionDisplay';
 
 const START = '2026-09-21T00:00:00.000Z';
 const started = Date.parse(START);
@@ -61,5 +65,14 @@ describe('formatTransactionElapsed', () => {
   it('超过一小时加上小时段——开了一小时的事务是个该看见的数字', () => {
     expect(formatTransactionElapsed(3_600_000)).toBe('1:00:00');
     expect(formatTransactionElapsed(3_725_000)).toBe('1:02:05');
+  });
+});
+
+describe('transactionStatement', () => {
+  it('spells BEGIN out on SQL Server, where a bare BEGIN opens a block', () => {
+    expect(transactionStatement('BEGIN', 'sqlserver')).toBe('BEGIN TRANSACTION');
+    expect(transactionStatement('BEGIN', 'postgresql')).toBe('BEGIN');
+    expect(transactionStatement('COMMIT', 'sqlserver')).toBe('COMMIT');
+    expect(transactionStatement('ROLLBACK', 'sqlserver')).toBe('ROLLBACK');
   });
 });

@@ -272,3 +272,43 @@ describe('并发冲突守卫', () => {
     expect(buildDeleteStatement(guardTarget, idKey).sql).toBe('DELETE FROM "u" WHERE "id" = 1');
   });
 });
+
+describe('SQL Server', () => {
+  const SQL_SERVER_COLUMNS = [
+    column('id', 'int'),
+    column('name', 'nvarchar(32)'),
+    column('body', 'text'),
+    column('at', 'time(7)'),
+    column('flag', 'bit'),
+    column('photo', 'varbinary(max)')
+  ];
+  const sqlServer: TableTarget = {
+    schema: 'dbo', table: 'u', columns: SQL_SERVER_COLUMNS, dialect: 'sqlserver'
+  };
+  const idKey: RowKey = { columns: ['id'], values: { id: 1 } };
+
+  it('占位符是按次序编号的 @Pn', () => {
+    const statement = buildUpdateStatement(sqlServer, idKey, { name: value('b'), flag: value(true) });
+    expect(statement.sql).toBe('UPDATE [dbo].[u] SET [name] = @P1, [flag] = @P2 WHERE [id] = 1');
+    expect(statement.params).toEqual(['b', true]);
+  });
+
+  it('置空写成字面的 NULL：带类型的空参数转不成 varbinary', () => {
+    const statement = buildUpdateStatement(sqlServer, idKey, { photo: { kind: 'null' } });
+    expect(statement.sql).toBe('UPDATE [dbo].[u] SET [photo] = NULL WHERE [id] = 1');
+    expect(statement.params).toEqual([]);
+  });
+
+  it('text 不能拿 = 比、time(7) 读回来比不上，这两类不进并发守卫', () => {
+    const original = { id: 1, name: 'a', body: 'long', at: '10:00:00.1234567', flag: true };
+    const statement = buildDeleteStatement(sqlServer, idKey, { values: original });
+    expect(statement.sql).toBe('DELETE FROM [dbo].[u] WHERE [id] = 1 AND [name] = @P1 AND [flag] = @P2');
+    expect(statement.params).toEqual(['a', true]);
+  });
+
+  it('展示时布尔写成 1 / 0，参数按 @Pn 填回', () => {
+    const statement = buildUpdateStatement(sqlServer, idKey, { name: value("O'x"), flag: value(false) });
+    expect(renderStatementForDisplay(statement, 'sqlserver'))
+      .toBe("UPDATE [dbo].[u] SET [name] = N'O''x', [flag] = 0 WHERE [id] = 1");
+  });
+});

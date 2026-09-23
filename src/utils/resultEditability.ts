@@ -41,11 +41,13 @@ const DISQUALIFYING_KEYWORDS = new Set([
   'JOIN', 'UNION', 'INTERSECT', 'EXCEPT', 'GROUP', 'HAVING', 'DISTINCT', 'WINDOW'
 ]);
 
-const IDENTIFIER = String.raw`(?:"[^"]+"|\`[^\`]+\`|[A-Za-z_][A-Za-z0-9_$]*)`;
+const IDENTIFIER = String.raw`(?:"[^"]+"|\`[^\`]+\`|\[(?:[^\]]|\]\])+\]|[A-Za-z_][A-Za-z0-9_$]*)`;
 const COLUMN_LIST = String.raw`${IDENTIFIER}(?:\s*,\s*${IDENTIFIER})*`;
 
 const SELECT_SHAPE = new RegExp(
-  String.raw`^select\s+(\*|${COLUMN_LIST})\s+from\s+(${IDENTIFIER})(?:\s*\.\s*(${IDENTIFIER}))?([\s\S]*)$`,
+  // `TOP n` 只有 SQL Server 有，SSMS 的「选择前 1000 行」就是这个形状；
+  // 它只截断行数，不改变每一行对应哪一行
+  String.raw`^select\s+(?:top\s+(?:\(\s*\d+\s*\)|\d+)\s+)?(\*|${COLUMN_LIST})\s+from\s+(${IDENTIFIER})(?:\s*\.\s*(${IDENTIFIER}))?([\s\S]*)$`,
   'i'
 );
 
@@ -61,6 +63,9 @@ const ALLOWED_TAIL = /^(where\b|order\s+by\b|limit\b|offset\b|fetch\b)/i;
 function unquoteIdentifier(raw: string, dialect: SqlIdentifierDialect): string {
   if (raw.startsWith('"') || raw.startsWith('`')) {
     return raw.slice(1, -1);
+  }
+  if (raw.startsWith('[')) {
+    return raw.slice(1, -1).split(']]').join(']');
   }
   return dialect === 'postgresql' ? raw.toLowerCase() : raw;
 }

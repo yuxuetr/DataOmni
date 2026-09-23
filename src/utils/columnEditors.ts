@@ -63,10 +63,14 @@ export function isCompleteHex(text: string): boolean {
  * 得到的是那串字符的字节，不是它表示的字节——长度正好翻倍，而语句不报错。
  *
  * PostgreSQL 的 bytea 输入格式是 `\x` 开头（`standard_conforming_strings`
- * 默认开着，所以这里的反斜杠是字面的）；MySQL 与 SQLite 用 `X'...'`。
+ * 默认开着，所以这里的反斜杠是字面的）；MySQL 与 SQLite 用 `X'...'`；
+ * SQL Server 是 `0x...`，它不认 `X'...'`。
  */
 export function binaryLiteral(hex: string, dialect: SqlIdentifierDialect): string {
   const normalized = normalizeHex(hex).toLowerCase();
+  if (dialect === 'sqlserver') {
+    return `0x${normalized}`;
+  }
   return dialect === 'postgresql'
     ? `'\\x${normalized}'::bytea`
     : `X'${normalized}'`;

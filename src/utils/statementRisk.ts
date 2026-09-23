@@ -48,6 +48,12 @@ export function classifyStatementRisk(sql: string): StatementRisk {
     return 'append';
   }
 
+  // MERGE 没有顶层 WHERE 可看：`WHEN NOT MATCHED BY SOURCE THEN DELETE`
+  // 会删掉目标表里所有对不上的行，影响面由数据决定
+  if (first === 'MERGE') {
+    return 'bulk-write';
+  }
+
   if (first === 'WITH') {
     // CTE 的头是 WITH，真正做事的是后面那个动词
     const action = keywords.find(
@@ -60,6 +66,12 @@ export function classifyStatementRisk(sql: string): StatementRisk {
       return keywords.includes('WHERE') ? 'scoped-write' : 'bulk-write';
     }
     return 'read';
+  }
+
+  // `SELECT … INTO 新表` 在 SQL Server 与 PostgreSQL 里是建表，
+  // MySQL 的 `INTO OUTFILE` 是写文件——都不是读
+  if (first === 'SELECT' && keywords.includes('INTO')) {
+    return 'scoped-write';
   }
 
   if (READ_KEYWORDS.includes(first)) {

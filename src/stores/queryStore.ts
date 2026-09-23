@@ -36,6 +36,7 @@ import { describeResultEditability, parseSingleTableSelect } from '../utils/resu
 import { loadTableMetadata } from '../utils/tableMetadata';
 import type { WriteStatementPayload } from '../utils/pendingChanges';
 import { executeSequentially } from '../utils/queryExecutionPolicy';
+import { transactionStatement, type TransactionCommand } from '../utils/transactionDisplay';
 import { translateNow } from './languageStore';
 import { changesSchema } from '../utils/schemaChanges';
 import { useAppStore } from './appStore';
@@ -134,7 +135,7 @@ interface QueryActions {
   /** 从后端读一次事务状态写回 session；后端是权威，这里不自己推 */
   refreshTransaction: () => Promise<void>;
   /** 开始 / 提交 / 回滚。不进文档也不过风险确认——按钮本身就是确认 */
-  runTransactionStatement: (sql: 'BEGIN' | 'COMMIT' | 'ROLLBACK') => Promise<boolean>;
+  runTransactionStatement: (command: TransactionCommand) => Promise<boolean>;
   
   // 结果管理
   clearResults: () => void;
@@ -576,8 +577,9 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     }
   },
 
-  runTransactionStatement: async (sql) => {
-    const { connectionId, session, queryTimeoutMs } = get();
+  runTransactionStatement: async (command) => {
+    const { connectionId, connectionString, session, queryTimeoutMs } = get();
+    const sql = transactionStatement(command, getSqlDialect(connectionString));
     if (!connectionId || !session) {
       return false;
     }

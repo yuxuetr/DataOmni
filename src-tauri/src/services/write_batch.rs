@@ -8,6 +8,7 @@
 //! 待提交的变更原样还在，可以改完再提交一次。
 
 use crate::services::query_error::QueryError;
+use crate::services::query_executor::PoolRef;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sqlx::{Executor, MySql, Postgres, Sqlite, Transaction};
@@ -48,7 +49,7 @@ pub struct WriteBatchError {
 }
 
 impl WriteBatchError {
-  fn at(statement_index: usize, error: impl Into<QueryError>) -> Self {
+  pub(crate) fn at(statement_index: usize, error: impl Into<QueryError>) -> Self {
     Self { statement_index, error: error.into() }
   }
 }
@@ -117,14 +118,18 @@ macro_rules! run_in_transaction {
 /// 在一个事务里按顺序执行，返回每条语句影响的行数。
 ///
 /// 顺序是有意义的：同一行先改后删、先删后插，换个次序结果就不同。
-pub async fn execute_write_batch(
-  pool: &DbPool,
+pub async fn execute_write_batch<'a>(
+  pool: impl Into<PoolRef<'a>>,
   statements: &[WriteStatement],
 ) -> Result<Vec<u64>, WriteBatchError> {
   if statements.is_empty() {
     return Ok(Vec::new());
   }
 
+  let pool = match pool.into() {
+    PoolRef::Sqlx(pool) => pool,
+    PoolRef::SqlServer(pool) => return pool.write_batch(statements).await,
+  };
   match pool {
     DbPool::Sqlite(pool) => {
       let _: &sqlx::Pool<Sqlite> = pool;
