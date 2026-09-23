@@ -65,7 +65,7 @@ FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
 WHERE c.relkind IN ('r', 'p')
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')
   AND n.nspname NOT LIKE 'pg\_toast%'
   AND n.nspname NOT LIKE 'pg\_temp%'
 ORDER BY n.nspname, c.relname, a.attnum
@@ -92,7 +92,7 @@ CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(attnum, fatt
 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
 JOIN pg_attribute fa ON fa.attrelid = ft.oid AND fa.attnum = k.fattnum
 WHERE c.contype = 'f'
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')
 ORDER BY n.nspname, t.relname, c.conname, k.ord
 "#;
 

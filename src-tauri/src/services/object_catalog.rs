@@ -51,6 +51,12 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
 ///
 /// 序列这里不过滤 serial / identity 列自动建的那些——它们是真实存在的对象，
 /// 用户按名字（`users_id_seq`）找得到才有意义。
+///
+/// 系统 schema 除了 PostgreSQL 自己的两个，还排掉 CockroachDB 的
+/// `crdb_internal` 与 `pg_extension`：不排的话对象树里多出 91 张系统表、
+/// 20 个视图和 133 个内建函数，内建函数的参数签名还是 NULL，整行名字跟着
+/// 成了 NULL。这两个名字在 PostgreSQL 上不存在（`pg_` 前缀是保留的），
+/// 排了等于没排。补全目录与 ER 图用的是同一份清单。
 const POSTGRES_OBJECTS: &str = r#"
 SELECT
   n.nspname::text AS object_schema,
@@ -65,7 +71,7 @@ SELECT
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')
   AND n.nspname NOT LIKE 'pg\_toast%'
   AND n.nspname NOT LIKE 'pg\_temp%'
 UNION ALL
@@ -77,7 +83,7 @@ SELECT
 FROM pg_proc p
 JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE p.prokind IN ('f', 'p')
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')
 ORDER BY 1, 3, 2
 "#;
 

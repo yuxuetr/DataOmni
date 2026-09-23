@@ -53,7 +53,7 @@ FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
 WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')
   AND n.nspname NOT LIKE 'pg\_toast%'
   AND n.nspname NOT LIKE 'pg\_temp%'
 ORDER BY n.nspname, c.relname, a.attnum

@@ -669,13 +669,13 @@ async fn postgres_reports_indexes_foreign_keys_and_checks() {
     .fetch_all(&pool)
     .await
     .expect("run PostgreSQL index query");
-  let indexes: Vec<(String, String, i32, bool, bool)> = index_rows
+  let indexes: Vec<(String, String, i64, bool, bool)> = index_rows
     .iter()
     .map(|row| {
       (
         row.get::<String, _>("index_name"),
         row.get::<String, _>("column_name"),
-        row.get::<i32, _>("ordinal"),
+        pg_int(row, "ordinal").expect("ordinal is never NULL"),
         row.get::<bool, _>("is_unique"),
         row.get::<bool, _>("is_primary"),
       )
@@ -709,9 +709,12 @@ async fn postgres_reports_indexes_foreign_keys_and_checks() {
     .iter()
     .find(|(name, ..)| name == &format!("ix_meta_child_expr_{}", fixture.suffix))
     .map(|(_, column, ..)| column.clone());
-  // PostgreSQL 会把 varchar 归一成 text，所以原文是 `lower(label::text)`
+  // PostgreSQL 会把 varchar 归一成 text，所以原文是 `lower(label::text)`；
+  // CockroachDB 外面多一层括号：`(lower(label))`
   assert!(
-    expression_column.as_deref().is_some_and(|text| text.starts_with("lower(label")),
+    expression_column
+      .as_deref()
+      .is_some_and(|text| text.trim_start_matches('(').starts_with("lower(label")),
     "表达式索引要给出表达式原文；join pg_attribute 的写法会让这一列整个消失: {indexes:?}"
   );
 
@@ -721,11 +724,11 @@ async fn postgres_reports_indexes_foreign_keys_and_checks() {
     .fetch_all(&pool)
     .await
     .expect("run PostgreSQL foreign key query");
-  let pairs: Vec<(i32, String, String, String)> = fk_rows
+  let pairs: Vec<(i64, String, String, String)> = fk_rows
     .iter()
     .map(|row| {
       (
-        row.get::<i32, _>("ordinal"),
+        pg_int(row, "ordinal").expect("ordinal is never NULL"),
         row.get::<String, _>("column_name"),
         row.get::<String, _>("referenced_table"),
         row.get::<String, _>("referenced_column"),
@@ -1111,15 +1114,21 @@ async fn postgres_accepts_the_parameters_the_ui_actually_sends() {
   )
   .expect("supported");
 
+  let cockroach = is_cockroach(&pool).await;
   for (name, sql) in bound_catalog_queries(&queries) {
     let mut query = sqlx::query(sql).bind(&fixture.child);
     for _ in 1..queries.parameter_count {
       query = query.bind(Option::<String>::None);
     }
-    query
-      .fetch_all(&pool)
-      .await
-      .unwrap_or_else(|error| panic!("PostgreSQL 的 {name} 不接受界面发的参数: {error}"));
+    match query.fetch_all(&pool).await {
+      Err(error) if cockroach && name == "triggers" => {
+        assert_cockroach_refuses_the_trigger_catalog(error)
+      }
+      Err(error) => panic!("PostgreSQL 的 {name} 不接受界面发的参数: {error}"),
+      Ok(_) => {
+        assert!(!(cockroach && name == "triggers"), "CockroachDB 的触发器目录能跑了，回来重估")
+      }
+    }
   }
 }
 
@@ -1504,6 +1513,7 @@ async fn postgres_catalog_results_are_decodable_by_the_plugin() {
   let pool =
     PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
 
+  let cockroach = is_cockroach(&pool).await;
   let fixture = MetaFixture::new("pgdecode");
   let view = format!("{}_v", fixture.child);
   let function = format!("{}_fn", fixture.child);
@@ -1565,10 +1575,15 @@ async fn postgres_catalog_results_are_decodable_by_the_plugin() {
     for param in &request.params {
       query = query.bind(param.clone());
     }
-    let rows = query
-      .fetch_all(&pool)
-      .await
-      .unwrap_or_else(|error| panic!("PostgreSQL 的 {} 跑不通: {error}", request.name));
+    let rows = match query.fetch_all(&pool).await {
+      Err(error) if cockroach && request.name == "triggers" => {
+        assert_cockroach_refuses_the_trigger_catalog(error);
+        continue;
+      }
+      result => {
+        result.unwrap_or_else(|error| panic!("PostgreSQL 的 {} 跑不通: {error}", request.name))
+      }
+    };
     assert_plugin_decodes("PostgreSQL", request, &rows, PLUGIN_DECODES_POSTGRES);
   }
 
@@ -1669,12 +1684,26 @@ async fn postgres_lists_user_triggers_without_the_foreign_key_internals() {
     &dataomni_lib::models::DatabaseType::PostgreSQL,
   )
   .expect("supported");
-  let rows = sqlx::query(queries.triggers)
+  let outcome = sqlx::query(queries.triggers)
     .bind(&fixture.child)
     .bind(Option::<String>::None)
     .fetch_all(&pool)
-    .await
-    .expect("run trigger query");
+    .await;
+  let rows = match outcome {
+    Err(error) if is_cockroach(&pool).await => {
+      assert_cockroach_refuses_the_trigger_catalog(error);
+      Vec::new()
+    }
+    result => result.expect("run trigger query"),
+  };
+
+  if rows.is_empty() && is_cockroach(&pool).await {
+    for table in [&fixture.child, &fixture.parent] {
+      sqlx::query(&format!("DROP TABLE IF EXISTS {table} CASCADE")).execute(&pool).await.ok();
+    }
+    sqlx::query(&format!("DROP FUNCTION IF EXISTS {function}()")).execute(&pool).await.ok();
+    return;
+  }
 
   let names: Vec<String> = rows.iter().map(|row| row.get::<String, _>("trigger_name")).collect();
   // 这张表带外键，PostgreSQL 会为它建内部触发器；tgisinternal 没排掉的话
@@ -1888,9 +1917,12 @@ async fn postgres_lists_database_objects_and_resolves_overloaded_routines() {
   let overloads: Vec<&(String, String, String)> =
     objects.iter().filter(|(name, ..)| name.starts_with(&routine)).collect();
   assert_eq!(overloads.len(), 2, "两个重载应各占一条: {overloads:?}");
+  // CockroachDB 的签名不带参数名、类型用它自己的拼法：`(int8)` / `(text)`
+  let (integer_signature, text_signature) =
+    if is_cockroach(&pool).await { ("(int8)", "(text)") } else { ("(a integer)", "(a text)") };
   assert!(
-    overloads.iter().any(|(name, ..)| name.ends_with("(a integer)"))
-      && overloads.iter().any(|(name, ..)| name.ends_with("(a text)")),
+    overloads.iter().any(|(name, ..)| name.ends_with(integer_signature))
+      && overloads.iter().any(|(name, ..)| name.ends_with(text_signature)),
     "显示名要带参数签名: {overloads:?}"
   );
   assert_ne!(overloads[0].2, overloads[1].2, "两个重载的 object_id 必须不同");
@@ -1903,9 +1935,16 @@ async fn postgres_lists_database_objects_and_resolves_overloaded_routines() {
       .await
       .expect("run routine definition query")
       .get("definition");
-    let expected = if name.ends_with("(a text)") { "text" } else { "integer" };
+    // CockroachDB 的定义原文用它自己的类型名：`INT8`、`STRING`
+    let cockroach = integer_signature == "(int8)";
+    let expected = match (name.ends_with(text_signature), cockroach) {
+      (true, true) => "STRING",
+      (true, false) => "TEXT",
+      (false, true) => "INT8",
+      (false, false) => "INTEGER",
+    };
     assert!(
-      definition.contains(&format!("RETURNS {expected}")),
+      definition.to_uppercase().contains(&format!("RETURNS {expected}")),
       "oid {id} 应取到 {name} 的定义，实际: {definition}"
     );
   }
@@ -2607,6 +2646,33 @@ impl MysqlFlavor {
   }
 }
 
+/// PostgreSQL 协议的那一组：同一个 URL 可能指向 PostgreSQL 或 CockroachDB
+async fn is_cockroach(pool: &sqlx::PgPool) -> bool {
+  let version: String =
+    sqlx::query_scalar("SELECT version()").fetch_one(pool).await.expect("read server version");
+  version.contains("CockroachDB")
+}
+
+/// 目录里的整数列：PostgreSQL 是 INT4，CockroachDB 的 INT 一律是 INT8。
+/// 界面走插件的解码器，两种都认；sqlx 的 `get` 按宽度严格匹配
+fn pg_int(row: &sqlx::postgres::PgRow, column: &str) -> Option<i64> {
+  row
+    .try_get::<Option<i32>, _>(column)
+    .map(|value| value.map(i64::from))
+    .or_else(|_| row.try_get::<Option<i64>, _>(column))
+    .unwrap_or_else(|error| panic!("decode {column}: {error}"))
+}
+
+/// CockroachDB 没有 `pg_get_triggerdef()`，而且它的 `pg_trigger` 与
+/// `information_schema.triggers` 都是空的——建了触发器也查不到（25.2 上验过），
+/// 只有 `SHOW CREATE TRIGGER` 看得见。换一种目录写法只会把「查不到」变成
+/// 「没有」，所以触发器那一段在它上面就是报错，由结构页那一段单独显示原因。
+/// 钉在这里：哪天它补上了这个函数，这条会红，提醒回来把这段接上。
+fn assert_cockroach_refuses_the_trigger_catalog(error: impl std::fmt::Display) {
+  let message = error.to_string();
+  assert!(message.contains("pg_get_triggerdef"), "应是缺 pg_get_triggerdef，实际: {message}");
+}
+
 async fn mysql_flavor(pool: &sqlx::MySqlPool) -> MysqlFlavor {
   let version: String =
     sqlx::query_scalar("SELECT VERSION()").fetch_one(pool).await.expect("read server version");
@@ -2699,6 +2765,13 @@ async fn postgres_syntax_error_carries_sqlstate_and_position() {
     .expect_err("syntax error should fail");
 
   assert_eq!(error.code.as_deref(), Some("42601"), "SQLSTATE 要原样带上来");
+  // CockroachDB 不给出错位置（没有 POSITION 字段），界面就不标位置，
+  // 只显示原话。钉住「没有」：哪天它给了，这条会红，提醒回来验对不对得上
+  if is_cockroach(&pool).await {
+    assert!(error.position().is_none(), "CockroachDB 开始给位置了，回来验: {error:?}");
+    assert!(!error.message.is_empty());
+    return;
+  }
   let position = error.position().expect("PostgreSQL 会给出错字符位置") as usize;
   // 位置是从 1 开始的字符下标；这条语句里它指向 `dual`
   assert_eq!(&sql[position - 1..position + 3], "dual", "位置必须能对回原文: {error:?}");
@@ -2733,6 +2806,15 @@ async fn postgres_constraint_violation_names_the_constraint_and_table() {
       .expect_err("unique violation should fail");
 
   assert_eq!(error.code.as_deref(), Some("23505"));
+  // CockroachDB 给约束名，但不填 TABLE 字段，DETAIL 里的值带引号
+  // （`Key (code)=('a')`）。界面少的只是单独标出的表名那一栏
+  if is_cockroach(&pool).await {
+    assert_eq!(error.constraint(), Some(format!("uq_{table}_code").as_str()));
+    assert!(error.table().is_none(), "CockroachDB 开始给表名了，回来重估: {error:?}");
+    assert!(error.detail().unwrap_or_default().contains("(code)="), "{error:?}");
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+    return;
+  }
   assert_eq!(error.constraint(), Some(format!("uq_{table}_code").as_str()));
   assert_eq!(error.table(), Some(table));
   // DETAIL 才说得出是哪个值撞了；以前这一整句都被 to_string() 丢掉了
@@ -3110,14 +3192,14 @@ async fn postgres_reports_declared_types_and_generated_columns() {
     .fetch_all(&pool)
     .await
     .expect("run PostgreSQL column query");
-  let columns: Vec<(String, String, bool, Option<i32>, bool)> = rows
+  let columns: Vec<(String, String, bool, Option<i64>, bool)> = rows
     .iter()
     .map(|row| {
       (
         row.get::<String, _>("column_name"),
         row.get::<String, _>("data_type"),
         row.get::<bool, _>("is_nullable"),
-        row.get::<Option<i32>, _>("primary_key_ordinal"),
+        pg_int(row, "primary_key_ordinal"),
         row.get::<bool, _>("is_generated"),
       )
     })
@@ -3366,7 +3448,7 @@ async fn postgres_catalog_columns(
       name: row.get::<String, _>("column_name"),
       data_type: row.get::<String, _>("data_type"),
       nullable: row.get::<bool, _>("is_nullable"),
-      primary_key_ordinal: row.get::<Option<i32>, _>("primary_key_ordinal").map(i64::from),
+      primary_key_ordinal: pg_int(row, "primary_key_ordinal"),
       default_value: row.get::<Option<String>, _>("column_default"),
       generated: row.get::<bool, _>("is_generated"),
       collation: row.get::<Option<String>, _>("collation"),
@@ -3433,6 +3515,14 @@ async fn postgres_runs_the_generated_ddl_from_the_shared_corpus() {
   let pool =
     PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
   let catalog = column_queries(dataomni_lib::models::DatabaseType::PostgreSQL);
+  // CockroachDB 的目录处处是自己的拼法：`INT` 是 `bigint`、字符串默认值写成
+  // `'a'::STRING`、SERIAL 的默认值照样给出 `nextval(...)`。逐字段比语料只是在比
+  // 拼写。在它上面守住真正要紧的三件事：生成的语句跑得通、建出来的表插得进行、
+  // 跑完之后列名与顺序和语料一致
+  let cockroach = is_cockroach(&pool).await;
+  let names = |columns: &[ddl_corpus::Column]| -> Vec<String> {
+    columns.iter().map(|column| column.name.clone()).collect()
+  };
 
   for case in ddl_corpus::load("postgresql") {
     for statement in &case.fixture {
@@ -3442,7 +3532,11 @@ async fn postgres_runs_the_generated_ddl_from_the_shared_corpus() {
     // 建表用例没有 origin——表还不存在
     if !case.origin.is_empty() {
       let origin = postgres_catalog_columns(&pool, catalog, &case.table).await;
-      assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+      if cockroach {
+        assert_eq!(names(&origin), names(&case.origin), "{}: 夹具建出来的列不对", case.name);
+      } else {
+        assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+      }
     }
 
     for statement in &case.statements {
@@ -3460,7 +3554,11 @@ async fn postgres_runs_the_generated_ddl_from_the_shared_corpus() {
     }
 
     let after = postgres_catalog_columns(&pool, catalog, &case.final_table).await;
-    assert_eq!(after, case.after, "{}: 跑完之后的表和语料说的不一样", case.name);
+    if cockroach {
+      assert_eq!(names(&after), names(&case.after), "{}: 跑完之后的列不对", case.name);
+    } else {
+      assert_eq!(after, case.after, "{}: 跑完之后的表和语料说的不一样", case.name);
+    }
 
     for statement in &case.cleanup {
       sqlx::query(statement).execute(&pool).await.ok();
@@ -3770,6 +3868,7 @@ async fn postgres_explain_gives_a_tree_with_real_numbers_when_analyzed() {
   };
   let pool =
     PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let cockroach = is_cockroach(&pool).await;
   let db_pool = DbPool::Postgres(pool);
   let sessions = QuerySessionState::default();
   let db_type = dataomni_lib::models::DatabaseType::PostgreSQL;
@@ -3787,6 +3886,20 @@ async fn postgres_explain_gives_a_tree_with_real_numbers_when_analyzed() {
   }
 
   let sql = "SELECT code FROM explain_smoke WHERE n > 2 ORDER BY code LIMIT 5";
+
+  // CockroachDB 的 EXPLAIN 没有 JSON 格式，给的是它自己的文本树。当前版本不解析，
+  // 要钉的是「报出来」：服务端的原话送到界面上，而不是画一棵空树
+  if cockroach {
+    let statement =
+      dataomni_lib::services::explain_statement(&db_type, sql, false).expect("explain statement");
+    let error = sessions
+      .execute("plan", &url, &db_pool, &statement, 1, Duration::from_secs(30))
+      .await
+      .expect_err("CockroachDB rejects FORMAT JSON");
+    assert!(error.message.contains("syntax error"), "应是服务端原话: {}", error.message);
+    sessions.release("plan").await;
+    return;
+  }
 
   let plain = explain_with_session(&sessions, &db_pool, &url, &db_type, sql, false).await;
   let operations = all_operations(&plain);
@@ -4050,10 +4163,13 @@ async fn postgres_import_casts_text_into_typed_columns() {
   assert_eq!(summary.rows_inserted, 2);
 
   // 只数行数证明不了转换是对的：一串 '2026-01-02' 存进 text 列也是两行
-  let row = sqlx::query("SELECT n, d, amount, ok, tag FROM import_smoke_typed ORDER BY n LIMIT 1")
-    .fetch_one(&pool)
-    .await
-    .expect("read back");
+  // `n::int4`：CockroachDB 的 INT 是 INT8，这里要比的是导入的值，不是列宽
+  let row = sqlx::query(
+    "SELECT n::int4 AS n, d, amount, ok, tag FROM import_smoke_typed ORDER BY n LIMIT 1",
+  )
+  .fetch_one(&pool)
+  .await
+  .expect("read back");
   assert_eq!(row.get::<i32, _>("n"), 1);
   assert_eq!(row.get::<chrono::NaiveDate, _>("d").to_string(), "2026-01-02");
   assert!(row.get::<bool, _>("ok"));
@@ -4097,7 +4213,7 @@ async fn postgres_keeps_importing_after_a_row_the_server_rejected() {
   assert_eq!(summary.errors.iter().map(|error| error.line).collect::<Vec<_>>(), vec![3, 5]);
   assert!(!summary.rolled_back);
 
-  let kept: Vec<i32> = sqlx::query_scalar("SELECT n FROM import_smoke_skip ORDER BY n")
+  let kept: Vec<i32> = sqlx::query_scalar("SELECT n::int4 FROM import_smoke_skip ORDER BY n")
     .fetch_all(&pool)
     .await
     .expect("read back");
