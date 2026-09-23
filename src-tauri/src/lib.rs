@@ -28,6 +28,7 @@ pub fn run() {
     .manage(ImportPauseState::default())
     .manage(services::QuerySessionState::default())
     .manage(services::TunnelRegistry::default())
+    .manage(services::SqlServerRegistry::default())
     .setup(|_app| {
       // 启动日志留着：窗口起不来时，这一行是唯一能说明进程到底跑没跑的证据
       println!("🎯 DataOmni 启动");
@@ -42,6 +43,8 @@ pub fn run() {
       test_connection,
       diagnose_connection,
       close_ssh_tunnel,
+      sql_server_select,
+      close_sql_server,
       // 数据库操作命令
       execute_query,
       execute_write_batch,

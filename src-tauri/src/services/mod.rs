@@ -11,6 +11,7 @@ pub mod query_executor;
 pub mod query_session;
 pub mod schema_metadata;
 pub mod session_target;
+pub mod sql_server;
 pub mod ssh_tunnel;
 pub mod transaction_state;
 pub mod write_batch;
@@ -32,7 +33,7 @@ pub use object_catalog::{object_catalog_queries, ObjectCatalogQueries};
 pub use query_error::QueryError;
 pub use query_executor::{
   execute_query, execute_query_with_limit, execute_query_with_limits, execute_query_with_timeout,
-  NonQueryHandling, QueryColumnMetadata, QueryExecutionResult, QueryExecutionSummary,
+  NonQueryHandling, PoolRef, QueryColumnMetadata, QueryExecutionResult, QueryExecutionSummary,
   QueryResultBatch, QueryRow, QueryTruncationReason, SessionConnection, StreamOptions,
   DEFAULT_QUERY_BATCH_SIZE, DEFAULT_QUERY_BYTE_LIMIT, DEFAULT_QUERY_ROW_LIMIT, NON_QUERY_MESSAGE,
   QUERY_TIMEOUT_CODE, USE_STATEMENT_REFUSED,
@@ -40,6 +41,7 @@ pub use query_executor::{
 pub use query_session::{QuerySessionState, StreamingQueryOptions};
 pub use schema_metadata::{schema_metadata_queries, DdlQuery, SchemaMetadataQueries};
 pub use session_target::{session_target_query, SessionTargetQuery};
+pub use sql_server::{SqlServerPool, SqlServerRegistry, SqlServerTarget, SQL_SERVER_SCHEME};
 pub use ssh_tunnel::{ActiveTunnel, TunnelError, TunnelRegistry};
 pub use transaction_state::{TransactionState, TransactionStatus};
 pub use write_batch::{

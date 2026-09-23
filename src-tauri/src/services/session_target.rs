@@ -23,6 +23,7 @@ pub fn session_target_query(db_type: &DatabaseType) -> Option<SessionTargetQuery
     DatabaseType::PostgreSQL => Some(SessionTargetQuery { sql: POSTGRES_TARGET }),
     DatabaseType::MySQL => Some(SessionTargetQuery { sql: MYSQL_TARGET }),
     DatabaseType::SQLite => Some(SessionTargetQuery { sql: SQLITE_TARGET }),
+    DatabaseType::SqlServer => Some(SessionTargetQuery { sql: SQL_SERVER_TARGET }),
     _ => None,
   }
 }
@@ -62,12 +63,22 @@ SELECT
   (SELECT query_only FROM pragma_query_only()) AS read_only
 "#;
 
+/// `SCHEMA_NAME()` 是登录用户的默认 schema——不带前缀的 `CREATE TABLE t`
+/// 落到哪里。只读看的是库本身（只读库、可用性组里的只读副本）
+const SQL_SERVER_TARGET: &str = r#"
+SELECT
+  DB_NAME() AS database_name,
+  SCHEMA_NAME() AS schema_name,
+  CAST(CASE WHEN DATABASEPROPERTYEX(DB_NAME(), 'Updateability') = 'READ_ONLY'
+    THEN 1 ELSE 0 END AS bit) AS read_only
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
 
-  const SUPPORTED: [DatabaseType; 3] =
-    [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite];
+  const SUPPORTED: [DatabaseType; 4] =
+    [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite, DatabaseType::SqlServer];
 
   #[test]
   fn every_dialect_projects_the_three_columns() {

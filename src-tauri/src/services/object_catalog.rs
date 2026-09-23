@@ -41,6 +41,12 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
       sequence_properties: None,
       object_parameter_count: 0,
     }),
+    DatabaseType::SqlServer => Some(ObjectCatalogQueries {
+      objects: SQL_SERVER_OBJECTS,
+      routine_definition: SQL_SERVER_ROUTINE_DEFINITION,
+      sequence_properties: Some(SQL_SERVER_SEQUENCE_PROPERTIES),
+      object_parameter_count: 0,
+    }),
     _ => None,
   }
 }
@@ -154,6 +160,48 @@ ORDER BY 3, 2
 "#;
 
 const SQLITE_NO_ROUTINES: &str = "SELECT NULL AS definition WHERE 0";
+
+/// `object_id` 用 `sys.objects.object_id`：函数与存储过程不能重载，但不同
+/// schema 下可以同名，按 id 取定义才不会取错。`is_ms_shipped` 排掉系统对象。
+/// 函数有三种：标量（FN）、内联表值（IF）、多语句表值（TF）。
+const SQL_SERVER_OBJECTS: &str = r#"
+SELECT
+  s.name AS object_schema,
+  o.name AS object_name,
+  CASE o.type
+    WHEN 'U' THEN 'table'
+    WHEN 'V' THEN 'view'
+    WHEN 'P' THEN 'procedure'
+    WHEN 'SO' THEN 'sequence'
+    ELSE 'function'
+  END AS object_kind,
+  CAST(o.object_id AS nvarchar(20)) AS object_id
+FROM sys.objects o
+JOIN sys.schemas s ON s.schema_id = o.schema_id
+WHERE o.type IN ('U', 'V', 'P', 'FN', 'IF', 'TF', 'SO')
+  AND o.is_ms_shipped = 0
+ORDER BY 1, 3, 2
+"#;
+
+/// 前端对非 PostgreSQL 的方言绑两个参数（名字、库名）；这里的第一个参数
+/// 就是 object_id，第二个 SQL Server 用不上，`sp_executesql` 允许多声明的参数不用
+const SQL_SERVER_ROUTINE_DEFINITION: &str =
+  "SELECT OBJECT_DEFINITION(CAST(@P1 AS int)) AS definition";
+
+/// 值是 `sql_variant`，一律转成文本；列名与 PostgreSQL 那一份对齐
+const SQL_SERVER_SEQUENCE_PROPERTIES: &str = r#"
+SELECT
+  CAST(sq.start_value AS nvarchar(40)) AS start_value,
+  CAST(sq.increment AS nvarchar(40)) AS increment_by,
+  CAST(sq.minimum_value AS nvarchar(40)) AS min_value,
+  CAST(sq.maximum_value AS nvarchar(40)) AS max_value,
+  CAST(sq.cache_size AS nvarchar(20)) AS cache_size,
+  CASE WHEN sq.is_cycling = 1 THEN 'true' ELSE 'false' END AS cycles,
+  TYPE_NAME(sq.system_type_id) AS data_type,
+  CAST(sq.current_value AS nvarchar(40)) AS last_value
+FROM sys.sequences sq
+WHERE sq.object_id = CAST(@P1 AS int)
+"#;
 
 #[cfg(test)]
 mod tests {

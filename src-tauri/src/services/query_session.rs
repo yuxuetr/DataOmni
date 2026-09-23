@@ -1,3 +1,4 @@
+use crate::services::query_executor::PoolRef;
 use crate::services::query_executor::QUERY_TIMEOUT;
 use crate::services::{
   transaction_state::TransactionState, QueryError, QueryExecutionResult, QueryExecutionSummary,
@@ -67,7 +68,7 @@ pub struct QuerySessionState {
 pub struct StreamingQueryOptions<'a> {
   pub session_id: &'a str,
   pub pool_key: &'a str,
-  pub pool: &'a DbPool,
+  pub pool: PoolRef<'a>,
   pub sql: &'a str,
   /// false 时，不在事务里就先发一条 `BEGIN`。
   ///
@@ -97,7 +98,7 @@ impl QuerySessionState {
       return Err(QueryError::message(SESSION_ID_EMPTY));
     }
 
-    let entry = self.get_or_create(session_id, pool_key, pool).await?;
+    let entry = self.get_or_create(session_id, pool_key, pool.into()).await?;
     if entry.pool_key != pool_key {
       return Err(QueryError::message(SESSION_BOUND_ELSEWHERE));
     }
@@ -182,7 +183,7 @@ impl QuerySessionState {
     &self,
     session_id: &str,
     pool_key: &str,
-    pool: &DbPool,
+    pool: PoolRef<'_>,
   ) -> Result<Arc<SessionEntry>, QueryError> {
     if let Some(entry) = self.sessions.lock().await.get(session_id).cloned() {
       return Ok(entry);
@@ -303,7 +304,7 @@ mod tests {
         StreamingQueryOptions {
           session_id: "s1",
           pool_key: "sqlite::memory:",
-          pool,
+          pool: pool.into(),
           sql,
           autocommit,
           assume_rows: false,

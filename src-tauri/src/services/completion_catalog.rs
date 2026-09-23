@@ -10,6 +10,7 @@
 //! 再查一次只是多一次往返。
 
 use crate::models::DatabaseType;
+use crate::services::sql_server::sql_server_type_name;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -32,6 +33,9 @@ pub fn completion_catalog_query(db_type: &DatabaseType) -> Option<CompletionCata
     }
     DatabaseType::SQLite => {
       Some(CompletionCatalogQuery { relations: SQLITE_RELATIONS, parameter_count: 0 })
+    }
+    DatabaseType::SqlServer => {
+      Some(CompletionCatalogQuery { relations: SQL_SERVER_RELATIONS, parameter_count: 0 })
     }
     _ => None,
   }
@@ -93,12 +97,32 @@ WHERE m.type IN ('table', 'view')
 ORDER BY m.name, p.cid
 "#;
 
+const SQL_SERVER_RELATIONS: &str = concat!(
+  r#"
+SELECT
+  s.name AS relation_schema,
+  o.name AS relation_name,
+  CASE WHEN o.type = 'V' THEN 'view' ELSE 'table' END AS relation_kind,
+  c.name AS column_name,
+  "#,
+  sql_server_type_name!(),
+  r#" AS data_type
+FROM sys.objects o
+JOIN sys.schemas s ON s.schema_id = o.schema_id
+JOIN sys.columns c ON c.object_id = o.object_id
+JOIN sys.types ty ON ty.user_type_id = c.user_type_id
+WHERE o.type IN ('U', 'V')
+  AND o.is_ms_shipped = 0
+ORDER BY s.name, o.name, c.column_id
+"#
+);
+
 #[cfg(test)]
 mod tests {
   use super::*;
 
-  const SUPPORTED: [DatabaseType; 3] =
-    [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite];
+  const SUPPORTED: [DatabaseType; 4] =
+    [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite, DatabaseType::SqlServer];
 
   #[test]
   fn declared_parameter_count_matches_the_placeholders() {

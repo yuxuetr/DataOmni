@@ -15,7 +15,8 @@ use tokio::time::Duration;
 
 pub const QUERY_CANCELLED_CODE: &str = "QUERY_CANCELLED";
 
-use crate::services::{QueryError, TunnelRegistry};
+use crate::services::query_executor::{sql_server_unsupported, PoolRef};
+use crate::services::{QueryError, SqlServerRegistry, TunnelRegistry, SQL_SERVER_SCHEME};
 
 /// 池子按连接串做键，查不到说明前端 `Database.load` 用的串和这里算的不是
 /// 同一个。写成码是为了英文界面上不要印中文——见 `utils/backendError.ts`。
@@ -38,6 +39,52 @@ pub const OBJECT_BROWSE_UNSUPPORTED: &str = "DATAOMNI_OBJECT_BROWSE_UNSUPPORTED"
 pub const ER_DIAGRAM_UNSUPPORTED: &str = "DATAOMNI_ER_DIAGRAM_UNSUPPORTED";
 pub const COMPLETION_CATALOG_UNSUPPORTED: &str = "DATAOMNI_COMPLETION_CATALOG_UNSUPPORTED";
 pub const SESSION_TARGET_UNSUPPORTED: &str = "DATAOMNI_SESSION_TARGET_UNSUPPORTED";
+
+/// 这条连接串对应的池子在哪儿。
+///
+/// sqlx 三家的池子在插件的 `DbInstances` 里（前端 `Database.load` 打开的），
+/// SQL Server 的在后端自己的 [`SqlServerRegistry`] 里（`test_connection` 打开的）。
+/// 键都是 `connection_string_via` 算出来的同一个串。
+enum ResolvedPool<'a> {
+  Sqlx(tokio::sync::RwLockReadGuard<'a, HashMap<String, tauri_plugin_sql::DbPool>>, String),
+  SqlServer(std::sync::Arc<crate::services::SqlServerPool>),
+}
+
+impl ResolvedPool<'_> {
+  async fn resolve<'a>(
+    connection_string: String,
+    database_instances: &'a DbInstances,
+    sql_server: &SqlServerRegistry,
+  ) -> Result<ResolvedPool<'a>, QueryError> {
+    if connection_string.starts_with(SQL_SERVER_SCHEME) {
+      return sql_server
+        .get(&connection_string)
+        .map(ResolvedPool::SqlServer)
+        .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED));
+    }
+    Ok(ResolvedPool::Sqlx(database_instances.0.read().await, connection_string))
+  }
+
+  fn pool_ref(&self) -> Result<PoolRef<'_>, QueryError> {
+    match self {
+      Self::Sqlx(instances, key) => instances
+        .get(key)
+        .map(PoolRef::Sqlx)
+        .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED)),
+      Self::SqlServer(pool) => Ok(PoolRef::SqlServer(pool)),
+    }
+  }
+}
+
+/// 写入、导出、导入还没接到 SQL Server 上（第三、第四阶段）。不在这里拦的话，
+/// 它们去插件的 `DbInstances` 里找池子找不到，报的是「会话未连接」——
+/// 而界面上连接明明是绿的
+fn refuse_sql_server(connection_string: &str, operation: &str) -> Result<(), QueryError> {
+  if connection_string.starts_with(SQL_SERVER_SCHEME) {
+    return Err(sql_server_unsupported(operation));
+  }
+  Ok(())
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -92,6 +139,8 @@ impl QueryCancellationState {
   }
 }
 
+// 参数都是 Tauri 注入的 State，由框架按类型逐个填，合不成一个结构
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn execute_query(
   request: QueryExecutionRequest,
@@ -101,6 +150,7 @@ pub async fn execute_query(
   database_instances: State<'_, DbInstances>,
   cancellation_state: State<'_, QueryCancellationState>,
   query_session_state: State<'_, QuerySessionState>,
+  sql_server: State<'_, SqlServerRegistry>,
 ) -> Result<QueryExecutionSummary, QueryError> {
   if !(100..=3_600_000).contains(&request.timeout_ms) {
     return Err(QueryError::message(TIMEOUT_OUT_OF_RANGE));
@@ -125,10 +175,9 @@ pub async fn execute_query(
       .map_err(QueryError::message)?
   };
 
-  let instances = database_instances.0.read().await;
-  let pool = instances
-    .get(&connection_string)
-    .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED))?;
+  let resolved =
+    ResolvedPool::resolve(connection_string.clone(), &database_instances, &sql_server).await?;
+  let pool = resolved.pool_ref()?;
   let receiver =
     cancellation_state.register(&request.execution_id).await.map_err(QueryError::message)?;
   let mut send_batch =
@@ -180,6 +229,8 @@ pub async fn execute_write_batch(
     service.resolve_connection_string(&connection_id, tunnel_port).map_err(batch_error)?
   };
 
+  refuse_sql_server(&connection_string, "write")
+    .map_err(|error| WriteBatchError { statement_index: 0, error })?;
   let instances = database_instances.0.read().await;
   let pool =
     instances.get(&connection_string).ok_or_else(|| batch_error(DB_SESSION_NOT_CONNECTED))?;
@@ -229,6 +280,7 @@ pub async fn export_query_to_file(
       .map_err(QueryError::message)?
   };
 
+  refuse_sql_server(&connection_string, "export")?;
   let instances = database_instances.0.read().await;
   let pool = instances
     .get(&connection_string)
@@ -355,6 +407,7 @@ pub async fn import_csv_file(
       .map_err(QueryError::message)?
   };
 
+  refuse_sql_server(&connection_string, "import")?;
   let instances = database_instances.0.read().await;
   let pool = instances
     .get(&connection_string)
@@ -510,7 +563,7 @@ pub async fn explain_query(
       StreamingQueryOptions {
         session_id: &request.session_id,
         pool_key: &connection_string,
-        pool,
+        pool: PoolRef::Sqlx(pool),
         sql: &statement,
         autocommit: request.autocommit,
         assume_rows: true,

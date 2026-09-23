@@ -177,18 +177,54 @@ pub async fn execute_query_with_limits(
   }
 }
 
+/// 一条连接从哪个池子来：插件管的 sqlx 三家，或者后端自己持有的 SQL Server。
+///
+/// 插件的 `DbPool` 是别人的枚举，加不进第四个变体，所以包一层。只有要
+/// **开一条会话连接**的地方需要它（`SessionConnection::acquire`）；只接受
+/// `&DbPool` 的调用方经 `From` 照旧编译。
+#[derive(Clone, Copy)]
+pub enum PoolRef<'a> {
+  Sqlx(&'a DbPool),
+  SqlServer(&'a std::sync::Arc<crate::services::sql_server::SqlServerPool>),
+}
+
+impl<'a> From<&'a DbPool> for PoolRef<'a> {
+  fn from(pool: &'a DbPool) -> Self {
+    Self::Sqlx(pool)
+  }
+}
+
 pub enum SessionConnection {
   Sqlite(sqlx::pool::PoolConnection<Sqlite>),
   MySql(sqlx::pool::PoolConnection<MySql>),
   Postgres(sqlx::pool::PoolConnection<Postgres>),
+  /// 装箱：tiberius 的客户端比 sqlx 的池连接大得多，不装箱的话每个变体都按它付内存
+  SqlServer(Box<crate::services::sql_server::SqlServerConnection>),
+}
+
+/// SQL Server 这一阶段还没接上的操作
+pub(crate) fn sql_server_unsupported(operation: &str) -> QueryError {
+  QueryError::message(format!(
+    "{}: {operation}",
+    crate::services::sql_server::SQL_SERVER_UNSUPPORTED
+  ))
 }
 
 impl SessionConnection {
-  pub async fn acquire(pool: &DbPool) -> Result<Self, QueryError> {
-    match pool {
-      DbPool::Sqlite(pool) => pool.acquire().await.map(Self::Sqlite).map_err(display_error),
-      DbPool::MySql(pool) => pool.acquire().await.map(Self::MySql).map_err(display_error),
-      DbPool::Postgres(pool) => pool.acquire().await.map(Self::Postgres).map_err(display_error),
+  pub async fn acquire<'a>(pool: impl Into<PoolRef<'a>>) -> Result<Self, QueryError> {
+    match pool.into() {
+      PoolRef::Sqlx(DbPool::Sqlite(pool)) => {
+        pool.acquire().await.map(Self::Sqlite).map_err(display_error)
+      }
+      PoolRef::Sqlx(DbPool::MySql(pool)) => {
+        pool.acquire().await.map(Self::MySql).map_err(display_error)
+      }
+      PoolRef::Sqlx(DbPool::Postgres(pool)) => {
+        pool.acquire().await.map(Self::Postgres).map_err(display_error)
+      }
+      PoolRef::SqlServer(pool) => {
+        pool.acquire_for_session().await.map(|connection| Self::SqlServer(Box::new(connection)))
+      }
     }
   }
 
@@ -201,6 +237,20 @@ impl SessionConnection {
       Self::Sqlite(connection) => execute_sqlite_connection(connection, sql, row_limit).await,
       Self::MySql(connection) => execute_mysql_connection(connection, sql, row_limit).await,
       Self::Postgres(connection) => execute_postgres_connection(connection, sql, row_limit).await,
+      Self::SqlServer(connection) => {
+        let mut rows = Vec::new();
+        let summary = connection
+          .execute_streaming(
+            sql,
+            StreamOptions::limited(row_limit, DEFAULT_QUERY_BYTE_LIMIT, row_limit.max(1)),
+            &mut |batch| {
+              rows.extend(batch.rows);
+              Ok(())
+            },
+          )
+          .await?;
+        summary_with_rows(summary, rows)
+      }
     }
   }
 
@@ -216,6 +266,8 @@ impl SessionConnection {
       Self::Sqlite(connection) => describe_sqlite_columns(connection, sql).await,
       Self::MySql(connection) => describe_mysql_columns(connection, sql).await,
       Self::Postgres(connection) => describe_postgres_columns(connection, sql).await,
+      // 导出要先写表头；SQL Server 要 `sp_describe_first_result_set`，在第四阶段
+      Self::SqlServer(_) => Err(sql_server_unsupported("describe")),
     }
   }
 
@@ -251,6 +303,8 @@ impl SessionConnection {
         }
         connection.execute(query).await.map(|done| done.rows_affected()).map_err(display_error)
       }
+      // CSV 导入走这里，在第四阶段
+      Self::SqlServer(_) => Err(sql_server_unsupported("import")),
     }
   }
 
@@ -271,6 +325,7 @@ impl SessionConnection {
       Self::Postgres(connection) => {
         connection.execute(sql).await.map(|done| done.rows_affected()).map_err(display_error)
       }
+      Self::SqlServer(connection) => connection.execute_batch(sql).await,
     }
   }
 
@@ -307,6 +362,7 @@ impl SessionConnection {
       Self::Postgres(connection) => {
         execute_postgres_connection_streaming(connection, sql, options, sink).await
       }
+      Self::SqlServer(connection) => connection.execute_streaming(sql, options, sink).await,
     }
   }
 }
@@ -690,7 +746,7 @@ async fn execute_postgres_connection_streaming(
   })
 }
 
-fn flush_full_batch(
+pub(crate) fn flush_full_batch(
   rows: &mut Vec<QueryRow>,
   batch_size: usize,
   batch_count: &mut usize,
@@ -703,7 +759,7 @@ fn flush_full_batch(
   send_batch(rows, batch_count, row_count, sink)
 }
 
-fn flush_remaining_batch(
+pub(crate) fn flush_remaining_batch(
   rows: &mut Vec<QueryRow>,
   batch_count: &mut usize,
   row_count: usize,
@@ -733,7 +789,7 @@ fn send_batch(
 /// `usize::MAX` 表示不设限（导出路径）。这时不能只是「比较结果恒为假」就算了——
 /// `serialized_row_size` 会把整行再序列化一遍，而结果会被直接丢掉。一次全表
 /// 导出就是白做几百万次。
-fn admit_row_bytes(
+pub(crate) fn admit_row_bytes(
   row: &QueryRow,
   byte_limit: usize,
   bytes_read: &mut usize,
@@ -770,7 +826,7 @@ fn refuse_use_statement(sql: &str) -> Result<(), QueryError> {
 }
 
 /// 导出路径遇到不返回结果集的语句时提前退出，不让它执行。
-fn refuse_non_query(handling: NonQueryHandling) -> Result<(), QueryError> {
+pub(crate) fn refuse_non_query(handling: NonQueryHandling) -> Result<(), QueryError> {
   match handling {
     NonQueryHandling::Execute => Ok(()),
     NonQueryHandling::Refuse => Err(QueryError::message(NON_QUERY_MESSAGE)),
@@ -1074,11 +1130,11 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
 /// 认不出（小时要两位），拿它去比较或写回也要赌服务端的宽容。
 /// 这里照数据库的文本输出：两位小时，小数秒只在非零时出现并去掉末尾的 0
 /// （PostgreSQL 就是这么输出的；MySQL 按列的精度补 0，值相同）。
-fn format_date(date: Date) -> String {
+pub(crate) fn format_date(date: Date) -> String {
   format!("{:04}-{:02}-{:02}", date.year(), u8::from(date.month()), date.day())
 }
 
-fn format_time(time: Time) -> String {
+pub(crate) fn format_time(time: Time) -> String {
   let whole = format!("{:02}:{:02}:{:02}", time.hour(), time.minute(), time.second());
   match time.microsecond() {
     0 => whole,
@@ -1086,7 +1142,7 @@ fn format_time(time: Time) -> String {
   }
 }
 
-fn format_datetime(value: PrimitiveDateTime) -> String {
+pub(crate) fn format_datetime(value: PrimitiveDateTime) -> String {
   format!("{} {}", format_date(value.date()), format_time(value.time()))
 }
 
@@ -1190,11 +1246,11 @@ where
 /// 解码失败、序列化失败这类：错误来自我们这一侧，没有数据库给的结构可取，
 /// 只留一句话。和 `QueryError::from(sqlx::Error)` 分开是为了不把
 /// 「数据库说的」和「我们说的」混成一种东西。
-fn display_error(error: impl std::fmt::Display) -> QueryError {
+pub(crate) fn display_error(error: impl std::fmt::Display) -> QueryError {
   QueryError::message(error.to_string())
 }
 
-fn tagged_value(value_type: &str, value: String) -> JsonValue {
+pub(crate) fn tagged_value(value_type: &str, value: String) -> JsonValue {
   JsonValue::Object(Map::from_iter([
     ("type".to_string(), JsonValue::String(value_type.to_string())),
     ("value".to_string(), JsonValue::String(value)),

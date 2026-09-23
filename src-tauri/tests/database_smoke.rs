@@ -304,7 +304,7 @@ async fn assert_transaction_binding(
       StreamingQueryOptions {
         session_id,
         pool_key,
-        pool,
+        pool: pool.into(),
         sql: "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5",
         autocommit: true,
         assume_rows: false,
@@ -3745,7 +3745,7 @@ async fn postgres_aborts_the_whole_transaction_after_one_failed_statement() {
   let options = |sql: &'static str| StreamingQueryOptions {
     session_id: "tx-pg",
     pool_key: &url,
-    pool: &db_pool,
+    pool: (&db_pool).into(),
     sql,
     autocommit: true,
     assume_rows: false,
@@ -3801,7 +3801,7 @@ async fn mysql_keeps_the_transaction_usable_after_a_failed_statement() {
   let options = |sql: &'static str| StreamingQueryOptions {
     session_id: "tx-my",
     pool_key: &url,
-    pool: &db_pool,
+    pool: (&db_pool).into(),
     sql,
     autocommit: true,
     assume_rows: false,
@@ -3865,7 +3865,7 @@ async fn explain_with_session(
       StreamingQueryOptions {
         session_id: "plan",
         pool_key,
-        pool,
+        pool: pool.into(),
         sql: &statement,
         autocommit: true,
         assume_rows: true,

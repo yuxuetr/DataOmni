@@ -76,6 +76,9 @@ pub enum DatabaseType {
   PostgreSQL,
   #[serde(rename = "sqlite")]
   SQLite,
+  /// 不走 sqlx：驱动是 tiberius，连接由后端自己持有。见 `services/sql_server.rs`
+  #[serde(rename = "sqlserver")]
+  SqlServer,
 
   // 非关系型数据库
   #[serde(rename = "mongodb")]
@@ -106,7 +109,13 @@ impl DatabaseType {
   /// 都由测试钉在 `Cargo.toml` 的 features 上。界面那份是提前告知，这份是
   /// 最终裁决——任何绕过界面的路径（老配置、手改存档）都过不去。
   pub fn has_driver(&self) -> bool {
-    matches!(self, DatabaseType::MySQL | DatabaseType::PostgreSQL | DatabaseType::SQLite)
+    matches!(
+      self,
+      DatabaseType::MySQL
+        | DatabaseType::PostgreSQL
+        | DatabaseType::SQLite
+        | DatabaseType::SqlServer
+    )
   }
 
   pub fn get_default_port(&self) -> u16 {
@@ -114,6 +123,7 @@ impl DatabaseType {
       DatabaseType::MySQL => 3306,
       DatabaseType::PostgreSQL => 5432,
       DatabaseType::SQLite => 0, // SQLite 不需要端口
+      DatabaseType::SqlServer => 1433,
       DatabaseType::MongoDB => 27017,
       DatabaseType::Redis => 6379,
       DatabaseType::Neo4j => 7687,      // Neo4j Bolt 端口
@@ -203,6 +213,17 @@ impl DatabaseType {
       DatabaseType::SQLite => {
         format!("sqlite:{}", config.database.as_ref().unwrap_or(&":memory:".to_string()))
       }
+      // 这不是给驱动的连接串，是 `SqlServerRegistry` 里的键：前端拿它认出这条
+      // 连接归后端管，后端每条命令按它取池子。所以**不带口令**——它会出现在
+      // 前端的状态里，而连接参数在登记池子的时候就已经交给后端了
+      DatabaseType::SqlServer => format!(
+        "{}{}@{}:{}/{}",
+        crate::services::SQL_SERVER_SCHEME,
+        encode(&config.username),
+        config.host,
+        config.port,
+        encode(config.database.as_deref().unwrap_or(""))
+      ),
       DatabaseType::MongoDB => {
         if !config.username.is_empty() && !config.password.is_empty() {
           format!(
@@ -418,10 +439,11 @@ impl Default for ConnectionProfile {
 
 #[cfg(test)]
 mod tests {
-  const ALL_DATABASE_TYPES: [super::DatabaseType; 9] = [
+  const ALL_DATABASE_TYPES: [super::DatabaseType; 10] = [
     super::DatabaseType::MySQL,
     super::DatabaseType::PostgreSQL,
     super::DatabaseType::SQLite,
+    super::DatabaseType::SqlServer,
     super::DatabaseType::MongoDB,
     super::DatabaseType::Redis,
     super::DatabaseType::Neo4j,
@@ -530,6 +552,13 @@ mod tests {
   #[test]
   fn every_supported_type_can_produce_a_plan_even_if_it_cannot_analyze() {
     for db_type in ALL_DATABASE_TYPES {
+      // SQL Server 是唯一的例外，而且是**按阶段**的例外：执行计划排在第四阶段
+      // （`SHOWPLAN_XML`），连接表单上那一格的「有缺口」说明里写着。做完那一阶段
+      // 就删掉这一行——断言会逼着你删
+      if db_type == super::DatabaseType::SqlServer {
+        assert!(crate::services::explain_statement(&db_type, "SELECT 1", false).is_err());
+        continue;
+      }
       assert_eq!(
         db_type.has_driver(),
         crate::services::explain_statement(&db_type, "SELECT 1", false).is_ok(),

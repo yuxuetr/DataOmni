@@ -332,11 +332,15 @@ enum Dialect {
 }
 
 impl Dialect {
-  fn of(connection: &SessionConnection) -> Self {
+  fn of(connection: &SessionConnection) -> Result<Self, QueryError> {
     match connection {
-      SessionConnection::Sqlite(_) => Self::Sqlite,
-      SessionConnection::MySql(_) => Self::MySql,
-      SessionConnection::Postgres(_) => Self::Postgres,
+      SessionConnection::Sqlite(_) => Ok(Self::Sqlite),
+      SessionConnection::MySql(_) => Ok(Self::MySql),
+      SessionConnection::Postgres(_) => Ok(Self::Postgres),
+      // 导入排在第四阶段：一条 INSERT 最多 2100 个参数，批量大小要按它重算
+      SessionConnection::SqlServer(_) => {
+        Err(crate::services::query_executor::sql_server_unsupported("import"))
+      }
     }
   }
 
@@ -475,7 +479,7 @@ pub async fn import_csv(
     })?;
 
   let mut connection = SessionConnection::acquire(pool).await?;
-  let dialect = Dialect::of(&connection);
+  let dialect = Dialect::of(&connection)?;
   let per_statement = rows_per_statement(request.batch_size, request.columns.len());
   let batch_sql = build_insert(
     dialect,
@@ -689,7 +693,7 @@ async fn flush(
     batch_sql
   } else {
     tail_sql = build_insert(
-      Dialect::of(connection),
+      Dialect::of(connection)?,
       request.schema.as_deref(),
       &request.table,
       &request.columns,

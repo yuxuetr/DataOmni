@@ -1,5 +1,8 @@
-use crate::models::ConnectionProfile;
-use crate::services::{ssh_tunnel, ConnectionService, TunnelRegistry};
+use crate::models::{ConnectionProfile, DatabaseType};
+use crate::services::{
+  sql_server, ssh_tunnel, ConnectionService, SqlServerPool, SqlServerRegistry, SqlServerTarget,
+  TunnelRegistry,
+};
 use std::sync::Mutex;
 use tauri::{AppHandle, State};
 
@@ -101,6 +104,7 @@ pub async fn test_connection(
   app_handle: AppHandle,
   service_state: State<'_, ConnectionServiceState>,
   tunnels: State<'_, TunnelRegistry>,
+  sql_server_registry: State<'_, SqlServerRegistry>,
 ) -> Result<String, String> {
   println!("🧪 测试数据库连接: {}", config.name);
 
@@ -109,21 +113,64 @@ pub async fn test_connection(
   let resolved =
     with_service(&service_state, &app_handle, |service| service.resolve_for_connection(&config))?;
 
-  let Some(tunnel) = resolved.ssh_tunnel.clone() else {
-    return Ok(resolved.connection_string_via(None));
+  let local_port = match resolved.ssh_tunnel.clone() {
+    None => None,
+    Some(tunnel) => {
+      let Some(known_hosts) = ssh_tunnel::default_known_hosts() else {
+        return Err(crate::services::connection_service::KNOWN_HOSTS_NO_HOME.to_string());
+      };
+      let port = tunnels
+        .ensure(&resolved, &tunnel, &known_hosts)
+        .await
+        .map_err(|error| error.to_string())?;
+      println!("🔒 SSH 隧道已就绪: 127.0.0.1:{port} → {}:{}", tunnel.host, tunnel.port);
+      Some(port)
+    }
   };
 
-  let Some(known_hosts) = ssh_tunnel::default_known_hosts() else {
-    return Err(crate::services::connection_service::KNOWN_HOSTS_NO_HOME.to_string());
-  };
+  // 连接串必须和执行查询那条路算出来的**逐字节相同**（有隧道时指向本地转发
+  // 端口）——两边都走 `connection_string_via`，就没有第二份实现可以走偏
+  let connection_string = resolved.connection_string_via(local_port);
 
-  let local_port =
-    tunnels.ensure(&resolved, &tunnel, &known_hosts).await.map_err(|error| error.to_string())?;
+  // 另外三家到这里就够了：前端拿连接串去 `Database.load`，由插件去连。
+  // SQL Server 不归插件管，在这里真的连上，连接留给后面的命令用
+  if resolved.db_type == DatabaseType::SqlServer {
+    let reachable = match local_port {
+      Some(port) => resolved.redirected_to("127.0.0.1", port),
+      None => resolved,
+    };
+    let target = SqlServerTarget::from_profile(&reachable);
+    let client = sql_server::connect(&target).await.map_err(|error| error.message)?;
+    sql_server_registry.insert(connection_string.clone(), SqlServerPool::new(target, client));
+  }
+  Ok(connection_string)
+}
 
-  // 连接串必须指向本地转发端口，而且要和执行查询那条路算出来的**逐字节
-  // 相同**——两边都走 `connection_string_via`，就没有第二份实现可以走偏
-  println!("🔒 SSH 隧道已就绪: 127.0.0.1:{local_port} → {}:{}", tunnel.host, tunnel.port);
-  Ok(resolved.connection_string_via(Some(local_port)))
+/// SQL Server 连接上的目录查询：前端对另外三家走插件的 `select`，对这一家走这里。
+/// 返回的形状与插件一致——一行一个对象，值不带类型标签。
+#[tauri::command]
+pub async fn sql_server_select(
+  connection_string: String,
+  sql: String,
+  params: Vec<serde_json::Value>,
+  sql_server_registry: State<'_, SqlServerRegistry>,
+) -> Result<Vec<crate::services::QueryRow>, crate::services::QueryError> {
+  let pool = sql_server_registry.get(&connection_string).ok_or_else(|| {
+    crate::services::QueryError::message(
+      crate::commands::database_commands::DB_SESSION_NOT_CONNECTED,
+    )
+  })?;
+  pool.select(&sql, &params).await
+}
+
+/// 断开时把登记的池子去掉。池子里的空闲连接随之关闭；会话连接由
+/// `release_database_session` 另行释放。
+#[tauri::command]
+pub fn close_sql_server(
+  connection_string: String,
+  sql_server_registry: State<'_, SqlServerRegistry>,
+) -> bool {
+  sql_server_registry.remove(&connection_string)
 }
 
 /// 断开连接时拆掉隧道。

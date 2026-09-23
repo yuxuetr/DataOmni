@@ -8,6 +8,7 @@
 //! `public.orders` 和 `billing.orders` 两张不同的表，只按名字会把它们画成一个。
 
 use crate::models::DatabaseType;
+use crate::services::sql_server::sql_server_type_name;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,6 +39,11 @@ pub fn er_diagram_queries(db_type: &DatabaseType) -> Option<ErDiagramQueries> {
     DatabaseType::SQLite => Some(ErDiagramQueries {
       columns: SQLITE_COLUMNS,
       foreign_keys: SQLITE_FOREIGN_KEYS,
+      parameter_count: 0,
+    }),
+    DatabaseType::SqlServer => Some(ErDiagramQueries {
+      columns: SQL_SERVER_COLUMNS,
+      foreign_keys: SQL_SERVER_FOREIGN_KEYS,
       parameter_count: 0,
     }),
     _ => None,
@@ -170,13 +176,67 @@ WHERE m.type = 'table'
 ORDER BY m.name, f.id, f.seq
 "#;
 
+/// 连接本身就落在一个库上，`sys.*` 只看得到这个库，不用再绑库名
+const SQL_SERVER_COLUMNS: &str = concat!(
+  r#"
+SELECT
+  s.name AS table_schema,
+  o.name AS table_name,
+  c.name AS column_name,
+  "#,
+  sql_server_type_name!(),
+  r#" AS data_type,
+  CAST(c.column_id AS int) AS ordinal,
+  CAST(CASE WHEN pk.column_id IS NULL THEN 0 ELSE 1 END AS bit) AS is_primary_key,
+  c.is_nullable AS is_nullable
+FROM sys.objects o
+JOIN sys.schemas s ON s.schema_id = o.schema_id
+JOIN sys.columns c ON c.object_id = o.object_id
+JOIN sys.types ty ON ty.user_type_id = c.user_type_id
+LEFT JOIN (
+  SELECT ic.object_id, ic.column_id
+  FROM sys.indexes i
+  JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+  WHERE i.is_primary_key = 1
+) pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id
+WHERE o.type = 'U'
+  AND o.is_ms_shipped = 0
+ORDER BY s.name, o.name, c.column_id
+"#
+);
+
+const SQL_SERVER_FOREIGN_KEYS: &str = r#"
+SELECT
+  s.name AS table_schema,
+  o.name AS table_name,
+  pc.name AS column_name,
+  rs.name AS referenced_schema,
+  rt.name AS referenced_table,
+  rc.name AS referenced_column,
+  fk.name AS constraint_name,
+  CAST(fkc.constraint_column_id AS int) AS ordinal
+FROM sys.foreign_keys fk
+JOIN sys.objects o ON o.object_id = fk.parent_object_id
+JOIN sys.schemas s ON s.schema_id = o.schema_id
+JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+JOIN sys.objects rt ON rt.object_id = fkc.referenced_object_id
+JOIN sys.schemas rs ON rs.schema_id = rt.schema_id
+JOIN sys.columns rc
+  ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
+WHERE o.is_ms_shipped = 0
+ORDER BY s.name, o.name, fk.name, fkc.constraint_column_id
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
 
   #[test]
   fn declared_parameter_count_matches_the_placeholders() {
-    for db_type in [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite] {
+    for db_type in
+      [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite, DatabaseType::SqlServer]
+    {
       let queries = er_diagram_queries(&db_type).expect("supported");
       for sql in [queries.columns, queries.foreign_keys] {
         assert_eq!(

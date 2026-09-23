@@ -9,6 +9,7 @@
 //! 查询一律带占位符，表名与 schema 由调用方绑定，不做字符串拼接。
 
 use crate::models::DatabaseType;
+use crate::services::sql_server::sql_server_type_name;
 use serde::Serialize;
 
 /// 一个方言的三段目录查询。
@@ -79,6 +80,17 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       ddl: Some(DdlQuery::Bound { sql: SQLITE_DDL }),
       triggers: SQLITE_TRIGGERS,
       parameter_count: 1,
+    }),
+    // SQL Server 没有 `SHOW CREATE TABLE`，和 PostgreSQL 一样：视图有权威定义，
+    // 表没有，查表时返回 0 行
+    DatabaseType::SqlServer => Some(SchemaMetadataQueries {
+      columns: SQL_SERVER_COLUMNS,
+      indexes: SQL_SERVER_INDEXES,
+      foreign_keys: SQL_SERVER_FOREIGN_KEYS,
+      check_constraints: Some(SQL_SERVER_CHECK_CONSTRAINTS),
+      ddl: Some(DdlQuery::Bound { sql: SQL_SERVER_VIEW_DEFINITION }),
+      triggers: SQL_SERVER_TRIGGERS,
+      parameter_count: 2,
     }),
     _ => None,
   }
@@ -491,14 +503,165 @@ WHERE type = 'trigger'
 ORDER BY name
 "#;
 
+/// SQL Server 的目录一律按 `sys.*` 取，不走 `INFORMATION_SCHEMA`：后者没有
+/// identity / 计算列 / 索引，而这几样结构页都要。
+///
+/// 两个参数是表名与 schema；schema 为 NULL 时用会话的默认 schema
+/// （`SCHEMA_NAME()`，通常是 `dbo`）。`o.type` 取表与视图——视图同样能打开数据页。
+///
+/// `column_default` 是 `sys.default_constraints.definition` 的原文，外面带着
+/// SQL Server 自己加的括号：`((0))`、`('it''s')`、`(getdate())`。是 SQL 表达式，
+/// 不是值；改结构那一阶段要按表达式重述它，现在只用于显示。
+/// `rowversion`（旧名 `timestamp`）的值由服务端写，算作 `is_generated`。
+const SQL_SERVER_COLUMNS: &str = concat!(
+  r#"
+SELECT
+  c.name AS column_name,
+  "#,
+  sql_server_type_name!(),
+  r#" AS data_type,
+  c.is_nullable AS is_nullable,
+  dc.definition AS column_default,
+  CAST(CASE WHEN pk.key_ordinal IS NULL THEN 0 ELSE 1 END AS bit) AS is_primary_key,
+  CAST(pk.key_ordinal AS int) AS primary_key_ordinal,
+  CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR ty.name = 'timestamp'
+    THEN 1 ELSE 0 END AS bit) AS is_generated,
+  c.collation_name AS collation,
+  CAST(NULL AS nvarchar(1)) AS comment,
+  CAST(NULL AS nvarchar(1)) AS column_extra
+FROM sys.objects o
+JOIN sys.schemas s ON s.schema_id = o.schema_id
+JOIN sys.columns c ON c.object_id = o.object_id
+JOIN sys.types ty ON ty.user_type_id = c.user_type_id
+LEFT JOIN sys.default_constraints dc ON dc.object_id = c.default_object_id
+LEFT JOIN (
+  SELECT ic.object_id, ic.column_id, ic.key_ordinal
+  FROM sys.indexes i
+  JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+  WHERE i.is_primary_key = 1
+) pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id
+WHERE o.name = @P1
+  AND s.name = COALESCE(@P2, SCHEMA_NAME())
+  AND o.type IN ('U', 'V')
+ORDER BY c.column_id
+"#
+);
+
+/// `type > 0` 排掉堆（没有聚集索引的表在 `sys.indexes` 里有一行 type 0）。
+/// 包含列（`INCLUDE`）不是键的一部分，排掉——拿它去定位一行是错的。
+/// 唯一约束在 SQL Server 里就是一个唯一索引，一并列出。
+const SQL_SERVER_INDEXES: &str = r#"
+SELECT
+  i.name AS index_name,
+  col.name AS column_name,
+  CAST(ic.key_ordinal AS int) AS ordinal,
+  i.is_unique AS is_unique,
+  i.is_primary_key AS is_primary,
+  i.has_filter AS is_partial,
+  CAST(CASE WHEN i.is_disabled = 1 THEN 0 ELSE 1 END AS bit) AS is_valid,
+  LOWER(i.type_desc) AS method
+FROM sys.indexes i
+JOIN sys.objects o ON o.object_id = i.object_id
+JOIN sys.schemas s ON s.schema_id = o.schema_id
+JOIN sys.index_columns ic
+  ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+ AND ic.is_included_column = 0 AND ic.key_ordinal > 0
+JOIN sys.columns col ON col.object_id = ic.object_id AND col.column_id = ic.column_id
+WHERE o.name = @P1
+  AND s.name = COALESCE(@P2, SCHEMA_NAME())
+  AND i.type > 0
+ORDER BY i.name, ic.key_ordinal
+"#;
+
+/// 动作名是 `NO_ACTION` / `SET_NULL` 这种写法，换成空格与另外几家一致
+const SQL_SERVER_FOREIGN_KEYS: &str = r#"
+SELECT
+  fk.name AS constraint_name,
+  CAST(fkc.constraint_column_id AS int) AS ordinal,
+  pc.name AS column_name,
+  rs.name AS referenced_schema,
+  rt.name AS referenced_table,
+  rc.name AS referenced_column,
+  REPLACE(fk.update_referential_action_desc, '_', ' ') AS on_update,
+  REPLACE(fk.delete_referential_action_desc, '_', ' ') AS on_delete
+FROM sys.foreign_keys fk
+JOIN sys.objects o ON o.object_id = fk.parent_object_id
+JOIN sys.schemas s ON s.schema_id = o.schema_id
+JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+JOIN sys.objects rt ON rt.object_id = fkc.referenced_object_id
+JOIN sys.schemas rs ON rs.schema_id = rt.schema_id
+JOIN sys.columns rc
+  ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id
+WHERE o.name = @P1
+  AND s.name = COALESCE(@P2, SCHEMA_NAME())
+ORDER BY fk.name, fkc.constraint_column_id
+"#;
+
+const SQL_SERVER_CHECK_CONSTRAINTS: &str = r#"
+SELECT
+  cc.name AS constraint_name,
+  cc.definition AS expression
+FROM sys.check_constraints cc
+JOIN sys.objects o ON o.object_id = cc.parent_object_id
+JOIN sys.schemas s ON s.schema_id = o.schema_id
+WHERE o.name = @P1
+  AND s.name = COALESCE(@P2, SCHEMA_NAME())
+ORDER BY cc.name
+"#;
+
+/// `OBJECT_DEFINITION` 给的就是 `CREATE VIEW ...` 原文，不用自己拼
+const SQL_SERVER_VIEW_DEFINITION: &str = r#"
+SELECT OBJECT_DEFINITION(o.object_id) AS sql
+FROM sys.objects o
+JOIN sys.schemas s ON s.schema_id = o.schema_id
+WHERE o.name = @P1
+  AND s.name = COALESCE(@P2, SCHEMA_NAME())
+  AND o.type = 'V'
+"#;
+
+/// SQL Server 没有 BEFORE 触发器，只有 AFTER 与 INSTEAD OF；一个触发器可以
+/// 同时挂在几种事件上，事件用逗号连起来。`FOR XML PATH` 而不是 `STRING_AGG`：
+/// 后者要 2017 起，2016 还在支持期内。
+const SQL_SERVER_TRIGGERS: &str = r#"
+SELECT
+  tr.name AS trigger_name,
+  CASE WHEN tr.is_instead_of_trigger = 1 THEN 'INSTEAD OF' ELSE 'AFTER' END AS timing,
+  STUFF((
+    SELECT ', ' + te.type_desc
+    FROM sys.trigger_events te
+    WHERE te.object_id = tr.object_id
+    ORDER BY te.type
+    FOR XML PATH('')
+  ), 1, 2, '') AS event,
+  OBJECT_DEFINITION(tr.object_id) AS definition
+FROM sys.triggers tr
+JOIN sys.objects o ON o.object_id = tr.parent_id
+JOIN sys.schemas s ON s.schema_id = o.schema_id
+WHERE o.name = @P1
+  AND s.name = COALESCE(@P2, SCHEMA_NAME())
+ORDER BY tr.name
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
 
   /// 占位符里最大的序号，就是这段 SQL 要绑几个参数。
   ///
-  /// PostgreSQL 写 `$1`/`$2`；SQLite 写 `?1`；MySQL 写裸 `?`，按出现次数算。
+  /// PostgreSQL 写 `$1`/`$2`；SQLite 写 `?1`；SQL Server 写 `@P1`；
+  /// MySQL 写裸 `?`，按出现次数算。
   fn placeholder_count(sql: &str) -> usize {
+    let sql_server = sql
+      .match_indices("@P")
+      .filter_map(|(at, _)| {
+        sql[at + 2..].chars().take_while(char::is_ascii_digit).collect::<String>().parse().ok()
+      })
+      .max()
+      .unwrap_or(0);
+    if sql_server > 0 {
+      return sql_server;
+    }
     let numbered = |marker: char| {
       sql
         .match_indices(marker)
@@ -530,7 +693,9 @@ mod tests {
   /// PostgreSQL 上整个「结构」页一条索引都显示不出来。
   #[test]
   fn every_bound_query_of_a_dialect_binds_parameter_count_values() {
-    for db_type in [DatabaseType::PostgreSQL, DatabaseType::MySQL, DatabaseType::SQLite] {
+    for db_type in
+      [DatabaseType::PostgreSQL, DatabaseType::MySQL, DatabaseType::SQLite, DatabaseType::SqlServer]
+    {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       let expected = usize::from(queries.parameter_count);
 
@@ -627,7 +792,9 @@ mod tests {
   /// 而没有任何一处会说这是为什么。
   #[test]
   fn every_index_query_reports_whether_the_index_can_identify_a_row() {
-    for db_type in [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite] {
+    for db_type in
+      [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite, DatabaseType::SqlServer]
+    {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       for column in ["is_unique", "is_primary", "is_partial", "is_valid"] {
         assert!(
@@ -648,7 +815,9 @@ mod tests {
   /// 那个方言的自增主键表就再也插不进一行——而错误信息只说「主键必填」。
   #[test]
   fn every_column_query_returns_the_same_shape() {
-    for db_type in [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite] {
+    for db_type in
+      [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite, DatabaseType::SqlServer]
+    {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       for alias in [
         "column_name",
@@ -701,7 +870,9 @@ mod tests {
 
   #[test]
   fn supported_databases_bind_parameters_instead_of_interpolating() {
-    for db_type in [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite] {
+    for db_type in
+      [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite, DatabaseType::SqlServer]
+    {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       for sql in [
         Some(queries.columns),
@@ -714,7 +885,7 @@ mod tests {
       .flatten()
       {
         assert!(
-          sql.contains('?') || sql.contains('$'),
+          sql.contains('?') || sql.contains('$') || sql.contains("@P1"),
           "{:?} 的目录查询必须带占位符，不能把表名拼进字符串: {}",
           db_type,
           sql
