@@ -452,7 +452,25 @@ impl ConnectionService {
 
 fn credential_entry(profile_id: &str) -> Result<Entry, String> {
   Entry::new(CREDENTIAL_SERVICE, profile_id)
-    .map_err(|error| format!("{CREDENTIAL_STORE_UNAVAILABLE}: {error}"))
+    .map_err(|error| describe_store_unavailable(&error, Entry::store_status()))
+}
+
+/// 钥匙串打不开时，把真正的原因交出去。
+///
+/// keyring 只在第一次建条目时初始化一次平台存储，结果缓存到进程结束。初始化
+/// 失败之后，每次 `Entry::new` 都只报一句 "No default store has been set"，
+/// 真正的原因（Linux 上最常见的是没人提供 Secret Service）只留在
+/// `store_status` 里。也因为这份缓存，钥匙串装好之后要重启应用才用得上——
+/// 这句话在前端文案里。
+fn describe_store_unavailable(
+  error: &keyring::Error,
+  store_status: &keyring::Result<()>,
+) -> String {
+  let cause = match (error, store_status) {
+    (keyring::Error::NoDefaultStore, Err(init_error)) => init_error.to_string(),
+    _ => error.to_string(),
+  };
+  format!("{CREDENTIAL_STORE_UNAVAILABLE}: {cause}")
 }
 
 fn credential_ref(profile_id: &str) -> String {
@@ -835,6 +853,30 @@ mod tests {
 
   fn temporary_config_path() -> PathBuf {
     std::env::temp_dir().join(format!("dataomni-{}.json", uuid::Uuid::new_v4()))
+  }
+
+  // Ubuntu 22.04 容器里没有 Secret Service 时，界面上实际印出来的细节是
+  // "No default store has been set, so cannot search or create entries"
+  #[test]
+  fn a_store_that_never_initialised_reports_why() {
+    let init_error = keyring::Error::PlatformFailure(Box::new(std::io::Error::other(
+      "org.freedesktop.secrets was not provided by any .service files",
+    )));
+
+    let message = describe_store_unavailable(&keyring::Error::NoDefaultStore, &Err(init_error));
+
+    assert!(message.starts_with(CREDENTIAL_STORE_UNAVAILABLE), "{message}");
+    assert!(message.contains("org.freedesktop.secrets was not provided"), "{message}");
+    assert!(!message.contains("No default store"), "{message}");
+  }
+
+  #[test]
+  fn other_entry_errors_are_reported_as_they_are() {
+    let error = keyring::Error::Invalid("service".to_string(), "empty".to_string());
+
+    let message = describe_store_unavailable(&error, &Ok(()));
+
+    assert_eq!(message, format!("{CREDENTIAL_STORE_UNAVAILABLE}: {error}"));
   }
 
   #[test]

@@ -869,7 +869,7 @@ export const en: Translations = {
   'error.backend.serviceStateUnavailable': 'The connection service state is corrupted; restarting the app will recover it. Details: {detail}',
   'error.backend.serviceInitFailed': 'The connection service failed to start; the config directory may be unwritable or the config file corrupted. Details: {detail}',
   'error.backend.serviceNotReady': 'The connection service is not ready yet; try again in a moment.',
-  'error.backend.credentialStoreUnavailable': 'Could not open the system keychain. On Linux a Secret Service provider such as gnome-keyring must be installed and unlocked. Details: {detail}',
+  'error.backend.credentialStoreUnavailable': 'Could not open the system keychain. On Linux a Secret Service provider such as gnome-keyring must be installed and unlocked, and DataOmni restarted afterwards. You can also leave the password unsaved and enter it on each connect. Details: {detail}',
   'error.backend.credentialSaveFailed': 'The password could not be saved to the system keychain and will not be remembered. Details: {detail}',
   'error.backend.credentialDeleteFailed': 'The password could not be removed from the system keychain and may still be stored there. Details: {detail}',
   'error.backend.credentialMissing': 'The system keychain has no password for this connection; enter it again.',

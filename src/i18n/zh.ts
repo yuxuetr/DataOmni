@@ -884,7 +884,7 @@ export const zh = {
   'error.backend.serviceStateUnavailable': '连接服务的内部状态已损坏，重启应用可恢复。技术细节：{detail}',
   'error.backend.serviceInitFailed': '连接服务启动失败，可能是配置目录不可写或配置文件已损坏。技术细节：{detail}',
   'error.backend.serviceNotReady': '连接服务尚未就绪，请稍后重试。',
-  'error.backend.credentialStoreUnavailable': '打不开系统钥匙串。Linux 上需要安装并登录 Secret Service（如 gnome-keyring）。技术细节：{detail}',
+  'error.backend.credentialStoreUnavailable': '打不开系统钥匙串。Linux 上需要安装并解锁 Secret Service（如 gnome-keyring），装好后重启 DataOmni 才会生效；也可以不保存密码，每次连接时输入。技术细节：{detail}',
   'error.backend.credentialSaveFailed': '密码没能存进系统钥匙串，这次的密码不会被记住。技术细节：{detail}',
   'error.backend.credentialDeleteFailed': '没能从系统钥匙串删掉这条密码，它可能还留在钥匙串里。技术细节：{detail}',
   'error.backend.credentialMissing': '系统钥匙串里没有这个连接的密码，请重新输入。',
