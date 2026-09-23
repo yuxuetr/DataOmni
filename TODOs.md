@@ -1371,7 +1371,46 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     影响行数——而「影响 0 行或多于预期就报错」是 2.5 的核心断言之一
     （`ROW_COUNT_MISMATCH_CODE`）。在这个模型下那条断言要么失效要么误报，
     等于把已经可信的路径重新变得不可信。
-- [-] 协议兼容库：用现有驱动验 MariaDB、TiDB、CockroachDB（2026-09-23 立项）
+- [x] 协议兼容库：用现有驱动验 MariaDB、TiDB、CockroachDB（2026-09-23 立项，同日完成）
+  - **结论**：MariaDB 11.4 收为「支持」；TiDB 8.5 收为「可用，有缺口」；
+    CockroachDB 25.2 当前版本不收。矩阵在 README「兼容性矩阵」。
+  - **MariaDB（`a922f92`）**：首轮 12 条红，归因后三处是应用缺陷——
+    (1) 预处理协议收 `USE`，编辑器里一条 `USE` 就把池子里的连接挪到别的库，
+    还回池子后对象树按 `DATABASE()` 列出另一个库的表，界面上的库名不变；
+    改为 MySQL 方言下由后端拒绝。(2) 索引目录引用的 `STATISTICS.EXPRESSION`
+    在 MariaDB 不存在，整段 1054，结构页一条索引都没有；包进 `/*!80013 */`。
+    (3) **最危险的一处**：`COLUMN_DEFAULT` 在 MariaDB 是 SQL 字面量（`'a'`、
+    字符串 `NULL`），改结构界面照 MySQL 的形状再引一层，只改一列注释就写成
+    `DEFAULT '''a'''` / `DEFAULT 'NULL'`，语句成功、默认值被悄悄换掉；目录查询里
+    换成 MySQL 形状，表达式补 `DEFAULT_GENERATED`。门：
+    `mysql_column_defaults_come_back_in_one_shape_on_mysql_and_mariadb`，
+    去掉换形状或去掉补标记各自会红。其余红的是用例断言了 MySQL 的拼写
+    （`int(11)`、`current_timestamp()`、默认排序规则），在用例里按
+    `VERSION()` 分开。
+  - **TiDB（`2915492`）**：首轮 9 条红，两处应用缺陷——函数索引的 `COLUMN_NAME`
+    是字符串 `'NULL'`（`EXPRESSION` 挪到 `COALESCE` 前面）；没有默认值的
+    `ON UPDATE` 列也带 `DEFAULT_GENERATED`，界面据此拒绝重述（没有默认值时摘掉）。
+    **中途纠正过一个判断**：以为 TiDB 自报 8.0.11 会跳过 `/*!80013 */`，另加了
+    `/*T! */`；反向验证时去掉它并不红——TiDB 不看版本号，所有 `/*! */` 都执行，
+    真正起作用的是换顺序，`/*T!` 已删。已知缺口由用例钉住当前行为：EXPLAIN
+    不认 `FORMAT=JSON`（报原话）、一条 ALTER 里改列加改表名被 8200 整条拒绝
+    （表不变）、检查约束目录恒空（默认不启用；启用后 `TABLE_CONSTRAINTS` 也不列
+    CHECK，在 8.5 上打开开关验过）、没有触发器与存储程序。
+  - **CockroachDB 不收**：PostgreSQL 那组 21 条只过 7 条。结构页整页打不开
+    （`pg_get_triggerdef()` 不存在，触发器与索引、外键在同一个 `Promise.all`）、
+    `EXPLAIN (FORMAT JSON)` 语法错误、错误里没有约束名与位置、对象目录里有
+    名字为 NULL 的行。写入不变量那一侧（整事务回滚、导入失败不留残行）是过的，
+    所以不是「不可信」，是「离日常可用还差一串目录查询的改写」。
+    **重估条件**：`smoke.sh cockroach postgres` 这一组全绿——每一条红都已在上面
+    点名，改一处少一条。
+  - 测试库在 cu 上：`dataomni-mariadb`（127.0.0.1:13306）、`dataomni-tidb`
+    （127.0.0.1:14000，root 无密码）、`dataomni-cockroach`（127.0.0.1:26257，
+    insecure），都只绑本机、带内存上限，用完已停，`docker start` 即可再用。
+    跑法：把 `DATAOMNI_MYSQL_TEST_URL` / `DATAOMNI_POSTGRES_TEST_URL` 指过去
+    （经 `ssh -L` 转发），同一套用例按 `VERSION()` 自己分支。
+  - 未做：没有在这三家上**渲染界面**看过。界面发的目录查询都经
+    `*_catalog_results_are_decodable_by_the_plugin` 在真库上跑过并逐列比对了
+    插件的解码器，但那不等于看过结构页。
   - 为什么是这三个：它们说 MySQL / PostgreSQL 的线协议，sqlx 现有驱动就能连，
     不需要上面那次前置重构。这是「多数据库」里唯一不用先付大成本的一块。
   - 做法：不写新用例。把 `database_smoke.rs` 整套 MySQL / PostgreSQL 用例原样
