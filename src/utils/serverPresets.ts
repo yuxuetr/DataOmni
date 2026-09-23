@@ -1,4 +1,5 @@
 import type { ConnectionProfile, TlsMode } from '../contracts/connection';
+import type { TranslationKey } from '../i18n/translate';
 import { createDefaultConfig, DatabaseType } from '../stores/connectionStore';
 
 /**
@@ -26,6 +27,14 @@ interface ServerPresetSpec {
    * 「要求 TLS」会直接连不上；云上开了 TLS 的，优先档照样走加密。
    */
   tlsMode: TlsMode;
+  /**
+   * 「可用，有缺口」的那几项用不了的功能；`null` 就是完全支持。
+   *
+   * 这是「已支持 / 实验性 / 计划中」里中间那一档的第一批真实成员：能连能查，
+   * 但真库用例里有几条是按「这里做不到」钉住的。和 README 兼容性矩阵的结论列
+   * 由 `serverPresets.test.ts` 对齐，一边改了另一边会红。
+   */
+  gapsKey: TranslationKey | null;
 }
 
 export const SERVER_PRESETS: Record<ServerPreset, ServerPresetSpec> = {
@@ -35,7 +44,8 @@ export const SERVER_PRESETS: Record<ServerPreset, ServerPresetSpec> = {
     port: 3306,
     database: '',
     username: 'root',
-    tlsMode: 'preferred'
+    tlsMode: 'preferred',
+    gapsKey: null
   },
   tidb: {
     name: 'TiDB',
@@ -43,7 +53,8 @@ export const SERVER_PRESETS: Record<ServerPreset, ServerPresetSpec> = {
     port: 4000,
     database: 'test',
     username: 'root',
-    tlsMode: 'preferred'
+    tlsMode: 'preferred',
+    gapsKey: 'form.db.gaps.tidb'
   },
   cockroachdb: {
     name: 'CockroachDB',
@@ -51,7 +62,8 @@ export const SERVER_PRESETS: Record<ServerPreset, ServerPresetSpec> = {
     port: 26257,
     database: 'defaultdb',
     username: 'root',
-    tlsMode: 'preferred'
+    tlsMode: 'preferred',
+    gapsKey: 'form.db.gaps.cockroachdb'
   }
 };
 

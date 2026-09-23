@@ -1,6 +1,14 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { createDefaultConfig, DatabaseType } from '../stores/connectionStore';
-import { serverLabel, serverPresetConfig, serverPresetOf } from './serverPresets';
+import {
+  SERVER_PRESETS,
+  serverLabel,
+  serverPresetConfig,
+  serverPresetOf,
+  type ServerPreset
+} from './serverPresets';
 
 describe('serverPresetConfig', () => {
   it('keeps the wire protocol and fills in the server’s own port', () => {
@@ -40,4 +48,29 @@ describe('serverLabel', () => {
     expect(serverLabel(serverPresetConfig('tidb'))).toBe('TiDB');
     expect(serverLabel(createDefaultConfig(DatabaseType.PostgreSQL))).toBe('postgresql');
   });
+});
+
+/**
+ * 表单上的「有缺口」标记和 README 兼容性矩阵说的是同一件事，两边各改各的，
+ * 界面就会把一个有缺口的服务端画得和完全支持的一样（或者反过来）。
+ */
+describe('gap markers', () => {
+  const readme = readFileSync(fileURLToPath(new URL('../../README.md', import.meta.url)), 'utf8');
+
+  function matrixVerdict(serverName: string): string {
+    const row = readme.split('\n').find((line) => line.startsWith(`| ${serverName} |`));
+    if (!row) {
+      throw new Error(`README 兼容性矩阵里没有 ${serverName} 这一行`);
+    }
+    return row.split('|')[4].trim();
+  }
+
+  it.each(Object.keys(SERVER_PRESETS) as ServerPreset[])(
+    '%s is marked with gaps exactly when the README matrix says so',
+    (preset) => {
+      const spec = SERVER_PRESETS[preset];
+      const readmeSaysGaps = matrixVerdict(spec.name).startsWith('⚠️');
+      expect(spec.gapsKey !== null).toBe(readmeSaysGaps);
+    }
+  );
 });

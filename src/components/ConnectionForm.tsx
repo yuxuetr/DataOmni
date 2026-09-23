@@ -519,7 +519,14 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             >
                               <span className="shrink-0"><Database size={16} /></span>
                               <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm">{spec.name}</span>
+                                <span className="flex items-center gap-1.5">
+                                  <span className="truncate text-sm">{spec.name}</span>
+                                  {spec.gapsKey && (
+                                    <span className="shrink-0 rounded-control border border-warning-line bg-warning-soft px-1 text-[10px] leading-tight text-warning">
+                                      {t('form.db.gapsTag')}
+                                    </span>
+                                  )}
+                                </span>
                                 <span className="block truncate text-[11px] leading-tight text-fg-subtle">
                                   {t('form.db.viaProtocol', { protocol })}
                                 </span>
@@ -531,6 +538,12 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   </div>
                 ))}
               </div>
+              {/* 选中有缺口的服务端时把缺口摆出来：让人先知道，而不是用到那一项才撞上 */}
+              {selectedPreset && SERVER_PRESETS[selectedPreset].gapsKey && (
+                <p className="mt-2 rounded-control border border-warning-line bg-warning-soft px-3 py-2 text-xs text-warning">
+                  {t(SERVER_PRESETS[selectedPreset].gapsKey)}
+                </p>
+              )}
             </div>
           </div>
 

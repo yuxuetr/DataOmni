@@ -94,8 +94,9 @@
 
 **MariaDB、TiDB、CockroachDB** 各有一个入口，选了会填好它自己的默认端口（TiDB 是
 4000，CockroachDB 是 26257）和默认库，TLS 设成「优先使用 TLS」。它们走的是
-MySQL / PostgreSQL 协议，连上之后的用法和 MySQL / PostgreSQL 一样；各有哪些功能
-用不了，见 README 的「兼容性矩阵」。
+MySQL / PostgreSQL 协议，连上之后的用法和 MySQL / PostgreSQL 一样。TiDB 与
+CockroachDB 那两格标着「有缺口」，选中时表单里会列出具体哪几项用不了；完整的
+对照见 README 的「兼容性矩阵」。
 
 ### 打开 SQLite 文件
 
