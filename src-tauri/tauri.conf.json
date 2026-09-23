@@ -28,6 +28,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Desktop database client for MySQL, PostgreSQL and SQLite",
+    "longDescription": "Browse schemas, edit table data, run SQL and export results for MySQL, PostgreSQL and SQLite. Passwords are kept in the system keychain, never in plain text on disk.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
