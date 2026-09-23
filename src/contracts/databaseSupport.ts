@@ -51,7 +51,6 @@ export type PendingFeature =
 /** SQL Server 的四个阶段已经全部接上；Oracle 在第一阶段（TODOs 4.2） */
 export const PENDING_FEATURES: Readonly<Partial<Record<DatabaseType, readonly PendingFeature[]>>> = {
   [DatabaseType.Oracle]: [
-    'explain',
     'structureEditing',
     'import',
     'streamingExport'

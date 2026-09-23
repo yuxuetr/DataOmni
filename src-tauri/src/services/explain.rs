@@ -122,6 +122,9 @@ pub fn explain_statement(
     // 没有 EXPLAIN：语句原样，由执行那一侧用 `SET SHOWPLAN_XML` 包住
     // （见 `StreamOptions::explain_plan`）
     DatabaseType::SqlServer => Ok(sql.to_string()),
+    // 同样原样：`EXPLAIN PLAN` 要写进 PLAN_TABLE 再读出来、再撤掉，是执行那一侧的
+    // 几步（见 `oracle::explain_plan`）
+    DatabaseType::Oracle => Ok(sql.to_string()),
     other => Err(QueryError::message(format!("{EXPLAIN_UNSUPPORTED}: {other:?}"))),
   }
 }
@@ -181,6 +184,7 @@ pub fn parse_plan(
     DatabaseType::MySQL => parse_mysql(rows),
     DatabaseType::SQLite => Ok(parse_sqlite(rows)),
     DatabaseType::SqlServer => parse_sql_server(rows),
+    DatabaseType::Oracle => parse_oracle(rows),
     other => Err(QueryError::message(format!("{EXPLAIN_UNSUPPORTED}: {other:?}"))),
   }
 }
@@ -405,6 +409,75 @@ fn parse_sql_server(rows: &[Map<String, JsonValue>]) -> Result<QueryPlan, QueryE
     // 换行之后仍是同一份计划，另存成 .sqlplan 照样能在 SSMS 里打开
     raw: texts.join("\n").replace("><", ">\n<"),
   })
+}
+
+/// Oracle：`PLAN_TABLE` 的每一步带 `id` 与 `parent_id`，`DBMS_XPLAN` 的原文另给。
+/// 两样由执行那一侧装进一格 JSON（`{"steps": [...], "text": "..."}`）。
+///
+/// 操作名是 `OPERATION` 与 `OPTIONS` 连起来（`TABLE ACCESS` + `FULL`）：`DBMS_XPLAN`
+/// 就这么写，Oracle 用户认得的也是这个写法。
+fn parse_oracle(rows: &[Map<String, JsonValue>]) -> Result<QueryPlan, QueryError> {
+  let (payload, _) = parse_json_payload(rows)?;
+  let steps = payload.get("steps").and_then(JsonValue::as_array).cloned().unwrap_or_default();
+  if steps.is_empty() {
+    return Err(QueryError::message(EXPLAIN_EMPTY));
+  }
+  let id_of = |step: &JsonValue, key: &str| number(step.get(key)).map(|value| value as i64);
+
+  let mut nodes: Vec<(i64, Option<i64>, PlanNode)> = steps
+    .iter()
+    .filter_map(|step| Some((id_of(step, "id")?, id_of(step, "parent_id"), oracle_node(step))))
+    .collect();
+  // 从最深的一步往上挂：先把子节点挂好，父节点再被挂到它的父节点上时带着整棵子树。
+  // `id` 按执行计划的先序排，子节点的 id 总比父节点大
+  nodes.sort_by_key(|(id, _, _)| *id);
+  let mut roots = Vec::new();
+  while let Some((_, parent, node)) = nodes.pop() {
+    match parent.and_then(|parent| nodes.iter_mut().find(|(id, _, _)| *id == parent)) {
+      Some((_, _, parent)) => parent.children.insert(0, node),
+      None => roots.insert(0, node),
+    }
+  }
+
+  Ok(QueryPlan {
+    roots,
+    analyzed: false,
+    planning_ms: None,
+    execution_ms: None,
+    raw: payload.get("text").and_then(JsonValue::as_str).unwrap_or_default().to_string(),
+  })
+}
+
+fn oracle_node(step: &JsonValue) -> PlanNode {
+  let text = |key: &str| step.get(key).and_then(scalar_text).filter(|value| !value.is_empty());
+  let operation = match (text("operation"), text("options")) {
+    (Some(operation), Some(options)) => format!("{operation} {options}"),
+    (Some(operation), None) => operation,
+    _ => "?".to_string(),
+  };
+  let mut node = PlanNode::new(operation);
+  node.target = match (text("object_owner"), text("object_name")) {
+    (Some(owner), Some(name)) => Some(format!("{owner}.{name}")),
+    (None, Some(name)) => Some(name),
+    _ => None,
+  };
+  node.estimated_rows = number(step.get("cardinality"));
+  node.cost = number(step.get("cost"));
+  for (key, label) in [
+    ("access_predicates", "Access"),
+    ("filter_predicates", "Filter"),
+    ("object_type", "Object type"),
+    ("bytes", "Bytes"),
+    ("cpu_cost", "CPU cost"),
+    ("io_cost", "IO cost"),
+    ("time", "Time (s)"),
+    ("projection", "Projection"),
+  ] {
+    if let Some(value) = text(key) {
+      node.detail.push(PlanDetail { key: label.to_string(), value });
+    }
+  }
+  node
 }
 
 /// 按本地名比，不管命名空间：整份计划都在 showplan 的命名空间里
@@ -796,6 +869,56 @@ mod tests {
     // 下一层的对象不能被算到上一层头上
     assert_eq!(join.target, None);
     assert!(plan.raw.lines().count() > 10, "原文要一行一个标签");
+  }
+
+  /// 真库上取回来的一份（`fixtures/oracle-plan.json`，分组加排序），由 `oracle_smoke` 写出
+  #[test]
+  fn oracle_plans_hang_steps_under_their_parent_ids() {
+    let rows: Vec<Map<String, JsonValue>> =
+      serde_json::from_str(include_str!("../../../fixtures/oracle-plan.json")).expect("fixture");
+    let plan = parse_plan(&DatabaseType::Oracle, &rows, false).expect("parses");
+
+    assert_eq!(plan.roots.len(), 1);
+    let root = &plan.roots[0];
+    assert_eq!(root.operation, "SELECT STATEMENT");
+    assert_eq!(root.cost, Some(4.0));
+    let sort = &root.children[0];
+    assert_eq!(sort.operation, "SORT GROUP BY", "操作名是 OPERATION 与 OPTIONS 连起来");
+    let scan = &sort.children[0];
+    assert_eq!(scan.operation, "TABLE ACCESS FULL");
+    assert_eq!(scan.target.as_deref(), Some("DATAOMNI.OM_WRITE"));
+    assert_eq!(scan.estimated_rows, Some(1.0));
+    assert!(scan.detail.iter().any(|d| d.key == "Filter" && d.value == "\"ID\">1"));
+    assert!(plan.raw.starts_with("Plan hash value"), "{}", plan.raw);
+  }
+
+  #[test]
+  fn oracle_siblings_keep_the_plan_order() {
+    use serde_json::json;
+    let step = |id: i64, parent: Option<i64>, operation: &str| json!({ "id": id, "parent_id": parent, "operation": operation, "options": null });
+    let payload = json!({
+      "steps": [
+        step(0, None, "SELECT STATEMENT"),
+        step(1, Some(0), "HASH JOIN"),
+        step(2, Some(1), "BUILD"),
+        step(3, Some(2), "BUILD SCAN"),
+        step(4, Some(1), "PROBE"),
+      ],
+      "text": ""
+    });
+    let plan =
+      parse_plan(&DatabaseType::Oracle, &json_row(&payload.to_string()), false).expect("parses");
+    let join = &plan.roots[0].children[0];
+    let children: Vec<&str> = join.children.iter().map(|c| c.operation.as_str()).collect();
+    assert_eq!(children, ["BUILD", "PROBE"], "连接的两侧不能颠倒");
+    assert_eq!(join.children[0].children[0].operation, "BUILD SCAN");
+  }
+
+  #[test]
+  fn an_oracle_plan_without_steps_is_empty_not_a_blank_tree() {
+    let error = parse_plan(&DatabaseType::Oracle, &json_row(r#"{"steps":[],"text":""}"#), false)
+      .expect_err("empty");
+    assert_eq!(error.message, EXPLAIN_EMPTY);
   }
 
   #[test]

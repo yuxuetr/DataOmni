@@ -567,13 +567,6 @@ mod tests {
   #[test]
   fn every_supported_type_can_produce_a_plan_even_if_it_cannot_analyze() {
     for db_type in ALL_DATABASE_TYPES {
-      // Oracle 按阶段例外：执行计划排在第三阶段（`EXPLAIN PLAN` + `DBMS_XPLAN`），
-      // 连接表单上那一格的「有缺口」说明里写着。做完那一阶段就删掉这一段——
-      // 断言会逼着你删
-      if db_type == super::DatabaseType::Oracle {
-        assert!(crate::services::explain_statement(&db_type, "SELECT 1", false).is_err());
-        continue;
-      }
       assert_eq!(
         db_type.has_driver(),
         crate::services::explain_statement(&db_type, "SELECT 1", false).is_ok(),

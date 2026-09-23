@@ -637,3 +637,96 @@ async fn oracle_session_transactions_follow_the_server_and_the_autocommit_switch
   assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Idle);
   run_in(&sessions, &pool, id, "DROP TABLE om_tx_ddl PURGE", true).await;
 }
+
+// ---------------------------------------------------------------------------
+// 第三阶段：执行计划、整表导出、CSV 导入、改结构
+// ---------------------------------------------------------------------------
+
+async fn explain_in(
+  sessions: &QuerySessionState,
+  pool: &Arc<OraclePool>,
+  session_id: &str,
+  sql: &str,
+  autocommit: bool,
+) -> Result<dataomni_lib::services::QueryPlan, dataomni_lib::services::QueryError> {
+  use dataomni_lib::models::DatabaseType;
+  let statement = dataomni_lib::services::explain_statement(&DatabaseType::Oracle, sql, false)?;
+  let mut rows = Vec::new();
+  let mut options = session_options(pool, session_id, &statement, autocommit);
+  options.explain_plan = true;
+  sessions
+    .execute_streaming(options, &mut |batch| {
+      rows.extend(batch.rows);
+      Ok(())
+    })
+    .await?;
+  // 取一份真计划给 explain.rs 的单测当夹具：只写第一次（用例里第一条是分组加排序那条）
+  if let Some(path) = std::env::var_os("DATAOMNI_WRITE_ORACLE_PLAN_FIXTURE")
+    .filter(|path| !std::path::Path::new(path).exists())
+  {
+    std::fs::write(path, serde_json::to_string_pretty(&rows).expect("rows")).expect("fixture");
+  }
+  dataomni_lib::services::parse_plan(&DatabaseType::Oracle, &rows, false)
+}
+
+#[tokio::test]
+async fn oracle_explain_reads_the_plan_without_running_it_or_leaving_a_transaction() {
+  use dataomni_lib::services::TransactionStatus;
+  let Some(pool) = pool().await else { return };
+  write_fixture(&pool).await;
+  let sessions = QuerySessionState::default();
+  let id = "oracle-explain";
+
+  let plan = explain_in(
+    &sessions,
+    &pool,
+    id,
+    "SELECT name, COUNT(*) FROM om_write WHERE id > 1 GROUP BY name ORDER BY 1;",
+    true,
+  )
+  .await
+  .expect("plan");
+  assert_eq!(plan.roots.len(), 1);
+  let root = &plan.roots[0];
+  assert_eq!(root.operation, "SELECT STATEMENT");
+  let scan = root.children.iter().flat_map(|child| child.children.iter()).next().expect("scan");
+  assert!(scan.operation.starts_with("TABLE ACCESS"), "{}", scan.operation);
+  assert_eq!(scan.target.as_deref(), Some("DATAOMNI.OM_WRITE"));
+  assert!(
+    scan.detail.iter().any(|d| d.key == "Filter" && d.value.contains("ID")),
+    "{:?}",
+    scan.detail
+  );
+  assert!(root.cost.is_some() && root.estimated_rows.is_some());
+  assert!(plan.raw.contains("Plan hash value"), "{}", plan.raw);
+  // 写 PLAN_TABLE 本身开了一个事务：取完计划之后不能留着
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Idle);
+
+  // 解释一条 DELETE 不会删任何东西
+  explain_in(&sessions, &pool, id, "DELETE FROM om_write", true).await.expect("dml plan");
+  assert_eq!(names(&pool).await.len(), 2);
+
+  // 用户自己开着的事务：改动留着、事务还在
+  run_in(&sessions, &pool, id, "UPDATE om_write SET note = 'kept' WHERE id = 1", false).await;
+  let begun = sessions.transaction(id).await;
+  explain_in(&sessions, &pool, id, "SELECT * FROM om_write", false).await.expect("plan in tx");
+  assert_eq!(sessions.transaction(id).await.started_at, begun.started_at);
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Active);
+  let note = sessions
+    .execute_streaming(
+      session_options(&pool, id, "SELECT note FROM om_write WHERE id = 1", false),
+      &mut |batch| {
+        assert_eq!(text(&batch.rows[0]["NOTE"]), "kept", "用户的改动被计划那一步撤掉了");
+        Ok(())
+      },
+    )
+    .await;
+  note.expect("read own change");
+  run_in(&sessions, &pool, id, "ROLLBACK", true).await;
+
+  // 语法错误的位置指向用户写的那条，不是包了一层之后的
+  let error =
+    explain_in(&sessions, &pool, id, "SELECT FROM om_write", true).await.expect_err("syntax error");
+  assert_eq!(error.code.as_deref(), Some("ORA-00936"));
+  assert_eq!(error.details.and_then(|details| details.position), Some(8));
+}

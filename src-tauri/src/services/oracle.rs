@@ -536,7 +536,7 @@ impl OracleConnection {
     sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
   ) -> Result<QueryExecutionSummary, QueryError> {
     if options.explain_plan {
-      return Err(unsupported("explain"));
+      return self.explain(sql, options, sink).await;
     }
     let commit_after = self.autocommit && !self.transaction().in_transaction();
     let connection = self.take_connection().await?;
@@ -601,17 +601,7 @@ impl OracleConnection {
     })?;
     guard.finished = true;
 
-    let started_at = std::mem::take(&mut self.transaction).started_at;
-    if keeps_connection(&outcome) {
-      self.connection = Some(connection);
-      // 问不出来（这一句也失败了）就当作没有事务：连接多半已经不行了
-      if open == Some(true) {
-        self.transaction = TransactionState {
-          status: TransactionStatus::Active,
-          started_at: started_at.or_else(|| Some(chrono::Utc::now().to_rfc3339())),
-        };
-      }
-    }
+    self.settle(connection, keeps_connection(&outcome), open);
     if let Some(error) = sink_error {
       return Err(error);
     }
@@ -633,6 +623,65 @@ impl OracleConnection {
       byte_limit: options.byte_limit,
       bytes_read,
     })
+  }
+
+  /// 取执行计划：结果是一行一格，格子里是 [`read_plan`] 拼的 JSON，由
+  /// `explain::parse_plan` 解析。语句本身不执行（`EXPLAIN PLAN` 只解析、优化）
+  async fn explain(
+    &mut self,
+    sql: &str,
+    options: StreamOptions,
+    sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+  ) -> Result<QueryExecutionSummary, QueryError> {
+    let connection = self.take_connection().await?;
+    let mut guard = BreakOnDrop { connection: Arc::clone(&connection), finished: false };
+    let statement = statement_text(sql);
+    let worker = Arc::clone(&connection);
+    let (outcome, open) = blocking(move || {
+      let outcome = explain_plan(&worker, &statement);
+      Ok((outcome, open_transaction(&worker)))
+    })
+    .await?;
+    guard.finished = true;
+    self.settle(connection, keeps_connection(&outcome), open);
+    let plan = outcome?;
+    let mut rows = vec![plan];
+    let mut batch_count = 0;
+    flush_remaining_batch(&mut rows, &mut batch_count, 1, sink)?;
+    Ok(QueryExecutionSummary::Rows {
+      columns: vec![PLAN_COLUMN.to_string()],
+      column_metadata: vec![QueryColumnMetadata {
+        name: PLAN_COLUMN.to_string(),
+        ordinal: 0,
+        database_type: "JSON".to_string(),
+        logical_type: "json".to_string(),
+        nullable: Some(false),
+      }],
+      row_count: 1,
+      batch_count,
+      truncated: false,
+      truncation_reason: None,
+      row_limit: options.row_limit,
+      byte_limit: options.byte_limit,
+      bytes_read: 0,
+    })
+  }
+
+  /// 一次调用之后：连接还能用就收回来，事务状态照服务端刚报的记
+  fn settle(&mut self, connection: Arc<Connection>, keeps: bool, open: Option<bool>) {
+    let started_at = std::mem::take(&mut self.transaction).started_at;
+    if !keeps {
+      return;
+    }
+    self.connection = Some(connection);
+    // 问不出来（这一句也失败了）就当作没有事务：连接多半已经不行了
+    if open == Some(true) {
+      self.transaction = TransactionState {
+        status: TransactionStatus::Active,
+        // 还是同一个事务就沿用开始时间，否则状态栏上的计时每条语句都归零
+        started_at: started_at.or_else(|| Some(chrono::Utc::now().to_rfc3339())),
+      };
+    }
   }
 
   /// 下一条语句按不按自动提交走
@@ -671,6 +720,72 @@ fn open_transaction(connection: &Connection) -> Option<bool> {
     .query_row_as::<Option<String>>("SELECT DBMS_TRANSACTION.LOCAL_TRANSACTION_ID FROM dual", &[])
     .ok()
     .map(|id| id.is_some())
+}
+
+const PLAN_COLUMN: &str = "plan";
+const EXPLAIN_PREFIX: &str = "EXPLAIN PLAN SET STATEMENT_ID = 'DATAOMNI' FOR ";
+/// 计划的每一步。别名带引号，理由同目录查询：不带引号的别名被折成大写
+const PLAN_STEPS: &str = r#"SELECT id AS "id", parent_id AS "parent_id",
+  operation AS "operation", options AS "options",
+  object_owner AS "object_owner", object_name AS "object_name", object_type AS "object_type",
+  cardinality AS "cardinality", bytes AS "bytes", cost AS "cost",
+  cpu_cost AS "cpu_cost", io_cost AS "io_cost", time AS "time",
+  access_predicates AS "access_predicates", filter_predicates AS "filter_predicates",
+  projection AS "projection"
+FROM plan_table WHERE statement_id = 'DATAOMNI' ORDER BY id"#;
+/// 「文本」那一页：`DBMS_XPLAN` 的原文，Oracle 用户认得的那张表加谓词与备注
+const PLAN_TEXT: &str = r#"SELECT plan_table_output AS "line"
+FROM TABLE(DBMS_XPLAN.DISPLAY('PLAN_TABLE', 'DATAOMNI', 'TYPICAL'))"#;
+
+/// `EXPLAIN PLAN` 写进会话的 `PLAN_TABLE`，读出来之后撤掉。
+///
+/// 实验（Oracle Free 23ai）：写 `PLAN_TABLE` 本身就开了一个事务。所以之前没有事务
+/// 就整个回滚；之前有（用户开着的）就只退回到这里设的保存点，用户的改动原样留着
+/// ——整个回滚会把它们一起撤掉，而照原样留着则让状态栏凭空多出一个事务。问不出
+/// 之前有没有时按「有」处理：保存点在两种情况下都不会撤掉不该撤的东西。
+fn explain_plan(connection: &Connection, statement: &str) -> Result<QueryRow, QueryError> {
+  let open_before = open_transaction(connection) != Some(false);
+  if open_before {
+    connection
+      .execute("SAVEPOINT dataomni_explain", &[])
+      .map_err(|error| query_error(&error, None))?;
+  }
+  let plan = read_plan(connection, statement);
+  let undo = if open_before {
+    connection.execute("ROLLBACK TO SAVEPOINT dataomni_explain", &[]).map(|_| ())
+  } else {
+    connection.rollback()
+  };
+  let plan = plan?;
+  undo.map_err(|error| query_error(&error, None))?;
+  Ok(plan)
+}
+
+fn read_plan(connection: &Connection, statement: &str) -> Result<QueryRow, QueryError> {
+  let wrapped = format!("{EXPLAIN_PREFIX}{statement}");
+  connection
+    .execute(&wrapped, &[])
+    .map_err(|error| without_prefix(query_error(&error, Some(&wrapped)), EXPLAIN_PREFIX))?;
+  let steps = select_rows(connection, PLAN_STEPS, &[])?;
+  let text = select_rows(connection, PLAN_TEXT, &[])?
+    .iter()
+    .map(|row| row.get("line").and_then(JsonValue::as_str).unwrap_or_default().to_string())
+    .collect::<Vec<_>>()
+    .join("\n");
+  let payload = serde_json::json!({ "steps": steps, "text": text });
+  let mut row = Map::new();
+  row.insert(PLAN_COLUMN.to_string(), JsonValue::String(payload.to_string()));
+  Ok(row)
+}
+
+/// 出错位置是相对包了一层的那条语句算的，错误面板标的是用户写的那条
+fn without_prefix(mut error: QueryError, prefix: &str) -> QueryError {
+  let shift = prefix.chars().count() as u32;
+  if let Some(details) = error.details.as_mut() {
+    details.position = details.position.and_then(|position| position.checked_sub(shift));
+    details.position = details.position.filter(|position| *position > 0);
+  }
+  error
 }
 
 /// 这条语句自己就在开、关事务：关掉自动提交时不用为它做什么，自动提交开着时
