@@ -134,7 +134,7 @@ pub fn transaction_effect(sql: &str) -> TransactionEffect {
 }
 
 /// 开头的两个关键字，全大写。跳过空白、`--` 行注释与 `/* */` 块注释。
-fn leading_keywords(sql: &str) -> (String, String) {
+pub(crate) fn leading_keywords(sql: &str) -> (String, String) {
   let mut rest = sql;
   let mut keywords = Vec::with_capacity(2);
 

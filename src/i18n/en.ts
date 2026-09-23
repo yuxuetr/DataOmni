@@ -913,6 +913,7 @@ export const en: Translations = {
   'error.backend.queryTimeout': 'The query exceeded the {detail} ms timeout and was stopped. Raise the timeout in the toolbar, or narrow the query first.',
   'error.backend.columnDecodeFailed': 'This column could not be decoded (name · type · reason): {detail}. Cast it to text in the query to read it.',
   'error.backend.nonQuery': 'This statement returns no result set, so there is nothing to export.',
+  'error.backend.useStatementRefused': 'Switching databases with USE is not supported in the editor: it would silently make the object tree show another database. Change the default database in the connection settings, or qualify names in SQL (database.table).',
   'error.backend.csvColumnTypeInvalid': 'The target column type is not a valid type name (column · type): {detail}',
   'error.backend.csvRowTooShort': 'This row has too few fields (actual · requested index · mapped column): {detail}. The delimiter is probably wrong.',
   'error.backend.rowCountMismatch': 'This statement affected an unexpected number of rows (expected · actual): {detail}. The whole batch was rolled back — that row may have been changed or deleted by someone else.',

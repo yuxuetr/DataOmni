@@ -35,7 +35,7 @@ pub use query_executor::{
   NonQueryHandling, QueryColumnMetadata, QueryExecutionResult, QueryExecutionSummary,
   QueryResultBatch, QueryRow, QueryTruncationReason, SessionConnection, StreamOptions,
   DEFAULT_QUERY_BATCH_SIZE, DEFAULT_QUERY_BYTE_LIMIT, DEFAULT_QUERY_ROW_LIMIT, NON_QUERY_MESSAGE,
-  QUERY_TIMEOUT_CODE,
+  QUERY_TIMEOUT_CODE, USE_STATEMENT_REFUSED,
 };
 pub use query_session::{QuerySessionState, StreamingQueryOptions};
 pub use schema_metadata::{schema_metadata_queries, DdlQuery, SchemaMetadataQueries};

@@ -515,6 +515,7 @@ async fn execute_mysql_connection_streaming(
   options: StreamOptions,
   sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
 ) -> Result<QueryExecutionSummary, QueryError> {
+  refuse_use_statement(sql)?;
   if is_transaction_control_statement(sql) {
     refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
@@ -751,6 +752,22 @@ fn admit_row_bytes(
 /// 不返回结果集时给出的话。导出路径有两处会说这句（先探列、再流式读），
 /// 同一件事说两种话会让人以为是两个不同的问题。
 pub const NON_QUERY_MESSAGE: &str = "DATAOMNI_NON_QUERY";
+
+/// MySQL 方言下拒绝 `USE`，见 `refuse_use_statement`。
+pub const USE_STATEMENT_REFUSED: &str = "DATAOMNI_USE_STATEMENT_REFUSED";
+
+/// MySQL 方言下不让 `USE` 跑到服务端。
+///
+/// 编辑器与对象树、补全、ER 图共用一个池子，目录查询按 `DATABASE()` 取当前库。
+/// 一条被 `USE` 挪走的连接还回池子，下一次拿到它的目录查询就列出另一个库的
+/// 表，而界面上的库名没变。MySQL 的预处理协议本来就拒绝 `USE`（1295），
+/// MariaDB 的不拒，所以这一道由我们自己挡，两家说同一句话。
+fn refuse_use_statement(sql: &str) -> Result<(), QueryError> {
+  match crate::services::transaction_state::leading_keywords(sql).0.as_str() {
+    "USE" => Err(QueryError::message(USE_STATEMENT_REFUSED)),
+    _ => Ok(()),
+  }
+}
 
 /// 导出路径遇到不返回结果集的语句时提前退出，不让它执行。
 fn refuse_non_query(handling: NonQueryHandling) -> Result<(), QueryError> {
@@ -1108,6 +1125,17 @@ mod tests {
   use super::*;
   use sqlx::sqlite::SqlitePoolOptions;
   use std::future::pending;
+
+  #[test]
+  fn refuses_use_but_not_statements_that_merely_start_like_it() {
+    for sql in ["USE other_db", "use `other db`;", "-- 切库\nUSE other_db", "/* x */ Use other_db"]
+    {
+      assert!(refuse_use_statement(sql).is_err(), "expected refusal: {sql}");
+    }
+    for sql in ["SELECT 'USE other_db'", "USER_DEFINED", "UPDATE users SET name = 'use'"] {
+      assert!(refuse_use_statement(sql).is_ok(), "expected pass-through: {sql}");
+    }
+  }
 
   #[test]
   fn recognizes_transaction_control_statements_without_matching_prefixes() {

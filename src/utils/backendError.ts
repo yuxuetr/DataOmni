@@ -82,6 +82,7 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_QUERY_TIMEOUT: 'error.backend.queryTimeout',
   DATAOMNI_COLUMN_DECODE_FAILED: 'error.backend.columnDecodeFailed',
   DATAOMNI_NON_QUERY: 'error.backend.nonQuery',
+  DATAOMNI_USE_STATEMENT_REFUSED: 'error.backend.useStatementRefused',
   DATAOMNI_CSV_COLUMN_TYPE_INVALID: 'error.backend.csvColumnTypeInvalid',
   DATAOMNI_CSV_ROW_TOO_SHORT: 'error.backend.csvRowTooShort',
   DATAOMNI_ROW_COUNT_MISMATCH: 'error.backend.rowCountMismatch',

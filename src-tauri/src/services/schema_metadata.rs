@@ -133,19 +133,60 @@ ORDER BY a.attnum
 /// `COLUMN_TYPE` 而不是 `DATA_TYPE`：后者只有 `varchar`、`int`，丢掉长度、
 /// 精度与 `unsigned`。结构页显示的就是这个字段，也是改结构时唯一的起点。
 ///
-/// `GENERATION_EXPRESSION` 在非计算列上是空串而不是 NULL，所以用 `<> ''`。
+/// `GENERATION_EXPRESSION` 在非计算列上 MySQL 给空串、MariaDB 给 NULL。
+/// 只写 `<> ''` 在 MariaDB 上得到 NULL，整个 `OR` 也跟着成了 NULL——
+/// 这一列就从布尔变成了三值，所以先 `COALESCE`。
+///
+/// **默认值在 MariaDB 上要先换成 MySQL 的形状。** 两家的 `COLUMN_DEFAULT`
+/// 说的不是同一种东西（MySQL 8.4 与 MariaDB 11.4 上逐类核对过）：
+///
+/// | 定义 | MySQL | MariaDB |
+/// | --- | --- | --- |
+/// | `DEFAULT 'it''s'` | `it's` | `'it''s'` |
+/// | 可空、无默认值 | NULL | 字符串 `NULL` |
+/// | `DEFAULT 'NULL'` | `NULL`（字符串） | `'NULL'` |
+/// | `DEFAULT 0` / `b'1'` | `0` / `b'1'` | 同左 |
+/// | `DEFAULT CURRENT_TIMESTAMP` | `CURRENT_TIMESTAMP` + EXTRA `DEFAULT_GENERATED` | `current_timestamp()`，EXTRA 里没有标记 |
+///
+/// 改结构的界面（`tableDdl.ts` 的 `columnDefaultSql`）照 MySQL 的形状把它
+/// 重述回 SQL：不带标记的非数字当字符串再引一层。不换的话，在 MariaDB 上
+/// 只改一列的注释，`MODIFY` 就会把 `'a'` 写成 `'''a'''`、把「没有默认值」
+/// 写成 `DEFAULT 'NULL'`——语句成功，默认值被悄悄换掉。
+///
+/// 所以这里：带引号的去引号并还原 `''` 与 `\\` 两种转义；裸的 `NULL` 是
+/// 没有默认值；其余裸的、又不是数字或位串字面量的，是表达式，补上
+/// `DEFAULT_GENERATED`，界面据此拒绝重述（与 MySQL 上同一条理由）。
+/// 数字的正则写成 `-{0,1}` 而不是 `-?`：参数个数那道门按问号数占位符。
+/// 反斜杠用 `CHAR(92)` 写，不在字面量里转义：`NO_BACKSLASH_ESCAPES` 打开时
+/// `'\\'` 就是两个字符了。
 const MYSQL_COLUMNS: &str = r#"
 SELECT
   CAST(c.COLUMN_NAME AS CHAR) AS column_name,
   CAST(c.COLUMN_TYPE AS CHAR) AS data_type,
   (c.IS_NULLABLE = 'YES') AS is_nullable,
-  CAST(c.COLUMN_DEFAULT AS CHAR) AS column_default,
+  CAST(CASE
+    WHEN VERSION() NOT LIKE '%MariaDB%' THEN c.COLUMN_DEFAULT
+    WHEN c.COLUMN_DEFAULT = 'NULL' THEN NULL
+    WHEN c.COLUMN_DEFAULT LIKE '''%' THEN REPLACE(REPLACE(
+      SUBSTRING(c.COLUMN_DEFAULT, 2, CHAR_LENGTH(c.COLUMN_DEFAULT) - 2),
+      '''''', ''''),
+      CONCAT(CHAR(92 USING utf8mb4), CHAR(92 USING utf8mb4)), CHAR(92 USING utf8mb4))
+    ELSE c.COLUMN_DEFAULT
+  END AS CHAR) AS column_default,
   (kcu.ORDINAL_POSITION IS NOT NULL) AS is_primary_key,
   kcu.ORDINAL_POSITION AS primary_key_ordinal,
-  (c.EXTRA LIKE '%auto_increment%' OR c.GENERATION_EXPRESSION <> '') AS is_generated,
+  (c.EXTRA LIKE '%auto_increment%' OR COALESCE(c.GENERATION_EXPRESSION, '') <> '') AS is_generated,
   CAST(c.COLLATION_NAME AS CHAR) AS collation,
   CAST(NULLIF(c.COLUMN_COMMENT, '') AS CHAR) AS comment,
-  CAST(c.EXTRA AS CHAR) AS column_extra
+  CAST(CASE
+    WHEN VERSION() LIKE '%MariaDB%'
+      AND c.COLUMN_DEFAULT <> 'NULL'
+      AND c.COLUMN_DEFAULT NOT LIKE '''%'
+      AND c.COLUMN_DEFAULT NOT REGEXP '^-{0,1}[0-9]'
+      AND c.COLUMN_DEFAULT NOT LIKE 'b''%'
+      THEN TRIM(CONCAT('DEFAULT_GENERATED ', c.EXTRA))
+    ELSE c.EXTRA
+  END AS CHAR) AS column_extra
 FROM INFORMATION_SCHEMA.COLUMNS c
 LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
   ON kcu.TABLE_SCHEMA = c.TABLE_SCHEMA
@@ -261,11 +302,16 @@ ORDER BY c.conname
 /// MySQL 8 的函数索引 `COLUMN_NAME` 为 NULL、表达式在 `EXPRESSION` 里，
 /// 只读 COLUMN_NAME 会得到一列空值；那串表达式匹配不上任何列名，
 /// 选行标识时自然会被排掉。
+///
+/// `EXPRESSION` 包在 `/*!80013 */` 里：MariaDB 的 `STATISTICS` 没有这一列，
+/// 直接写会让整段报 1054，结构页一条索引都显示不出来。这种注释 MySQL 8.0.13
+/// 起照常执行、MariaDB 跳过（两边都在真库上验过）——MariaDB 也没有函数索引，
+/// 跳过之后 `COALESCE` 只剩 `COLUMN_NAME` 一个参数，正好。
 /// MySQL 没有部分索引，`is_partial` 恒假；也没有「未验证的索引」，`is_valid` 恒真。
 const MYSQL_INDEXES: &str = r#"
 SELECT
   CAST(s.INDEX_NAME AS CHAR) AS index_name,
-  CAST(COALESCE(s.COLUMN_NAME, s.EXPRESSION) AS CHAR) AS column_name,
+  CAST(COALESCE(s.COLUMN_NAME /*!80013 , s.EXPRESSION */) AS CHAR) AS column_name,
   s.SEQ_IN_INDEX AS ordinal,
   (s.NON_UNIQUE = 0) AS is_unique,
   (s.INDEX_NAME = 'PRIMARY') AS is_primary,

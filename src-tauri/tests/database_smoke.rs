@@ -232,15 +232,22 @@ async fn mysql_supports_basic_read_write() {
   )
   .await
   .expect("read precise MySQL values");
-  assert_tagged_values(
-    precise,
-    &[
-      ("large_integer", "bigint", "9007199254740993"),
-      ("decimal_value", "decimal", "12345678901234567890.12345678"),
-      ("binary_value", "binary", "00ff10"),
-      ("json_value", "json", "{\"enabled\":true}"),
-    ],
-  );
+  let mut expected = vec![
+    ("large_integer", "bigint", "9007199254740993"),
+    ("decimal_value", "decimal", "12345678901234567890.12345678"),
+    ("binary_value", "binary", "00ff10"),
+  ];
+  // MariaDB 的 JSON 是 LONGTEXT 的别名，线协议上就是一段文本，驱动认不出
+  // 它是 JSON。界面照文本显示和编辑，不会丢字——只是没有 JSON 专用编辑器
+  if is_mariadb(&pool).await {
+    let QueryExecutionResult::Rows { rows, .. } = &precise else {
+      panic!("expected a row result");
+    };
+    assert_eq!(rows[0]["json_value"], "{\"enabled\": true}");
+  } else {
+    expected.push(("json_value", "json", "{\"enabled\":true}"));
+  }
+  assert_tagged_values(precise, &expected);
 
   assert_transaction_binding(
     &QuerySessionState::default(),
@@ -601,7 +608,7 @@ impl MetaFixture {
   fn ddl(&self, dialect: &str) -> Vec<String> {
     let Self { suffix, parent, child } = self;
     let text_type = "VARCHAR(32)";
-    vec![
+    let mut statements = vec![
       format!("DROP TABLE IF EXISTS {child}"),
       format!("DROP TABLE IF EXISTS {parent}"),
       format!("CREATE TABLE {parent} (x INT NOT NULL, y INT NOT NULL, PRIMARY KEY (x, y))"),
@@ -624,11 +631,17 @@ impl MetaFixture {
       // join pg_attribute 会让整列消失；MySQL 的 COLUMN_NAME 为 NULL、表达式在
       // EXPRESSION 里；SQLite 的 pragma_index_info.name 为 NULL。
       // 不放进夹具，这三处处理就全是猜的。
-      match dialect {
-        "mysql" => format!("CREATE INDEX ix_meta_child_expr_{suffix} ON {child} ((score + 1))"),
-        _ => format!("CREATE INDEX ix_meta_child_expr_{suffix} ON {child} ((lower(label)))"),
-      },
-    ]
+    ];
+    match dialect {
+      "mysql" => statements
+        .push(format!("CREATE INDEX ix_meta_child_expr_{suffix} ON {child} ((score + 1))")),
+      // MariaDB 没有函数索引（要先建虚拟列再索引它，那就是普通索引了），
+      // 这一种它根本建不出来，也就不会在它的目录里出现
+      "mariadb" => {}
+      _ => statements
+        .push(format!("CREATE INDEX ix_meta_child_expr_{suffix} ON {child} ((lower(label)))")),
+    }
+    statements
   }
 }
 
@@ -759,7 +772,7 @@ async fn mysql_reports_indexes_foreign_keys_and_checks() {
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
 
   let fixture = MetaFixture::new("my");
-  for statement in fixture.ddl("mysql") {
+  for statement in fixture.ddl(mysql_flavor(&pool).await) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL metadata fixture");
   }
 
@@ -773,13 +786,13 @@ async fn mysql_reports_indexes_foreign_keys_and_checks() {
     .fetch_all(&pool)
     .await
     .expect("run MySQL index query");
-  let indexes: Vec<(String, String, u32, i64, i64)> = index_rows
+  let indexes: Vec<(String, String, i64, i64, i64)> = index_rows
     .iter()
     .map(|row| {
       (
         row.get::<String, _>("index_name"),
         row.get::<String, _>("column_name"),
-        row.get::<u32, _>("ordinal"),
+        mysql_ordinal(row, "ordinal").expect("ordinal is never NULL"),
         row.get::<i64, _>("is_unique"),
         row.get::<i64, _>("is_primary"),
       )
@@ -808,7 +821,8 @@ async fn mysql_reports_indexes_foreign_keys_and_checks() {
     .find(|(name, ..)| name == &format!("ix_meta_child_expr_{}", fixture.suffix))
     .map(|(_, column, ..)| column.clone());
   assert!(
-    expression_column.as_deref().is_some_and(|text| text.contains("score")),
+    mysql_flavor(&pool).await == "mariadb"
+      || expression_column.as_deref().is_some_and(|text| text.contains("score")),
     "函数索引的 COLUMN_NAME 是 NULL，必须回退到 EXPRESSION，否则这一列是空的: {indexes:?}"
   );
 
@@ -818,11 +832,11 @@ async fn mysql_reports_indexes_foreign_keys_and_checks() {
     .fetch_all(&pool)
     .await
     .expect("run MySQL foreign key query");
-  let pairs: Vec<(u32, String, String, String)> = fk_rows
+  let pairs: Vec<(i64, String, String, String)> = fk_rows
     .iter()
     .map(|row| {
       (
-        row.get::<u32, _>("ordinal"),
+        mysql_ordinal(row, "ordinal").expect("ordinal is never NULL"),
         row.get::<String, _>("column_name"),
         row.get::<String, _>("referenced_table"),
         row.get::<String, _>("referenced_column"),
@@ -962,7 +976,7 @@ async fn mysql_returns_the_authoritative_create_table_statement() {
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
 
   let fixture = MetaFixture::new("myddl");
-  for statement in fixture.ddl("mysql") {
+  for statement in fixture.ddl(mysql_flavor(&pool).await) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL metadata fixture");
   }
 
@@ -1107,7 +1121,7 @@ async fn mysql_accepts_the_parameters_the_ui_actually_sends() {
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
 
   let fixture = MetaFixture::new("myparams");
-  for statement in fixture.ddl("mysql") {
+  for statement in fixture.ddl(mysql_flavor(&pool).await) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
   }
 
@@ -1403,7 +1417,7 @@ async fn mysql_catalog_results_are_decodable_by_the_plugin() {
   let function = format!("{}_fn", fixture.child);
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
   sqlx::raw_sql(&format!("DROP FUNCTION IF EXISTS {function}")).execute(&pool).await.ok();
-  for statement in fixture.ddl("mysql") {
+  for statement in fixture.ddl(mysql_flavor(&pool).await) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
   }
   sqlx::query(&format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child))
@@ -1669,7 +1683,7 @@ async fn mysql_returns_trigger_components_and_the_create_view_statement() {
   let view = format!("{}_v", fixture.child);
   let trigger = format!("{}_trg", fixture.child);
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
-  for statement in fixture.ddl("mysql") {
+  for statement in fixture.ddl(mysql_flavor(&pool).await) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
   }
   sqlx::query(&format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child))
@@ -1906,7 +1920,7 @@ async fn mysql_lists_tables_views_and_routines() {
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
   sqlx::raw_sql(&format!("DROP FUNCTION IF EXISTS {routine}")).execute(&pool).await.ok();
   sqlx::raw_sql(&format!("DROP PROCEDURE IF EXISTS {procedure}")).execute(&pool).await.ok();
-  for statement in fixture.ddl("mysql") {
+  for statement in fixture.ddl(mysql_flavor(&pool).await) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
   }
   sqlx::query(&format!("CREATE VIEW {view} AS SELECT id FROM {}", fixture.child))
@@ -2102,7 +2116,7 @@ async fn mysql_er_diagram_reports_column_types_with_length() {
   let fixture = MetaFixture::new("myer");
   let view = format!("{}_v", fixture.child);
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
-  for statement in fixture.ddl("mysql") {
+  for statement in fixture.ddl(mysql_flavor(&pool).await) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
   }
   sqlx::query(&format!("CREATE VIEW {view} AS SELECT id FROM {}", fixture.child))
@@ -2294,7 +2308,7 @@ async fn mysql_completion_catalog_lists_views_next_to_tables() {
   let fixture = MetaFixture::new("mycomp");
   let view = format!("{}_v", fixture.child);
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
-  for statement in fixture.ddl("mysql") {
+  for statement in fixture.ddl(mysql_flavor(&pool).await) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
   }
   sqlx::query(&format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child))
@@ -2490,14 +2504,117 @@ async fn mysql_use_is_rejected_by_the_prepared_protocol() {
   //
   // 所以界面上那一栏在 MySQL 下恒等于连上去时选定的库。哪天改回文本协议，
   // 这条会红，提醒回来重估那一栏的说法。
-  let error = sqlx::query("USE information_schema")
-    .execute(&pool)
-    .await
-    .expect_err("prepared protocol must reject USE");
+  //
+  // MariaDB 不一样：它的预处理协议**收** `USE`。这正是下面那条用例要防的事，
+  // 这里照实钉住两家的差别——哪天 MariaDB 也拒了，那道防线就可以重估。
+  let outcome = sqlx::query("USE information_schema").execute(&pool).await;
+  if is_mariadb(&pool).await {
+    assert!(outcome.is_ok(), "MariaDB 的预处理协议本来收 USE，实际: {outcome:?}");
+    return;
+  }
+  let error = outcome.expect_err("prepared protocol must reject USE");
   assert!(
     error.to_string().contains("1295") || error.to_string().contains("prepared statement"),
     "预期 1295，实际: {error}"
   );
+}
+
+/// 用户在编辑器里敲的 `USE` 不能把池子里的连接挪到别的库。
+///
+/// 对象树、补全、ER 图的目录查询都按 `DATABASE()` 取当前库，而它们和编辑器
+/// 共用一个池子。一条被 `USE` 挪走的连接还回池子之后，下一次恰好拿到它的
+/// 目录查询就会列出另一个库的表，而界面上的库名还是原来那个——静默地错。
+///
+/// MySQL 上这件事靠预处理协议拒绝 `USE` 挡住（上一条），MariaDB 上协议不挡，
+/// 只能由我们自己挡。池子只放一条连接，保证第二次拿到的就是被挪过的那条。
+#[tokio::test]
+async fn mysql_use_cannot_move_a_pooled_connection_to_another_database() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  let db_pool = DbPool::MySql(pool.clone());
+
+  let error = execute_query(&db_pool, "/* 切库 */ use information_schema")
+    .await
+    .expect_err("USE must be refused");
+  assert!(
+    error.message.starts_with(dataomni_lib::services::USE_STATEMENT_REFUSED),
+    "应当由我们拒绝，而不是驱动报什么算什么，实际: {}",
+    error.message
+  );
+
+  let database: Option<String> = sqlx::query_scalar("SELECT CAST(DATABASE() AS CHAR)")
+    .fetch_one(&pool)
+    .await
+    .expect("read current database");
+  assert_eq!(database.as_deref(), Some("dataomni_test"), "池子里的连接被挪走了");
+}
+
+/// 同一个 URL 可能指向 MySQL 也可能指向 MariaDB，两家只在少数地方真的不同，
+/// 用例在那几处按服务端自报的版本分开断言。
+async fn is_mariadb(pool: &sqlx::MySqlPool) -> bool {
+  let version: String =
+    sqlx::query_scalar("SELECT VERSION()").fetch_one(pool).await.expect("read server version");
+  version.contains("MariaDB")
+}
+
+/// 目录里的序号列：MySQL 是 INT UNSIGNED，MariaDB 是 BIGINT。
+///
+/// 界面走插件的解码器，两种都认；sqlx 的 `get` 按宽度和符号严格匹配，
+/// 所以用例这里也得两种都认，否则红的是用例而不是应用。
+fn mysql_ordinal(row: &sqlx::mysql::MySqlRow, column: &str) -> Option<i64> {
+  row
+    .try_get::<Option<u32>, _>(column)
+    .map(|ordinal| ordinal.map(i64::from))
+    .or_else(|_| row.try_get::<Option<i64>, _>(column))
+    .unwrap_or_else(|error| panic!("decode {column}: {error}"))
+}
+
+/// MariaDB 与 MySQL 只在**拼写**上不同、意思一样的两处，换成 MySQL 的拼法。
+///
+/// - 整数类型带显示宽度：`int(11)`、`int(10) unsigned`。MySQL 8.0.19 起不再
+///   显示它，MariaDB 照旧；宽度从来不影响取值范围。
+/// - 表达式小写带括号：`on update current_timestamp()`。
+/// - utf8mb4 的默认排序规则：没写 `COLLATE` 的列拿到的是服务端的默认值，
+///   MySQL 8 是 `utf8mb4_0900_ai_ci`，MariaDB 11.4 是 `utf8mb4_uca1400_ai_ci`。
+///   语料里写的是前者；这是服务端配置，不是我们生成的语句有什么不同。
+///
+/// 只放这三条。默认值那种「意思也不同」的差别由目录查询自己换形状
+/// （见 `mysql_column_defaults_come_back_in_one_shape_on_mysql_and_mariadb`），
+/// 不能在用例里抹平——抹平了就看不见界面会拿到什么。
+fn mariadb_spelling_as_mysql(mut column: ddl_corpus::Column) -> ddl_corpus::Column {
+  column.data_type = strip_integer_display_width(&column.data_type);
+  column.extra =
+    column.extra.map(|extra| extra.replace("current_timestamp()", "CURRENT_TIMESTAMP"));
+  if column.collation.as_deref() == Some("utf8mb4_uca1400_ai_ci") {
+    column.collation = Some("utf8mb4_0900_ai_ci".to_string());
+  }
+  column
+}
+
+fn strip_integer_display_width(data_type: &str) -> String {
+  let integer_types = ["tinyint(", "smallint(", "mediumint(", "bigint(", "int("];
+  let Some(prefix) = integer_types.iter().find(|prefix| data_type.starts_with(**prefix)) else {
+    return data_type.to_string();
+  };
+  let rest = &data_type[prefix.len()..];
+  match rest.find(')') {
+    Some(close) if rest[..close].chars().all(|c| c.is_ascii_digit()) => {
+      format!("{}{}", &prefix[..prefix.len() - 1], &rest[close + 1..])
+    }
+    _ => data_type.to_string(),
+  }
+}
+
+/// 给 `MetaFixture::ddl` 用的方言名
+async fn mysql_flavor(pool: &sqlx::MySqlPool) -> &'static str {
+  if is_mariadb(pool).await {
+    "mariadb"
+  } else {
+    "mysql"
+  }
 }
 
 #[tokio::test]
@@ -2848,6 +2965,82 @@ fn column_fixture_ddl(dialect: &str, table: &str) -> Vec<String> {
   }
 }
 
+/// 默认值无论连的是 MySQL 还是 MariaDB，都要按 MySQL 的形状回来。
+///
+/// 改结构的界面照这个形状把默认值重述回 SQL（`tableDdl.ts` 的
+/// `columnDefaultSql`）：不带 `DEFAULT_GENERATED` 的非数字当字符串再引一层。
+/// MariaDB 原样给的是 SQL 字面量 `'a'`、「没有默认值」给的是字符串 `NULL`，
+/// 不换形状的话，只改一列注释就会把默认值悄悄改掉。
+///
+/// 每一行都是两家原始表示不同、或容易被换形状的规则误伤的一类。
+/// 最后一行尤其要紧：`DEFAULT 'CURRENT_TIMESTAMP'` 是字符串，不是表达式。
+#[tokio::test]
+async fn mysql_column_defaults_come_back_in_one_shape_on_mysql_and_mariadb() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  let table = "dataomni_default_shapes";
+  sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.expect("drop");
+  sqlx::query(&format!(
+    r"CREATE TABLE {table} (
+       s_plain VARCHAR(20) DEFAULT 'a',
+       s_quote VARCHAR(20) DEFAULT 'it''s',
+       s_bslash VARCHAR(20) DEFAULT 'a\\b',
+       s_nullword VARCHAR(20) DEFAULT 'NULL',
+       s_nullable VARCHAR(20),
+       s_notnull VARCHAR(20) NOT NULL,
+       s_empty VARCHAR(20) DEFAULT '',
+       i_zero INT DEFAULT 0,
+       d_neg DECIMAL(5,2) DEFAULT -1.5,
+       b_bit BIT(1) DEFAULT b'1',
+       ts TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+       e_expr INT DEFAULT (1 + 1),
+       s_ctsword VARCHAR(30) DEFAULT 'CURRENT_TIMESTAMP'
+     )"
+  ))
+  .execute(&pool)
+  .await
+  .expect("create default shape fixture");
+
+  let columns =
+    mysql_catalog_columns(&pool, column_queries(dataomni_lib::models::DatabaseType::MySQL), table)
+      .await;
+  let shapes: Vec<(String, Option<String>, bool)> = columns
+    .into_iter()
+    .map(|column| {
+      let generated = column.extra.as_deref().unwrap_or_default().contains("DEFAULT_GENERATED");
+      (column.name, column.default_value, generated)
+    })
+    .collect();
+  let literal =
+    |name: &str, value: Option<&str>| (name.to_string(), value.map(String::from), false);
+  assert_eq!(
+    shapes[..10],
+    [
+      literal("s_plain", Some("a")),
+      literal("s_quote", Some("it's")),
+      literal("s_bslash", Some(r"a\b")),
+      literal("s_nullword", Some("NULL")),
+      literal("s_nullable", None),
+      literal("s_notnull", None),
+      literal("s_empty", Some("")),
+      literal("i_zero", Some("0")),
+      literal("d_neg", Some("-1.50")),
+      literal("b_bit", Some("b'1'")),
+    ]
+  );
+  // 表达式的原文两家写法不同（`CURRENT_TIMESTAMP` / `current_timestamp()`），
+  // 都是合法的 SQL；要钉的是它被认成表达式
+  for (name, default_value, generated) in &shapes[10..12] {
+    assert!(*generated && default_value.is_some(), "{name} 应被认成表达式: {shapes:?}");
+  }
+  assert_eq!(shapes[12], literal("s_ctsword", Some("CURRENT_TIMESTAMP")));
+
+  sqlx::query(&format!("DROP TABLE {table}")).execute(&pool).await.ok();
+}
+
 fn column_queries(db_type: dataomni_lib::models::DatabaseType) -> &'static str {
   dataomni_lib::services::schema_metadata_queries(&db_type).expect("supported").columns
 }
@@ -2927,14 +3120,16 @@ async fn mysql_reports_declared_types_and_generated_columns() {
     .fetch_all(&pool)
     .await
     .expect("run MySQL column query");
-  let columns: Vec<(String, String, i64, Option<u32>, i64)> = rows
+  let mariadb = is_mariadb(&pool).await;
+  let columns: Vec<(String, String, i64, Option<i64>, i64)> = rows
     .iter()
     .map(|row| {
+      let data_type = row.get::<String, _>("data_type");
       (
         row.get::<String, _>("column_name"),
-        row.get::<String, _>("data_type"),
+        if mariadb { strip_integer_display_width(&data_type) } else { data_type },
         row.get::<i64, _>("is_nullable"),
-        row.get::<Option<u32>, _>("primary_key_ordinal"),
+        mysql_ordinal(row, "primary_key_ordinal"),
         row.get::<i64, _>("is_generated"),
       )
     })
@@ -3152,7 +3347,7 @@ async fn mysql_catalog_columns(
       name: row.get::<String, _>("column_name"),
       data_type: row.get::<String, _>("data_type"),
       nullable: row.get::<i64, _>("is_nullable") == 1,
-      primary_key_ordinal: row.get::<Option<u32>, _>("primary_key_ordinal").map(i64::from),
+      primary_key_ordinal: mysql_ordinal(row, "primary_key_ordinal"),
       default_value: row.get::<Option<String>, _>("column_default"),
       generated: row.get::<i64, _>("is_generated") == 1,
       collation: row.get::<Option<String>, _>("collation"),
@@ -3235,6 +3430,14 @@ async fn mysql_runs_the_generated_ddl_from_the_shared_corpus() {
   let pool =
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
   let catalog = column_queries(dataomni_lib::models::DatabaseType::MySQL);
+  let mariadb = is_mariadb(&pool).await;
+  let comparable = |columns: Vec<ddl_corpus::Column>| {
+    if mariadb {
+      columns.into_iter().map(mariadb_spelling_as_mysql).collect()
+    } else {
+      columns
+    }
+  };
 
   for case in ddl_corpus::load("mysql") {
     for statement in &case.fixture {
@@ -3243,7 +3446,7 @@ async fn mysql_runs_the_generated_ddl_from_the_shared_corpus() {
 
     // 建表用例没有 origin——表还不存在
     if !case.origin.is_empty() {
-      let origin = mysql_catalog_columns(&pool, catalog, &case.table).await;
+      let origin = comparable(mysql_catalog_columns(&pool, catalog, &case.table).await);
       assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
     }
 
@@ -3261,7 +3464,7 @@ async fn mysql_runs_the_generated_ddl_from_the_shared_corpus() {
         .unwrap_or_else(|error| panic!("{}: 建出来的表插不进行\n{statement}\n{error}", case.name));
     }
 
-    let after = mysql_catalog_columns(&pool, catalog, &case.final_table).await;
+    let after = comparable(mysql_catalog_columns(&pool, catalog, &case.final_table).await);
     assert_eq!(after, case.after, "{}: 跑完之后的表和语料说的不一样", case.name);
 
     for statement in &case.cleanup {

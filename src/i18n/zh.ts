@@ -928,6 +928,7 @@ export const zh = {
   'error.backend.queryTimeout': '查询执行超过了 {detail} 毫秒的超时上限，已经中止。可以在工具栏调高超时，或者先给查询加上限制条件。',
   'error.backend.columnDecodeFailed': '这一列读不出来（列名 · 类型 · 原因）：{detail}。可以在查询里把它转成文本再取。',
   'error.backend.nonQuery': '这条语句不返回结果集，没有可导出的内容。',
+  'error.backend.useStatementRefused': '不支持在编辑器里用 USE 切换数据库：它会让侧边栏的对象树悄悄换成另一个库的内容。要换库请在连接配置里改默认数据库，或在 SQL 里写全限定名（库名.表名）。',
   'error.backend.csvColumnTypeInvalid': '目标列的类型名不合法（列 · 类型）：{detail}',
   'error.backend.csvRowTooShort': '这一行的字段数不够（实际 · 要取第几个 · 映射到的列）：{detail}。多半是分隔符选错了。',
   'error.backend.rowCountMismatch': '这条语句影响的行数和预期不一致（预期 · 实际）：{detail}。整批已回滚——那一行可能已被别人改过或删掉。',
