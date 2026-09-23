@@ -783,3 +783,141 @@ async fn oracle_exports_stream_to_a_file_and_refuse_non_queries_before_running_t
   assert_eq!(error.code.as_deref(), Some("ORA-00942"), "{error:?}");
   std::fs::remove_dir_all(&dir).ok();
 }
+
+/// 和 SQL Server 那份同一个文件：转换失败（ORA-01722 / 01843）、主键冲突、太长、非空。
+/// Oracle 的这几种都只终止那一条语句，事务留着
+const IMPORT_CSV: &str = "id,n,at,name
+1,10,2024-01-01,a
+2,abc,2024-01-02,b
+3,30,2024-13-45,c
+1,40,,d
+5,50,,toolong
+6,,,f
+7,70,2024-02-02 08:30:00,g
+";
+
+async fn import_fixture(pool: &Arc<OraclePool>) {
+  drop_quietly(pool, "om_import").await;
+  run_all(
+    pool,
+    &["CREATE TABLE om_import (id NUMBER(10) PRIMARY KEY, n NUMBER(10) NOT NULL, at DATE, name VARCHAR2(5))"],
+  )
+  .await;
+}
+
+fn import_request(
+  path: &std::path::Path,
+  on_error: dataomni_lib::services::ErrorPolicy,
+  strategy: dataomni_lib::services::TransactionStrategy,
+) -> dataomni_lib::services::ImportRequest {
+  let column =
+    |source, target: &str, target_type: &str| dataomni_lib::services::csv_import::ImportColumn {
+      source,
+      target: target.to_string(),
+      target_type: target_type.to_string(),
+    };
+  dataomni_lib::services::ImportRequest {
+    path: path.to_string_lossy().to_string(),
+    schema: Some("DATAOMNI".into()),
+    table: "OM_IMPORT".into(),
+    csv: dataomni_lib::services::CsvOptions {
+      delimiter: ",".into(),
+      has_header: true,
+      null_text: String::new(),
+    },
+    columns: vec![
+      column(0, "ID", "NUMBER(10)"),
+      column(1, "N", "NUMBER(10)"),
+      column(2, "AT", "DATE"),
+      column(3, "NAME", "VARCHAR2(5)"),
+    ],
+    batch_size: 3,
+    strategy,
+    on_error,
+  }
+}
+
+async fn run_import(
+  pool: &Arc<OraclePool>,
+  request: &dataomni_lib::services::ImportRequest,
+) -> dataomni_lib::services::ImportSummary {
+  dataomni_lib::services::import_csv(
+    PoolRef::Oracle(pool),
+    request,
+    &mut |_| {},
+    &mut || false,
+    &mut || false,
+  )
+  .await
+  .expect("import runs")
+}
+
+async fn imported(pool: &Arc<OraclePool>) -> Vec<(String, String)> {
+  pool
+    .select(
+      "SELECT id, NVL(TO_CHAR(at, 'YYYY-MM-DD HH24:MI:SS'), '-') AS at FROM om_import ORDER BY id",
+      &[],
+    )
+    .await
+    .expect("read back")
+    .iter()
+    .map(|row| (text(&row["ID"]), text(&row["AT"])))
+    .collect()
+}
+
+#[tokio::test]
+async fn oracle_import_binds_whole_batches_and_finds_the_bad_rows() {
+  use dataomni_lib::services::{ErrorPolicy, TransactionStrategy};
+  let Some(pool) = pool().await else { return };
+  let path =
+    std::env::temp_dir().join(format!("dataomni-oracle-import-{}.csv", std::process::id()));
+  std::fs::write(&path, IMPORT_CSV).expect("write csv");
+
+  for strategy in [TransactionStrategy::SingleTransaction, TransactionStrategy::PerBatch] {
+    import_fixture(&pool).await;
+    let summary = run_import(&pool, &import_request(&path, ErrorPolicy::Skip, strategy)).await;
+    assert!(!summary.rolled_back, "{summary:?}");
+    assert_eq!((summary.rows_read, summary.rows_inserted, summary.rows_failed), (7, 2, 5));
+    // 文本按会话的 NLS 格式转成 DATE：只有日期的、带时分秒的都认
+    assert_eq!(
+      imported(&pool).await,
+      [
+        ("1".to_string(), "2024-01-01 00:00:00".to_string()),
+        ("7".to_string(), "2024-02-02 08:30:00".to_string())
+      ],
+      "{strategy:?}"
+    );
+    let by_line = |line: u64| {
+      summary.errors.iter().find(|error| error.line == line).map(|error| error.message.clone())
+    };
+    for (line, code) in
+      [(3, "ORA-01722"), (4, "ORA-01843"), (5, "ORA-00001"), (6, "ORA-12899"), (7, "ORA-01400")]
+    {
+      assert!(by_line(line).is_some_and(|m| m.contains(code)), "{line}: {:?}", by_line(line));
+    }
+  }
+  std::fs::remove_file(&path).ok();
+}
+
+#[tokio::test]
+async fn oracle_import_aborts_on_the_first_bad_row_and_leaves_nothing_behind() {
+  use dataomni_lib::services::{ErrorPolicy, TransactionStrategy};
+  let Some(pool) = pool().await else { return };
+  import_fixture(&pool).await;
+  let path =
+    std::env::temp_dir().join(format!("dataomni-oracle-import-abort-{}.csv", std::process::id()));
+  std::fs::write(&path, IMPORT_CSV).expect("write csv");
+
+  let summary = run_import(
+    &pool,
+    &import_request(&path, ErrorPolicy::Abort, TransactionStrategy::SingleTransaction),
+  )
+  .await;
+  assert!(summary.rolled_back);
+  assert_eq!(summary.rows_inserted, 0);
+  assert_eq!(summary.errors.len(), 1);
+  assert_eq!(summary.errors[0].line, 3, "{:?}", summary.errors);
+  // 数组 DML 出错时坏行前面那几行已经写进去了，要靠保存点和最后的回滚撤掉
+  assert!(imported(&pool).await.is_empty());
+  std::fs::remove_file(&path).ok();
+}

@@ -821,7 +821,6 @@ export const zh = {
   'form.oracleServiceHint': 'Easy Connect 的服务名，例如 FREEPDB1、ORCLPDB1。按 SID 连接与 TLS（钱包）这一版还不支持。',
   'error.backend.oracleClientMissing': '找不到 Oracle Instant Client（找过的目录：{detail}）。安装包里应当带着它；从源码运行时先执行 scripts/fetch-oracle-client.sh，或设 DATAOMNI_ORACLE_CLIENT_DIR 指向一份 Instant Client。',
   'error.backend.oracleClientLoadFailed': 'Oracle Instant Client 加载失败：{detail}。Linux 上多半是缺系统库 libaio（Ubuntu 24.04 起叫 libaio1t64）。',
-  'error.backend.oracleUnsupported': 'Oracle 还不支持这项操作（{detail}）。它在分阶段接入，连接表单上那一格列着这一版还用不了的功能。',
   'error.backend.oracleTlsUnsupported': 'Oracle 的 TLS 要用钱包，这一版还不支持。请把 TLS 模式设为「不使用 TLS」，或者通过 SSH 隧道连接。',
   'form.dbType': '数据库类型 *',
   'form.unsupported': '尚未支持',

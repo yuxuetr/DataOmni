@@ -35,8 +35,7 @@ impl SessionRuntime {
   /// 只在语句本身与事务无关时补：用户自己写的 `BEGIN` 不需要前面再来一条，
   /// 而在 `COMMIT` 前面补一条 `BEGIN` 是开一个立刻提交的空事务。
   async fn begin_if_needed(&mut self, autocommit: bool, sql: &str) -> Result<(), QueryError> {
-    // 事务控制语句本身不按「自动提交」再提交一次
-    self.connection.set_autocommit(autocommit && !self.connection.controls_transaction(sql));
+    self.connection.set_autocommit(autocommit);
     if autocommit
       || self.current_transaction().in_transaction()
       || self.connection.controls_transaction(sql)

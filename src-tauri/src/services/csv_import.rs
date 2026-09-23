@@ -345,6 +345,7 @@ enum Dialect {
   MySql,
   Postgres,
   SqlServer,
+  Oracle,
 }
 
 impl Dialect {
@@ -354,9 +355,7 @@ impl Dialect {
       SessionConnection::MySql(_) => Self::MySql,
       SessionConnection::Postgres(_) => Self::Postgres,
       SessionConnection::SqlServer(_) => Self::SqlServer,
-      SessionConnection::Oracle(_) => {
-        unreachable!("import_csv refuses Oracle before it picks a dialect")
-      }
+      SessionConnection::Oracle(_) => Self::Oracle,
     }
   }
 
@@ -369,12 +368,13 @@ impl Dialect {
     format!("{quote}{escaped}{quote}")
   }
 
-  /// T-SQL 里单独的 `BEGIN` 是语句块
+  /// T-SQL 里单独的 `BEGIN` 是语句块；Oracle 没有 BEGIN，事务随第一条 DML 开始，
+  /// 要一句明确开事务的话是 `SET TRANSACTION`（之后连接不再逐条自动提交）
   fn begin(&self) -> &'static str {
-    if *self == Self::SqlServer {
-      "BEGIN TRANSACTION"
-    } else {
-      "BEGIN"
+    match self {
+      Self::SqlServer => "BEGIN TRANSACTION",
+      Self::Oracle => "SET TRANSACTION READ WRITE",
+      _ => "BEGIN",
     }
   }
 
@@ -394,9 +394,9 @@ impl Dialect {
     }
   }
 
-  /// SQL Server 没有释放保存点这回事，保存点随事务结束
+  /// SQL Server 与 Oracle 没有释放保存点这回事，保存点随事务结束
   fn release(&self, name: &str) -> Option<String> {
-    (*self != Self::SqlServer).then(|| format!("RELEASE SAVEPOINT {name}"))
+    (!matches!(self, Self::SqlServer | Self::Oracle)).then(|| format!("RELEASE SAVEPOINT {name}"))
   }
 
   /// 一条语句放几行：受占位符上限约束，SQL Server 另有 `VALUES` 的行数上限
@@ -406,6 +406,8 @@ impl Dialect {
     }
     let (params, rows) = match self {
       Self::SqlServer => (SQL_SERVER_MAX_PARAMS, SQL_SERVER_MAX_VALUES_ROWS),
+      // 数组 DML：语句只有一行的占位符，一批多少行都行
+      Self::Oracle => (usize::MAX, usize::MAX),
       _ => (MAX_BIND_PARAMS, usize::MAX),
     };
     batch_size.clamp(1, (params / columns).clamp(1, rows))
@@ -531,6 +533,8 @@ fn build_insert(
   let names =
     columns.iter().map(|column| dialect.quote(&column.target)).collect::<Vec<_>>().join(", ");
 
+  // Oracle 走数组 DML：语句只写一行占位符，一批的值由驱动逐行绑
+  let rows = if dialect == Dialect::Oracle { rows.min(1) } else { rows };
   let mut tuples = Vec::with_capacity(rows);
   let mut next = 1usize;
   for _ in 0..rows {
@@ -549,6 +553,7 @@ fn build_insert(
           placeholders.push(format!("${next}::text::{}", column.target_type));
         }
         Dialect::SqlServer => placeholders.push(format!("@P{next}")),
+        Dialect::Oracle => placeholders.push(format!(":{next}")),
         _ => placeholders.push("?".to_string()),
       }
       next += 1;
@@ -618,9 +623,6 @@ pub async fn import_csv<'a>(
     })?;
 
   let mut connection = SessionConnection::acquire(pool).await?;
-  if matches!(connection, SessionConnection::Oracle(_)) {
-    return Err(crate::services::oracle::unsupported("import"));
-  }
   let dialect = Dialect::of(&connection);
   let per_statement = dialect.rows_per_statement(request.batch_size, request.columns.len());
   let batch_sql = build_insert(
@@ -1068,6 +1070,22 @@ mod tests {
     assert_eq!(Dialect::SqlServer.rows_per_statement(5000, 1), 1000);
     assert_eq!(Dialect::SqlServer.rows_per_statement(1000, 3), 700);
     assert_eq!(Dialect::SqlServer.rows_per_statement(1000, 3000), 1);
+  }
+
+  /// Oracle 走数组 DML：一批多少行，语句都只有一行占位符，值由驱动逐行绑
+  #[test]
+  fn oracle_batches_bind_rows_against_a_single_row_statement() {
+    let columns = vec![
+      ImportColumn { source: 0, target: "ID".into(), target_type: "NUMBER(10)".into() },
+      ImportColumn { source: 1, target: "NAME".into(), target_type: "VARCHAR2(5)".into() },
+    ];
+    assert_eq!(Dialect::Oracle.rows_per_statement(5000, 2), 5000);
+    assert_eq!(
+      build_insert(Dialect::Oracle, Some("DATAOMNI"), "OM_IMPORT", &columns, 500).expect("sql"),
+      r#"INSERT INTO "DATAOMNI"."OM_IMPORT" ("ID", "NAME") VALUES (:1, :2)"#
+    );
+    assert_eq!(Dialect::Oracle.release("sp"), None, "Oracle 没有 RELEASE SAVEPOINT");
+    assert_eq!(Dialect::Oracle.begin(), "SET TRANSACTION READ WRITE");
   }
 
   #[test]

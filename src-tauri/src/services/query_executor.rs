@@ -317,8 +317,8 @@ impl SessionConnection {
         connection.execute(query).await.map(|done| done.rows_affected()).map_err(display_error)
       }
       Self::SqlServer(connection) => connection.execute_with_params(sql, params).await,
-      // CSV 导入，在第三阶段
-      Self::Oracle(_) => Err(crate::services::oracle::unsupported("import")),
+      // 数组 DML：`sql` 是单行的语句，`params` 是一行接一行的值
+      Self::Oracle(connection) => connection.execute_with_params(sql, params).await,
     }
   }
 

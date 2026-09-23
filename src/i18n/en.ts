@@ -794,7 +794,6 @@ export const en: Translations = {
   'form.oracleServiceHint': 'The Easy Connect service name, such as FREEPDB1 or ORCLPDB1. Connecting by SID and TLS (wallets) are not supported yet.',
   'error.backend.oracleClientMissing': 'Oracle Instant Client was not found (looked in: {detail}). The installer should include it; when running from source, run scripts/fetch-oracle-client.sh first, or point DATAOMNI_ORACLE_CLIENT_DIR at an Instant Client directory.',
   'error.backend.oracleClientLoadFailed': 'Oracle Instant Client failed to load: {detail}. On Linux this is usually the missing system library libaio (called libaio1t64 from Ubuntu 24.04).',
-  'error.backend.oracleUnsupported': 'Oracle does not support this operation yet ({detail}). Support is arriving in stages; the Oracle tile in the connection form lists what is not available yet.',
   'error.backend.oracleTlsUnsupported': 'TLS for Oracle needs a wallet, which is not supported yet. Set the TLS mode to "Disabled", or connect through an SSH tunnel.',
   'form.dbType': 'Database type *',
   'form.unsupported': 'Not supported yet',

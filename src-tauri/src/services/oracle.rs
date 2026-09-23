@@ -85,8 +85,6 @@ pub const ORACLE_SCHEME: &str = "oracle://";
 pub const ORACLE_CLIENT_MISSING: &str = "DATAOMNI_ORACLE_CLIENT_MISSING";
 /// Instant Client 在，但加载失败（缺系统库、平台不对）。数据是 ODPI-C 的原话
 pub const ORACLE_CLIENT_LOAD_FAILED: &str = "DATAOMNI_ORACLE_CLIENT_LOAD_FAILED";
-/// 这一阶段还没接上的操作。数据是操作名
-pub const ORACLE_UNSUPPORTED: &str = "DATAOMNI_ORACLE_UNSUPPORTED";
 
 /// 开发与测试时覆盖 Instant Client 的位置
 const CLIENT_DIR_ENV: &str = "DATAOMNI_ORACLE_CLIENT_DIR";
@@ -538,7 +536,10 @@ impl OracleConnection {
     if options.explain_plan {
       return self.explain(sql, options, sink).await;
     }
-    let commit_after = self.autocommit && !self.transaction().in_transaction();
+    // 事务控制语句本身不按「自动提交」再提交一次：`SET TRANSACTION` 之后提交等于
+    // 刚开的事务立刻结束，`SAVEPOINT` 之后提交等于保存点刚设就没了
+    let commit_after =
+      self.autocommit && !self.transaction().in_transaction() && !controls_transaction(sql);
     let connection = self.take_connection().await?;
     let mut guard = BreakOnDrop { connection: Arc::clone(&connection), finished: false };
     let statement = statement_text(sql);
@@ -696,6 +697,33 @@ impl OracleConnection {
       Some(_) => self.transaction.clone(),
       None => TransactionState::default(),
     }
+  }
+
+  /// 同一条语句按多行参数执行（数组 DML，CSV 导入走这里），返回影响行数。
+  ///
+  /// `params` 按语句的绑定个数一行接一行地排——导入把一批的值首尾相接放在一起。
+  /// 不拼多行的 `INSERT ALL`：实验里 500 行 × 5 列的 `INSERT ALL` 光解析就 1.7 秒，
+  /// 数组 DML 同样的量 0.2 秒、5000 行 0.8 秒。值一律按文本绑，由服务端照会话的
+  /// NLS 格式转成列的类型，和另外几家一样。
+  pub async fn execute_with_params(
+    &mut self,
+    sql: &str,
+    params: &[Option<String>],
+  ) -> Result<u64, QueryError> {
+    let commit_after = self.autocommit && !self.transaction().in_transaction();
+    let connection = self.take_connection().await?;
+    let mut guard = BreakOnDrop { connection: Arc::clone(&connection), finished: false };
+    let statement = statement_text(sql);
+    let params = params.to_vec();
+    let worker = Arc::clone(&connection);
+    let (outcome, open) = blocking(move || {
+      let outcome = execute_many(&worker, &statement, &params, commit_after);
+      Ok((outcome, open_transaction(&worker)))
+    })
+    .await?;
+    guard.finished = true;
+    self.settle(connection, keeps_connection(&outcome), open);
+    outcome
   }
 
   /// 见 [`describe`]
@@ -865,6 +893,40 @@ fn run_statement(
   Ok(None)
 }
 
+fn execute_many(
+  connection: &Connection,
+  statement: &str,
+  params: &[Option<String>],
+  commit_after: bool,
+) -> Result<u64, QueryError> {
+  // 同一条语句第二次准备走语句缓存，问一次绑定个数不多花什么
+  let width = connection
+    .statement(statement)
+    .build()
+    .map_err(|error| query_error(&error, Some(statement)))?
+    .bind_count();
+  if width == 0 || params.len() % width != 0 {
+    return Err(QueryError::message(format!(
+      "{} parameters do not fill rows of the statement's {width} binds",
+      params.len()
+    )));
+  }
+  let rows = params.len() / width;
+  // 数组 DML 出错时驱动报的「位置」是第几行，不是语句里的字符位置，所以不带语句
+  let failed = |error: oracle::Error| query_error(&error, None);
+  let mut batch = connection.batch(statement, rows).build().map_err(failed)?;
+  for row in params.chunks_exact(width) {
+    let binds: Vec<&dyn oracle::sql_type::ToSql> =
+      row.iter().map(|value| value as &dyn oracle::sql_type::ToSql).collect();
+    batch.append_row(&binds).map_err(failed)?;
+  }
+  batch.execute().map_err(failed)?;
+  if commit_after {
+    connection.commit().map_err(failed)?;
+  }
+  Ok(rows as u64)
+}
+
 /// 结果集的列：同名的编上号，元数据与行里的键用的是同一份名字
 fn column_header(
   columns: &[(String, OracleType, bool)],
@@ -907,10 +969,6 @@ fn describe(connection: &Connection, sql: &str) -> Result<Vec<QueryColumnMetadat
     .map(|info| (info.name().to_string(), info.oracle_type().clone(), info.nullable()))
     .collect();
   Ok(column_header(&columns).0)
-}
-
-pub(crate) fn unsupported(operation: &str) -> QueryError {
-  QueryError::message(format!("{ORACLE_UNSUPPORTED}: {operation}"))
 }
 
 /// 发给服务端的那段文本。
