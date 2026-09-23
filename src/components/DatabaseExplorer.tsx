@@ -214,6 +214,16 @@ export default function DatabaseExplorer({
     // schemaVersion：我们自己执行过 DDL 之后重新拉一遍，新建的表立刻出现在树里
   }, [connectionId, connectionReady, schemaVersion]);
   
+  // 过期的那一刻不会自己触发渲染；下一次渲染发现过期了就重新拉，旧列表在拉的
+  // 过程中照常显示。失败时显示错误，而 isMetadataStale 不再变化，不会反复重试
+  useEffect(() => {
+    if (isMetadataStale && connectionReady && !loading) {
+      loadDatabaseMetadata(true);
+    }
+    // 故意不依赖 loading：失败后 loading 落回 false 而过期还在，依赖它就会无限重试
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMetadataStale, connectionReady]);
+
   // 添加额外的连接ID变化监听，确保连接切换时清理旧状态
   useEffect(() => {
     console.log('🔄 DatabaseExplorer: 连接ID变化，清理旧状态:', connectionId);
@@ -242,7 +252,10 @@ export default function DatabaseExplorer({
     );
   }
 
-  const objects = cachedMetadata && !isMetadataStale ? cachedMetadata.objects : [];
+  // 过期只决定「该重新拉了」，不决定「不给看」。此前两件事是同一个条件：
+  // 连上五分钟之后随便点一下，整棵树就变成「没有数据库对象」，而且没有
+  // 任何东西去重新加载，只能自己想到去点刷新
+  const objects = cachedMetadata ? cachedMetadata.objects : [];
   // 先筛再建树：分组是按筛完的结果分的，所以标题上的计数就是命中数，
   // 而一个都没命中的类型根本不会出现——不用再画一行「函数 0」
   const matching = filterObjects(objects, filter);
@@ -429,7 +442,9 @@ export default function DatabaseExplorer({
 
       {/* 内容区域 */}
       <div className="flex-1 overflow-y-auto">
-        {loading ? (
+        {/* 手头已经有一棵树时重新拉不清掉它：刷新按钮本身在转，
+            整片换成转圈只是让人在这几百毫秒里什么也点不了 */}
+        {loading && objects.length === 0 ? (
           <div className="flex items-center justify-center h-full">
             <Loader className="animate-spin text-fg-subtle" size={16} />
             <span className="ml-2 text-fg-muted text-sm">{t('explorer.loading')}</span>
