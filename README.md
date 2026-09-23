@@ -53,7 +53,7 @@ MySQL 一组 21 条、PostgreSQL 一组 21 条），不是按协议兼容推断�
 | TiDB | 8.5 | MySQL | ⚠️ 可用，有缺口 | 21 / 21（缺口由用例钉住） |
 | CockroachDB | 25.2 | PostgreSQL | ⚠️ 可用，有缺口 | 21 / 21（缺口由用例钉住） |
 | SQL Server | 2022 | SQL Server | ✅ 支持 | 16 / 16（独立用例，`sql_server_smoke.rs`，含改结构语料） |
-| Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ⚠️ 可用，有缺口 | 6 / 6（独立用例，`oracle_smoke.rs`） |
+| Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ⚠️ 可用，有缺口 | 8 / 8（独立用例，`oracle_smoke.rs`） |
 
 - **MariaDB**：JSON 列是 LONGTEXT 的别名，按文本显示与编辑，没有 JSON 专用
   编辑器；没有函数索引。
@@ -77,9 +77,11 @@ MySQL 一组 21 条、PostgreSQL 一组 21 条），不是按协议兼容推断�
     转换错误会把整个事务回滚，不能像别家那样退回保存点。
 - **Oracle 在分阶段接入**：能连接（按服务名、SSH 隧道）、执行 SQL（结果上限、超时与
   取消——服务端那条语句会真的停下——错误带 ORA 码与出错位置）、浏览对象树 / 表结构
-  （`DBMS_METADATA` 给的建表语句）/ ER 图、翻看表数据、补全与格式化。还不能：在表格里
-  改数据、事务控制（这一版每条非查询语句执行成功就提交）、执行计划、改表结构与新建表、
-  CSV 导入、整表导出；TLS（要钱包）与按 SID 连接也还没有。Instant Client（Basic Light，
+  （`DBMS_METADATA` 给的建表语句）/ ER 图、翻看表数据、补全与格式化、在表格里改数据、
+  事务控制与关闭自动提交（Oracle 没有 BEGIN，「开始事务」发的是 `SET TRANSACTION`；
+  DDL 会隐式提交，状态栏跟着服务端走）。还不能：执行计划、改表结构与新建表、CSV 导入、
+  整表导出；TLS（要钱包）与按 SID 连接也还没有。Oracle 把空字符串存成 NULL，在表格里
+  填一个空值得到的是 NULL。Instant Client（Basic Light，
   许可允许随应用分发，许可原文随包附上）装在应用里，用户不用自己装；Linux 上要系统的
   `libaio`，deb 包声明了依赖。
 - 在编辑器里用 `USE` 切库在 MySQL 类服务端上一律拒绝：它会让侧边栏的对象树

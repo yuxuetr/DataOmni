@@ -62,11 +62,23 @@ const COMPARABLE_TYPE_TOKENS = new Set([
 const SQL_SERVER_INCOMPARABLE = new Set(['text', 'time']);
 const SQL_SERVER_COMPARABLE = new Set(['nvarchar', 'nchar', 'uniqueidentifier', 'bit']);
 
+/**
+ * Oracle：文本、NUMBER、DATE 与 TIMESTAMP（带不带时区都行——会话的 NLS 格式和
+ * 结果的写法一致，实验过能原样转回去）比得准；LOB 与 LONG 根本不能拿 `=` 比，
+ * 近似浮点照别家一样不比。
+ */
+const ORACLE_COMPARABLE = new Set([
+  'varchar2', 'nvarchar2', 'char', 'nchar', 'number', 'integer', 'date', 'timestamp'
+]);
+
 export function isConcurrencyComparable(dataType: string, dialect?: SqlDialect): boolean {
   const token = columnTypeToken(dataType);
   if (dialect === 'sqlserver') {
     return SQL_SERVER_COMPARABLE.has(token)
       || (COMPARABLE_TYPE_TOKENS.has(token) && !SQL_SERVER_INCOMPARABLE.has(token));
+  }
+  if (dialect === 'oracle') {
+    return ORACLE_COMPARABLE.has(token);
   }
   return COMPARABLE_TYPE_TOKENS.has(token);
 }

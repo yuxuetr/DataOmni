@@ -74,5 +74,6 @@ describe('transactionStatement', () => {
     expect(transactionStatement('BEGIN', 'postgresql')).toBe('BEGIN');
     expect(transactionStatement('COMMIT', 'sqlserver')).toBe('COMMIT');
     expect(transactionStatement('ROLLBACK', 'sqlserver')).toBe('ROLLBACK');
+    expect(transactionStatement('BEGIN', 'oracle')).toBe('SET TRANSACTION READ WRITE');
   });
 });

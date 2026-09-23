@@ -83,7 +83,7 @@ export function CellInputEditor({
   }, [menuOpen]);
 
   const kinds = CELL_INPUT_KINDS.filter((kind) => allowDefault || kind !== 'default');
-  const editor = columnEditorKind(dataType);
+  const editor = columnEditorKind(dataType, dialect);
 
   const pick = (kind: CellInputKind) => {
     setMenuOpen(false);

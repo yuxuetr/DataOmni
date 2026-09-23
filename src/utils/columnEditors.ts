@@ -36,8 +36,13 @@ const EDITOR_BY_TOKEN: Record<string, ColumnEditorKind> = {
   smalldatetime: 'datetime'
 };
 
-export function columnEditorKind(dataType: string): ColumnEditorKind {
-  return EDITOR_BY_TOKEN[columnTypeToken(dataType)] ?? 'text';
+export function columnEditorKind(dataType: string, dialect?: SqlIdentifierDialect): ColumnEditorKind {
+  const token = columnTypeToken(dataType);
+  // Oracle 的 DATE 带时分秒：给它只选日期的控件，改一次就把时间抹成了 00:00:00
+  if (dialect === 'oracle' && token === 'date') {
+    return 'datetime';
+  }
+  return EDITOR_BY_TOKEN[token] ?? 'text';
 }
 
 /** 十六进制里允许用空白分组，`de ad be ef` 和 `deadbeef` 是同一个值 */
@@ -70,6 +75,10 @@ export function binaryLiteral(hex: string, dialect: SqlIdentifierDialect): strin
   const normalized = normalizeHex(hex).toLowerCase();
   if (dialect === 'sqlserver') {
     return `0x${normalized}`;
+  }
+  // Oracle 没有二进制字面量
+  if (dialect === 'oracle') {
+    return `HEXTORAW('${normalized}')`;
   }
   return dialect === 'postgresql'
     ? `'\\x${normalized}'::bytea`

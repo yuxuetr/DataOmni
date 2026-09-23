@@ -454,3 +454,186 @@ async fn oracle_structure_page_query_timings() {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// 第二阶段：网格的写入批次、会话事务
+// ---------------------------------------------------------------------------
+
+async fn write_fixture(pool: &Arc<OraclePool>) {
+  drop_quietly(pool, "om_write").await;
+  run_all(
+    pool,
+    &[
+      "CREATE TABLE om_write (id NUMBER(10) PRIMARY KEY, name VARCHAR2(20) NOT NULL, at DATE, note VARCHAR2(20))",
+      "INSERT INTO om_write (id, name) VALUES (1, '甲')",
+      "INSERT INTO om_write (id, name) VALUES (2, '乙')",
+    ],
+  )
+  .await;
+}
+
+fn write(
+  sql: &str,
+  params: Vec<JsonValue>,
+  expect_rows: Option<u64>,
+) -> dataomni_lib::services::WriteStatement {
+  dataomni_lib::services::WriteStatement { sql: sql.to_string(), params, expect_rows }
+}
+
+async fn names(pool: &Arc<OraclePool>) -> Vec<String> {
+  pool
+    .select("SELECT name FROM om_write ORDER BY id", &[])
+    .await
+    .expect("read back")
+    .iter()
+    .map(|row| text(&row["NAME"]))
+    .collect()
+}
+
+#[tokio::test]
+async fn oracle_write_batches_bind_text_dates_and_roll_back_as_a_whole() {
+  use dataomni_lib::services::{execute_write_batch, ROW_COUNT_MISMATCH_CODE};
+  let Some(pool) = pool().await else { return };
+  write_fixture(&pool).await;
+
+  // 日期以结果里的写法绑成文本：默认的 NLS_DATE_FORMAT 是 DD-MON-RR，这一条会 ORA-01861
+  let affected = execute_write_batch(
+    PoolRef::Oracle(&pool),
+    &[
+      write(
+        r#"UPDATE "DATAOMNI"."OM_WRITE" SET "NAME" = :1, "AT" = :2 WHERE "ID" = 1 AND "NAME" = :3;"#,
+        vec![json!("丙"), json!("2026-09-21 08:30:00"), json!("甲")],
+        Some(1),
+      ),
+      write(
+        r#"INSERT INTO "DATAOMNI"."OM_WRITE" ("ID", "NAME") VALUES (:1, :2)"#,
+        vec![json!(3), json!("丁")],
+        None,
+      ),
+    ],
+  )
+  .await
+  .expect("batch commits");
+  assert_eq!(affected, vec![1, 1]);
+  assert_eq!(names(&pool).await, ["丙", "乙", "丁"]);
+  let at = pool.select("SELECT at FROM om_write WHERE id = 1", &[]).await.expect("date");
+  assert_eq!(text(&at[0]["AT"]), "2026-09-21 08:30:00");
+
+  // 第二条违反 NOT NULL：第一条的 DELETE 也不能留下
+  let error = execute_write_batch(
+    PoolRef::Oracle(&pool),
+    &[
+      write(r#"DELETE FROM "OM_WRITE" WHERE "ID" = 3"#, vec![], Some(1)),
+      write(r#"UPDATE "OM_WRITE" SET "NAME" = NULL WHERE "ID" = 2"#, vec![], Some(1)),
+    ],
+  )
+  .await
+  .expect_err("second statement fails");
+  assert_eq!(error.statement_index, 1);
+  assert_eq!(error.error.code.as_deref(), Some("ORA-01407"), "{:?}", error.error);
+  assert_eq!(names(&pool).await, ["丙", "乙", "丁"], "第一条的 DELETE 必须回滚");
+
+  // 那一行已经被别人改掉：零行匹配，整批回滚
+  let error = execute_write_batch(
+    PoolRef::Oracle(&pool),
+    &[
+      write(r#"DELETE FROM "OM_WRITE" WHERE "ID" = 3"#, vec![], Some(1)),
+      write(
+        r#"UPDATE "OM_WRITE" SET "NOTE" = 'x' WHERE "ID" = 1 AND "NAME" = :1"#,
+        vec![json!("甲")],
+        Some(1),
+      ),
+    ],
+  )
+  .await
+  .expect_err("stale row");
+  assert_eq!(error.error.code.as_deref(), Some(ROW_COUNT_MISMATCH_CODE));
+  assert_eq!(names(&pool).await, ["丙", "乙", "丁"]);
+
+  // 用过的连接回到池子里，上面不能开着事务
+  let open = pool
+    .select("SELECT NVL(DBMS_TRANSACTION.LOCAL_TRANSACTION_ID, 'none') AS t FROM dual", &[])
+    .await
+    .expect("transaction id");
+  assert_eq!(text(&open[0]["T"]), "none");
+}
+
+fn session_options<'a>(
+  pool: &'a Arc<OraclePool>,
+  session_id: &'a str,
+  sql: &'a str,
+  autocommit: bool,
+) -> StreamingQueryOptions<'a> {
+  StreamingQueryOptions {
+    session_id,
+    pool_key: "oracle://smoke",
+    pool: PoolRef::Oracle(pool),
+    sql,
+    autocommit,
+    explain_plan: false,
+    row_limit: 100,
+    byte_limit: 16 * 1024 * 1024,
+    batch_size: 100,
+    timeout_duration: Duration::from_secs(30),
+  }
+}
+
+async fn run_in(
+  sessions: &QuerySessionState,
+  pool: &Arc<OraclePool>,
+  session_id: &str,
+  sql: &str,
+  autocommit: bool,
+) {
+  sessions
+    .execute_streaming(session_options(pool, session_id, sql, autocommit), &mut |_| Ok(()))
+    .await
+    .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+}
+
+#[tokio::test]
+async fn oracle_session_transactions_follow_the_server_and_the_autocommit_switch() {
+  use dataomni_lib::services::TransactionStatus;
+  let Some(pool) = pool().await else { return };
+  write_fixture(&pool).await;
+  let sessions = QuerySessionState::default();
+  let id = "oracle-transaction";
+
+  // 自动提交开着：写入各自提交，事务栏是空的
+  run_in(&sessions, &pool, id, "UPDATE om_write SET note = 'a' WHERE id = 1", true).await;
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Idle);
+
+  // 关掉：同一条写入留在事务里，回滚之后就没了
+  run_in(&sessions, &pool, id, "UPDATE om_write SET note = 'b' WHERE id = 1", false).await;
+  let begun = sessions.transaction(id).await;
+  assert_eq!(begun.status, TransactionStatus::Active);
+  run_in(&sessions, &pool, id, "UPDATE om_write SET note = 'c' WHERE id = 2", false).await;
+  assert_eq!(
+    sessions.transaction(id).await.started_at,
+    begun.started_at,
+    "同一个事务，开始时间不变"
+  );
+  run_in(&sessions, &pool, id, "ROLLBACK", true).await;
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Idle);
+  let notes = pool.select("SELECT note FROM om_write ORDER BY id", &[]).await.expect("notes");
+  assert_eq!(
+    (text(&notes[0]["NOTE"]), notes[1]["NOTE"].clone()),
+    ("a".to_string(), JsonValue::Null)
+  );
+
+  // 按了「开始事务」之后自动提交还开着：不该替用户把他的事务一条条提交掉
+  run_in(&sessions, &pool, id, "SET TRANSACTION READ WRITE", true).await;
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Active);
+  run_in(&sessions, &pool, id, "UPDATE om_write SET note = 'd' WHERE id = 1", true).await;
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Active);
+  run_in(&sessions, &pool, id, "ROLLBACK", true).await;
+  let note = pool.select("SELECT note FROM om_write WHERE id = 1", &[]).await.expect("note");
+  assert_eq!(text(&note[0]["NOTE"]), "a", "那条 UPDATE 应当随回滚撤掉");
+
+  // DDL 会隐式提交：状态要跟着回到空闲
+  run_in(&sessions, &pool, id, "UPDATE om_write SET note = 'e' WHERE id = 1", false).await;
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Active);
+  run_in(&sessions, &pool, id, "CREATE TABLE om_tx_ddl (id NUMBER)", false).await;
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Idle);
+  run_in(&sessions, &pool, id, "DROP TABLE om_tx_ddl PURGE", true).await;
+}

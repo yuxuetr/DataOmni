@@ -78,5 +78,13 @@ export type TransactionCommand = 'BEGIN' | 'COMMIT' | 'ROLLBACK';
  * 开事务要写全 `BEGIN TRANSACTION`。`COMMIT` 与 `ROLLBACK` 各家都认。
  */
 export function transactionStatement(command: TransactionCommand, dialect: SqlDialect): string {
-  return command === 'BEGIN' && dialect === 'sqlserver' ? 'BEGIN TRANSACTION' : command;
+  if (command !== 'BEGIN') {
+    return command;
+  }
+  // Oracle 没有 BEGIN（那是 PL/SQL 块的开头）；`SET TRANSACTION` 开一个事务，
+  // 服务端随即报得出事务号
+  if (dialect === 'oracle') {
+    return 'SET TRANSACTION READ WRITE';
+  }
+  return dialect === 'sqlserver' ? 'BEGIN TRANSACTION' : command;
 }

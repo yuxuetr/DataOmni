@@ -364,10 +364,21 @@ impl SessionConnection {
 
   /// 关掉自动提交时补的那一句。T-SQL 里单独一个 `BEGIN` 是语句块的开头，
   /// 不开事务
-  pub fn begin_statement(&self) -> &'static str {
+  ///
+  /// Oracle 没有这一句：事务随第一条 DML 开始，自动提交由连接自己按开关决定
+  pub fn begin_statement(&self) -> Option<&'static str> {
     match self {
-      Self::SqlServer(_) => "BEGIN TRANSACTION",
-      _ => "BEGIN",
+      Self::SqlServer(_) => Some("BEGIN TRANSACTION"),
+      Self::Oracle(_) => None,
+      _ => Some("BEGIN"),
+    }
+  }
+
+  /// 把这一次执行的自动提交开关交给连接。只有 Oracle 要：另外几家的自动提交在
+  /// 服务端，靠补一句 `BEGIN` 关掉
+  pub fn set_autocommit(&mut self, autocommit: bool) {
+    if let Self::Oracle(connection) = self {
+      connection.set_autocommit(autocommit);
     }
   }
 
@@ -376,6 +387,7 @@ impl SessionConnection {
     use crate::services::transaction_state::{transaction_effect, TransactionEffect};
     match self {
       Self::SqlServer(_) => crate::services::sql_server::controls_transaction(sql),
+      Self::Oracle(_) => crate::services::oracle::controls_transaction(sql),
       _ => transaction_effect(sql) != TransactionEffect::None,
     }
   }
@@ -387,6 +399,7 @@ impl SessionConnection {
   ) -> Option<crate::services::transaction_state::TransactionState> {
     match self {
       Self::SqlServer(connection) => Some(connection.transaction()),
+      Self::Oracle(connection) => Some(connection.transaction()),
       _ => None,
     }
   }

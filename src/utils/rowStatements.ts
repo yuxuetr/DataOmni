@@ -52,6 +52,10 @@ function createPlaceholderAllocator(dialect: SqlIdentifierDialect): () => string
     if (dialect === 'postgresql') {
       return `$${index}`;
     }
+    // Oracle 按位置绑 `:1`、`:2`
+    if (dialect === 'oracle') {
+      return `:${index}`;
+    }
     return dialect === 'sqlserver' ? `@P${index}` : '?';
   };
 }
@@ -309,7 +313,8 @@ export function renderStatementForDisplay(
   dialect: SqlIdentifierDialect
 ): string {
   let index = 0;
-  return statement.sql.replace(/\$\d+|@P\d+|\?/g, () => {
+  const placeholder = dialect === 'oracle' ? /:\d+/g : /\$\d+|@P\d+|\?/g;
+  return statement.sql.replace(placeholder, () => {
     const value = statement.params[index];
     index += 1;
     if (value === null || value === undefined) {

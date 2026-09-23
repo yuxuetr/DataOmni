@@ -312,3 +312,28 @@ describe('SQL Server', () => {
       .toBe("UPDATE [dbo].[u] SET [name] = N'O''x', [flag] = 0 WHERE [id] = 1");
   });
 });
+
+describe('Oracle', () => {
+  const ORACLE_COLUMNS = [
+    column('ID', 'NUMBER(10)'),
+    column('NAME', 'VARCHAR2(20 CHAR)'),
+    column('BODY', 'CLOB'),
+    column('AT', 'TIMESTAMP(3) WITH TIME ZONE'),
+    column('SCORE', 'BINARY_DOUBLE')
+  ];
+  const oracle: TableTarget = { schema: 'APP', table: 'T', columns: ORACLE_COLUMNS, dialect: 'oracle' };
+  const idKey: RowKey = { columns: ['ID'], values: { ID: 7 } };
+
+  it('占位符是按位置编号的 :n，LOB 与浮点不进并发守卫', () => {
+    const original = { ID: 7, NAME: 'a', BODY: 'long', AT: '2026-09-20 07:04:05.123 +08:00', SCORE: 1.5 };
+    const statement = buildDeleteStatement(oracle, idKey, { values: original });
+    expect(statement.sql).toBe('DELETE FROM "APP"."T" WHERE "ID" = 7 AND "NAME" = :1 AND "AT" = :2');
+    expect(statement.params).toEqual(['a', '2026-09-20 07:04:05.123 +08:00']);
+  });
+
+  it('展示时按 :n 填回', () => {
+    const statement = buildUpdateStatement(oracle, idKey, { NAME: value("O'x") });
+    expect(renderStatementForDisplay(statement, 'oracle'))
+      .toBe(`UPDATE "APP"."T" SET "NAME" = 'O''x' WHERE "ID" = 7`);
+  });
+});

@@ -55,6 +55,13 @@ describe('十六进制', () => {
   });
 });
 
+describe('Oracle 的 DATE', () => {
+  it('带时分秒，用日期加时间的控件', () => {
+    expect(columnEditorKind('DATE', 'oracle')).toBe('datetime');
+    expect(columnEditorKind('date', 'postgresql')).toBe('date');
+  });
+});
+
 describe('binaryLiteral', () => {
   it('MySQL 与 SQLite 用 X\'...\'', () => {
     expect(binaryLiteral('DEADBEEF', 'mysql')).toBe("X'deadbeef'");
@@ -67,6 +74,7 @@ describe('binaryLiteral', () => {
 
   it('SQL Server 用 0x，它不认 X\'...\'', () => {
     expect(binaryLiteral('DE AD', 'sqlserver')).toBe('0xdead');
+    expect(binaryLiteral('DE AD', 'oracle')).toBe("HEXTORAW('dead')");
   });
 });
 
