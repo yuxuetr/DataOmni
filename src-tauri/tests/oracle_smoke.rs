@@ -730,3 +730,56 @@ async fn oracle_explain_reads_the_plan_without_running_it_or_leaving_a_transacti
   assert_eq!(error.code.as_deref(), Some("ORA-00936"));
   assert_eq!(error.details.and_then(|details| details.position), Some(8));
 }
+
+fn export_options() -> dataomni_lib::services::ExportOptions {
+  dataomni_lib::services::ExportOptions {
+    format: dataomni_lib::services::ExportFormat::Csv,
+    delimiter: ",".to_string(),
+    include_header: true,
+    null_text: String::new(),
+    byte_order_mark: false,
+  }
+}
+
+/// 整表导出：表头在取任何一行之前就位；不返回结果集的语句一行都不执行；写错的
+/// 语句报它自己的错。同名的列（连接里两边都有 ID）表头与行用的是同一份编号
+#[tokio::test]
+async fn oracle_exports_stream_to_a_file_and_refuse_non_queries_before_running_them() {
+  let Some(pool) = pool().await else { return };
+  write_fixture(&pool).await;
+  let dir = std::env::temp_dir().join(format!("dataomni-oracle-export-{}", std::process::id()));
+  std::fs::create_dir_all(&dir).expect("temp dir");
+  let target = dir.join("out.csv");
+  let export = |sql: &'static str| {
+    let pool = Arc::clone(&pool);
+    let target = target.clone();
+    async move {
+      dataomni_lib::services::export_query(
+        PoolRef::Oracle(&pool),
+        sql,
+        &target,
+        export_options(),
+        &mut |_| {},
+        &mut || false,
+      )
+      .await
+    }
+  };
+
+  let summary = export(
+    "SELECT a.id, a.name, b.id, a.id * 1.5 AS half FROM om_write a JOIN om_write b ON b.id = a.id ORDER BY a.id;",
+  )
+  .await
+  .expect("export");
+  assert_eq!(summary.rows_written, 2);
+  let contents = std::fs::read_to_string(&target).expect("read back");
+  assert_eq!(contents, "ID,NAME,ID 2,HALF\n1,甲,1,1.5\n2,乙,2,3");
+
+  let error = export("DELETE FROM om_write").await.expect_err("refused");
+  assert_eq!(error.message, dataomni_lib::services::query_executor::NON_QUERY_MESSAGE);
+  assert_eq!(names(&pool).await, ["甲", "乙"], "拒绝之前不能已经删了");
+
+  let error = export("SELECT * FROM no_such_table").await.expect_err("bad sql");
+  assert_eq!(error.code.as_deref(), Some("ORA-00942"), "{error:?}");
+  std::fs::remove_dir_all(&dir).ok();
+}

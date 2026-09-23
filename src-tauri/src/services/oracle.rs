@@ -698,6 +698,23 @@ impl OracleConnection {
     }
   }
 
+  /// 见 [`describe`]
+  pub async fn describe_columns(
+    &mut self,
+    sql: &str,
+  ) -> Result<Vec<QueryColumnMetadata>, QueryError> {
+    let connection = self.take_connection().await?;
+    let mut guard = BreakOnDrop { connection: Arc::clone(&connection), finished: false };
+    let statement = statement_text(sql);
+    let worker = Arc::clone(&connection);
+    let outcome = blocking(move || describe(&worker, &statement)).await;
+    guard.finished = true;
+    if keeps_connection(&outcome) {
+      self.connection = Some(connection);
+    }
+    outcome
+  }
+
   /// 一次没有结果集可言的执行（事务控制这类）
   pub async fn execute_batch(&mut self, sql: &str) -> Result<u64, QueryError> {
     let mut rows = Vec::new();
@@ -831,19 +848,7 @@ fn run_statement(
     .iter()
     .map(|info| (info.name().to_string(), info.oracle_type().clone(), info.nullable()))
     .collect();
-  let names = label_columns(columns.iter().map(|(name, _, _)| name.as_str()));
-  let metadata = columns
-    .iter()
-    .zip(&names)
-    .enumerate()
-    .map(|(ordinal, ((_, oracle_type, nullable), name))| QueryColumnMetadata {
-      name: name.clone(),
-      ordinal,
-      database_type: oracle_type.to_string(),
-      logical_type: logical_type(oracle_type).to_string(),
-      nullable: Some(*nullable),
-    })
-    .collect();
+  let (metadata, names) = column_header(&columns);
   if sender.blocking_send(Fetched::Columns(metadata, names.clone())).is_err() {
     return Ok(None);
   }
@@ -858,6 +863,50 @@ fn run_statement(
     }
   }
   Ok(None)
+}
+
+/// 结果集的列：同名的编上号，元数据与行里的键用的是同一份名字
+fn column_header(
+  columns: &[(String, OracleType, bool)],
+) -> (Vec<QueryColumnMetadata>, Vec<String>) {
+  let names = label_columns(columns.iter().map(|(name, _, _)| name.as_str()));
+  let metadata = columns
+    .iter()
+    .zip(&names)
+    .enumerate()
+    .map(|(ordinal, ((_, oracle_type, nullable), name))| QueryColumnMetadata {
+      name: name.clone(),
+      ordinal,
+      database_type: oracle_type.to_string(),
+      logical_type: logical_type(oracle_type).to_string(),
+      nullable: Some(*nullable),
+    })
+    .collect();
+  (metadata, names)
+}
+
+/// 只问「这条语句返回哪些列」，一行都不取（导出要先写表头）。
+///
+/// 驱动没有「只描述」的模式，列信息要执行之后才有。实验（Oracle Free 23ai，一条
+/// 两百万行随机排序的查询）：预取设成 0 时执行 0.2 秒就返回了列，预取 2 行要 9.6 秒
+/// ——排序是在取第一行时才做的。所以执行但不取。不是查询的语句只准备、不执行：
+/// 准备一条 `CREATE TABLE` 不会建表（同一次实验里核对过）。
+fn describe(connection: &Connection, sql: &str) -> Result<Vec<QueryColumnMetadata>, QueryError> {
+  let mut prepared = connection
+    .statement(sql)
+    .prefetch_rows(0)
+    .build()
+    .map_err(|error| query_error(&error, Some(sql)))?;
+  if !prepared.is_query() {
+    return Ok(Vec::new());
+  }
+  let rows = prepared.query(&[]).map_err(|error| query_error(&error, Some(sql)))?;
+  let columns: Vec<(String, OracleType, bool)> = rows
+    .column_info()
+    .iter()
+    .map(|info| (info.name().to_string(), info.oracle_type().clone(), info.nullable()))
+    .collect();
+  Ok(column_header(&columns).0)
 }
 
 pub(crate) fn unsupported(operation: &str) -> QueryError {

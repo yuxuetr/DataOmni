@@ -280,8 +280,7 @@ impl SessionConnection {
       Self::MySql(connection) => describe_mysql_columns(connection, sql).await,
       Self::Postgres(connection) => describe_postgres_columns(connection, sql).await,
       Self::SqlServer(connection) => connection.describe_columns(sql).await,
-      // 导出要先写表头，在第三阶段
-      Self::Oracle(_) => Err(crate::services::oracle::unsupported("describe")),
+      Self::Oracle(connection) => connection.describe_columns(sql).await,
     }
   }
 

@@ -52,8 +52,7 @@ export type PendingFeature =
 export const PENDING_FEATURES: Readonly<Partial<Record<DatabaseType, readonly PendingFeature[]>>> = {
   [DatabaseType.Oracle]: [
     'structureEditing',
-    'import',
-    'streamingExport'
+    'import'
   ]
 };
 
