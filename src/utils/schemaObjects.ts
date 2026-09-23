@@ -28,7 +28,57 @@ export interface SchemaObjects {
   /** 对象定义原文；空 = 数据库不提供（PostgreSQL 的表） */
   ddl: string | null;
   triggers: TriggerInfo[];
-  error?: string;
+  /**
+   * 读失败的段及原因。在这里的段不能画成「没有」——「没有索引」和「没查到」
+   * 对用户的意义完全相反，而前者还会让表被判成只读。
+   */
+  failures: Partial<Record<SchemaObjectSection, string>>;
+}
+
+export type SchemaObjectSection = 'indexes' | 'foreignKeys' | 'checkConstraints' | 'ddl' | 'triggers';
+
+type SchemaObjectValues = Omit<SchemaObjects, 'failures'>;
+
+const EMPTY_SCHEMA_OBJECTS: SchemaObjectValues = {
+  indexes: [],
+  foreignKeys: [],
+  checkConstraints: null,
+  ddl: null,
+  triggers: []
+};
+
+/**
+ * 各段各自成败。
+ *
+ * 五段目录查询此前放在一个 `Promise.all` 里，一段失败整页清空。实际撞上过：
+ * CockroachDB 没有 `pg_get_triggerdef()`，只是触发器那段读不到，索引却跟着
+ * 「不可用」，于是每张表都被判成只读。
+ */
+export function collectSchemaObjects(
+  settled: { [K in SchemaObjectSection]: PromiseSettledResult<SchemaObjectValues[K]> },
+  describeReason: (reason: unknown) => string
+): SchemaObjects {
+  const values: SchemaObjectValues = { ...EMPTY_SCHEMA_OBJECTS };
+  const failures: SchemaObjects['failures'] = {};
+  const assign = <K extends SchemaObjectSection>(section: K) => {
+    const result = settled[section];
+    if (result.status === 'fulfilled') {
+      values[section] = result.value;
+    } else {
+      failures[section] = describeReason(result.reason);
+    }
+  };
+  (Object.keys(settled) as SchemaObjectSection[]).forEach(assign);
+  return { ...values, failures };
+}
+
+/** 连查询文本都没拿到：每一段都没查成 */
+export function failAllSchemaObjects(reason: string): SchemaObjects {
+  const failures: SchemaObjects['failures'] = {};
+  (Object.keys(EMPTY_SCHEMA_OBJECTS) as SchemaObjectSection[]).forEach((section) => {
+    failures[section] = reason;
+  });
+  return { ...EMPTY_SCHEMA_OBJECTS, failures };
 }
 
 export interface IndexInfo {

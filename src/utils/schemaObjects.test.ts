@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_EXPRESSION_COLUMN_PLACEHOLDER,
+  collectSchemaObjects,
+  failAllSchemaObjects,
   groupForeignKeyRows,
   groupIndexRows,
   extractDdlStatements,
   joinDdlStatements,
   toCheckConstraints,
-  toTriggers
+  toTriggers,
+  type IndexInfo
 } from './schemaObjects';
 
 describe('groupIndexRows', () => {
@@ -264,5 +267,58 @@ describe('toTriggers', () => {
 
   it('空输入得到空数组', () => {
     expect(toTriggers([])).toEqual([]);
+  });
+});
+
+describe('collectSchemaObjects', () => {
+  const fulfilled = <T,>(value: T): PromiseSettledResult<T> => ({ status: 'fulfilled', value });
+  const rejected = (reason: unknown): PromiseSettledResult<never> => ({ status: 'rejected', reason });
+  const describeReason = (reason: unknown) => String(reason);
+
+  it('一段读不到只记在那一段，其余照常', () => {
+    // CockroachDB 没有 pg_get_triggerdef()：只有触发器那段失败。此前整页五段一起
+    // 清空，索引也跟着「不可用」，于是每张表都成了只读
+    const index: IndexInfo = {
+      name: 'pk', columns: ['id'], isUnique: true, isPrimary: true, isPartial: false, isValid: true, method: null
+    };
+    const objects = collectSchemaObjects(
+      {
+        indexes: fulfilled([index]),
+        foreignKeys: fulfilled([]),
+        checkConstraints: fulfilled([]),
+        ddl: fulfilled(null),
+        triggers: rejected('unknown function: pg_get_triggerdef()')
+      },
+      describeReason
+    );
+
+    expect(objects.indexes).toEqual([index]);
+    expect(objects.failures).toEqual({ triggers: 'unknown function: pg_get_triggerdef()' });
+  });
+
+  it('全部读到时没有任何失败段', () => {
+    const objects = collectSchemaObjects(
+      {
+        indexes: fulfilled([]),
+        foreignKeys: fulfilled([]),
+        checkConstraints: fulfilled(null),
+        ddl: fulfilled('CREATE TABLE t (id INT)'),
+        triggers: fulfilled([])
+      },
+      describeReason
+    );
+
+    expect(objects.failures).toEqual({});
+    expect(objects.checkConstraints).toBeNull();
+    expect(objects.ddl).toBe('CREATE TABLE t (id INT)');
+  });
+
+  it('连查询文本都拿不到时每一段都算失败', () => {
+    const objects = failAllSchemaObjects('boom');
+
+    expect(Object.keys(objects.failures).sort()).toEqual(
+      ['checkConstraints', 'ddl', 'foreignKeys', 'indexes', 'triggers']
+    );
+    expect(new Set(Object.values(objects.failures))).toEqual(new Set(['boom']));
   });
 });

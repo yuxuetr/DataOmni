@@ -51,7 +51,9 @@ import { ResultChartDialog } from './ResultChartDialog';
 import { CsvImportDialog } from './CsvImportDialog';
 import { useTaskStore } from '../stores/taskStore';
 import {
+  collectSchemaObjects,
   extractDdlStatements,
+  failAllSchemaObjects,
   groupForeignKeyRows,
   groupIndexRows,
   joinDdlStatements,
@@ -267,37 +269,37 @@ export default function TableDataViewer({
 
       // SQLite 的 pragma 表值函数只认一个表名参数，没有 schema 概念
       const params = catalogQueryParams(queries.parameter_count, tableName, schema);
-      const [indexRows, foreignKeyRows, checkRows, ddlRows, triggerRows] = await Promise.all([
-        requireDatabase(database).select(queries.indexes, params),
-        requireDatabase(database).select(queries.foreign_keys, params),
+      const select = (sql: string) => requireDatabase(database).select(sql, params);
+      const [indexes, foreignKeys, checkConstraints, ddl, triggers] = await Promise.allSettled([
+        select(queries.indexes).then((rows) =>
+          groupIndexRows(asRows(rows), t('schema.expressionColumn'))
+        ),
+        select(queries.foreign_keys).then((rows) => groupForeignKeyRows(asRows(rows))),
         queries.check_constraints
-          ? requireDatabase(database).select(queries.check_constraints, params)
+          ? select(queries.check_constraints).then((rows) => toCheckConstraints(asRows(rows)))
           : Promise.resolve(null),
-        runDdlQuery(queries.ddl, queries.parameter_count),
+        runDdlQuery(queries.ddl, queries.parameter_count).then((rows) =>
+          rows === null ? null : joinDdlStatements(extractDdlStatements(asRows(rows)))
+        ),
         // SQLite 的 pragma 之外的目录查询同样只认一个表名参数
-        requireDatabase(database).select(queries.triggers, params)
+        select(queries.triggers).then((rows) => toTriggers(asRows(rows)))
       ]);
 
-      const objects: SchemaObjects = {
-        indexes: groupIndexRows(asRows(indexRows), t('schema.expressionColumn')),
-        foreignKeys: groupForeignKeyRows(asRows(foreignKeyRows)),
-        checkConstraints: checkRows === null ? null : toCheckConstraints(asRows(checkRows)),
-        ddl: ddlRows === null ? null : joinDdlStatements(extractDdlStatements(asRows(ddlRows))),
-        triggers: toTriggers(asRows(triggerRows))
-      };
+      const objects = collectSchemaObjects(
+        { indexes, foreignKeys, checkConstraints, ddl, triggers },
+        (reason) => describeError(reason, t('schema.readObjectsFailed'))
+      );
       setSchemaObjects(objects);
-      cacheTableStructure(currentTableKey, connection.id, { objects });
+      // 有段没查成就不缓存：切回来时再试一次，而不是把一次失败记上一辈子
+      if (Object.keys(objects.failures).length === 0) {
+        cacheTableStructure(currentTableKey, connection.id, { objects });
+      } else {
+        console.error('部分结构对象读取失败:', objects.failures);
+      }
     } catch (err) {
       // 结构对象读失败不该把已经拿到的列信息一起打掉：列是主体，这里是补充
       console.error('加载索引与约束失败:', err);
-      setSchemaObjects({
-        indexes: [],
-        foreignKeys: [],
-        checkConstraints: null,
-        ddl: null,
-        triggers: [],
-        error: describeError(err, t('schema.readObjectsFailed'))
-      });
+      setSchemaObjects(failAllSchemaObjects(describeError(err, t('schema.readObjectsFailed'))));
     }
   };
 
@@ -513,7 +515,8 @@ export default function TableDataViewer({
     if (!schemaObjects) {
       return { status: 'pending' };
     }
-    if (schemaObjects.error) {
+    // 只看索引那一段：触发器读不到和「这一行靠哪几列定位」无关
+    if (schemaObjects.failures.indexes) {
       return { status: 'unavailable' };
     }
     return { status: 'loaded', indexes: schemaObjects.indexes };

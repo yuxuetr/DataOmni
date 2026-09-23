@@ -90,7 +90,7 @@ const STRUCTURE_COLUMNS: ColumnInfo[] = [
 ];
 
 const STRUCTURE_OBJECTS: SchemaObjects = {
-  indexes: [], foreignKeys: [], checkConstraints: null, ddl: null, triggers: []
+  indexes: [], foreignKeys: [], checkConstraints: null, ddl: null, triggers: [], failures: {}
 };
 
 const STRUCTURE_KEY = tableStructureKey('c1', 'public', 'orders');

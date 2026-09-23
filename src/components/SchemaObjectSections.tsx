@@ -29,16 +29,9 @@ export function SchemaObjectSections({
     );
   }
 
-  // 读失败时只报错。继续画「索引 0 / 没有索引」是在陈述一个根本没查成的事实，
-  // 而「没有索引」和「没查到」对用户的意义完全相反。
-  if (objects.error) {
-    return (
-      <p className="flex items-start gap-2 border-t border-line bg-danger-soft px-4 py-2 text-xs text-danger">
-        <AlertCircle size={14} className="mt-0.5 shrink-0" />
-        <span className="min-w-0 flex-1 break-words">{objects.error}</span>
-      </p>
-    );
-  }
+  // 读失败的段只报错，别的段照常画。继续画「索引 0 / 没有索引」是在陈述一个
+  // 根本没查成的事实，而「没有索引」和「没查到」对用户的意义完全相反。
+  const { failures } = objects;
 
   return (
     <div className="divide-y divide-line border-t border-line">
@@ -46,6 +39,7 @@ export function SchemaObjectSections({
         title={t('schema.indexes')}
         count={objects.indexes.length}
         emptyText={t('schema.indexes.empty')}
+        failure={failures.indexes}
       >
         {objects.indexes.map(index => (
           <li key={index.name} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 py-2">
@@ -64,6 +58,7 @@ export function SchemaObjectSections({
         title={t('schema.foreignKeys')}
         count={objects.foreignKeys.length}
         emptyText={t('schema.foreignKeys.empty')}
+        failure={failures.foreignKeys}
       >
         {objects.foreignKeys.map(foreignKey => (
           <li key={foreignKey.name} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 py-2">
@@ -91,7 +86,16 @@ export function SchemaObjectSections({
         ))}
       </SchemaSection>
 
-      {objects.checkConstraints === null ? (
+      {failures.checkConstraints ? (
+        <SchemaSection
+          title={t('schema.checks')}
+          count={null}
+          emptyText=""
+          failure={failures.checkConstraints}
+        >
+          {null}
+        </SchemaSection>
+      ) : objects.checkConstraints === null ? (
         <SchemaSection title={t('schema.checks')} count={null} emptyText="">
           <li className="px-4 py-2 text-xs text-fg-subtle">
             {dbType === 'sqlite'
@@ -120,6 +124,7 @@ export function SchemaObjectSections({
         title={t('schema.triggers')}
         count={objects.triggers.length}
         emptyText={t('schema.triggers.empty')}
+        failure={failures.triggers}
       >
         {objects.triggers.map(trigger => (
           <li key={trigger.name} className="px-4 py-2">
@@ -137,7 +142,7 @@ export function SchemaObjectSections({
         ))}
       </SchemaSection>
 
-      <DdlSection ddl={objects.ddl} dbType={dbType} />
+      <DdlSection ddl={objects.ddl} dbType={dbType} failure={failures.ddl} />
     </div>
   );
 }
@@ -150,7 +155,15 @@ export function SchemaObjectSections({
  * 存储参数、分区、继承、注释、触发器、RLS。少任何一项，产出的就是看起来权威、
  * 照着重建却不等价的 DDL——比没有更糟，因为没人会去核对它。
  */
-function DdlSection({ ddl, dbType }: { ddl: string | null; dbType: ConnectionProfile['db_type'] }) {
+function DdlSection({
+  ddl,
+  dbType,
+  failure
+}: {
+  ddl: string | null;
+  dbType: ConnectionProfile['db_type'];
+  failure: string | undefined;
+}) {
   const t = useLanguageStore((state) => state.t);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState<string | null>(null);
@@ -188,7 +201,9 @@ function DdlSection({ ddl, dbType }: { ddl: string | null; dbType: ConnectionPro
 
       {copyError && <p className="px-4 py-2 text-xs text-danger">{copyError}</p>}
 
-      {ddl ? (
+      {failure ? (
+        <SectionFailure message={failure} />
+      ) : ddl ? (
         <pre className="overflow-x-auto px-4 py-3 font-mono text-xs text-fg select-text whitespace-pre">
           {ddl}
         </pre>
@@ -207,11 +222,14 @@ function SchemaSection({
   title,
   count,
   emptyText,
+  failure,
   children
 }: {
   title: string;
   count: number | null;
   emptyText: string;
+  /** 这一段没查成。有它就不画数量，更不画「没有」 */
+  failure?: string;
   children: React.ReactNode;
 }) {
   const isEmpty = count === 0;
@@ -220,14 +238,25 @@ function SchemaSection({
     <section>
       <h3 className="flex items-baseline gap-2 bg-surface-sunken px-4 py-2 text-xs font-medium text-fg-muted">
         {title}
-        {count !== null && <span className="text-fg-subtle">{count}</span>}
+        {count !== null && !failure && <span className="text-fg-subtle">{count}</span>}
       </h3>
-      {isEmpty ? (
+      {failure ? (
+        <SectionFailure message={failure} />
+      ) : isEmpty ? (
         <p className="px-4 py-2 text-xs text-fg-subtle">{emptyText}</p>
       ) : (
         <ul className="divide-y divide-line">{children}</ul>
       )}
     </section>
+  );
+}
+
+function SectionFailure({ message }: { message: string }) {
+  return (
+    <p className="flex items-start gap-2 bg-danger-soft px-4 py-2 text-xs text-danger">
+      <AlertCircle size={14} className="mt-0.5 shrink-0" />
+      <span className="min-w-0 flex-1 break-words">{message}</span>
+    </p>
   );
 }
 
