@@ -29,7 +29,7 @@
 
 ### 🔗 数据库支持
 
-- **可连接并执行查询**: MySQL, PostgreSQL, SQLite, SQL Server, Oracle（分阶段接入，见兼容性矩阵）
+- **可连接并执行查询**: MySQL, PostgreSQL, SQLite, SQL Server, Oracle（见兼容性矩阵）
 - **计划中，当前版本连不上**: MongoDB, Redis, Neo4j, DuckDB, ClickHouse, Elasticsearch
 
   不是「能连上但不能查」——`tauri-plugin-sql` 与 `sqlx` 都只编入了
@@ -53,7 +53,7 @@ MySQL 一组 21 条、PostgreSQL 一组 21 条），不是按协议兼容推断�
 | TiDB | 8.5 | MySQL | ⚠️ 可用，有缺口 | 21 / 21（缺口由用例钉住） |
 | CockroachDB | 25.2 | PostgreSQL | ⚠️ 可用，有缺口 | 21 / 21（缺口由用例钉住） |
 | SQL Server | 2022 | SQL Server | ✅ 支持 | 16 / 16（独立用例，`sql_server_smoke.rs`，含改结构语料） |
-| Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ⚠️ 可用，有缺口 | 8 / 8（独立用例，`oracle_smoke.rs`） |
+| Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 13 / 13（独立用例，`oracle_smoke.rs`，含改结构语料） |
 
 - **MariaDB**：JSON 列是 LONGTEXT 的别名，按文本显示与编辑，没有 JSON 专用
   编辑器；没有函数索引。
@@ -75,15 +75,21 @@ MySQL 一组 21 条、PostgreSQL 一组 21 条），不是按协议兼容推断�
     `CAST` 的写法；`money` 经驱动解成浮点，超过约 9×10¹¹ 的值末位可能不准。
   - CSV 导入时，转不成目标类型的值在插入之前就查出来记成坏行：SQL Server 的类型
     转换错误会把整个事务回滚，不能像别家那样退回保存点。
-- **Oracle 在分阶段接入**：能连接（按服务名、SSH 隧道）、执行 SQL（结果上限、超时与
-  取消——服务端那条语句会真的停下——错误带 ORA 码与出错位置）、浏览对象树 / 表结构
-  （`DBMS_METADATA` 给的建表语句）/ ER 图、翻看表数据、补全与格式化、在表格里改数据、
-  事务控制与关闭自动提交（Oracle 没有 BEGIN，「开始事务」发的是 `SET TRANSACTION`；
-  DDL 会隐式提交，状态栏跟着服务端走）。还不能：执行计划、改表结构与新建表、CSV 导入、
-  整表导出；TLS（要钱包）与按 SID 连接也还没有。Oracle 把空字符串存成 NULL，在表格里
-  填一个空值得到的是 NULL。Instant Client（Basic Light，
-  许可允许随应用分发，许可原文随包附上）装在应用里，用户不用自己装；Linux 上要系统的
-  `libaio`，deb 包声明了依赖。
+- **Oracle**：三个阶段都已接上（连接、执行、对象与结构浏览、表格编辑、事务、执行计划、
+  改结构与建表、CSV 导入、整表导出）。Instant Client（Basic Light，许可允许随应用分发，
+  许可原文随包附上）装在应用里，用户不用自己装；Linux 上要系统的 `libaio`，deb 包声明了
+  依赖。与另外几家不同、值得知道的几处：
+  - 按服务名连接（Easy Connect）；按 SID 连接与 TLS（要钱包）还不支持，需要加密就走
+    SSH 隧道。
+  - 超时与取消会让服务端那条语句真的停下；错误带 ORA 码与出错位置。
+  - 没有 BEGIN：「开始事务」发的是 `SET TRANSACTION`；DDL 会隐式提交，状态栏跟着
+    服务端走。
+  - 执行计划是 `EXPLAIN PLAN` 的估算（「文本」页是 `DBMS_XPLAN` 的原文），没有「真的
+    执行一遍」。
+  - **改结构不是一个事务**：Oracle 的每条 DDL 自己提交。能合进一条的合进一条，
+    其余（改列名、删列、改表名）各自一条，预览里会说明；中途有一条失败时前面的已经
+    生效。
+  - Oracle 把空字符串存成 NULL，在表格里填一个空值得到的是 NULL。
 - 在编辑器里用 `USE` 切库在 MySQL 类服务端上一律拒绝：它会让侧边栏的对象树
   悄悄换成另一个库。MySQL 本来就拒，MariaDB 与 TiDB 不拒，所以由应用来挡。
 

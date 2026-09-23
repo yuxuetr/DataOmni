@@ -135,6 +135,12 @@ export function columnDefaultSql(
   if (raw == null) {
     return null;
   }
+  if (dialect === 'oracle') {
+    // `DATA_DEFAULT` 是 LONG，原样带着结尾的空白（SQL 里 TRIM 不了它）；默认值去不掉，
+    // 只能 `DEFAULT NULL`，之后目录里是字面的 `NULL`——那就是没有默认值
+    const trimmed = raw.trim();
+    return trimmed === '' || trimmed.toUpperCase() === 'NULL' ? null : trimmed;
+  }
   if (dialect !== 'mysql') {
     return raw;
   }
@@ -144,16 +150,29 @@ export function columnDefaultSql(
   return isNumericColumnType(column.data_type) ? raw : quoteSqlStringLiteral(raw, 'mysql');
 }
 
+/**
+ * 一列的定义：名字、类型、可空、默认值。
+ *
+ * Oracle 要求 DEFAULT 写在约束前面（反过来是 ORA-03076）；另外几家两种次序都收，
+ * 保持原来的写法——那几份在真库上跑过的语料照的就是它。
+ */
+function columnDefinition(
+  column: ColumnDraft,
+  notNull: boolean,
+  dialect: SqlIdentifierDialect
+): string {
+  const nullability = notNull ? ['NOT NULL'] : [];
+  const defaultValue = column.defaultValue != null ? [`DEFAULT ${column.defaultValue}`] : [];
+  return [
+    quoteSqlIdentifier(column.name, dialect),
+    column.dataType.trim(),
+    ...(dialect === 'oracle' ? [...defaultValue, ...nullability] : [...nullability, ...defaultValue])
+  ].join(' ');
+}
+
 /** 一列在 ADD COLUMN 里的定义。四家通用的那一小段（SQL Server 不写 COLUMN 这个词） */
 function addColumnDefinition(column: ColumnDraft, dialect: SqlIdentifierDialect): string {
-  const parts = [quoteSqlIdentifier(column.name, dialect), column.dataType.trim()];
-  if (!column.nullable) {
-    parts.push('NOT NULL');
-  }
-  if (column.defaultValue != null) {
-    parts.push(`DEFAULT ${column.defaultValue}`);
-  }
-  return parts.join(' ');
+  return columnDefinition(column, !column.nullable, dialect);
 }
 
 /**
@@ -252,6 +271,9 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
   const { dialect } = request;
   if (dialect === 'sqlserver') {
     return buildSqlServerTableDdl(request);
+  }
+  if (dialect === 'oracle') {
+    return buildOracleTableDdl(request);
   }
   const statements: string[] = [];
   const refusals: DdlRefusal[] = [];
@@ -489,6 +511,90 @@ function buildSqlServerTableDdl(request: TableDdlRequest): DdlPlan {
   return { statements, refusals, impacts };
 }
 
+/**
+ * Oracle 的改结构。几条都是在 Oracle Free 23ai 上试出来的：
+ *
+ * - **每条 DDL 自己提交**，一批语句不是一个事务，中途失败时前面的已经生效。所以
+ *   能合的合进一条：`MODIFY (...)` 与 `ADD (...)` 可以同在一条 ALTER TABLE 里；
+ *   `DROP` 不能和它们并列（ORA-03048），改列名、改表名也只能各自成句。
+ * - `MODIFY` 只写改了的那几项：把已经可空的列再写一次 `NULL` 是 ORA-01451，
+ *   `NOT NULL` 同理是 ORA-01442。同一列只能出现一次，改了的几项写在一起。
+ * - 默认值去不掉，只能 `DEFAULT NULL`（`columnDefaultSql` 把目录里随之出现的
+ *   `NULL` 读回没有默认值）。
+ * - 自增（identity）与虚拟列除了改名不动，理由同 SQL Server：它们的值由数据库产生，
+ *   类型、可空、默认值都连着生成规则。
+ */
+function buildOracleTableDdl(request: TableDdlRequest): DdlPlan {
+  const current = tableReference(request, request.table);
+  const quote = (name: string) => quoteSqlIdentifier(name, 'oracle');
+  const refusals: DdlRefusal[] = [];
+  const impacts: DdlImpact[] = [];
+  const renames: string[] = [];
+  const drops: string[] = [];
+  const modifies: string[] = [];
+  const adds: string[] = [];
+
+  for (const column of request.columns) {
+    const origin = column.origin;
+    if (column.dropped) {
+      if (origin) {
+        drops.push(quote(origin.name));
+        impacts.push({ kind: 'drop-column', column: origin.name });
+      }
+      continue;
+    }
+    if (!origin) {
+      if (!isBlankDraft(column)) {
+        adds.push(addColumnDefinition(column, 'oracle'));
+      }
+      continue;
+    }
+
+    const change = diffColumn(column, 'oracle');
+    if (change.renamed) {
+      renames.push(`ALTER TABLE ${current} RENAME COLUMN ${quote(origin.name)} TO ${quote(column.name)}`);
+    }
+    const others = changedDdlActions(change).filter((action) => action !== 'rename-column');
+    if (others.length === 0) {
+      continue;
+    }
+    if (origin.is_generated) {
+      for (const action of others) {
+        refusals.push({ column: column.name, action, reason: 'ddl.refuse.oracleGeneratedColumn' });
+      }
+      continue;
+    }
+    const parts = [quote(column.name)];
+    if (change.typeChanged) {
+      parts.push(column.dataType.trim());
+    }
+    if (change.defaultChanged) {
+      parts.push(`DEFAULT ${column.defaultValue ?? 'NULL'}`);
+    }
+    if (change.nullabilityChanged) {
+      parts.push(column.nullable ? 'NULL' : 'NOT NULL');
+    }
+    modifies.push(parts.join(' '));
+  }
+
+  const statements = [...renames];
+  if (drops.length > 0) {
+    statements.push(`ALTER TABLE ${current} DROP (${drops.join(', ')})`);
+  }
+  const clauses = [
+    ...(modifies.length > 0 ? [`MODIFY (${modifies.join(', ')})`] : []),
+    ...(adds.length > 0 ? [`ADD (${adds.join(', ')})`] : [])
+  ];
+  if (clauses.length > 0) {
+    statements.push(`ALTER TABLE ${current} ${clauses.join(' ')}`);
+  }
+  // 改表名放最后：前面几条都还在用旧名字。新名字不带 schema，Oracle 不收
+  if (request.newTableName !== request.table) {
+    statements.push(`ALTER TABLE ${current} RENAME TO ${quote(request.newTableName)}`);
+  }
+  return { statements, refusals, impacts };
+}
+
 function defaultAction(quotedColumn: string, defaultValue: string | null): string {
   return defaultValue == null
     ? `ALTER COLUMN ${quotedColumn} DROP DEFAULT`
@@ -534,18 +640,10 @@ export interface CreateTableRequest {
 export function buildCreateTable(request: CreateTableRequest): DdlPlan {
   const { dialect } = request;
   const columns = usableDraftColumns(request.columns);
-  const definitions = columns.map((column) => {
-    const parts = [quoteSqlIdentifier(column.name, dialect), column.dataType.trim()];
-    // 主键列一律 NOT NULL：三家里只有 SQLite 允许主键存 NULL，而那是它自己
-    // 记录在案的历史遗留，照着建出来的表会有一行谁也定位不到
-    if (!column.nullable || column.primaryKey) {
-      parts.push('NOT NULL');
-    }
-    if (column.defaultValue != null) {
-      parts.push(`DEFAULT ${column.defaultValue}`);
-    }
-    return parts.join(' ');
-  });
+  // 主键列一律 NOT NULL：三家里只有 SQLite 允许主键存 NULL，而那是它自己
+  // 记录在案的历史遗留，照着建出来的表会有一行谁也定位不到
+  const definitions = columns.map((column) =>
+    columnDefinition(column, !column.nullable || column.primaryKey, dialect));
 
   const keyColumns = columns.filter((column) => column.primaryKey);
   if (keyColumns.length > 0) {
@@ -576,8 +674,16 @@ export function buildCreateTable(request: CreateTableRequest): DdlPlan {
  */
 export function defaultCreateSchema(
   schemas: readonly string[],
-  dialect: SqlIdentifierDialect
+  dialect: SqlIdentifierDialect,
+  username?: string | null
 ): string {
-  const preferred = dialect === 'sqlserver' ? 'dbo' : dialect === 'postgresql' ? 'public' : null;
+  // Oracle 的 schema 就是用户：不写 schema 时建在登录用户自己名下，名字是大写的
+  const preferred = dialect === 'sqlserver'
+    ? 'dbo'
+    : dialect === 'postgresql'
+      ? 'public'
+      : dialect === 'oracle' && username
+        ? username.toUpperCase()
+        : null;
   return preferred && schemas.includes(preferred) ? preferred : schemas[0] ?? '';
 }

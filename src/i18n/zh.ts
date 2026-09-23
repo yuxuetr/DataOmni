@@ -241,6 +241,9 @@ export const zh = {
   'ddl.refuse.mysqlExpressionDefault': '这一列的默认值是表达式。MySQL 改类型只能重述整段定义，而目录里的表达式是归一化后的形式，重述出来的未必是同一个默认值。',
   'ddl.refuse.sqlServerGeneratedColumn': '这一列的值由数据库产生（自增、计算列或 rowversion）。SQL Server 上除了改名，这一类列的类型、可空与默认值都不能直接改。',
   'ddl.refuse.mysqlGeneratedColumn': '这是计算列。MySQL 改类型要连生成表达式一起重述，而目录里的表达式是归一化后的形式。',
+  'ddl.refuse.oracleGeneratedColumn': '这一列的值由数据库产生（自增或虚拟列）。除了改名，它的类型、可空与默认值都连着生成规则，不在这里改。',
+  'ddl.oracleCommitsEach': 'Oracle 的每条 DDL 都自己提交：这 {count} 条语句逐条生效，不是一个事务。中途有一条失败时，前面的已经改了。',
+  'ddl.oracleCommitsEach.one': 'Oracle 的每条 DDL 都自己提交。',
   'ddl.mysqlRestates': 'MySQL 只能重述整段列定义。上面的语句就是将要执行的全部内容——没有出现在里面的属性会被丢掉。',
 
   // 结果表

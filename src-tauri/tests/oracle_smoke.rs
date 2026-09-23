@@ -921,3 +921,68 @@ async fn oracle_import_aborts_on_the_first_bad_row_and_leaves_nothing_behind() {
   assert!(imported(&pool).await.is_empty());
   std::fs::remove_file(&path).ok();
 }
+
+#[path = "support/ddl_corpus.rs"]
+mod ddl_corpus;
+
+async fn oracle_catalog_columns(pool: &Arc<OraclePool>, table: &str) -> Vec<ddl_corpus::Column> {
+  use dataomni_lib::models::DatabaseType;
+  use dataomni_lib::services::schema_metadata_queries;
+  let queries = schema_metadata_queries(&DatabaseType::Oracle).expect("Oracle catalog");
+  let flag = |value: &JsonValue| value == &json!(1) || value == &json!(true);
+  pool
+    .select(queries.columns, &[json!(table), JsonValue::Null])
+    .await
+    .expect("read column catalog")
+    .iter()
+    .map(|row| {
+      let generated = flag(&row["is_generated"]);
+      let default_value = row["column_default"].as_str().map(str::to_string);
+      ddl_corpus::Column {
+        name: text(&row["column_name"]),
+        data_type: text(&row["data_type"]),
+        nullable: flag(&row["is_nullable"]),
+        primary_key_ordinal: row["primary_key_ordinal"].as_i64(),
+        // 自增列的默认值是它背后那个序列的 nextval，序列名每次建表都不一样
+        // （`"DATAOMNI"."ISEQ$$_73461".nextval`），语料里写不出来，只比「有没有」
+        default_value: match default_value {
+          Some(value) if generated && value.contains("ISEQ$$_") => Some("<identity>".to_string()),
+          other => other,
+        },
+        generated,
+        collation: row["collation"].as_str().map(str::to_string),
+        comment: row["comment"].as_str().map(str::to_string),
+        extra: row["column_extra"].as_str().map(str::to_string),
+      }
+    })
+    .collect()
+}
+
+/// 改结构语料的 Oracle 用例：语句走界面上同一条路（`execute_write_batch`），跑完再读
+/// 列目录核对。Oracle 的 DDL 每条自己提交，这里验的是每条都跑得通、跑完的表对
+#[tokio::test]
+async fn oracle_runs_the_generated_ddl_from_the_shared_corpus() {
+  use dataomni_lib::services::execute_write_batch;
+  let Some(pool) = pool().await else { return };
+  let cases = ddl_corpus::load("oracle");
+  assert!(!cases.is_empty(), "语料里要有 Oracle 的用例");
+  for case in cases {
+    run_all(&pool, &case.fixture.iter().map(String::as_str).collect::<Vec<_>>()).await;
+    if !case.origin.is_empty() {
+      let origin = oracle_catalog_columns(&pool, &case.table).await;
+      assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+    }
+    let statements: Vec<_> =
+      case.statements.iter().map(|sql| write(sql, Vec::new(), None)).collect();
+    execute_write_batch(PoolRef::Oracle(&pool), &statements).await.unwrap_or_else(|error| {
+      panic!(
+        "{}: 生成的语句跑不了（第 {} 条）\n{:?}",
+        case.name, error.statement_index, error.error
+      )
+    });
+    run_all(&pool, &case.insert.iter().map(String::as_str).collect::<Vec<_>>()).await;
+    let after = oracle_catalog_columns(&pool, &case.final_table).await;
+    assert_eq!(after, case.after, "{}: 跑完之后的表和语料说的不一样", case.name);
+    run_all(&pool, &case.cleanup.iter().map(String::as_str).collect::<Vec<_>>()).await;
+  }
+}

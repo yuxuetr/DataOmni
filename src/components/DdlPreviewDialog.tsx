@@ -60,6 +60,8 @@ export function DdlPreviewDialog({
   // 这句提示只在真的发了这种语句时出现
   const restates = dialect === 'mysql'
     && plan.statements.some((sql) => sql.includes('MODIFY COLUMN') || sql.includes('CHANGE COLUMN'));
+  // Oracle 的 DDL 逐条隐式提交：只有一条时它本身是原子的，不用多说
+  const commitsEach = dialect === 'oracle' && plan.statements.length > 1;
 
   return (
     <div
@@ -127,6 +129,11 @@ export function DdlPreviewDialog({
           )}
 
           {restates && <p className="text-xs text-fg-subtle">{t('ddl.mysqlRestates')}</p>}
+          {commitsEach && (
+            <p className="text-xs text-fg-subtle">
+              {t('ddl.oracleCommitsEach', { count: plan.statements.length })}
+            </p>
+          )}
 
           {plan.refusals.length > 0 && (
             <section className="rounded-control border border-warning-line bg-warning-soft px-3 py-2">

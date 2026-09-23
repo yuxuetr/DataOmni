@@ -48,12 +48,11 @@ export type PendingFeature =
   | 'import'
   | 'streamingExport';
 
-/** SQL Server 的四个阶段已经全部接上；Oracle 在第一阶段（TODOs 4.2） */
-export const PENDING_FEATURES: Readonly<Partial<Record<DatabaseType, readonly PendingFeature[]>>> = {
-  [DatabaseType.Oracle]: [
-    'structureEditing'
-  ]
-};
+/**
+ * 分阶段接入的库还没接上的功能。SQL Server 与 Oracle 的各个阶段都已接上
+ * （TODOs 4.2），清单是空的；下一个分阶段接入的库在这里登记
+ */
+export const PENDING_FEATURES: Readonly<Partial<Record<DatabaseType, readonly PendingFeature[]>>> = {};
 
 /** `dbType` 收字符串：调用方手里常常只有方言名（`'sqlserver'`），它与类型值同形 */
 export function supportsFeature(dbType: string, feature: PendingFeature): boolean {

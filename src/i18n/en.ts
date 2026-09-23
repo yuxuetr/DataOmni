@@ -225,6 +225,9 @@ export const en: Translations = {
   'ddl.refuse.mysqlExpressionDefault': 'This column has an expression default. Changing its type in MySQL restates the whole definition, and the catalog only keeps a normalised form of that expression, so the restated default may not be the same one.',
   'ddl.refuse.sqlServerGeneratedColumn': 'The database produces this column (identity, computed or rowversion). On SQL Server such a column can be renamed, but its type, nullability and default cannot be changed directly.',
   'ddl.refuse.mysqlGeneratedColumn': 'This is a generated column. Changing its type in MySQL means restating the generation expression, and the catalog only keeps a normalised form of it.',
+  'ddl.refuse.oracleGeneratedColumn': 'The database produces this column (identity or virtual). It can be renamed, but its type, nullability and default are tied to how it is generated and are not changed here.',
+  'ddl.oracleCommitsEach': 'Every Oracle DDL statement commits on its own: these {count} statements take effect one by one, not as one transaction. If one fails midway, the ones before it have already been applied.',
+  'ddl.oracleCommitsEach.one': 'Every Oracle DDL statement commits on its own.',
   'ddl.mysqlRestates': 'MySQL can only restate a whole column definition. The statements above are exactly what will run — anything not in them is dropped.',
 
   'result.rowCount': '{count} rows',

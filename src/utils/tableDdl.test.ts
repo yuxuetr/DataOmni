@@ -302,6 +302,71 @@ describe('buildTableDdl / SQLite', () => {
   });
 });
 
+describe('buildTableDdl / Oracle', () => {
+  const amount = column({ name: 'AMOUNT', data_type: 'NUMBER(10,2)', default_value: '0 ' });
+  const code = column({ name: 'CODE', data_type: 'VARCHAR2(32)', is_nullable: false });
+
+  it('目录里的默认值带着结尾的空白，DEFAULT NULL 之后是字面的 NULL', () => {
+    // DATA_DEFAULT 是 LONG，SQL 里 TRIM 不了；已在 Oracle Free 23ai 上核对
+    expect(columnDefaultSql(amount, 'oracle')).toBe('0');
+    expect(columnDefaultSql(column({ name: 'X', default_value: 'NULL' }), 'oracle')).toBeNull();
+    expect(columnDefaultSql(column({ name: 'Y', default_value: "'a' " }), 'oracle')).toBe("'a'");
+  });
+
+  it('没改的列不出现在语句里，打开就执行是空的', () => {
+    const plan = buildTableDdl(request('oracle', [draftOf(amount, 'oracle'), draftOf(code, 'oracle')]));
+    expect(plan.statements).toEqual([]);
+  });
+
+  it('MODIFY 只写改了的那几项：已经可空的列再写一次 NULL 是 ORA-01451', () => {
+    const plan = buildTableDdl(request('oracle', [
+      { ...draftOf(amount, 'oracle'), dataType: 'NUMBER(12,2)' },
+      { ...draftOf(code, 'oracle'), nullable: true }
+    ]));
+    expect(plan.statements).toEqual([
+      'ALTER TABLE "orders" MODIFY ("AMOUNT" NUMBER(12,2), "CODE" NULL)'
+    ]);
+  });
+
+  it('默认值去不掉，只能改成 DEFAULT NULL；DEFAULT 写在可空性前面', () => {
+    const plan = buildTableDdl(request('oracle', [
+      { ...draftOf(amount, 'oracle'), defaultValue: null, nullable: false }
+    ]));
+    expect(plan.statements).toEqual([
+      'ALTER TABLE "orders" MODIFY ("AMOUNT" DEFAULT NULL NOT NULL)'
+    ]);
+  });
+
+  it('DROP 不能和 MODIFY、ADD 并列（ORA-03048），各自一条；改名在前、改表名在后', () => {
+    const plan = buildTableDdl(request('oracle', [
+      { ...draftOf(code, 'oracle'), name: 'SKU', dataType: 'VARCHAR2(64)' },
+      { ...draftOf(amount, 'oracle'), dropped: true },
+      {
+        origin: null, name: 'NOTE', dataType: 'VARCHAR2(10)',
+        nullable: false, defaultValue: "'x'", dropped: false, primaryKey: false
+      }
+    ], { newTableName: 'orders2' }));
+    expect(plan.statements).toEqual([
+      'ALTER TABLE "orders" RENAME COLUMN "CODE" TO "SKU"',
+      'ALTER TABLE "orders" DROP ("AMOUNT")',
+      'ALTER TABLE "orders" MODIFY ("SKU" VARCHAR2(64)) ADD ("NOTE" VARCHAR2(10) DEFAULT \'x\' NOT NULL)',
+      'ALTER TABLE "orders" RENAME TO "orders2"'
+    ]);
+    expect(plan.impacts).toEqual([{ kind: 'drop-column', column: 'AMOUNT' }]);
+  });
+
+  it('自增与虚拟列只能改名', () => {
+    const id = column({ name: 'ID', data_type: 'NUMBER(10)', is_nullable: false, is_generated: true });
+    const plan = buildTableDdl(request('oracle', [
+      { ...draftOf(id, 'oracle'), name: 'KEY', dataType: 'NUMBER(12)' }
+    ]));
+    expect(plan.statements).toEqual(['ALTER TABLE "orders" RENAME COLUMN "ID" TO "KEY"']);
+    expect(plan.refusals).toEqual([
+      { column: 'KEY', action: 'change-type', reason: 'ddl.refuse.oracleGeneratedColumn' }
+    ]);
+  });
+});
+
 describe('incompleteDraftColumns', () => {
   it('点名缺名字或缺类型的列；没名字的那一行用类型指代，总得说得出是哪一行', () => {
     expect(incompleteDraftColumns([
@@ -399,6 +464,18 @@ describe('buildCreateTable', () => {
     expect(plan.impacts).toEqual([]);
   });
 
+  it('Oracle 的 DEFAULT 在 NOT NULL 前面，反过来是 ORA-03076', () => {
+    const plan = buildCreateTable({
+      schema: null,
+      table: 'LOG',
+      dialect: 'oracle',
+      columns: [draft('ID', 'NUMBER(10)', { primaryKey: true }), draft('N', 'NUMBER', { nullable: false, defaultValue: '0' })]
+    });
+    expect(plan.statements).toEqual([
+      'CREATE TABLE "LOG" (\n  "ID" NUMBER(10) NOT NULL,\n  "N" NUMBER DEFAULT 0 NOT NULL,\n  PRIMARY KEY ("ID")\n)'
+    ]);
+  });
+
   it('标记删除的列不进建表语句', () => {
     const plan = buildCreateTable({
       schema: null,
@@ -416,5 +493,7 @@ describe('defaultCreateSchema', () => {
     expect(defaultCreateSchema(['analytics', 'public'], 'postgresql')).toBe('public');
     expect(defaultCreateSchema(['sales'], 'sqlserver')).toBe('sales');
     expect(defaultCreateSchema([], 'mysql')).toBe('');
+    expect(defaultCreateSchema(['APEX', 'DATAOMNI'], 'oracle', 'dataomni')).toBe('DATAOMNI');
+    expect(defaultCreateSchema(['APEX', 'HR'], 'oracle', 'dataomni')).toBe('APEX');
   });
 });

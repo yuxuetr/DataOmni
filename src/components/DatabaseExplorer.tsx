@@ -536,6 +536,7 @@ export default function DatabaseExplorer({
           schemas={[...new Set(
             objects.map((object) => object.schema).filter((name): name is string => !!name)
           )].sort()}
+          username={connection.username}
           onClose={() => setCreatingTable(false)}
           onCreated={(table, schema) => {
             void loadDatabaseMetadata(true);

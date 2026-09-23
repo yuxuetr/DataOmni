@@ -22,6 +22,8 @@ interface CreateTableDialogProps {
   dialect: SqlIdentifierDialect;
   /** 库里已有的 schema；SQLite 没有这一层，传空数组 */
   schemas: readonly string[];
+  /** 登录用户：Oracle 的 schema 就是用户，不写 schema 时建在它名下 */
+  username?: string | null;
   onClose: () => void;
   onCreated: (table: string, schema: string | null) => void;
 }
@@ -52,6 +54,7 @@ export function CreateTableDialog({
   connectionId,
   dialect,
   schemas,
+  username,
   onClose,
   onCreated
 }: CreateTableDialogProps) {
@@ -59,9 +62,16 @@ export function CreateTableDialog({
   const markSchemaChanged = useAppStore((state) => state.markSchemaChanged);
 
   const [table, setTable] = useState('');
-  const [schema, setSchema] = useState(() => defaultCreateSchema(schemas, dialect));
+  const [schema, setSchema] = useState(() => defaultCreateSchema(schemas, dialect, username));
   const [drafts, setDrafts] = useState<ColumnDraft[]>([
-    { ...BLANK, name: 'id', dataType: defaultKeyType(dialect), nullable: false, primaryKey: true },
+    {
+      ...BLANK,
+      // 名字会被引号括起来：Oracle 里带引号的小写名字大小写敏感，以后每次都得加引号写
+      name: dialect === 'oracle' ? 'ID' : 'id',
+      dataType: defaultKeyType(dialect),
+      nullable: false,
+      primaryKey: true
+    },
     { ...BLANK }
   ]);
   const [preview, setPreview] = useState<DdlPlan | null>(null);
@@ -251,6 +261,9 @@ function defaultKeyType(dialect: SqlIdentifierDialect): string {
   }
   if (dialect === 'sqlserver') {
     return 'int IDENTITY(1,1)';
+  }
+  if (dialect === 'oracle') {
+    return 'NUMBER(10) GENERATED ALWAYS AS IDENTITY';
   }
   return dialect === 'mysql' ? 'INT AUTO_INCREMENT' : 'INTEGER';
 }
