@@ -776,7 +776,7 @@ export const en: Translations = {
   'form.db.viaProtocol': 'Connects over the {protocol} protocol',
   'form.db.gapsTag': 'Gaps',
   'form.db.gaps.tidb': 'A few things do not work on TiDB: query plans (it rejects EXPLAIN FORMAT=JSON); check constraints are not shown on the structure page; there are no triggers or stored procedures; changing a column and renaming the table in one save is rejected as a whole, so save them separately.',
-  'form.db.gaps.cockroachdb': 'A few things do not work on CockroachDB: query plans (it rejects EXPLAIN (FORMAT JSON)); triggers cannot be read on the structure page; errors carry no position or table name; decimals may show more digits than the declared scale (the value is the same).',
+  'form.db.gaps.cockroachdb': 'A few things do not work on CockroachDB: query plans (it rejects EXPLAIN (FORMAT JSON)); triggers cannot be read on the structure page; errors carry no position or table name.',
   'form.dbType': 'Database type *',
   'form.unsupported': 'Not supported yet',
   'form.unsupportedTitle': '{name}: not supported yet',

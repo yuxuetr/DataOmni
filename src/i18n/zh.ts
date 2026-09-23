@@ -803,7 +803,7 @@ export const zh = {
   'form.db.viaProtocol': '按 {protocol} 协议连接',
   'form.db.gapsTag': '有缺口',
   'form.db.gaps.tidb': 'TiDB 上有几项用不了：执行计划（不认 EXPLAIN FORMAT=JSON）；结构页不显示检查约束；没有触发器与存储过程；改结构时改列和改表名同时做会被整条拒绝，分两次保存即可。',
-  'form.db.gaps.cockroachdb': 'CockroachDB 上有几项用不了：执行计划（不认 EXPLAIN (FORMAT JSON)）；结构页读不到触发器；错误信息里没有出错位置和表名；小数的显示位数可能多于声明的标度（值相等）。',
+  'form.db.gaps.cockroachdb': 'CockroachDB 上有几项用不了：执行计划（不认 EXPLAIN (FORMAT JSON)）；结构页读不到触发器；错误信息里没有出错位置和表名。',
   'form.dbType': '数据库类型 *',
   'form.unsupported': '尚未支持',
   'form.unsupportedTitle': '{name}：尚未支持',
