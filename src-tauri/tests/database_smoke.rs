@@ -524,6 +524,9 @@ async fn postgres_decodes_common_column_types() {
        col_int INTEGER,
        col_bigint BIGINT,
        col_numeric NUMERIC(20, 4),
+       col_numeric_cents NUMERIC(10, 2),
+       col_numeric_whole_cents NUMERIC(10, 2),
+       col_numeric_ten_thousand NUMERIC,
        col_real REAL,
        col_double DOUBLE PRECISION,
        col_bool BOOLEAN,
@@ -551,7 +554,7 @@ async fn postgres_decodes_common_column_types() {
   sqlx::query(
     "INSERT INTO type_coverage VALUES (
        -1, 2147483647, 9223372036854775807,
-       12345678901234.5678, 1.5, 2.5, true,
+       12345678901234.5678, 10.50, 10.00, 10000, 1.5, 2.5, true,
        'chr', 'varchar', 'text',
        '00000000-0000-0000-0000-000000000001',
        '\\x00ff1020'::bytea,
@@ -574,6 +577,11 @@ async fn postgres_decodes_common_column_types() {
     &[
       ("col_bigint", "bigint", "9223372036854775807"),
       ("col_numeric", "decimal", "12345678901234.5678"),
+      // 标度 2 不是 4 的倍数：PostgreSQL 按万进制分组传，末组是 5000，
+      // 只看数字组会读成 10.5000；声明的标度在 dscale 里
+      ("col_numeric_cents", "decimal", "10.50"),
+      ("col_numeric_whole_cents", "decimal", "10.00"),
+      ("col_numeric_ten_thousand", "decimal", "10000"),
       ("col_bytea", "binary", "00ff1020"),
       ("col_date", "date", "2026-09-20"),
       ("col_time", "time", "07:04:05"),

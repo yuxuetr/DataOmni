@@ -1022,10 +1022,16 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
     // 任何 uuid 列都会报 mismatched types
     "UUID" => tagged_display_value("text", ValueRef::to_owned(&value).try_decode::<uuid::Uuid>()),
     "INT8" => tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<i64>()),
-    "NUMERIC" => tagged_display_value(
-      "decimal",
-      ValueRef::to_owned(&value).try_decode::<sqlx::types::BigDecimal>(),
-    ),
+    "NUMERIC" => {
+      let decimal = ValueRef::to_owned(&value)
+        .try_decode::<sqlx::types::BigDecimal>()
+        .map_err(QueryError::from)?;
+      let decimal = match pg_numeric_display_scale(&value) {
+        Some(scale) => decimal.with_scale(scale),
+        None => decimal,
+      };
+      Ok(tagged_value("decimal", decimal.to_string()))
+    }
     "FLOAT4" => json_value(ValueRef::to_owned(&value).try_decode::<f32>()),
     "FLOAT8" => json_value(ValueRef::to_owned(&value).try_decode::<f64>()),
     "BOOL" => json_value(ValueRef::to_owned(&value).try_decode::<bool>()),
@@ -1082,6 +1088,24 @@ fn format_time(time: Time) -> String {
 
 fn format_datetime(value: PrimitiveDateTime) -> String {
   format!("{} {}", format_date(value.date()), format_time(value.time()))
+}
+
+/// PostgreSQL 二进制 NUMERIC 头里的 `dscale`：声明的（或字面量自带的）小数位数。
+///
+/// sqlx 0.8 转 BigDecimal 时不看它，标度按万进制数字组的个数算：`NUMERIC(10,2)`
+/// 的 `10.50` 读成 `10.5000`，`10.00` 读成 `10`，`10000` 的标度是负的。PostgreSQL
+/// 自己的文本输出正是按 dscale 写的，这里照它重设标度。重设不丢值：dscale 之外
+/// 的数字按协议恒为 0。
+///
+/// 头部是四个 16 位大端整数：ndigits、weight、sign、dscale。文本格式的值没有这个头。
+fn pg_numeric_display_scale(value: &PgValueRef<'_>) -> Option<i64> {
+  if value.format() != sqlx::postgres::PgValueFormat::Binary {
+    return None;
+  }
+  match value.as_bytes().ok()? {
+    [_, _, _, _, _, _, high, low, ..] => Some(i64::from(u16::from_be_bytes([*high, *low]))),
+    _ => None,
+  }
 }
 
 /// MySQL 的 TIME 是带符号时长，按它自己的 `[-]HH:MM:SS` 文本形式呈现。
