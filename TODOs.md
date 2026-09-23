@@ -1372,8 +1372,8 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     （`ROW_COUNT_MISMATCH_CODE`）。在这个模型下那条断言要么失效要么误报，
     等于把已经可信的路径重新变得不可信。
 - [x] 协议兼容库：用现有驱动验 MariaDB、TiDB、CockroachDB（2026-09-23 立项，同日完成）
-  - **结论**：MariaDB 11.4 收为「支持」；TiDB 8.5 收为「可用，有缺口」；
-    CockroachDB 25.2 当前版本不收。矩阵在 README「兼容性矩阵」。
+  - **结论**：MariaDB 11.4 收为「支持」；TiDB 8.5 与 CockroachDB 25.2 收为
+    「可用，有缺口」。矩阵在 README「兼容性矩阵」。
   - **MariaDB（`a922f92`）**：首轮 12 条红，归因后三处是应用缺陷——
     (1) 预处理协议收 `USE`，编辑器里一条 `USE` 就把池子里的连接挪到别的库，
     还回池子后对象树按 `DATABASE()` 列出另一个库的表，界面上的库名不变；
@@ -1396,22 +1396,34 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     不认 `FORMAT=JSON`（报原话）、一条 ALTER 里改列加改表名被 8200 整条拒绝
     （表不变）、检查约束目录恒空（默认不启用；启用后 `TABLE_CONSTRAINTS` 也不列
     CHECK，在 8.5 上打开开关验过）、没有触发器与存储程序。
-  - **CockroachDB 不收**：PostgreSQL 那组 21 条只过 7 条。结构页整页打不开
-    （`pg_get_triggerdef()` 不存在，触发器与索引、外键在同一个 `Promise.all`）、
-    `EXPLAIN (FORMAT JSON)` 语法错误、错误里没有约束名与位置、对象目录里有
-    名字为 NULL 的行。写入不变量那一侧（整事务回滚、导入失败不留残行）是过的，
-    所以不是「不可信」，是「离日常可用还差一串目录查询的改写」。
-    **重估条件**：`DATAOMNI_POSTGRES_TEST_URL` 指向 CockroachDB 时
-    `cargo test --test database_smoke postgres` 全绿——每一条红都已在上面点名，
-    改一处少一条。
+  - **CockroachDB**：首轮 PostgreSQL 那组 21 条只过 7 条，当时判「不收」；
+    用户要求修之后（`87e09b1`、`439dad3`）21/21。两处应用缺陷——
+    (1) **结构页一段失败整页清空，而且表因此变只读**：五段目录查询在一个
+    `Promise.all` 里，CockroachDB 只是没有 `pg_get_triggerdef()`，索引却跟着
+    「不可用」，行标识判不出来，每张表都不能改数据。这不是 CockroachDB 专属的
+    问题，任何一段在任何服务端上失败都会这样；改为各段各自成败，失败的段就地
+    显示原因，只有索引段失败才影响可编辑性。(2) 对象树混进 `crdb_internal` /
+    `pg_extension` 的 244 个系统对象，其中内建函数名字是 NULL；系统 schema
+    清单（对象目录、补全、ER 图五处）补上这两个。
+  - CockroachDB 的已知缺口由用例钉住：触发器段报错（它的 `pg_trigger` 与
+    `information_schema.triggers` 都是空的，只有 `SHOW CREATE TRIGGER` 看得见，
+    换目录写法只会把「查不到」变成「没有」）、EXPLAIN 不认 `FORMAT JSON`、
+    错误不给位置也不填 TABLE 字段、语料只比列名与顺序（类型与默认值是它自己的
+    拼法）。渲染验过：Linux 打包版连 25.2，结构页索引 / 外键 / 检查约束正常，
+    触发器段单独标红，数据页可编辑。顺带看到的：小数显示成 `10.5000` / `3`
+    （它自己的文本输出是 `10.50` / `3.00`），是它二进制编码的标度，值相等，
+    编辑时的冲突检测按数值比较不受影响；没修。
+  - 测试实例打开了临时表：`SET CLUSTER SETTING
+    sql.defaults.experimental_temporary_tables.enabled = true`（用例的夹具用
+    临时表，应用本身不用）。
   - 测试库在 cu 上：`dataomni-mariadb`（127.0.0.1:13306）、`dataomni-tidb`
     （127.0.0.1:14000，root 无密码）、`dataomni-cockroach`（127.0.0.1:26257，
     insecure），都只绑本机、带内存上限，用完已停，`docker start` 即可再用。
     跑法：把 `DATAOMNI_MYSQL_TEST_URL` / `DATAOMNI_POSTGRES_TEST_URL` 指过去
     （经 `ssh -L` 转发），同一套用例按 `VERSION()` 自己分支。
-  - 未做：没有在这三家上**渲染界面**看过。界面发的目录查询都经
-    `*_catalog_results_are_decodable_by_the_plugin` 在真库上跑过并逐列比对了
-    插件的解码器，但那不等于看过结构页。
+  - 渲染：CockroachDB 看过（见上）；MariaDB 与 TiDB 还没有。它们界面发的目录
+    查询都经 `*_catalog_results_are_decodable_by_the_plugin` 在真库上跑过并逐列
+    比对了插件的解码器，但那不等于看过结构页。
   - 为什么是这三个：它们说 MySQL / PostgreSQL 的线协议，sqlx 现有驱动就能连，
     不需要上面那次前置重构。这是「多数据库」里唯一不用先付大成本的一块。
   - 做法：不写新用例。把 `database_smoke.rs` 整套 MySQL / PostgreSQL 用例原样
