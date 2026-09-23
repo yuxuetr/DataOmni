@@ -22,6 +22,7 @@ import {
   offersReconnect,
   type ConnectionHealth
 } from '../utils/connectionHealth';
+import { serverLabel } from '../utils/serverPresets';
 
 interface SqlWorkbenchProps {
   connection: ConnectionConfig;
@@ -182,7 +183,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
             </span>
           )}
           <span className="truncate text-fg-muted">
-            {connection.db_type} · {connection.host}:{connection.port}
+            {serverLabel(connection)} · {connection.host}:{connection.port}
             {/* 库名优先用服务端报的，问不出来才退回配置里那个 */}
             {targetDatabase ? ` / ${targetDatabase}` : t('workbench.noDatabase')}
             {/* Schema 只有 PostgreSQL 有。它回答的是「不带前缀的 CREATE TABLE

@@ -107,6 +107,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useTableEditStore, tableEditKey } from '../stores/tableEditStore';
 import { selectTableStructure, useAppStore } from '../stores/appStore';
 import { buildFilterClause, isCompleteFilter, type ColumnFilter } from '../utils/tableFilters';
+import { serverLabel } from '../utils/serverPresets';
 
 // 编辑模式类型
 type EditMode = 'view' | 'edit' | 'add';
@@ -1005,7 +1006,7 @@ export default function TableDataViewer({
                 {schema ? `${schema}.${tableName}` : tableName}
               </h1>
               <p className="text-sm text-fg-muted">
-                {connection.name} • {connection.db_type}
+                {connection.name} • {serverLabel(connection)}
               </p>
             </div>
           </div>

@@ -5,6 +5,7 @@ import { DatabaseType } from '../contracts';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useProfileConnector } from '../hooks/useProfileConnector';
 import { orderProfilesByRecency } from '../utils/connectionRecency';
+import { serverLabel } from '../utils/serverPresets';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
 
@@ -98,7 +99,7 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
                         {describeTarget(profile)}
                       </span>
                     </span>
-                    <span className="shrink-0 text-xs text-fg-subtle">{profile.db_type}</span>
+                    <span className="shrink-0 text-xs text-fg-subtle">{serverLabel(profile)}</span>
                   </button>
                 </li>
               );

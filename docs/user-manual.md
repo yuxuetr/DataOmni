@@ -81,7 +81,7 @@
 | --- | --- |
 | 连接名称 | 只给自己看，列表和标签上显示它 |
 | 环境 | 开发 / 测试 / 预发 / 生产。见下面的[环境](#环境) |
-| 数据库类型 | MySQL、PostgreSQL、SQLite 可选。其余几种是计划中的，置灰选不了 |
+| 数据库类型 | MySQL、PostgreSQL、SQLite，以及 MariaDB、TiDB、CockroachDB。其余几种是计划中的，置灰选不了 |
 | 主机地址、端口 | 数据库服务器的地址。端口按类型自动填默认值 |
 | 数据库名称 | 连上之后默认进入的库。MySQL 必须填：对象树、补全和 ER 图都按这个库读 |
 | 用户名、密码 | 数据库账号 |
@@ -92,8 +92,10 @@
 填完先点「测试连接」，通过后「保存连接」。之后在欢迎页或连接选择器里点这个
 连接就会连上。
 
-**MariaDB、TiDB 选 MySQL，CockroachDB 选 PostgreSQL。** 它们各有哪些功能用不了，
-见 README 的「兼容性矩阵」。
+**MariaDB、TiDB、CockroachDB** 各有一个入口，选了会填好它自己的默认端口（TiDB 是
+4000，CockroachDB 是 26257）和默认库，TLS 设成「优先使用 TLS」。它们走的是
+MySQL / PostgreSQL 协议，连上之后的用法和 MySQL / PostgreSQL 一样；各有哪些功能
+用不了，见 README 的「兼容性矩阵」。
 
 ### 打开 SQLite 文件
 

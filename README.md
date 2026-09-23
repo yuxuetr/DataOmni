@@ -41,7 +41,8 @@
 
 下表每一格都来自真库上跑完的冒烟用例（`src-tauri/tests/database_smoke.rs`，
 MySQL 一组 21 条、PostgreSQL 一组 21 条），不是按协议兼容推断的。
-协议兼容的服务端在连接表单里选 MySQL / PostgreSQL 即可。
+连接表单里 MariaDB、TiDB、CockroachDB 各有一个入口，填好各自的默认端口；存下来
+的就是 MySQL / PostgreSQL 连接。
 
 | 服务端 | 版本 | 连接类型 | 结论 | 用例 |
 | --- | --- | --- | --- | --- |

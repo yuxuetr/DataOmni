@@ -800,6 +800,7 @@ export const zh = {
   'form.namePlaceholder': '输入连接名称',
   'form.environment': '环境',
   'form.environmentHint': '生产与预发连接会常驻标识；执行前要不要确认，按「设置 → 危险语句确认」里这个环境的门槛。',
+  'form.db.viaProtocol': '按 {protocol} 协议连接',
   'form.dbType': '数据库类型 *',
   'form.unsupported': '尚未支持',
   'form.unsupportedTitle': '{name}：尚未支持',

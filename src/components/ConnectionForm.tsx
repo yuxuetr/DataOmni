@@ -49,6 +49,12 @@ import {
 } from '../stores/connectionStore';
 import { useLanguageStore } from '../stores/languageStore';
 import { ENVIRONMENTS, ENVIRONMENT_NAME_KEYS } from '../contracts/environment';
+import {
+  SERVER_PRESETS,
+  serverPresetConfig,
+  serverPresetOf,
+  type ServerPreset
+} from '../utils/serverPresets';
 import type { ConnectionEnvironment } from '../contracts';
 import type { TranslationKey } from '../i18n/translate';
 
@@ -239,6 +245,18 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
       environment: prev.environment ?? defaultConfig.environment
     }));
   };
+
+  const handleServerPresetChange = (preset: ServerPreset) => {
+    const presetConfig = serverPresetConfig(preset);
+    setFormData(prev => ({
+      ...prev,
+      ...presetConfig,
+      name: prev.name,
+      environment: prev.environment ?? presetConfig.environment
+    }));
+  };
+
+  const selectedPreset = serverPresetOf(formData);
 
   // 选择数据库文件。选完直接写回路径框，用户仍可手改。
   const handleBrowseDatabaseFile = async () => {
@@ -452,7 +470,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         .filter((dbType) => dbType.categoryKey === categoryKey)
                         .map((dbType) => {
                           const supported = isDatabaseTypeSupported(dbType.type);
-                          const selected = formData.db_type === dbType.type;
+                          // 经快捷入口建的 MySQL / PostgreSQL 连接，高亮的是那个入口
+                          const selected = formData.db_type === dbType.type && selectedPreset === null;
 
                           return (
                             <button
@@ -476,6 +495,34 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                                 {!supported && (
                                   <span className="block text-[11px] leading-tight">{t('form.unsupported')}</span>
                                 )}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      {categoryKey === 'form.category.relational'
+                        && (Object.keys(SERVER_PRESETS) as ServerPreset[]).map((preset) => {
+                          const spec = SERVER_PRESETS[preset];
+                          const protocol = spec.dbType === DatabaseType.MySQL ? 'MySQL' : 'PostgreSQL';
+                          const selected = selectedPreset === preset;
+                          return (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={() => handleServerPresetChange(preset)}
+                              title={t('form.db.viaProtocol', { protocol })}
+                              className={clsx(
+                                'flex items-center gap-2 rounded-control border px-2.5 py-1.5 text-left transition-colors',
+                                selected
+                                  ? 'border-accent bg-accent-soft text-accent'
+                                  : 'border-line-strong text-fg hover:bg-surface-hover'
+                              )}
+                            >
+                              <span className="shrink-0"><Database size={16} /></span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm">{spec.name}</span>
+                                <span className="block truncate text-[11px] leading-tight text-fg-subtle">
+                                  {t('form.db.viaProtocol', { protocol })}
+                                </span>
                               </span>
                             </button>
                           );

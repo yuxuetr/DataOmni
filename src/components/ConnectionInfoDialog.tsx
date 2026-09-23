@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import type { ConnectionProfile } from '../contracts';
 import type { DatabaseSession } from '../contracts/session';
 import { useLanguageStore } from '../stores/languageStore';
+import { serverLabel } from '../utils/serverPresets';
 
 interface ConnectionInfoDialogProps {
   connection: ConnectionProfile;
@@ -71,7 +72,7 @@ export function ConnectionInfoDialog({ connection, session, onClose }: Connectio
         <div className="px-5 py-3 divide-y divide-line">
           <div className="pb-2">
             <Row label={t('info.name')} value={connection.name} />
-            <Row label={t('info.type')} value={connection.db_type} />
+            <Row label={t('info.type')} value={serverLabel(connection)} />
             <Row label={t('info.address')} value={`${connection.host}:${connection.port}`} />
             <Row label={t('info.database')} value={connection.database || t('info.unspecified')} />
             <Row label={t('info.user')} value={connection.username || t('info.unspecified')} />
