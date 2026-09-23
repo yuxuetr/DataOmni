@@ -1896,6 +1896,27 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     （`osascript is not allowed assistive access`），**读不到也点不了原生菜单**。
     做一个验不了的界面，违反本仓库自己的规矩。等权限放开或换一条验证路径
     （截图比对菜单展开态）再做。
+  - **⌘W 那一条做了**（`093bb17`）：只动触发条件本身，不借机把应用动作搬进菜单。
+    macOS 上照 Tauri 默认菜单重搭一份（`src-tauri/src/app_menu.rs`），唯一的
+    区别是 File 里的 `close_window`（写死 ⌘W，改不掉）换成两个自定义项：
+    Close Tab ⌘W 发 `menu://close-tab` 给前端，Close Window 挪到 ⇧⌘W、走
+    同一个 `onCloseRequested` 事务守卫。Window / Help 用 Tauri 认的那两个 id，
+    macOS 才会把它们当窗口菜单和帮助菜单。另外两个平台不装菜单，Ctrl+W 由
+    App 的 keydown 按同一个 `SHORTCUTS.closeTab` 处理；面板里多一条
+    「关闭标签」，没有标签时不出现。
+  - 门在 `shortcuts.test.ts`：直接读 `app_menu.rs` 的源码，比对菜单加速键就是
+    `SHORTCUTS.closeTab`、⇧⌘W 不和任何快捷键撞、事件名两边一致、源码里不许
+    再出现 `PredefinedMenuItem::close_window`。
+  - **非 mac 那条路在 Linux 真应用里验过**（Ubuntu 22.04 容器，Xvfb + xdotool，
+    见下面「安装、升级和卸载验证」）：两个标签时 Ctrl+W 只关当前那个、窗口还在；
+    关掉最后一个回到欢迎页；欢迎页上再按什么也不发生；编辑器里有草稿时按
+    Ctrl+W 弹出「保留草稿 / 丢弃 / 取消」；面板里「Close tab」标着 `Ctrl+W`。
+    WebKitGTK 上平台被认成 `other`，提示一律画成 `Ctrl+…`——这是
+    `detectPlatform` 注释里说的「只能拿字符串喂进来断言」的那部分，第一次在
+    真机上成立。
+  - **macOS 那条路还没在真应用里验**：辅助功能权限的问题没变，菜单读不到也
+    点不了，得有人手动按一遍（菜单里是否显示 Close Tab ⌘W / Close Window ⇧⌘W、
+    ⌘W 只关标签、欢迎页 ⌘W 无动作、有草稿时会问、⇧⌘W 关窗口）。
 - [x] 增加对象树、标签和表格右键菜单
   - 评估先分了一下：**标签和表格本来就有**（`WorkspaceTabMenu` 固定 / 复制 /
     关闭，`GridContextMenu` 四条复制），缺的只有对象树。所以这条的增量是
@@ -2204,12 +2225,54 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     dylib，这一类崩溃在正式签名之后不可能发生。
   - **一个教训记在自己账上**：这次崩溃发生时我看到「进程没了」，顺手归因成
     `timeout` 杀的就过去了，没去翻崩溃报告。不查就下结论，和没验一样。
-  - 未做：Windows 与 Linux 的三件事。**这两项必须在真机或虚拟机上做**，
-    不是「本机出不了包」那么简单——安装/升级/卸载的验证本身就是操作系统级的：
-    Windows 要看 MSI/NSIS 装卸时的注册表项与开始菜单，Linux 要看 .deb /
-    AppImage 的桌面入口与运行时依赖，两边还各有自己的未签名应用拦截
-    （SmartScreen / 各发行版的策略）。macOS 上没有等价物可以模拟。
-    等有那两个环境时再做，先推进其余条目。
+  - **Linux 已验证（容器内）**，2026-09-23，在 `cu` 上的 Ubuntu 22.04 容器里：
+    构建用一个容器（2 核 3 GB，冷编 23 分钟、热编 3 分 21 秒），验证用另一个
+    干净的容器，装 Xvfb / xdotool 驱动界面、截图回来看。产物 `.deb` 10.8 MB、
+    `.rpm` 10.8 MB、`.AppImage` 97 MB（自带 GTK / WebKit）。
+  - **装**：`apt install ./DataOmni_0.1.0_amd64.deb` 能把 `libwebkit2gtk-4.1-0`
+    与 `libgtk-3-0` 两个声明的依赖连同传递依赖一起拉齐，`ldd` 没有 not found。
+    装下去的就是二进制、`.desktop` 和三种尺寸的图标。
+  - 装的时候看到两处元数据缺陷，已修（`7b719f6`）：`.desktop` 的
+    `Categories=` 是空的（应用菜单里会归进「其他」），deb 的长描述是
+    `(none)`。补 `bundle.category` 与 short/longDescription，重新打包后
+    `Categories=Development;` 与描述都核对过。
+  - **打 AppImage 要 `xdg-utils`**：第一次构建在最后一步报
+    `xdg-open binary not found`，前两个包已经出了、退出码却是 1。补上之后
+    三个包都出。README 的 Linux 构建依赖写的是实际出过包的这一组。
+  - **跑**：界面完整，WebKitGTK 上平台被认成 `other`。Ctrl+W 那一串见上面
+    「应用菜单」那条。建 SQLite 连接、连上、开表看数据都正常；强杀后重开，
+    草稿标签原样回来（只读，等重新连上）。
+  - **钥匙串，三种处境都走过**：
+    - 有已解锁的 gnome-keyring：存进去的条目 `service=DataOmni`、
+      `username=<连接 id>`，`connections.json` 里只有 `credential_ref`、
+      没有明文；重启后连这条连接，报的是 `Connection refused`（假主机）而不是
+      取不到密码——读回来了。
+    - 完全没有 Secret Service：保存失败、什么也没写进磁盘（没有半条连接，也没有
+      明文）。但报的细节是 "No default store has been set"，**不是原因**，而且
+      原提示「装好 gnome-keyring」照做了也没用。修了（`fe95375`），分三步在
+      真应用里验过，见提交说明：keyring 只初始化一次平台存储、失败结果缓存到
+      进程结束，所以装好之后**必须重启应用**。
+    - 装了 gnome-keyring 但没有解锁的默认集合、也没有弹窗程序（容器里就是这样）：
+      报 `SS error: result not returned from SS API`。真桌面上这里会弹解锁框，
+      容器里验不到。
+  - **窗口尺寸不是问题**：默认 1600×1200 在没有窗口管理器的 Xvfb 里会跑出屏幕，
+    但那是没有 WM 的假象——起一个 openbox 之后，1920×1080 下被夹成 1600×1055，
+    1366×768 下被夹成 1364×743，标题栏都在屏幕内。
+  - **升级**：把 deb 改成 0.1.1 重新打包，`Unpacking data-omni (0.1.1) over (0.1.0)`，
+    用户数据原样。和 macOS 一样没有 updater，升级就是装一个新包。
+  - **卸载**：`apt purge` 删掉二进制、`.desktop` 和图标；留下的是
+    `~/.config/com.dataomni.app`（connections.json）、
+    `~/.local/share/com.dataomni.app`（WebKit 的 localStorage，工作区快照和
+    历史在这里）以及钥匙串里 `DataOmni` 服务下的条目。dpkg 本来就不碰家目录，
+    这是 Linux 的常态，不是遗漏。
+  - 容器里「中」和 🔑 画成方块，是镜像里没有 CJK 与彩色 emoji 字体；Ubuntu
+    桌面版默认带 Noto CJK 与 Noto Color Emoji。
+  - Linux 这边**没验的**：`.rpm` 没装过；AppImage 只以
+    `--appimage-extract-and-run` 跑过（容器里没有 FUSE，22.04 起真机上还要
+    `libfuse2`）；没有在真实桌面会话（GNOME / Wayland）里跑过，钥匙串的解锁
+    弹窗也就没见过。
+  - 未做：Windows 的三件事。**必须在真机或虚拟机上做**——要看 MSI/NSIS 装卸时
+    的注册表项与开始菜单，还有 SmartScreen 对未签名应用的拦截。容器模拟不了。
 - [x] 完成崩溃恢复、异常退出恢复和无网络场景测试
   - **崩溃 / 强杀恢复：量了一个数，不需要改代码。** 工作区快照是每次变化就写
     （effect 依赖 tabs / activeTabId / documents / closedTabs），不是退出时写；

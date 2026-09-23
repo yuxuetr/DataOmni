@@ -173,14 +173,17 @@ Tauri 本身跨平台，但**本项目只在下表记录的环境上实际验证
 |---|---|---|---|
 | macOS (Apple Silicon / aarch64) | `DataOmni.app`、`DataOmni_0.1.0_aarch64.dmg` | ✅ 已验证 | 2026-09-20 于 macOS 27.0 / arm64 执行 `bun tauri build`，退出码 0 |
 | macOS (Intel / x86_64) | — | ⚠️ 未验证 | 无 x86_64 机器，也未做交叉编译 |
-| Linux (Ubuntu) | — | ⚠️ 仅编译检查 | CI 在 ubuntu-latest 上跑 `bun run build`、`cargo clippy`、`cargo test` 与三库冒烟测试，但**不执行 `tauri build`，从未产出过安装包** |
+| Linux (Ubuntu 22.04 / x86_64) | `DataOmni_0.1.0_amd64.deb`、`.AppImage`、`.rpm` | ✅ 已验证（容器内） | 2026-09-23 执行 `bun tauri build`，退出码 0。`.deb` 在干净的 Ubuntu 22.04 容器里装、升级、卸载都验过，在 Xvfb + openbox 里跑通界面、Ctrl+W 与 gnome-keyring 存取密码；AppImage 只以 `--appimage-extract-and-run` 跑过（容器里没有 FUSE）；`.rpm` 没装过。**没有在真实桌面会话（GNOME / Wayland）里验过** |
 | Windows | — | ❌ 未验证 | 既无 CI job，也无本地构建记录 |
 
 应用未签名 / 未公证，macOS 首次打开需在「系统设置 → 隐私与安全性」中放行。
 
 ### 系统要求
 
-- **操作系统**: 见上表；目前仅 macOS (aarch64) 经过验证
+- **操作系统**: 见上表
+- **Linux 保存密码**需要一个已解锁的 Secret Service（GNOME 桌面自带 gnome-keyring）。
+  没有时连接照样能建，只是勾「在系统中保存密码」会报错，改成每次连接时输入即可。
+  钥匙串是应用运行中才装上的，要重启 DataOmni 才用得上
 - **内存**: 最低 4GB RAM，推荐 8GB+
 - **存储**: 至少 500MB 可用空间
 
@@ -190,6 +193,14 @@ Tauri 本身跨平台，但**本项目只在下表记录的环境上实际验证
 > 没有预编译安装包可下载，只能从源码构建。
 
 #### 从源码构建
+
+Linux 上先装系统依赖（Ubuntu 22.04 上实际出过包的就是这一组；`xdg-utils` 只有
+打 AppImage 才要，缺了会在最后一步报 `xdg-open binary not found`）：
+
+```bash
+sudo apt-get install build-essential curl wget file pkg-config libssl-dev \
+  libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev librsvg2-dev xdg-utils
+```
 
 ```bash
 # 克隆项目
