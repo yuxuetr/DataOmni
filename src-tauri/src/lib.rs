@@ -1,6 +1,8 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
 // 模块导入
+#[cfg(target_os = "macos")]
+mod app_menu;
 mod commands;
 // 集成测试要按 DatabaseType 取目录查询，枚举得公开；
 // 用字符串代替会丢掉穷尽匹配，新增方言时编译器不再提醒。
@@ -11,7 +13,12 @@ use commands::{connection_commands::ConnectionServiceState, *};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+  let builder = tauri::Builder::default();
+  #[cfg(target_os = "macos")]
+  let builder = builder
+    .menu(app_menu::build)
+    .on_menu_event(|app, event| app_menu::handle_event(app, event.id().as_ref()));
+  builder
     // 记住窗口大小与位置；默认在退出时保存、启动时恢复
     .plugin(tauri_plugin_window_state::Builder::default().build())
     .plugin(tauri_plugin_dialog::init())

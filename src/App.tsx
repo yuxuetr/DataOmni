@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { SHORTCUTS, matchesShortcut } from './utils/shortcuts';
+import { CLOSE_TAB_MENU_EVENT, SHORTCUTS, currentPlatform, matchesShortcut } from './utils/shortcuts';
 import { PanelLeftOpen } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Sidebar } from './components/Sidebar';
@@ -46,6 +46,7 @@ import { QueryHistoryDialog } from './components/QueryHistoryDialog';
 import { SQL_FILE_FILTER, stripBom, tabTitleFromSqlPath } from './utils/sqlFile';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { describeError } from './utils/describeError';
 import { useProfileConnector } from './hooks/useProfileConnector';
 import { useThemeStore } from './stores/themeStore';
@@ -180,6 +181,14 @@ function App() {
       if (matchesShortcut(event, SHORTCUTS.commandPalette)) {
         event.preventDefault();
         setPaletteOpen((open) => !open);
+        return;
+      }
+
+      // macOS 上 ⌘W 被原生菜单先接走，这里根本收不到；在这里也认的话，
+      // 哪天菜单那一侧没拦住，一次按键会关掉两个标签
+      if (currentPlatform() !== 'mac' && matchesShortcut(event, SHORTCUTS.closeTab)) {
+        event.preventDefault();
+        closeActiveTab();
         return;
       }
 
@@ -334,6 +343,31 @@ function App() {
 
     finishCloseTab(tabId, false);
   };
+
+  /**
+   * ⌘W / Ctrl+W。没有标签开着时什么也不做：关窗口是 ⇧⌘W，
+   * 在欢迎页上多按一次 ⌘W 不该把整个应用关掉。
+   */
+  const closeActiveTab = () => {
+    if (activeTabId) {
+      closeWorkspaceTab(activeTabId);
+    }
+  };
+
+  // 菜单事件只订阅一次，通过 ref 调到最新一次渲染的闭包——每次渲染重订一遍
+  // 的话，异步的 listen 与 unlisten 交错时会短暂挂着两个监听，一下关两个标签
+  const closeActiveTabRef = useRef(closeActiveTab);
+  closeActiveTabRef.current = closeActiveTab;
+  useEffect(() => {
+    const unlisten = listen(CLOSE_TAB_MENU_EVENT, () => closeActiveTabRef.current())
+      .catch((error: unknown) => {
+        console.warn('订阅菜单的关闭标签事件失败:', error);
+        return () => undefined;
+      });
+    return () => {
+      void unlisten.then((stop) => stop());
+    };
+  }, []);
 
   const handleCloseChoice = (choice: CloseTabChoice) => {
     const tabId = pendingCloseTabId;
@@ -572,6 +606,15 @@ function App() {
         shortcut: SHORTCUTS.reopenClosedTab,
         run: () => reopenClosedTab()
       },
+      ...(activeTab
+        ? [{
+            id: 'action:close-tab',
+            title: t('tab.closeAction'),
+            group: t('palette.group.action'),
+            shortcut: SHORTCUTS.closeTab,
+            run: () => closeActiveTab()
+          }]
+        : []),
       {
         id: 'action:toggle-sidebar',
         title: t('palette.action.toggleSidebar'),

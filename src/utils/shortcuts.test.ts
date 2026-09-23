@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  CLOSE_TAB_MENU_EVENT,
   SHORTCUTS,
   detectPlatform,
   formatShortcut,
@@ -162,5 +163,61 @@ describe('两个平台的差异只许出现在这一个文件里', () => {
           .map(([f, n, line]) => `${f}:${n} ${line.trim()}`)
       );
     expect(offenders).toEqual([]);
+  });
+});
+
+/** 取 `app_menu.rs` 里一个 `&str` 常量的值 */
+function rustConstant(source: string, name: string): string {
+  const match = source.match(new RegExp(`const ${name}: &str = "([^"]*)";`));
+  if (!match) {
+    throw new Error(`app_menu.rs 里找不到 ${name}`);
+  }
+  return match[1];
+}
+
+/** Tauri 的 accelerator 写法（`CmdOrCtrl+Shift+W`）换成这里的 Shortcut */
+function parseAccelerator(accelerator: string): Shortcut {
+  const parts = accelerator.split('+');
+  const key = parts.pop() ?? '';
+  const known = new Set(['CmdOrCtrl', 'Shift', 'Alt']);
+  const unknown = parts.filter((part) => !known.has(part));
+  if (unknown.length > 0) {
+    throw new Error(`不认识的修饰键 ${unknown.join(', ')}：CmdOrCtrl 之外的写法两个平台含义不同`);
+  }
+  const shortcut: Shortcut = { key: key.toLowerCase() };
+  if (parts.includes('CmdOrCtrl')) shortcut.mod = true;
+  if (parts.includes('Shift')) shortcut.shift = true;
+  if (parts.includes('Alt')) shortcut.alt = true;
+  return shortcut;
+}
+
+describe('原生菜单与快捷键注册表是同一份', () => {
+  // macOS 上 ⌘W 由菜单接住，webview 收不到；面板上的提示与另外两个平台的
+  // keydown 读的是 SHORTCUTS。两边各写一份，改一边就会出现「提示写着 ⌘W、
+  // 按下去关的却是窗口」——正是这次要修的那件事换个样子回来
+  const menuSource = readFileSync(
+    new URL('../../src-tauri/src/app_menu.rs', import.meta.url),
+    'utf8'
+  );
+
+  it('Close Tab 的组合就是 SHORTCUTS.closeTab', () => {
+    expect(parseAccelerator(rustConstant(menuSource, 'CLOSE_TAB_ACCELERATOR')))
+      .toEqual(SHORTCUTS.closeTab);
+  });
+
+  it('Close Window 不和任何一条快捷键撞', () => {
+    const closeWindow = parseAccelerator(rustConstant(menuSource, 'CLOSE_WINDOW_ACCELERATOR'));
+    const clashes = Object.entries(SHORTCUTS)
+      .filter(([, shortcut]) => formatShortcut(shortcut, 'mac') === formatShortcut(closeWindow, 'mac'))
+      .map(([name]) => name);
+    expect(clashes).toEqual([]);
+  });
+
+  it('菜单发的事件名就是前端监听的那个', () => {
+    expect(rustConstant(menuSource, 'CLOSE_TAB_EVENT')).toBe(CLOSE_TAB_MENU_EVENT);
+  });
+
+  it('Window 菜单里不再放预置的 close_window——它自带的 ⌘W 改不掉', () => {
+    expect(menuSource).not.toMatch(/PredefinedMenuItem::close_window/);
   });
 });

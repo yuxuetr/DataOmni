@@ -114,6 +114,9 @@ export function formatShortcut(
   return parts.join('+');
 }
 
+/** 原生菜单「Close Tab」发给前端的事件，与 `app_menu.rs` 的 `CLOSE_TAB_EVENT` 一致 */
+export const CLOSE_TAB_MENU_EVENT = 'menu://close-tab';
+
 /**
  * 全部快捷键。
  *
@@ -124,6 +127,9 @@ export function formatShortcut(
 export const SHORTCUTS = {
   commandPalette: { key: 'k', mod: true },
   reopenClosedTab: { key: 't', mod: true, shift: true },
+  // macOS 上这一下由原生菜单接住（`src-tauri/src/app_menu.rs`），webview 听不到；
+  // 另外两个平台没有菜单，由 App 的 keydown 处理。两边按的必须是同一个组合
+  closeTab: { key: 'w', mod: true },
   toggleSidebar: { key: 'b', mod: true },
   runCurrent: { key: 'Enter', mod: true },
   runAll: { key: 'Enter', mod: true, shift: true },
