@@ -1421,9 +1421,20 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     insecure），都只绑本机、带内存上限，用完已停，`docker start` 即可再用。
     跑法：把 `DATAOMNI_MYSQL_TEST_URL` / `DATAOMNI_POSTGRES_TEST_URL` 指过去
     （经 `ssh -L` 转发），同一套用例按 `VERSION()` 自己分支。
-  - 渲染：CockroachDB 看过（见上）；MariaDB 与 TiDB 还没有。它们界面发的目录
-    查询都经 `*_catalog_results_are_decodable_by_the_plugin` 在真库上跑过并逐列
-    比对了插件的解码器，但那不等于看过结构页。
+  - 渲染：三家都在 Linux 打包版上看过（2026-09-23）。CockroachDB 见上。
+    MariaDB 11.4 与 TiDB 8.5：对象树、数据页（可编辑）、结构页（索引 / 外键 /
+    检查约束 / 触发器，TiDB 的函数索引显示为 ``lower(`code`)``）、存储过程定义
+    都正常。渲染这一轮又抓到三处用例没抓到的：
+    (1) **日期时间照 `time` 的 Display 输出**（`5533dc2`）：`7:33:16.0 +00:00:00`，
+    小时不补零、秒后恒带小数，十点以前的值日期选择器认不出。不是兼容库专属，
+    MySQL / PostgreSQL / SQLite 同样；类型覆盖用例改用单位数小时并补断言。
+    (2) **对象树过期即清空**（`e7f4901`）：连上五分钟后随便点一下，整棵树变成
+    「没有数据库对象」且不会自己重新加载；过期原本只该决定「重新拉」。
+    (3) **TiDB 的 `DEFAULT CURRENT_TIMESTAMP` 被当成字符串**（`ac5cadb`）：
+    不带 `ON UPDATE` 时 TiDB 不打 `DEFAULT_GENERATED`，结构页显示带引号，
+    改结构会重述成 `DEFAULT 'CURRENT_TIMESTAMP'`；时间类型列上按表达式认。
+    门：`mysql_column_defaults_come_back_in_one_shape_on_mysql_and_mariadb`
+    补的两列，改前在 TiDB 上红。
   - 为什么是这三个：它们说 MySQL / PostgreSQL 的线协议，sqlx 现有驱动就能连，
     不需要上面那次前置重构。这是「多数据库」里唯一不用先付大成本的一块。
   - 做法：不写新用例。把 `database_smoke.rs` 整套 MySQL / PostgreSQL 用例原样
@@ -2433,7 +2444,7 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
   - 矩阵有了（README「兼容性矩阵」，2026-09-23，每一格来自真库用例）。
   - 用户文档没有：README 是能力说明，不是使用手册。
 - [x] 根据成熟度选择性纳入已完成的 P4 数据源
-  - 已按成熟度决定：MariaDB 收、TiDB 带缺口收、CockroachDB / DuckDB /
+  - 已按成熟度决定：MariaDB 收，TiDB 与 CockroachDB 带缺口收，DuckDB /
     ClickHouse 不收，理由与重估条件都在 4.2。
 
 ## 暂不优先
