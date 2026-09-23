@@ -34,7 +34,6 @@ use crate::services::write_batch::{
 use crate::services::QueryError;
 use futures_util::{FutureExt, TryStreamExt};
 use serde_json::{Map, Value as JsonValue};
-use std::collections::HashMap;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
@@ -507,27 +506,8 @@ impl Drop for SqlServerConnection {
   }
 }
 
-/// 按连接串登记的 SQL Server 连接池。和插件的 `DbInstances` 是同一个角色。
-#[derive(Default)]
-pub struct SqlServerRegistry {
-  pools: Mutex<HashMap<String, Arc<SqlServerPool>>>,
-}
-
-impl SqlServerRegistry {
-  pub fn insert(&self, key: String, pool: Arc<SqlServerPool>) {
-    if let Ok(mut pools) = self.pools.lock() {
-      pools.insert(key, pool);
-    }
-  }
-
-  pub fn get(&self, key: &str) -> Option<Arc<SqlServerPool>> {
-    self.pools.lock().ok().and_then(|pools| pools.get(key).cloned())
-  }
-
-  pub fn remove(&self, key: &str) -> bool {
-    self.pools.lock().ok().and_then(|mut pools| pools.remove(key)).is_some()
-  }
-}
+/// 按连接串登记的 SQL Server 连接池
+pub type SqlServerRegistry = crate::services::pool_registry::PoolRegistry<SqlServerPool>;
 
 impl SqlServerPool {
   pub fn target(&self) -> &SqlServerTarget {

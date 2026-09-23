@@ -9,6 +9,7 @@
 //! 查询一律带占位符，表名与 schema 由调用方绑定，不做字符串拼接。
 
 use crate::models::DatabaseType;
+use crate::services::oracle::{oracle_current_schema, oracle_type_name};
 use crate::services::sql_server::sql_server_type_name;
 use serde::Serialize;
 
@@ -90,6 +91,16 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       check_constraints: Some(SQL_SERVER_CHECK_CONSTRAINTS),
       ddl: Some(DdlQuery::Bound { sql: SQL_SERVER_VIEW_DEFINITION }),
       triggers: SQL_SERVER_TRIGGERS,
+      parameter_count: 2,
+    }),
+    // Oracle 有权威的建表语句（`DBMS_METADATA.GET_DDL`），表和视图都给
+    DatabaseType::Oracle => Some(SchemaMetadataQueries {
+      columns: ORACLE_COLUMNS,
+      indexes: ORACLE_INDEXES,
+      foreign_keys: ORACLE_FOREIGN_KEYS,
+      check_constraints: Some(ORACLE_CHECK_CONSTRAINTS),
+      ddl: Some(DdlQuery::Bound { sql: ORACLE_DDL }),
+      triggers: ORACLE_TRIGGERS,
       parameter_count: 2,
     }),
     _ => None,
@@ -643,6 +654,154 @@ WHERE o.name = @P1
 ORDER BY tr.name
 "#;
 
+// ---------------------------------------------------------------------------
+// Oracle。三处和另外几家不同，每一段都照着做：
+// - 列名一律写成带引号的小写别名：Oracle 把不带引号的别名折成大写，而前端按
+//   `column_name` 这样的小写键读。
+// - 标志位与序号 `CAST` 成带精度的 NUMBER：不带精度的 NUMBER 按小数传，到前端
+//   是字符串 "0"，`Boolean("0")` 是 true。
+// - `@P2` 那个 schema 参数在这里是 `:2`，不给就落在当前 schema。
+// ---------------------------------------------------------------------------
+
+/// `DATA_DEFAULT` 是 LONG：不能拿去做任何运算，只能原样取出来（取是可以的）。
+/// 自增列与虚拟列都算「数据库产生的值」。`HIDDEN_COLUMN` 排掉函数索引背后的
+/// 隐藏列（`SYS_NC00005$`）
+const ORACLE_COLUMNS: &str = concat!(
+  r#"
+SELECT
+  c.column_name AS "column_name",
+  "#,
+  oracle_type_name!(),
+  r#" AS "data_type",
+  CAST(CASE WHEN c.nullable = 'Y' THEN 1 ELSE 0 END AS NUMBER(1)) AS "is_nullable",
+  c.data_default AS "column_default",
+  CAST(CASE WHEN pk.position IS NULL THEN 0 ELSE 1 END AS NUMBER(1)) AS "is_primary_key",
+  CAST(pk.position AS NUMBER(10)) AS "primary_key_ordinal",
+  CAST(CASE WHEN c.identity_column = 'YES' OR c.virtual_column = 'YES' THEN 1 ELSE 0 END
+    AS NUMBER(1)) AS "is_generated",
+  CAST(NULL AS VARCHAR2(1)) AS "collation",
+  cm.comments AS "comment",
+  CAST(NULL AS VARCHAR2(1)) AS "column_extra"
+FROM all_tab_cols c
+LEFT JOIN (
+  SELECT cc.owner, cc.table_name, cc.column_name, cc.position
+  FROM all_constraints k
+  JOIN all_cons_columns cc ON cc.owner = k.owner AND cc.constraint_name = k.constraint_name
+  WHERE k.constraint_type = 'P'
+) pk ON pk.owner = c.owner AND pk.table_name = c.table_name AND pk.column_name = c.column_name
+LEFT JOIN all_col_comments cm
+  ON cm.owner = c.owner AND cm.table_name = c.table_name AND cm.column_name = c.column_name
+WHERE c.table_name = :1
+  AND c.owner = COALESCE(:2, "#,
+  oracle_current_schema!(),
+  r#")
+  AND c.hidden_column = 'NO'
+ORDER BY c.column_id
+"#
+);
+
+/// 函数索引的列在目录里是隐藏列名（`SYS_NC00005$`），换成 NULL，前端显示为
+/// 「表达式」——表达式原文在 `ALL_IND_EXPRESSIONS` 里，是 LONG，取不进这一段
+const ORACLE_INDEXES: &str = concat!(
+  r#"
+SELECT
+  i.index_name AS "index_name",
+  CASE WHEN ic.column_name LIKE 'SYS\_NC%$' ESCAPE '\' THEN NULL ELSE ic.column_name END
+    AS "column_name",
+  CAST(ic.column_position AS NUMBER(10)) AS "ordinal",
+  CAST(CASE WHEN i.uniqueness = 'UNIQUE' THEN 1 ELSE 0 END AS NUMBER(1)) AS "is_unique",
+  CAST(CASE WHEN k.constraint_name IS NULL THEN 0 ELSE 1 END AS NUMBER(1)) AS "is_primary",
+  CAST(0 AS NUMBER(1)) AS "is_partial",
+  CAST(CASE WHEN i.status IN ('VALID', 'N/A') THEN 1 ELSE 0 END AS NUMBER(1)) AS "is_valid",
+  LOWER(i.index_type) AS "method"
+FROM all_indexes i
+JOIN all_ind_columns ic ON ic.index_owner = i.owner AND ic.index_name = i.index_name
+LEFT JOIN all_constraints k
+  ON k.owner = i.table_owner AND k.index_name = i.index_name AND k.constraint_type = 'P'
+WHERE i.table_name = :1
+  AND i.table_owner = COALESCE(:2, "#,
+  oracle_current_schema!(),
+  r#")
+ORDER BY i.index_name, ic.column_position
+"#
+);
+
+/// Oracle 没有 ON UPDATE 动作，写成和别家「没写」时一样的 NO ACTION
+const ORACLE_FOREIGN_KEYS: &str = concat!(
+  r#"
+SELECT
+  c.constraint_name AS "constraint_name",
+  CAST(cc.position AS NUMBER(10)) AS "ordinal",
+  cc.column_name AS "column_name",
+  rc.owner AS "referenced_schema",
+  rc.table_name AS "referenced_table",
+  rcc.column_name AS "referenced_column",
+  'NO ACTION' AS "on_update",
+  c.delete_rule AS "on_delete"
+FROM all_constraints c
+JOIN all_cons_columns cc ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name
+JOIN all_constraints rc ON rc.owner = c.r_owner AND rc.constraint_name = c.r_constraint_name
+JOIN all_cons_columns rcc
+  ON rcc.owner = rc.owner AND rcc.constraint_name = rc.constraint_name
+ AND rcc.position = cc.position
+WHERE c.constraint_type = 'R'
+  AND c.table_name = :1
+  AND c.owner = COALESCE(:2, "#,
+  oracle_current_schema!(),
+  r#")
+ORDER BY c.constraint_name, cc.position
+"#
+);
+
+/// 每个 NOT NULL 列在 Oracle 里都是一条系统命名的检查约束（`"ID" IS NOT NULL`），
+/// 列出来只是把「可空」那一栏又说一遍，排掉。`SEARCH_CONDITION_VC` 是 12c 起
+/// 给的 VARCHAR2 版本，原来那列是 LONG
+const ORACLE_CHECK_CONSTRAINTS: &str = concat!(
+  r#"
+SELECT
+  c.constraint_name AS "constraint_name",
+  c.search_condition_vc AS "expression"
+FROM all_constraints c
+WHERE c.constraint_type = 'C'
+  AND c.table_name = :1
+  AND c.owner = COALESCE(:2, "#,
+  oracle_current_schema!(),
+  r#")
+  AND NOT (c.generated = 'GENERATED NAME' AND c.search_condition_vc LIKE '"%" IS NOT NULL')
+ORDER BY c.constraint_name
+"#
+);
+
+const ORACLE_DDL: &str = concat!(
+  r#"
+SELECT DBMS_METADATA.GET_DDL(o.object_type, o.object_name, o.owner) AS "sql"
+FROM all_objects o
+WHERE o.object_name = :1
+  AND o.owner = COALESCE(:2, "#,
+  oracle_current_schema!(),
+  r#")
+  AND o.object_type IN ('TABLE', 'VIEW')
+"#
+);
+
+/// 触发器体在 `TRIGGER_BODY` 里是 LONG，而且不带头部；`GET_DDL` 给的是完整的
+/// `CREATE OR REPLACE TRIGGER ...`
+const ORACLE_TRIGGERS: &str = concat!(
+  r#"
+SELECT
+  t.trigger_name AS "trigger_name",
+  t.trigger_type AS "timing",
+  t.triggering_event AS "event",
+  DBMS_METADATA.GET_DDL('TRIGGER', t.trigger_name, t.owner) AS "definition"
+FROM all_triggers t
+WHERE t.table_name = :1
+  AND t.table_owner = COALESCE(:2, "#,
+  oracle_current_schema!(),
+  r#")
+ORDER BY t.trigger_name
+"#
+);
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -676,6 +835,11 @@ mod tests {
     if dollars > 0 {
       return dollars;
     }
+    // Oracle 的 `:1`、`:2`
+    let colons = numbered(':');
+    if colons > 0 {
+      return colons;
+    }
     let numbered_marks = numbered('?');
     if numbered_marks > 0 {
       return numbered_marks;
@@ -693,9 +857,13 @@ mod tests {
   /// PostgreSQL 上整个「结构」页一条索引都显示不出来。
   #[test]
   fn every_bound_query_of_a_dialect_binds_parameter_count_values() {
-    for db_type in
-      [DatabaseType::PostgreSQL, DatabaseType::MySQL, DatabaseType::SQLite, DatabaseType::SqlServer]
-    {
+    for db_type in [
+      DatabaseType::PostgreSQL,
+      DatabaseType::MySQL,
+      DatabaseType::SQLite,
+      DatabaseType::SqlServer,
+      DatabaseType::Oracle,
+    ] {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       let expected = usize::from(queries.parameter_count);
 
@@ -792,9 +960,13 @@ mod tests {
   /// 而没有任何一处会说这是为什么。
   #[test]
   fn every_index_query_reports_whether_the_index_can_identify_a_row() {
-    for db_type in
-      [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite, DatabaseType::SqlServer]
-    {
+    for db_type in [
+      DatabaseType::MySQL,
+      DatabaseType::PostgreSQL,
+      DatabaseType::SQLite,
+      DatabaseType::SqlServer,
+      DatabaseType::Oracle,
+    ] {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       for column in ["is_unique", "is_primary", "is_partial", "is_valid"] {
         assert!(
@@ -815,9 +987,13 @@ mod tests {
   /// 那个方言的自增主键表就再也插不进一行——而错误信息只说「主键必填」。
   #[test]
   fn every_column_query_returns_the_same_shape() {
-    for db_type in
-      [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite, DatabaseType::SqlServer]
-    {
+    for db_type in [
+      DatabaseType::MySQL,
+      DatabaseType::PostgreSQL,
+      DatabaseType::SQLite,
+      DatabaseType::SqlServer,
+      DatabaseType::Oracle,
+    ] {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       for alias in [
         "column_name",
@@ -870,9 +1046,13 @@ mod tests {
 
   #[test]
   fn supported_databases_bind_parameters_instead_of_interpolating() {
-    for db_type in
-      [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite, DatabaseType::SqlServer]
-    {
+    for db_type in [
+      DatabaseType::MySQL,
+      DatabaseType::PostgreSQL,
+      DatabaseType::SQLite,
+      DatabaseType::SqlServer,
+      DatabaseType::Oracle,
+    ] {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       for sql in [
         Some(queries.columns),
@@ -885,7 +1065,7 @@ mod tests {
       .flatten()
       {
         assert!(
-          sql.contains('?') || sql.contains('$') || sql.contains("@P1"),
+          sql.contains('?') || sql.contains('$') || sql.contains("@P1") || sql.contains(":1"),
           "{:?} 的目录查询必须带占位符，不能把表名拼进字符串: {}",
           db_type,
           sql

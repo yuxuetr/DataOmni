@@ -12,7 +12,8 @@ export const SUPPORTED_DATABASE_TYPES: ReadonlySet<DatabaseType> = new Set([
   DatabaseType.SQLite,
   DatabaseType.MySQL,
   DatabaseType.PostgreSQL,
-  DatabaseType.SqlServer
+  DatabaseType.SqlServer,
+  DatabaseType.Oracle
 ]);
 
 /** sqlx 的 driver feature 名到本项目类型的对应 */
@@ -24,7 +25,8 @@ export const SQLX_DRIVER_FEATURES: Readonly<Record<string, DatabaseType>> = {
 
 /** 不走 sqlx 的驱动：`Cargo.toml` 里有这个依赖，对应的类型就连得上 */
 export const STANDALONE_DRIVER_CRATES: Readonly<Record<string, DatabaseType>> = {
-  tiberius: DatabaseType.SqlServer
+  tiberius: DatabaseType.SqlServer,
+  oracle: DatabaseType.Oracle
 };
 
 export function isDatabaseTypeSupported(type: DatabaseType): boolean {
@@ -46,11 +48,17 @@ export type PendingFeature =
   | 'import'
   | 'streamingExport';
 
-/**
- * SQL Server 的四个阶段已经全部接上（TODOs 4.2）。清单空着，机制留着：
- * 下一个分阶段接入的类型照同样的办法登记。
- */
-export const PENDING_FEATURES: Readonly<Partial<Record<DatabaseType, readonly PendingFeature[]>>> = {};
+/** SQL Server 的四个阶段已经全部接上；Oracle 在第一阶段（TODOs 4.2） */
+export const PENDING_FEATURES: Readonly<Partial<Record<DatabaseType, readonly PendingFeature[]>>> = {
+  [DatabaseType.Oracle]: [
+    'dataEditing',
+    'transactions',
+    'explain',
+    'structureEditing',
+    'import',
+    'streamingExport'
+  ]
+};
 
 /** `dbType` 收字符串：调用方手里常常只有方言名（`'sqlserver'`），它与类型值同形 */
 export function supportsFeature(dbType: string, feature: PendingFeature): boolean {

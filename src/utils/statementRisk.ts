@@ -146,9 +146,12 @@ export function classifyBatchRisk(sql: string, dialect?: SqlDialect): StatementR
   const [first, second, third, fourth] = topLevelKeywords(sql);
   const definesRoutine = (first === 'CREATE' || first === 'ALTER')
     && (ROUTINE_KINDS.has(second) || (second === 'OR' && ROUTINE_KINDS.has(fourth ?? third)));
-  const parts = definesRoutine ? [sql] : splitSqlStatements(sql, dialect);
+  // 匿名块（BEGIN … END）此刻就执行，要看里面的每一条
+  const parts = definesRoutine ? [sql] : splitSqlStatements(sql, dialect, { plsqlBlocks: false });
   return parts
-    .map(classifyStatementRisk)
+    // 块开头的 `BEGIN`（T-SQL 还有 `BEGIN TRY`）不是语句本身：`BEGIN DELETE FROM t`
+    // 按第一个词定级就成了带条件的写入
+    .map((part) => classifyStatementRisk(part.replace(/^\s*(?:BEGIN(?:\s+(?:TRY|CATCH))?\b\s*)+/i, '')))
     .reduce<StatementRisk>(
       (worst, risk) => (RISK_ORDER.indexOf(risk) > RISK_ORDER.indexOf(worst) ? risk : worst),
       'read'

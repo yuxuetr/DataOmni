@@ -67,6 +67,10 @@ function unquoteIdentifier(raw: string, dialect: SqlIdentifierDialect): string {
   if (raw.startsWith('[')) {
     return raw.slice(1, -1).split(']]').join(']');
   }
+  // Oracle 反过来：不带引号的折成大写，`FROM orders` 指的是目录里的 ORDERS
+  if (dialect === 'oracle') {
+    return raw.toUpperCase();
+  }
   return dialect === 'postgresql' ? raw.toLowerCase() : raw;
 }
 

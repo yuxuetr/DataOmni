@@ -1568,6 +1568,96 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
   - 仍然不做：「真的执行一遍」的执行计划（`SET STATISTICS XML` 的实际计划是
     最后一个结果集，要改结果流的读法）；`sql_variant` / CLR 类型的列（驱动
     `todo!()`，已接住并给出 `CAST` 写法）；money 超过约 9×10¹¹ 的精度。
+- [ ] **Oracle**（2026-09-23 立项，用户决定「打包进应用」，不要求用户自己装客户端）
+  - 两条路：
+    (a) `oracle` crate（ODPI-C，300 万下载，成熟）——运行时 dlopen Oracle Instant
+    Client，要把 Instant Client 按平台放进安装包（Basic Light 每个平台几十 MB），
+    还要核对 Oracle 的再分发条款。
+    (b) `oracle-rs` 0.1.7（纯 Rust 的 thin 协议，2025-12 首发，1.3 万下载）——
+    不需要任何客户端库，打包问题整个消失；风险是年轻。
+  - 先做实验再选：cu 上起 `gvenzl/oracle-free:23-slim`（和 SQL Server 不同时开，
+    内存不够），拿 (b) 跑一遍会咬人的那几处——类型往返（NUMBER 的精度与标度、
+    DATE / TIMESTAMP / 带时区、CLOB / BLOB / RAW、中文）、错误码与位置、影响行数、
+    事务、超时与取消（被放弃的语句在服务端停不停）、结果集元数据。(b) 过了就用
+    (b)，不打包任何东西；过不了再走 (a)，并把过不了的那一条写在这里。
+  - 接入沿用 SQL Server 那条路：后端自己持有连接，`PENDING_FEATURES` 分阶段登记，
+    表单那一格标「有缺口」。
+  - **实验结果：(b) 不收。** `oracle-rs` 0.1.7 对 Oracle Free 23ai 连得上、
+    `SELECT 1 FROM dual` 正常，但**任何一条服务端错误都会把连接弄断，而且错误码
+    丢了**：`SELECT * FROM no_such_table` 报「Oracle closed the connection without
+    providing error details」（应当是 ORA-00942），之后这条连接上每条语句都是
+    `ConnectionClosed`；`DROP TABLE` 一张不存在的表报 `code: 0` 后连接停在
+    `ConnectionNotReady`。在 cu 上不经 SSH 隧道直连复现，排除了隧道（驱动读了
+    错误位置但丢弃，协商结果 `supports_oob: false`，像是 break/reset 标记没处理）。
+    编辑器里写错一条 SQL 是最常见的事，这一条过不了就不用往下测了。
+    重估条件：它修掉这个之后，同一个探针（scratchpad `oracle-probe`，`errors`）
+    三条都返回 ORA 码且连接不断。
+  - **(a) 的实验（2026-09-23，`oracle` 0.6.3 + Instant Client 23.26 Basic Light）全过**：
+    错误带 ORA 码与**出错位置**（942 在 14、936 在 25），出错后连接照常可用；
+    类型全能往返（中文、NUMBER(38)、BINARY_DOUBLE、DATE、TIMESTAMP(6)、带时区、
+    CLOB、BLOB、RAW、BOOLEAN、INTERVAL）；`NUMBER(10,2)` 的 10.50 读成 `10.5`，
+    要按列的标度补（和 PostgreSQL 那次同一类）；读不加锁（多版本读，别的会话看不见
+    未提交的改动，也不等锁）；**取消是真的取消**：CPU 密集的查询上 `break_execution`
+    1.5 秒打断、服务端那条停了、连接还能用；调用超时（`set_call_timeout`）同样到点
+    就停、服务端也停。例外：`DBMS_SESSION.SLEEP` 不理会 break。
+  - 打包的三件事，已在两个平台上验过：
+    (1) **许可**：Instant Client 23.26 的 `BASIC_LITE_LICENSE` 是「Oracle Free
+    Distribution, Hosting, and Use Terms」，允许原样再分发，条件是不向用户收费、
+    随包附上这份许可、不改文件。**不能改**意味着不能给它的 .so 加 RPATH。
+    (2) **Linux 上 libclntsh 的依赖找不到**：ODPI-C 按目录 dlopen 到了 libclntsh，
+    但它的 NEEDED `libnnz.so` 走系统搜索路径；`libnnz.so` 没有 SONAME，预先
+    dlopen 也配不上。解法是在**我们自己的可执行文件**上写 `DT_RPATH`
+    （`--disable-new-dtags`，RPATH 对间接依赖也生效）：`$ORIGIN/../lib/DataOmni/
+    instantclient`，deb 与 AppImage 的布局都是 `usr/bin` 对 `usr/lib/<产品名>`。
+    验过：不设 `LD_LIBRARY_PATH` 能连、ORA 消息正常。另要系统的 `libaio`
+    （Ubuntu 24.04 起叫 `libaio1t64`），deb 声明依赖。
+    (3) **macOS**：它自己用 `@rpath`，ODPI-C 的 `oracle_client_lib_dir` 就够。
+    最小文件集：libclntsh、libclntshcore、libnnz、libociicus，外加 **fips / fips1403 /
+    legacy 三个加密模块**——少了它们报 ORA-28041（认证协议内部错误），而错误里
+    一个字也没提缺文件。macOS 这一套 83 MB，Linux 约 135 MB（libclntsh 本身 100 MB）。
+    Windows 没有环境验证，配置照同样的办法写，标成未验证。
+  - 分阶段，和 SQL Server 一样每一阶段都能用、都提交，表单那一格标「有缺口」：
+    1. 打包（取 Instant Client 的脚本、资源、RPATH、deb 依赖；缺客户端时说清楚）、
+       连接（测试 / 连上 / 断开、SSH 隧道；TLS 要钱包，先不做）、编辑器执行
+       （结果上限、调用超时、取消走 break、错误码与位置）、对象树、表数据只读浏览
+       （`OFFSET … FETCH`）、结构页（`DBMS_METADATA.GET_DDL` 给权威定义）、补全、
+       ER 图、会话位置、格式化（`plsql`）
+    2. 表格编辑、事务（Oracle 没有 BEGIN：事务随第一条 DML 开始，自动提交是客户端
+       开关；状态用 `DBMS_TRANSACTION.LOCAL_TRANSACTION_ID` 问服务端；DDL 隐式提交）、
+       风险判断
+    3. 执行计划（`EXPLAIN PLAN` + `DBMS_XPLAN`）、改结构、CSV 导入、整表导出
+  - **第一阶段（2026-09-23）**：后端 `services/oracle.rs`（阻塞驱动放 `spawn_blocking`，
+    结果集过通道、限额与分批沿用另外几家的那一套；future 被丢掉时 `break_execution`），
+    五套目录查询，前端方言（引号、`OFFSET … FETCH`、`FETCH FIRST`、PLSQL 补全与
+    `plsql` 格式化、schema 一层），表单那一格，`PENDING_FEATURES` 登记另外六项。
+    打包：`scripts/fetch-oracle-client.sh` 取最小文件集到 `src-tauri/vendor/`（不进仓库），
+    `tauri.oracle.conf.json` 只在打包时合并进来（`bun run package`）——写进主配置的话，
+    `tauri_build` 在编译期就要求资源存在，CI 与每个没取过客户端的人都编不过。
+    真库用例 6 条（`tests/oracle_smoke.rs`）。这一阶段真库上抓到、用例钉住的：
+    (1) **驱动把文本绑成 NVARCHAR2**：`COALESCE(:2, SYS_CONTEXT(...))` 报 ORA-12704，
+    `table_name = :1` 还会让服务端把字典的列转成 NVARCHAR2、用不上索引。目录查询的
+    文本参数改绑 VARCHAR2。
+    (2) **Oracle 把不带引号的别名折成大写**，前端按小写键读：目录查询一律 `AS "column_name"`，
+    表数据页的 `COUNT(*) AS total` 也要按方言引用，否则行数恒为 0。
+    (3) 标志位要 `CAST(... AS NUMBER(1))`：不带精度的 NUMBER 按小数传，到前端是 "0"，
+    `Boolean("0")` 是 true。
+    (4) **macOS 上 ODPI-C 只认 `libclntsh.dylib`**，那是指向 `…23.1` 的符号链接；打包会把
+    符号链接当文件再拷一份（多 56 MB），只留改过名的那份又会崩（依赖它的 libociicus
+    按原名找，SIGSEGV）。安装包里只放原样的文件，第一次加载时在临时目录铺一层
+    符号链接。反向验证：去掉 break → 超时用例红在「那条语句还在服务端跑」。
+  - 已知不做（这一阶段）：TLS（TCPS 要钱包；选了 TLS 由后端拒绝，免得明文连上却显示
+    加密）、按 SID 连接、事务开关（这一阶段每条非查询语句成功就提交）；Windows 的
+    Instant Client 文件集照 Linux 的对应物挑，没有验证过。
+  - 打包版（Linux deb，带 Instant Client，58.7 MB，`Depends: libaio1 | libaio1t64`）上
+    连 Oracle Free 23ai 渲染过：表单（服务名、有缺口说明、没有 TLS 一段）、对象树、
+    结构页（函数索引、复合外键、检查约束、触发器、定义）、表数据（`10.50`、38 位整数、
+    中文）、错误面板（ORA-00942 第 1 行第 16 列）、PL/SQL 块以 `/` 分开。渲染又抓到三处：
+    结构页等最慢的一段（`DBMS_METADATA` 冷的时候 14 秒）才画——定义原文改成单独等；
+    PL/SQL 块报「影响 1 行」（驱动恒报 1）；编辑器结果的只读原因说「索引读不到」，
+    其实是没把不带引号的表名折成大写（阶段二的表格编辑会因此认不出表）。
+  - 观察到但没有归因：冷启动之后第一条匿名块在 `DBMS_METADATA` 同时跑着时超时
+    （30 秒），热了之后 120 毫秒；当时容器内存 2.15 / 2.44 GB、宿主可用不到 1 GB。
+    重估条件：在内存宽裕的 Oracle 上复现。
 - [ ] 为每个新数据库补齐连接、元数据、执行、分页、导入导出和测试
 - [ ] 新数据库达到核心验收标准后才能标记为“已支持”
 - [x] ~~前置重构：前端直连收进后端命令~~ **评估完成（2026-09-23）：当前版本不做，

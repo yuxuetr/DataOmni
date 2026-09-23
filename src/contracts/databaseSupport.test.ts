@@ -80,7 +80,8 @@ describe('数据库类型支持范围', () => {
 describe('分阶段接入的类型', () => {
   const README = readFileSync(fileURLToPath(new URL('../../README.md', import.meta.url)), 'utf8');
   const MATRIX_NAMES: Partial<Record<DatabaseType, string>> = {
-    [DatabaseType.SqlServer]: 'SQL Server'
+    [DatabaseType.SqlServer]: 'SQL Server',
+    [DatabaseType.Oracle]: 'Oracle'
   };
 
   it('README 兼容性矩阵把它们标成「有缺口」，全都做完之后就不再是', () => {

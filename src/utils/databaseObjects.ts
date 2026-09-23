@@ -60,7 +60,10 @@ export interface ObjectTreeNode {
  */
 export function showsSchemaLevel(dbType: DatabaseType): boolean {
   // SQL Server 与 PostgreSQL 一样：一个库里有 dbo 和业务 schema，schema 是真实维度
-  return dbType === DatabaseType.PostgreSQL || dbType === DatabaseType.SqlServer;
+  // Oracle 的 schema 就是用户：一个连接能看到别的用户授给它的表
+  return dbType === DatabaseType.PostgreSQL
+    || dbType === DatabaseType.SqlServer
+    || dbType === DatabaseType.Oracle;
 }
 
 /** 表、视图、物化视图有行，能用表视图打开；函数与序列没有。 */

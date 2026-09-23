@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "vendor/instantclient/": "instantclient/"
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libaio1 | libaio1t64"]
+      }
+    }
+  }
+}

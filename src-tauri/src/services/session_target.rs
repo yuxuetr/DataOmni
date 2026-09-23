@@ -24,6 +24,7 @@ pub fn session_target_query(db_type: &DatabaseType) -> Option<SessionTargetQuery
     DatabaseType::MySQL => Some(SessionTargetQuery { sql: MYSQL_TARGET }),
     DatabaseType::SQLite => Some(SessionTargetQuery { sql: SQLITE_TARGET }),
     DatabaseType::SqlServer => Some(SessionTargetQuery { sql: SQL_SERVER_TARGET }),
+    DatabaseType::Oracle => Some(SessionTargetQuery { sql: ORACLE_TARGET }),
     _ => None,
   }
 }
@@ -73,12 +74,27 @@ SELECT
     THEN 1 ELSE 0 END AS bit) AS read_only
 "#;
 
+/// Oracle 的「库」是可插拔库（PDB）的名字；备库是只读的
+const ORACLE_TARGET: &str = r#"
+SELECT
+  SYS_CONTEXT('USERENV', 'CON_NAME') AS "database_name",
+  SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') AS "schema_name",
+  CAST(CASE WHEN SYS_CONTEXT('USERENV', 'DATABASE_ROLE') LIKE '%STANDBY%' THEN 1 ELSE 0 END
+    AS NUMBER(1)) AS "read_only"
+FROM dual
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
 
-  const SUPPORTED: [DatabaseType; 4] =
-    [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite, DatabaseType::SqlServer];
+  const SUPPORTED: [DatabaseType; 5] = [
+    DatabaseType::MySQL,
+    DatabaseType::PostgreSQL,
+    DatabaseType::SQLite,
+    DatabaseType::SqlServer,
+    DatabaseType::Oracle,
+  ];
 
   #[test]
   fn every_dialect_projects_the_three_columns() {
@@ -86,7 +102,9 @@ mod tests {
       let query = session_target_query(&db_type).expect("supported");
       for alias in ["database_name", "schema_name", "read_only"] {
         assert!(
-          query.sql.contains(&format!("AS {alias}")),
+          // Oracle 的别名带引号：它把不带引号的别名折成大写
+          query.sql.contains(&format!("AS {alias}"))
+            || query.sql.contains(&format!("AS \"{alias}\"")),
           "{db_type:?} 缺少 {alias}：前端按列名取值，少一个就是整列静默为空"
         );
       }

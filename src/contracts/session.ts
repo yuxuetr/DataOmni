@@ -31,7 +31,8 @@ export function createDatabaseSession(
     DatabaseType.MySQL,
     DatabaseType.PostgreSQL,
     DatabaseType.SQLite,
-    DatabaseType.SqlServer
+    DatabaseType.SqlServer,
+    DatabaseType.Oracle
   ].includes(profile.db_type);
   const has = (feature: Parameters<typeof supportsFeature>[1]) =>
     isSupportedRelationalDatabase && supportsFeature(profile.db_type, feature);
@@ -44,7 +45,8 @@ export function createDatabaseSession(
     capabilities: {
       schemas: profile.db_type === DatabaseType.MySQL
         || profile.db_type === DatabaseType.PostgreSQL
-        || profile.db_type === DatabaseType.SqlServer,
+        || profile.db_type === DatabaseType.SqlServer
+        || profile.db_type === DatabaseType.Oracle,
       transactions: has('transactions'),
       cancellation: false,
       explain: has('explain'),

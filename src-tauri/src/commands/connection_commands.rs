@@ -1,4 +1,5 @@
 use crate::models::{ConnectionProfile, DatabaseType};
+use crate::services::oracle::{self, OraclePool, OracleRegistry, OracleTarget};
 use crate::services::{
   sql_server, ssh_tunnel, ConnectionService, SqlServerPool, SqlServerRegistry, SqlServerTarget,
   TunnelRegistry,
@@ -105,6 +106,7 @@ pub async fn test_connection(
   service_state: State<'_, ConnectionServiceState>,
   tunnels: State<'_, TunnelRegistry>,
   sql_server_registry: State<'_, SqlServerRegistry>,
+  oracle_registry: State<'_, OracleRegistry>,
 ) -> Result<String, String> {
   println!("🧪 测试数据库连接: {}", config.name);
 
@@ -143,6 +145,15 @@ pub async fn test_connection(
     let client = sql_server::connect(&target).await.map_err(|error| error.message)?;
     let pool = SqlServerPool::new(target, client).await.map_err(|error| error.message)?;
     sql_server_registry.insert(connection_string.clone(), pool);
+  } else if resolved.db_type == DatabaseType::Oracle {
+    // Oracle 同样由后端持有
+    let reachable = match local_port {
+      Some(port) => resolved.redirected_to("127.0.0.1", port),
+      None => resolved,
+    };
+    let target = OracleTarget::from_profile(&reachable);
+    let connection = oracle::connect(&target).await.map_err(|error| error.message)?;
+    oracle_registry.insert(connection_string.clone(), OraclePool::new(target, connection));
   }
   Ok(connection_string)
 }
@@ -162,6 +173,27 @@ pub async fn sql_server_select(
     )
   })?;
   pool.select(&sql, &params).await
+}
+
+/// Oracle 连接上的目录查询。与 `sql_server_select` 同一个角色、同一种返回形状
+#[tauri::command]
+pub async fn oracle_select(
+  connection_string: String,
+  sql: String,
+  params: Vec<serde_json::Value>,
+  oracle_registry: State<'_, OracleRegistry>,
+) -> Result<Vec<crate::services::QueryRow>, crate::services::QueryError> {
+  let pool = oracle_registry.get(&connection_string).ok_or_else(|| {
+    crate::services::QueryError::message(
+      crate::commands::database_commands::DB_SESSION_NOT_CONNECTED,
+    )
+  })?;
+  pool.select(&sql, &params).await
+}
+
+#[tauri::command]
+pub fn close_oracle(connection_string: String, oracle_registry: State<'_, OracleRegistry>) -> bool {
+  oracle_registry.remove(&connection_string)
 }
 
 /// 断开时把登记的池子去掉。池子里的空闲连接随之关闭；会话连接由

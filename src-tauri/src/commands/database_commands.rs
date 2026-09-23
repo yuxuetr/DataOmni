@@ -15,6 +15,7 @@ use tokio::time::Duration;
 
 pub const QUERY_CANCELLED_CODE: &str = "QUERY_CANCELLED";
 
+use crate::services::oracle::{OracleRegistry, ORACLE_SCHEME};
 use crate::services::query_executor::PoolRef;
 use crate::services::{QueryError, SqlServerRegistry, TunnelRegistry, SQL_SERVER_SCHEME};
 
@@ -48,6 +49,7 @@ pub const SESSION_TARGET_UNSUPPORTED: &str = "DATAOMNI_SESSION_TARGET_UNSUPPORTE
 enum ResolvedPool<'a> {
   Sqlx(tokio::sync::RwLockReadGuard<'a, HashMap<String, tauri_plugin_sql::DbPool>>, String),
   SqlServer(std::sync::Arc<crate::services::SqlServerPool>),
+  Oracle(std::sync::Arc<crate::services::oracle::OraclePool>),
 }
 
 impl ResolvedPool<'_> {
@@ -55,7 +57,14 @@ impl ResolvedPool<'_> {
     connection_string: String,
     database_instances: &'a DbInstances,
     sql_server: &SqlServerRegistry,
+    oracle: &OracleRegistry,
   ) -> Result<ResolvedPool<'a>, QueryError> {
+    if connection_string.starts_with(ORACLE_SCHEME) {
+      return oracle
+        .get(&connection_string)
+        .map(ResolvedPool::Oracle)
+        .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED));
+    }
     if connection_string.starts_with(SQL_SERVER_SCHEME) {
       return sql_server
         .get(&connection_string)
@@ -72,6 +81,7 @@ impl ResolvedPool<'_> {
         .map(PoolRef::Sqlx)
         .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED)),
       Self::SqlServer(pool) => Ok(PoolRef::SqlServer(pool)),
+      Self::Oracle(pool) => Ok(PoolRef::Oracle(pool)),
     }
   }
 }
@@ -141,6 +151,7 @@ pub async fn execute_query(
   cancellation_state: State<'_, QueryCancellationState>,
   query_session_state: State<'_, QuerySessionState>,
   sql_server: State<'_, SqlServerRegistry>,
+  oracle: State<'_, OracleRegistry>,
 ) -> Result<QueryExecutionSummary, QueryError> {
   if !(100..=3_600_000).contains(&request.timeout_ms) {
     return Err(QueryError::message(TIMEOUT_OUT_OF_RANGE));
@@ -166,7 +177,8 @@ pub async fn execute_query(
   };
 
   let resolved =
-    ResolvedPool::resolve(connection_string.clone(), &database_instances, &sql_server).await?;
+    ResolvedPool::resolve(connection_string.clone(), &database_instances, &sql_server, &oracle)
+      .await?;
   let pool = resolved.pool_ref()?;
   let receiver =
     cancellation_state.register(&request.execution_id).await.map_err(QueryError::message)?;
@@ -208,6 +220,7 @@ pub async fn execute_write_batch(
   tunnels: State<'_, TunnelRegistry>,
   database_instances: State<'_, DbInstances>,
   sql_server: State<'_, SqlServerRegistry>,
+  oracle: State<'_, OracleRegistry>,
 ) -> Result<Vec<u64>, WriteBatchError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&connection_id).await;
@@ -220,9 +233,10 @@ pub async fn execute_write_batch(
     service.resolve_connection_string(&connection_id, tunnel_port).map_err(batch_error)?
   };
 
-  let resolved = ResolvedPool::resolve(connection_string, &database_instances, &sql_server)
-    .await
-    .map_err(|error| WriteBatchError { statement_index: 0, error })?;
+  let resolved =
+    ResolvedPool::resolve(connection_string, &database_instances, &sql_server, &oracle)
+      .await
+      .map_err(|error| WriteBatchError { statement_index: 0, error })?;
   let pool = resolved.pool_ref().map_err(|error| WriteBatchError { statement_index: 0, error })?;
   write_batch::execute_write_batch(pool, &statements).await
 }
@@ -248,6 +262,8 @@ pub struct ExportRequest {
 /// 不走 `execute_query`：那条命令按「结果要回到界面上」设计，行数与字节都被
 /// 上限钉死，而整表导出的行数正是未知且可能很大的那一类。这里一行都不进内存，
 /// 也一行都不过 IPC。
+// 参数都是 Tauri 注入的 State，由框架按类型逐个填，合不成一个结构
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn export_query_to_file(
   request: ExportRequest,
@@ -257,6 +273,7 @@ pub async fn export_query_to_file(
   database_instances: State<'_, DbInstances>,
   cancellation_state: State<'_, QueryCancellationState>,
   sql_server: State<'_, SqlServerRegistry>,
+  oracle: State<'_, OracleRegistry>,
 ) -> Result<ExportSummary, QueryError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&request.connection_id).await;
@@ -271,7 +288,8 @@ pub async fn export_query_to_file(
       .map_err(QueryError::message)?
   };
 
-  let resolved = ResolvedPool::resolve(connection_string, &database_instances, &sql_server).await?;
+  let resolved =
+    ResolvedPool::resolve(connection_string, &database_instances, &sql_server, &oracle).await?;
   let pool = resolved.pool_ref()?;
 
   // 取消与查询共用同一个登记表：取消的语义、重复 ID 的检查、结束时的清理
@@ -384,6 +402,7 @@ pub async fn import_csv_file(
   cancellation_state: State<'_, QueryCancellationState>,
   pause_state: State<'_, ImportPauseState>,
   sql_server: State<'_, SqlServerRegistry>,
+  oracle: State<'_, OracleRegistry>,
 ) -> Result<ImportSummary, QueryError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&request.connection_id).await;
@@ -398,7 +417,8 @@ pub async fn import_csv_file(
       .map_err(QueryError::message)?
   };
 
-  let resolved = ResolvedPool::resolve(connection_string, &database_instances, &sql_server).await?;
+  let resolved =
+    ResolvedPool::resolve(connection_string, &database_instances, &sql_server, &oracle).await?;
   let pool = resolved.pool_ref()?;
 
   let mut receiver =
@@ -515,6 +535,7 @@ pub async fn explain_query(
   database_instances: State<'_, DbInstances>,
   query_session_state: State<'_, QuerySessionState>,
   sql_server: State<'_, SqlServerRegistry>,
+  oracle: State<'_, OracleRegistry>,
 ) -> Result<crate::services::explain::QueryPlan, QueryError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&request.connection_id).await;
@@ -540,7 +561,8 @@ pub async fn explain_query(
     crate::services::explain::explain_statement(&db_type, &request.sql, request.analyze)?;
 
   let resolved =
-    ResolvedPool::resolve(connection_string.clone(), &database_instances, &sql_server).await?;
+    ResolvedPool::resolve(connection_string.clone(), &database_instances, &sql_server, &oracle)
+      .await?;
   let pool = resolved.pool_ref()?;
   // 走 streaming 而不是 execute：要带上 explain_plan。MySQL 在预处理
   // `EXPLAIN FORMAT=JSON` 时报告 0 列，按 describe 的说法走会拿回一个

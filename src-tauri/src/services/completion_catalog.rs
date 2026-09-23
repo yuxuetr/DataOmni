@@ -10,6 +10,7 @@
 //! 再查一次只是多一次往返。
 
 use crate::models::DatabaseType;
+use crate::services::oracle::{oracle_type_name, oracle_user_schemas};
 use crate::services::sql_server::sql_server_type_name;
 use serde::Serialize;
 
@@ -36,6 +37,9 @@ pub fn completion_catalog_query(db_type: &DatabaseType) -> Option<CompletionCata
     }
     DatabaseType::SqlServer => {
       Some(CompletionCatalogQuery { relations: SQL_SERVER_RELATIONS, parameter_count: 0 })
+    }
+    DatabaseType::Oracle => {
+      Some(CompletionCatalogQuery { relations: ORACLE_RELATIONS, parameter_count: 0 })
     }
     _ => None,
   }
@@ -117,12 +121,39 @@ ORDER BY s.name, o.name, c.column_id
 "#
 );
 
+const ORACLE_RELATIONS: &str = concat!(
+  r#"
+SELECT
+  c.owner AS "relation_schema",
+  c.table_name AS "relation_name",
+  CASE WHEN o.object_type = 'VIEW' THEN 'view' ELSE 'table' END AS "relation_kind",
+  c.column_name AS "column_name",
+  "#,
+  oracle_type_name!(),
+  r#" AS "data_type"
+FROM all_tab_columns c
+JOIN all_objects o ON o.owner = c.owner AND o.object_name = c.table_name
+  AND o.object_type IN ('TABLE', 'VIEW')
+JOIN all_users u ON u.username = c.owner
+WHERE "#,
+  oracle_user_schemas!(),
+  r#"
+  AND c.table_name NOT LIKE 'BIN$%'
+ORDER BY c.owner, c.table_name, c.column_id
+"#
+);
+
 #[cfg(test)]
 mod tests {
   use super::*;
 
-  const SUPPORTED: [DatabaseType; 4] =
-    [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite, DatabaseType::SqlServer];
+  const SUPPORTED: [DatabaseType; 5] = [
+    DatabaseType::MySQL,
+    DatabaseType::PostgreSQL,
+    DatabaseType::SQLite,
+    DatabaseType::SqlServer,
+    DatabaseType::Oracle,
+  ];
 
   #[test]
   fn declared_parameter_count_matches_the_placeholders() {
@@ -143,7 +174,9 @@ mod tests {
       for alias in ["relation_schema", "relation_name", "relation_kind", "column_name", "data_type"]
       {
         assert!(
-          query.relations.contains(&format!("AS {alias}")),
+          // Oracle 的别名带引号：它把不带引号的别名折成大写
+          query.relations.contains(&format!("AS {alias}"))
+            || query.relations.contains(&format!("AS \"{alias}\"")),
           "{db_type:?} 缺少 {alias}：前端按列名取值，少一个就是整列静默为空"
         );
       }

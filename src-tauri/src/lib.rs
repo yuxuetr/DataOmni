@@ -29,9 +29,16 @@ pub fn run() {
     .manage(services::QuerySessionState::default())
     .manage(services::TunnelRegistry::default())
     .manage(services::SqlServerRegistry::default())
-    .setup(|_app| {
+    .manage(services::oracle::OracleRegistry::default())
+    .setup(|app| {
       // 启动日志留着：窗口起不来时，这一行是唯一能说明进程到底跑没跑的证据
       println!("🎯 DataOmni 启动");
+      // 安装包把 Instant Client 放在资源目录的 `instantclient` 下（见
+      // `scripts/fetch-oracle-client.sh`）；只记下位置，第一次连 Oracle 时才加载
+      use tauri::Manager;
+      if let Ok(resources) = app.path().resource_dir() {
+        services::oracle::set_client_dir(resources.join("instantclient"));
+      }
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![
@@ -45,6 +52,8 @@ pub fn run() {
       close_ssh_tunnel,
       sql_server_select,
       close_sql_server,
+      oracle_select,
+      close_oracle,
       // 数据库操作命令
       execute_query,
       execute_write_batch,

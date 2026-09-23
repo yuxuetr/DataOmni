@@ -8,6 +8,7 @@
 //! `public.orders` 和 `billing.orders` 两张不同的表，只按名字会把它们画成一个。
 
 use crate::models::DatabaseType;
+use crate::services::oracle::{oracle_type_name, oracle_user_schemas};
 use crate::services::sql_server::sql_server_type_name;
 use serde::Serialize;
 
@@ -44,6 +45,11 @@ pub fn er_diagram_queries(db_type: &DatabaseType) -> Option<ErDiagramQueries> {
     DatabaseType::SqlServer => Some(ErDiagramQueries {
       columns: SQL_SERVER_COLUMNS,
       foreign_keys: SQL_SERVER_FOREIGN_KEYS,
+      parameter_count: 0,
+    }),
+    DatabaseType::Oracle => Some(ErDiagramQueries {
+      columns: ORACLE_COLUMNS,
+      foreign_keys: ORACLE_FOREIGN_KEYS,
       parameter_count: 0,
     }),
     _ => None,
@@ -228,15 +234,75 @@ WHERE o.is_ms_shipped = 0
 ORDER BY s.name, o.name, fk.name, fkc.constraint_column_id
 "#;
 
+/// Oracle：整库的表，照另外几家的做法只要表不要视图；系统 schema 排掉
+const ORACLE_COLUMNS: &str = concat!(
+  r#"
+SELECT
+  c.owner AS "table_schema",
+  c.table_name AS "table_name",
+  c.column_name AS "column_name",
+  "#,
+  oracle_type_name!(),
+  r#" AS "data_type",
+  CAST(c.column_id AS NUMBER(10)) AS "ordinal",
+  CAST(CASE WHEN pk.column_name IS NULL THEN 0 ELSE 1 END AS NUMBER(1)) AS "is_primary_key",
+  CAST(CASE WHEN c.nullable = 'Y' THEN 1 ELSE 0 END AS NUMBER(1)) AS "is_nullable"
+FROM all_tab_columns c
+JOIN all_tables t ON t.owner = c.owner AND t.table_name = c.table_name
+JOIN all_users u ON u.username = c.owner
+LEFT JOIN (
+  SELECT cc.owner, cc.table_name, cc.column_name
+  FROM all_constraints k
+  JOIN all_cons_columns cc ON cc.owner = k.owner AND cc.constraint_name = k.constraint_name
+  WHERE k.constraint_type = 'P'
+) pk ON pk.owner = c.owner AND pk.table_name = c.table_name AND pk.column_name = c.column_name
+WHERE "#,
+  oracle_user_schemas!(),
+  r#"
+  AND c.table_name NOT LIKE 'BIN$%'
+ORDER BY c.owner, c.table_name, c.column_id
+"#
+);
+
+const ORACLE_FOREIGN_KEYS: &str = concat!(
+  r#"
+SELECT
+  c.owner AS "table_schema",
+  c.table_name AS "table_name",
+  cc.column_name AS "column_name",
+  rc.owner AS "referenced_schema",
+  rc.table_name AS "referenced_table",
+  rcc.column_name AS "referenced_column",
+  c.constraint_name AS "constraint_name",
+  CAST(cc.position AS NUMBER(10)) AS "ordinal"
+FROM all_constraints c
+JOIN all_users u ON u.username = c.owner
+JOIN all_cons_columns cc ON cc.owner = c.owner AND cc.constraint_name = c.constraint_name
+JOIN all_constraints rc ON rc.owner = c.r_owner AND rc.constraint_name = c.r_constraint_name
+JOIN all_cons_columns rcc
+  ON rcc.owner = rc.owner AND rcc.constraint_name = rc.constraint_name
+ AND rcc.position = cc.position
+WHERE c.constraint_type = 'R'
+  AND "#,
+  oracle_user_schemas!(),
+  r#"
+ORDER BY c.owner, c.table_name, c.constraint_name, cc.position
+"#
+);
+
 #[cfg(test)]
 mod tests {
   use super::*;
 
   #[test]
   fn declared_parameter_count_matches_the_placeholders() {
-    for db_type in
-      [DatabaseType::MySQL, DatabaseType::PostgreSQL, DatabaseType::SQLite, DatabaseType::SqlServer]
-    {
+    for db_type in [
+      DatabaseType::MySQL,
+      DatabaseType::PostgreSQL,
+      DatabaseType::SQLite,
+      DatabaseType::SqlServer,
+      DatabaseType::Oracle,
+    ] {
       let queries = er_diagram_queries(&db_type).expect("supported");
       for sql in [queries.columns, queries.foreign_keys] {
         assert_eq!(

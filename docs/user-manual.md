@@ -125,6 +125,19 @@ CockroachDB 那两格标着「有缺口」，选中时表单里会列出具体�
   那样只退回这一批。万一还有别的错误让服务端回滚了导入的事务，导入会停下并说明，
   不会在没有事务的情况下接着写。
 
+**Oracle** 在分阶段接入：能连接（服务名、SSH 隧道）、执行 SQL、浏览对象树（按
+schema 分组，包归在「过程」里）、表结构（建表语句由 `DBMS_METADATA` 给出）、ER 图、
+翻看表数据、补全与格式化。表格里改数据、事务控制、执行计划、改表结构与新建表、
+CSV 导入、整表导出这一版还没有，对应的按钮不出现。另外几点：
+
+- 「数据库」那一格填的是**服务名**（Easy Connect），例如 `FREEPDB1`、`ORCLPDB1`；按 SID
+  连接还不支持。TLS 要用钱包，这一版也不支持——需要加密就走 SSH 隧道。
+- 这一版每条 `INSERT` / `UPDATE` / `DELETE` 执行成功就提交，没有「关闭自动提交」。
+- 编辑器里的 PL/SQL 块照 SQL*Plus 的写法：块里的分号不切，块以单独一行的 `/` 结束。
+- 应用里带着 Oracle Instant Client（Basic Light），不用另外安装。Linux 上需要系统库
+  `libaio`（deb 包会自动装上）。从源码运行时先执行 `scripts/fetch-oracle-client.sh`。
+- 超时与「取消」会真的让服务端停下那条语句（`DBMS_SESSION.SLEEP` 例外）。
+
 ### 打开 SQLite 文件
 
 欢迎页或命令面板里的「打开 SQLite 文件…」直接选一个 `.db` / `.sqlite` /

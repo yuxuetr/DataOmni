@@ -122,6 +122,13 @@ const databaseTypes: ReadonlyArray<{
     descriptionKey: 'form.db.sqlserver.desc'
   },
   {
+    type: DatabaseType.Oracle,
+    name: 'Oracle',
+    icon: <Database size={16} />,
+    categoryKey: 'form.category.relational',
+    descriptionKey: 'form.db.oracle.desc'
+  },
+  {
     type: DatabaseType.MongoDB,
     name: 'MongoDB',
     icon: <Globe size={16} />,
@@ -679,12 +686,14 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 {(formData.db_type === DatabaseType.MySQL || 
                   formData.db_type === DatabaseType.PostgreSQL || 
                   formData.db_type === DatabaseType.SqlServer ||
+                  formData.db_type === DatabaseType.Oracle ||
                   formData.db_type === DatabaseType.MongoDB ||
                   formData.db_type === DatabaseType.Neo4j ||
                   formData.db_type === DatabaseType.ClickHouse) && (
                   <div>
                     <label className="block text-sm font-medium text-fg mb-1">
-                      {t('form.database')}
+                      {/* Oracle 按 Easy Connect 连，这一格填的是服务名，不是库名 */}
+                      {formData.db_type === DatabaseType.Oracle ? t('form.oracleService') : t('form.database')}
                     </label>
                     <input
                       type="text"
@@ -696,12 +705,16 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         formData.db_type === DatabaseType.MySQL ? "mysql" :
                         formData.db_type === DatabaseType.PostgreSQL ? "postgres" :
                         formData.db_type === DatabaseType.SqlServer ? "master" :
+                        formData.db_type === DatabaseType.Oracle ? "FREEPDB1" :
                         formData.db_type === DatabaseType.MongoDB ? "admin" :
                         formData.db_type === DatabaseType.Neo4j ? "neo4j" :
                         formData.db_type === DatabaseType.ClickHouse ? "default" : ""
                       }
                       {...PLAIN_TEXT_INPUT}
                     />
+                    {formData.db_type === DatabaseType.Oracle && (
+                      <p className="text-xs text-fg-muted mt-1">{t('form.oracleServiceHint')}</p>
+                    )}
                   </div>
                 )}
 
@@ -728,6 +741,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 {(formData.db_type === DatabaseType.MySQL || 
                   formData.db_type === DatabaseType.PostgreSQL || 
                   formData.db_type === DatabaseType.SqlServer ||
+                  formData.db_type === DatabaseType.Oracle ||
                   formData.db_type === DatabaseType.MongoDB ||
                   formData.db_type === DatabaseType.Neo4j ||
                   formData.db_type === DatabaseType.ClickHouse ||

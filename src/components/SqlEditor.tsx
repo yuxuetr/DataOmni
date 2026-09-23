@@ -148,7 +148,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
       table: t('objectKind.table'),
       view: t('objectKind.view'),
       schema: t('completion.schema')
-    });
+    }, connection.username);
 
     return [
       sql({
@@ -162,7 +162,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
       EditorState.phrases.of(editorPhrases(t)),
       appEditorTheme
     ];
-  }, [relations, connection.db_type, t]);
+  }, [relations, connection.db_type, connection.username, t]);
 
   // 编辑器跟随应用主题。此前这里有个只管 CodeMirror 的「深色模式」勾选框，
   // 勾上以后只有代码框变深、其余界面仍是浅色——它表达的不是用户想要的那件事。

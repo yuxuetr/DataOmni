@@ -31,6 +31,11 @@ describe('parseSingleTableSelect', () => {
     expect(parseSingleTableSelect('SELECT * FROM "Users"', 'postgresql')?.table).toBe('Users');
   });
 
+  it('Oracle 把不带引号的标识符折成大写', () => {
+    expect(parseSingleTableSelect('SELECT * FROM om_parent', 'oracle')?.table).toBe('OM_PARENT');
+    expect(parseSingleTableSelect('SELECT * FROM "MixedCase"', 'oracle')?.table).toBe('MixedCase');
+  });
+
   it('MySQL 不折大小写', () => {
     expect(parseSingleTableSelect('SELECT * FROM Users', 'mysql')?.table).toBe('Users');
   });

@@ -157,6 +157,14 @@ describe('按 GO 分出来的一批', () => {
   });
 });
 
+describe('Oracle 的匿名块', () => {
+  it('块里的整表删除照样要确认', () => {
+    expect(classifyBatchRisk('BEGIN DELETE FROM t; END;', 'oracle')).toBe('bulk-write');
+    expect(classifyBatchRisk('CREATE OR REPLACE PROCEDURE p AS BEGIN DELETE FROM t; END;', 'oracle'))
+      .toBe('scoped-write');
+  });
+});
+
 describe('方括号里的关键字', () => {
   it('DELETE FROM [where] 仍然是整表删除', () => {
     expect(classifyStatementRisk('DELETE FROM [where]')).toBe('bulk-write');

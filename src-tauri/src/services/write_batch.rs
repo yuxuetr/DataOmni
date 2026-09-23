@@ -129,6 +129,10 @@ pub async fn execute_write_batch<'a>(
   let pool = match pool.into() {
     PoolRef::Sqlx(pool) => pool,
     PoolRef::SqlServer(pool) => return pool.write_batch(statements).await,
+    // 表格编辑在第二阶段
+    PoolRef::Oracle(_) => {
+      return Err(WriteBatchError::at(0, crate::services::oracle::unsupported("write")))
+    }
   };
   match pool {
     DbPool::Sqlite(pool) => {

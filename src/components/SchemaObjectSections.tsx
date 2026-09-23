@@ -142,7 +142,12 @@ export function SchemaObjectSections({
         ))}
       </SchemaSection>
 
-      <DdlSection ddl={objects.ddl} dbType={dbType} failure={failures.ddl} />
+      <DdlSection
+        ddl={objects.ddl}
+        dbType={dbType}
+        failure={failures.ddl}
+        pending={objects.ddlPending === true}
+      />
     </div>
   );
 }
@@ -158,11 +163,13 @@ export function SchemaObjectSections({
 function DdlSection({
   ddl,
   dbType,
-  failure
+  failure,
+  pending
 }: {
   ddl: string | null;
   dbType: ConnectionProfile['db_type'];
   failure: string | undefined;
+  pending: boolean;
 }) {
   const t = useLanguageStore((state) => state.t);
   const [copied, setCopied] = useState(false);
@@ -201,7 +208,9 @@ function DdlSection({
 
       {copyError && <p className="px-4 py-2 text-xs text-danger">{copyError}</p>}
 
-      {failure ? (
+      {pending ? (
+        <p className="px-4 py-2 text-xs text-fg-subtle">{t('schema.definition.loading')}</p>
+      ) : failure ? (
         <SectionFailure message={failure} />
       ) : ddl ? (
         <pre className="overflow-x-auto px-4 py-3 font-mono text-xs text-fg select-text whitespace-pre">

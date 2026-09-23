@@ -31,11 +31,32 @@ export interface SqlStatementRange {
  *   脚本里只要有一行 `GO`，就**只按 GO 切**：`CREATE PROCEDURE` 的过程体里
  *   满是分号，按分号切会把一个过程切成几段发出去。`GO 5` 这种带次数的不认——
  *   它要把这一批跑五遍，当成普通分隔符等于悄悄少跑四遍；留在批里让服务端报错。
+ * - Oracle 照 SQL*Plus 的约定：PL/SQL 块（`BEGIN`、`DECLARE`、`CREATE … PROCEDURE`
+ *   这一类）里的分号不切，块一直到单独一行的 `/` 为止，没有 `/` 就到脚本末尾。
+ *   `plsqlBlocks: false` 关掉这一条——风险判定要看块里面的每一条语句。
  */
-export const splitSqlStatements = (sqlText: string, dialect?: SqlDialect): string[] => {
-  const byLine = scanStatements(sqlText, dialect, true);
-  return byLine.sawBatchSeparator ? scanStatements(sqlText, dialect, false).statements : byLine.statements;
+export const splitSqlStatements = (
+  sqlText: string,
+  dialect?: SqlDialect,
+  options: { plsqlBlocks?: boolean } = {}
+): string[] => {
+  const blocks = dialect === 'oracle' && options.plsqlBlocks !== false;
+  const byLine = scanStatements(sqlText, dialect, true, blocks);
+  return byLine.sawBatchSeparator
+    ? scanStatements(sqlText, dialect, false, blocks).statements
+    : byLine.statements;
 };
+
+/** 单独一行的 `/`：SQL*Plus 里执行缓冲区、结束 PL/SQL 块的那一行 */
+function matchSlashLine(sqlText: string, index: number): number | null {
+  if (index > 0 && sqlText[index - 1] !== '\n' && sqlText[index - 1] !== '\r') {
+    return null;
+  }
+  const match = sqlText.slice(index).match(/^[\t ]*\/[\t ]*(?:\r\n|\r|\n|$)/);
+  return match ? index + match[0].length : null;
+}
+
+const PLSQL_BLOCK_START = /^\s*(?:BEGIN|DECLARE|CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:NON)?EDITIONABLE\s+)?(?:PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE))\b/i;
 
 /** 单独一行的 `GO`，前后可以有空白，后面可以跟行注释 */
 function matchBatchSeparator(sqlText: string, index: number): number | null {
@@ -49,8 +70,10 @@ function matchBatchSeparator(sqlText: string, index: number): number | null {
 function scanStatements(
   sqlText: string,
   dialect: SqlDialect | undefined,
-  splitOnDelimiter: boolean
+  splitOnDelimiter: boolean,
+  plsqlBlocks: boolean
 ): { statements: string[]; sawBatchSeparator: boolean } {
+  let inBlock = false;
   const statements: string[] = [];
   let buffer = '';
   let delimiter = ';';
@@ -87,7 +110,20 @@ function scanStatements(
         }
       }
 
-      if (splitOnDelimiter && sqlText.startsWith(delimiter, index)) {
+      if (plsqlBlocks) {
+        const slashEnd = matchSlashLine(sqlText, index);
+        if (slashEnd !== null) {
+          flush();
+          inBlock = false;
+          index = slashEnd;
+          continue;
+        }
+        if (!inBlock && buffer.trim() === '' && PLSQL_BLOCK_START.test(sqlText.slice(index, index + 120))) {
+          inBlock = true;
+        }
+      }
+
+      if (splitOnDelimiter && !inBlock && sqlText.startsWith(delimiter, index)) {
         flush();
         index += delimiter.length;
         continue;

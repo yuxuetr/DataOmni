@@ -67,6 +67,20 @@ const NON_TRANSACTIONAL: Record<SqlDialect, readonly KeywordPrefix[]> = {
   sqlite: [['VACUUM'], ['ATTACH'], ['DETACH']],
   // SQL Server 的 DDL 同样能回滚；库级与备份类的语句不许进用户事务，
   // 全文目录的增删也不行
+  // Oracle 和 MySQL 一样：每条 DDL 前后各隐式提交一次，事务包不住
+  oracle: [
+    ['CREATE'],
+    ['ALTER'],
+    ['DROP'],
+    ['TRUNCATE'],
+    ['RENAME'],
+    ['GRANT'],
+    ['REVOKE'],
+    ['COMMENT'],
+    ['ANALYZE'],
+    ['PURGE'],
+    ['FLASHBACK']
+  ],
   sqlserver: [
     ['CREATE', 'DATABASE'],
     ['ALTER', 'DATABASE'],

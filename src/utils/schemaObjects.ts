@@ -33,6 +33,11 @@ export interface SchemaObjects {
    * 对用户的意义完全相反，而前者还会让表被判成只读。
    */
   failures: Partial<Record<SchemaObjectSection, string>>;
+  /**
+   * 定义原文还在读。它单独来：Oracle 的 `DBMS_METADATA` 在慢一点的服务器上要几秒到
+   * 十几秒，而索引与约束早就回来了——等它等于让整页停在「读取中」
+   */
+  ddlPending?: boolean;
 }
 
 export type SchemaObjectSection = 'indexes' | 'foreignKeys' | 'checkConstraints' | 'ddl' | 'triggers';

@@ -1,5 +1,10 @@
 import { create } from 'zustand';
-import { openDatabase, SQL_SERVER_SCHEME, type DatabaseHandle } from '../utils/databaseHandle';
+import {
+  openDatabase,
+  ORACLE_SCHEME,
+  SQL_SERVER_SCHEME,
+  type DatabaseHandle
+} from '../utils/databaseHandle';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import {
   completeQueryExecution,
@@ -178,6 +183,9 @@ const getSqlDialect = (connectionString: string | null): SqlDialect => {
   }
   if (connectionString?.startsWith(SQL_SERVER_SCHEME)) {
     return 'sqlserver';
+  }
+  if (connectionString?.startsWith(ORACLE_SCHEME)) {
+    return 'oracle';
   }
   return 'sqlite';
 };

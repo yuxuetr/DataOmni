@@ -136,6 +136,10 @@ export function pageClause(
     const order = orderClause.trim() || 'ORDER BY (SELECT NULL)';
     return `${order} OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`;
   }
+  // Oracle 12c 起有同样的写法，而且不要求 ORDER BY；没有 LIMIT
+  if (dialect === 'oracle') {
+    return `${orderClause} OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`.trim();
+  }
   return `${orderClause} LIMIT ${limit} OFFSET ${offset}`;
 }
 
@@ -147,7 +151,10 @@ export function firstRowsQuery(
   dialect: SqlIdentifierDialect
 ): string {
   const name = quoteQualifiedSqlIdentifier(schema ? [schema, table] : [table], dialect);
-  return dialect === 'sqlserver'
-    ? `SELECT TOP ${count} * FROM ${name};`
+  if (dialect === 'sqlserver') {
+    return `SELECT TOP ${count} * FROM ${name};`;
+  }
+  return dialect === 'oracle'
+    ? `SELECT * FROM ${name} FETCH FIRST ${count} ROWS ONLY;`
     : `SELECT * FROM ${name} LIMIT ${count};`;
 }

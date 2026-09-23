@@ -15,18 +15,23 @@ export interface DatabaseHandle {
 
 /** 与后端 `SQL_SERVER_SCHEME` 一致：连接串以它开头就是 SQL Server */
 export const SQL_SERVER_SCHEME = 'sqlserver://';
+/** 与后端 `ORACLE_SCHEME` 一致 */
+export const ORACLE_SCHEME = 'oracle://';
 
 export async function openDatabase(connectionString: string): Promise<DatabaseHandle> {
   if (connectionString.startsWith(SQL_SERVER_SCHEME)) {
-    return sqlServerHandle(connectionString);
+    return backendHandle(connectionString, 'sql_server_select', 'close_sql_server');
+  }
+  if (connectionString.startsWith(ORACLE_SCHEME)) {
+    return backendHandle(connectionString, 'oracle_select', 'close_oracle');
   }
   return Database.load(connectionString);
 }
 
-function sqlServerHandle(connectionString: string): DatabaseHandle {
+function backendHandle(connectionString: string, select: string, close: string): DatabaseHandle {
   return {
     select: <T,>(sql: string, params: unknown[] = []) =>
-      invoke<T>('sql_server_select', { connectionString, sql, params }),
-    close: () => invoke<boolean>('close_sql_server', { connectionString })
+      invoke<T>(select, { connectionString, sql, params }),
+    close: () => invoke<boolean>(close, { connectionString })
   };
 }

@@ -27,7 +27,7 @@ export const quoteQualifiedSqlIdentifier = (
  * 而不是抛错——这条路径上真正重要的是「别让一个陌生类型把界面整个打掉」。
  */
 export function identifierDialectFor(dbType: string): SqlIdentifierDialect {
-  if (dbType === 'mysql' || dbType === 'sqlserver') {
+  if (dbType === 'mysql' || dbType === 'sqlserver' || dbType === 'oracle') {
     return dbType;
   }
   return dbType === 'postgresql' ? 'postgresql' : 'sqlite';

@@ -27,3 +27,6 @@ fix_docs
 
 # Playwright MCP 的截图与快照：渲染验证时的一次性产物
 .playwright-mcp/
+
+# scripts/fetch-oracle-client.sh 取下来的 Instant Client：打包时才用，不进仓库
+src-tauri/vendor/

@@ -1,6 +1,7 @@
 import type { Completion } from '@codemirror/autocomplete';
 import {
   MSSQL,
+  PLSQL,
   MySQL,
   PostgreSQL,
   SQLite,
@@ -88,7 +89,9 @@ export function normalizeCompletionRows(
 export function buildCompletionSchema(
   relations: readonly CompletionRelation[],
   dbType: DatabaseType,
-  labels: CompletionLabels
+  labels: CompletionLabels,
+  /** 登录用户。Oracle 不带前缀的名字落在用户自己的 schema 里（名字大写） */
+  username?: string
 ): CompletionSchemaResult {
   if (!showsSchemaLevel(dbType)) {
     const flat: Record<string, SQLNamespace> = {};
@@ -116,8 +119,13 @@ export function buildCompletionSchema(
 
   return {
     schema,
-    // 不带前缀的名字落在哪个 schema：PostgreSQL 是 public，SQL Server 是 dbo
-    defaultSchema: ['public', 'dbo'].find((name) => bySchema.has(name))
+    // 不带前缀的名字落在哪个 schema：PostgreSQL 是 public，SQL Server 是 dbo，
+    // Oracle 是登录用户（目录里是大写）
+    defaultSchema: [
+      'public',
+      'dbo',
+      ...(dbType === DatabaseType.Oracle && username ? [username.toUpperCase()] : [])
+    ].find((name) => bySchema.has(name))
   };
 }
 
@@ -136,6 +144,8 @@ export function sqlDialectFor(dbType: DatabaseType): SQLDialect {
       return SQLite;
     case DatabaseType.SqlServer:
       return MSSQL;
+    case DatabaseType.Oracle:
+      return PLSQL;
     default:
       return StandardSQL;
   }

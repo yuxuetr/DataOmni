@@ -79,6 +79,9 @@ pub enum DatabaseType {
   /// 不走 sqlx：驱动是 tiberius，连接由后端自己持有。见 `services/sql_server.rs`
   #[serde(rename = "sqlserver")]
   SqlServer,
+  /// 同样由后端持有：驱动是 ODPI-C，运行时要 Instant Client。见 `services/oracle.rs`
+  #[serde(rename = "oracle")]
+  Oracle,
 
   // 非关系型数据库
   #[serde(rename = "mongodb")]
@@ -115,6 +118,7 @@ impl DatabaseType {
         | DatabaseType::PostgreSQL
         | DatabaseType::SQLite
         | DatabaseType::SqlServer
+        | DatabaseType::Oracle
     )
   }
 
@@ -124,6 +128,7 @@ impl DatabaseType {
       DatabaseType::PostgreSQL => 5432,
       DatabaseType::SQLite => 0, // SQLite 不需要端口
       DatabaseType::SqlServer => 1433,
+      DatabaseType::Oracle => 1521,
       DatabaseType::MongoDB => 27017,
       DatabaseType::Redis => 6379,
       DatabaseType::Neo4j => 7687,      // Neo4j Bolt 端口
@@ -219,6 +224,15 @@ impl DatabaseType {
       DatabaseType::SqlServer => format!(
         "{}{}@{}:{}/{}",
         crate::services::SQL_SERVER_SCHEME,
+        encode(&config.username),
+        config.host,
+        config.port,
+        encode(config.database.as_deref().unwrap_or(""))
+      ),
+      // 和 SQL Server 同一个理由：是 `OracleRegistry` 里的键，不带口令
+      DatabaseType::Oracle => format!(
+        "{}{}@{}:{}/{}",
+        crate::services::oracle::ORACLE_SCHEME,
         encode(&config.username),
         config.host,
         config.port,
@@ -439,11 +453,12 @@ impl Default for ConnectionProfile {
 
 #[cfg(test)]
 mod tests {
-  const ALL_DATABASE_TYPES: [super::DatabaseType; 10] = [
+  const ALL_DATABASE_TYPES: [super::DatabaseType; 11] = [
     super::DatabaseType::MySQL,
     super::DatabaseType::PostgreSQL,
     super::DatabaseType::SQLite,
     super::DatabaseType::SqlServer,
+    super::DatabaseType::Oracle,
     super::DatabaseType::MongoDB,
     super::DatabaseType::Redis,
     super::DatabaseType::Neo4j,
@@ -552,6 +567,13 @@ mod tests {
   #[test]
   fn every_supported_type_can_produce_a_plan_even_if_it_cannot_analyze() {
     for db_type in ALL_DATABASE_TYPES {
+      // Oracle 按阶段例外：执行计划排在第三阶段（`EXPLAIN PLAN` + `DBMS_XPLAN`），
+      // 连接表单上那一格的「有缺口」说明里写着。做完那一阶段就删掉这一段——
+      // 断言会逼着你删
+      if db_type == super::DatabaseType::Oracle {
+        assert!(crate::services::explain_statement(&db_type, "SELECT 1", false).is_err());
+        continue;
+      }
       assert_eq!(
         db_type.has_driver(),
         crate::services::explain_statement(&db_type, "SELECT 1", false).is_ok(),

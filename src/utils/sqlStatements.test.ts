@@ -209,3 +209,34 @@ describe('按方言切语句', () => {
     expect(findSqlStatementAtOffset(script, script.length, 'sqlserver')?.sql).toBe('SELECT 2;');
   });
 });
+
+describe('Oracle 的 PL/SQL 块', () => {
+  it('块里的分号不切，块到单独一行的 / 为止', () => {
+    const script = [
+      'BEGIN',
+      '  DELETE FROM t;',
+      '  COMMIT;',
+      'END;',
+      '/',
+      'SELECT 1 FROM dual;',
+      'SELECT 2 FROM dual;'
+    ].join('\n');
+    expect(splitSqlStatements(script, 'oracle')).toEqual([
+      'BEGIN\n  DELETE FROM t;\n  COMMIT;\nEND;',
+      'SELECT 1 FROM dual',
+      'SELECT 2 FROM dual'
+    ]);
+  });
+
+  it('没有 / 的块到脚本末尾；CREATE OR REPLACE 的过程同样是块', () => {
+    expect(splitSqlStatements('CREATE OR REPLACE PROCEDURE p AS BEGIN NULL; END;', 'oracle'))
+      .toEqual(['CREATE OR REPLACE PROCEDURE p AS BEGIN NULL; END;']);
+    expect(splitSqlStatements('SELECT 1 FROM dual; BEGIN NULL; END;', 'oracle'))
+      .toEqual(['SELECT 1 FROM dual', 'BEGIN NULL; END;']);
+  });
+
+  it('别的方言不认 / 这一行', () => {
+    expect(splitSqlStatements('SELECT 1;\n/\nSELECT 2;', 'postgresql'))
+      .toEqual(['SELECT 1', '/\nSELECT 2']);
+  });
+});

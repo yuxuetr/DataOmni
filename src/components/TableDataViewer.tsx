@@ -33,7 +33,11 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 import type { ConnectionProfile, TableSchema } from '../contracts';
-import { identifierDialectFor, quoteQualifiedSqlIdentifier } from '../utils/sqlIdentifiers';
+import {
+  identifierDialectFor,
+  quoteQualifiedSqlIdentifier,
+  quoteSqlIdentifier
+} from '../utils/sqlIdentifiers';
 import {
   createSortedOrderClause,
   createTablePaginationOrder,
@@ -273,7 +277,11 @@ export default function TableDataViewer({
       // SQLite 的 pragma 表值函数只认一个表名参数，没有 schema 概念
       const params = catalogQueryParams(queries.parameter_count, tableName, schema);
       const select = (sql: string) => requireDatabase(database).select(sql, params);
-      const [indexes, foreignKeys, checkConstraints, ddl, triggers] = await Promise.allSettled([
+      // 定义原文单独等：它最慢（Oracle 上实测几秒到十几秒），其余几段先画出来
+      const ddlQuery = runDdlQuery(queries.ddl, queries.parameter_count).then((rows) =>
+        rows === null ? null : joinDdlStatements(extractDdlStatements(asRows(rows)))
+      );
+      const [indexes, foreignKeys, checkConstraints, triggers] = await Promise.allSettled([
         select(queries.indexes).then((rows) =>
           groupIndexRows(asRows(rows), t('schema.expressionColumn'))
         ),
@@ -281,16 +289,20 @@ export default function TableDataViewer({
         queries.check_constraints
           ? select(queries.check_constraints).then((rows) => toCheckConstraints(asRows(rows)))
           : Promise.resolve(null),
-        runDdlQuery(queries.ddl, queries.parameter_count).then((rows) =>
-          rows === null ? null : joinDdlStatements(extractDdlStatements(asRows(rows)))
-        ),
         // SQLite 的 pragma 之外的目录查询同样只认一个表名参数
         select(queries.triggers).then((rows) => toTriggers(asRows(rows)))
       ]);
 
+      const describe = (reason: unknown) => describeError(reason, t('schema.readObjectsFailed'));
+      const pending: PromiseSettledResult<string | null> = { status: 'fulfilled', value: null };
+      setSchemaObjects({
+        ...collectSchemaObjects({ indexes, foreignKeys, checkConstraints, ddl: pending, triggers }, describe),
+        ddlPending: true
+      });
+      const [ddl] = await Promise.allSettled([ddlQuery]);
       const objects = collectSchemaObjects(
         { indexes, foreignKeys, checkConstraints, ddl, triggers },
-        (reason) => describeError(reason, t('schema.readObjectsFailed'))
+        describe
       );
       setSchemaObjects(objects);
       // 有段没查成就不缓存：切回来时再试一次，而不是把一次失败记上一辈子
@@ -399,7 +411,8 @@ export default function TableDataViewer({
       if (cachedRowCount && cachedRowCount.key === dataSetKey) {
         total = cachedRowCount.total;
       } else {
-        const countQuery = `SELECT COUNT(*) as total FROM ${tableReference} ${whereClause}`;
+        // 别名要引用：Oracle 把不带引号的别名折成大写，结果里就只有 `TOTAL`
+        const countQuery = `SELECT COUNT(*) AS ${quoteSqlIdentifier('total', dialect)} FROM ${tableReference} ${whereClause}`;
         const countResult = await runReadQuery(countQuery);
         // COUNT(*) 由自建执行器返回为 tagged bigint，取出字面值再转数
         const rawTotal = countResult[0]?.total ?? 0;

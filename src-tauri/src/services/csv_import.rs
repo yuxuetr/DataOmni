@@ -354,6 +354,9 @@ impl Dialect {
       SessionConnection::MySql(_) => Self::MySql,
       SessionConnection::Postgres(_) => Self::Postgres,
       SessionConnection::SqlServer(_) => Self::SqlServer,
+      SessionConnection::Oracle(_) => {
+        unreachable!("import_csv refuses Oracle before it picks a dialect")
+      }
     }
   }
 
@@ -615,6 +618,9 @@ pub async fn import_csv<'a>(
     })?;
 
   let mut connection = SessionConnection::acquire(pool).await?;
+  if matches!(connection, SessionConnection::Oracle(_)) {
+    return Err(crate::services::oracle::unsupported("import"));
+  }
   let dialect = Dialect::of(&connection);
   let per_statement = dialect.rows_per_statement(request.batch_size, request.columns.len());
   let batch_sql = build_insert(

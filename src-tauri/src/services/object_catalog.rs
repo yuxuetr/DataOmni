@@ -47,6 +47,12 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
       sequence_properties: Some(SQL_SERVER_SEQUENCE_PROPERTIES),
       object_parameter_count: 0,
     }),
+    DatabaseType::Oracle => Some(ObjectCatalogQueries {
+      objects: ORACLE_OBJECTS,
+      routine_definition: ORACLE_ROUTINE_DEFINITION,
+      sequence_properties: Some(ORACLE_SEQUENCE_PROPERTIES),
+      object_parameter_count: 0,
+    }),
     _ => None,
   }
 }
@@ -201,6 +207,60 @@ SELECT
   CAST(sq.current_value AS nvarchar(40)) AS last_value
 FROM sys.sequences sq
 WHERE sq.object_id = CAST(@P1 AS int)
+"#;
+
+/// Oracle：只列用户自己的 schema（见 `oracle_user_schemas!`）；`BIN$` 开头的是回收站
+/// 里的表。包（PACKAGE）归在过程一组里——它不是函数，也没有更近的一组，而不列
+/// 出来就等于告诉用户这个库里没有包。`object_id` 是 `owner.name`：Oracle 的对象
+/// 没有可以拿来取定义的数字 id（`OBJECT_ID` 在导出导入之后会变）
+const ORACLE_OBJECTS: &str = concat!(
+  r#"
+SELECT
+  o.owner AS "object_schema",
+  o.object_name AS "object_name",
+  CASE o.object_type
+    WHEN 'TABLE' THEN 'table'
+    WHEN 'VIEW' THEN 'view'
+    WHEN 'SEQUENCE' THEN 'sequence'
+    WHEN 'FUNCTION' THEN 'function'
+    ELSE 'procedure'
+  END AS "object_kind",
+  o.owner || '.' || o.object_name AS "object_id"
+FROM all_objects o
+JOIN all_users u ON u.username = o.owner
+WHERE "#,
+  crate::services::oracle::oracle_user_schemas!(),
+  r#"
+  AND o.object_type IN ('TABLE', 'VIEW', 'PROCEDURE', 'FUNCTION', 'PACKAGE', 'SEQUENCE')
+  AND o.object_name NOT LIKE 'BIN$%'
+  AND o.secondary = 'N'
+ORDER BY 1, 3, 2
+"#
+);
+
+/// `ALL_SOURCE` 一行一行地存，拼起来会超过 VARCHAR2 的 4000 字节；`GET_DDL`
+/// 给的是一整段 CLOB，还带着 `CREATE OR REPLACE` 头
+const ORACLE_ROUTINE_DEFINITION: &str = r#"
+SELECT DBMS_METADATA.GET_DDL(o.object_type, o.object_name, o.owner) AS "definition"
+FROM all_objects o
+WHERE o.owner || '.' || o.object_name = :1
+  AND o.object_type IN ('PROCEDURE', 'FUNCTION', 'PACKAGE')
+"#;
+
+/// 数值都转成文本：序列的上限默认是 28 个 9，超出 JavaScript 能精确表示的范围。
+/// `ALL_SEQUENCES` 没有起始值
+const ORACLE_SEQUENCE_PROPERTIES: &str = r#"
+SELECT
+  CAST(NULL AS VARCHAR2(1)) AS "start_value",
+  TO_CHAR(s.increment_by) AS "increment_by",
+  TO_CHAR(s.min_value) AS "min_value",
+  TO_CHAR(s.max_value) AS "max_value",
+  TO_CHAR(s.cache_size) AS "cache_size",
+  CASE WHEN s.cycle_flag = 'Y' THEN 'true' ELSE 'false' END AS "cycles",
+  'NUMBER' AS "data_type",
+  TO_CHAR(s.last_number) AS "last_value"
+FROM all_sequences s
+WHERE s.sequence_owner || '.' || s.sequence_name = :1
 "#;
 
 #[cfg(test)]

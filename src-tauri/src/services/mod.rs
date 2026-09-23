@@ -6,6 +6,8 @@ pub mod er_diagram;
 pub mod explain;
 pub mod export_writer;
 pub mod object_catalog;
+pub mod oracle;
+pub mod pool_registry;
 pub mod query_error;
 pub mod query_executor;
 pub mod query_session;

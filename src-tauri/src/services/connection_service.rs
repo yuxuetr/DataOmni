@@ -1,4 +1,4 @@
-use crate::models::{ConnectionProfile, DatabaseType};
+use crate::models::{ConnectionProfile, DatabaseType, TlsMode};
 use keyring::Entry;
 use serde_json;
 use std::collections::HashMap;
@@ -23,6 +23,9 @@ const SESSION_PASSWORD_REQUIRED: &str = "SESSION_PASSWORD_REQUIRED";
 pub const UNSUPPORTED_DATABASE: &str = "DATAOMNI_UNSUPPORTED_DATABASE";
 pub const TLS_CLIENT_PAIR_REQUIRED: &str = "DATAOMNI_TLS_CLIENT_PAIR_REQUIRED";
 pub const TLS_CERTIFICATES_UNSUPPORTED: &str = "DATAOMNI_TLS_CERTIFICATES_UNSUPPORTED";
+/// Oracle 的 TLS（TCPS）要钱包，这一版还没接。不拦的话选了「要求 TLS」照样以明文
+/// 连上，而表单上写着加密
+pub const ORACLE_TLS_UNSUPPORTED: &str = "DATAOMNI_ORACLE_TLS_UNSUPPORTED";
 pub const SQLITE_PATH_REQUIRED: &str = "DATAOMNI_SQLITE_PATH_REQUIRED";
 pub const HOST_REQUIRED: &str = "DATAOMNI_HOST_REQUIRED";
 pub const USERNAME_REQUIRED: &str = "DATAOMNI_USERNAME_REQUIRED";
@@ -518,6 +521,11 @@ fn validate_tls_configuration(config: &ConnectionProfile) -> Result<(), String> 
   // 而用户会以为双向认证已经开着
   if has_client_certificate && config.db_type == DatabaseType::SqlServer {
     return Err(TLS_CERTIFICATES_UNSUPPORTED.to_string());
+  }
+  if config.db_type == DatabaseType::Oracle
+    && (config.effective_tls_mode() != TlsMode::Disabled || has_certificate_paths)
+  {
+    return Err(ORACLE_TLS_UNSUPPORTED.to_string());
   }
 
   Ok(())

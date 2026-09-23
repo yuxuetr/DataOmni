@@ -109,6 +109,14 @@ export const createDefaultConfig = (
         ssl: true,
         tls_mode: 'preferred',
       };
+    // TLS 要钱包，这一版不做；`database` 那一格是服务名
+    case DatabaseType.Oracle:
+      return {
+        ...baseConfig,
+        port: 1521,
+        database: 'FREEPDB1',
+        username: 'system',
+      };
     case DatabaseType.MongoDB:
       return {
         ...baseConfig,
@@ -165,6 +173,8 @@ export const getDefaultPort = (type: DatabaseType): number => {
       return 0;
     case DatabaseType.SqlServer:
       return 1433;
+    case DatabaseType.Oracle:
+      return 1521;
     case DatabaseType.MongoDB:
       return 27017;
     case DatabaseType.Redis:

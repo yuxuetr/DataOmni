@@ -24,6 +24,8 @@ export function sqlFormatterLanguage(dbType: DatabaseType): SqlLanguage | null {
       return 'sqlite';
     case DatabaseType.SqlServer:
       return 'transactsql';
+    case DatabaseType.Oracle:
+      return 'plsql';
     default:
       return null;
   }

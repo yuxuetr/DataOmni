@@ -188,6 +188,7 @@ pub async fn execute_query_with_limits(
 pub enum PoolRef<'a> {
   Sqlx(&'a DbPool),
   SqlServer(&'a std::sync::Arc<crate::services::sql_server::SqlServerPool>),
+  Oracle(&'a std::sync::Arc<crate::services::oracle::OraclePool>),
 }
 
 impl<'a> From<&'a DbPool> for PoolRef<'a> {
@@ -202,6 +203,7 @@ pub enum SessionConnection {
   Postgres(sqlx::pool::PoolConnection<Postgres>),
   /// 装箱：tiberius 的客户端比 sqlx 的池连接大得多，不装箱的话每个变体都按它付内存
   SqlServer(Box<crate::services::sql_server::SqlServerConnection>),
+  Oracle(Box<crate::services::oracle::OracleConnection>),
 }
 
 impl SessionConnection {
@@ -219,6 +221,9 @@ impl SessionConnection {
       PoolRef::SqlServer(pool) => {
         pool.acquire_for_session().await.map(|connection| Self::SqlServer(Box::new(connection)))
       }
+      PoolRef::Oracle(pool) => {
+        pool.acquire_for_session().await.map(|connection| Self::Oracle(Box::new(connection)))
+      }
     }
   }
 
@@ -232,6 +237,20 @@ impl SessionConnection {
       Self::MySql(connection) => execute_mysql_connection(connection, sql, row_limit).await,
       Self::Postgres(connection) => execute_postgres_connection(connection, sql, row_limit).await,
       Self::SqlServer(connection) => {
+        let mut rows = Vec::new();
+        let summary = connection
+          .execute_streaming(
+            sql,
+            StreamOptions::limited(row_limit, DEFAULT_QUERY_BYTE_LIMIT, row_limit.max(1)),
+            &mut |batch| {
+              rows.extend(batch.rows);
+              Ok(())
+            },
+          )
+          .await?;
+        summary_with_rows(summary, rows)
+      }
+      Self::Oracle(connection) => {
         let mut rows = Vec::new();
         let summary = connection
           .execute_streaming(
@@ -261,6 +280,8 @@ impl SessionConnection {
       Self::MySql(connection) => describe_mysql_columns(connection, sql).await,
       Self::Postgres(connection) => describe_postgres_columns(connection, sql).await,
       Self::SqlServer(connection) => connection.describe_columns(sql).await,
+      // 导出要先写表头，在第三阶段
+      Self::Oracle(_) => Err(crate::services::oracle::unsupported("describe")),
     }
   }
 
@@ -297,6 +318,8 @@ impl SessionConnection {
         connection.execute(query).await.map(|done| done.rows_affected()).map_err(display_error)
       }
       Self::SqlServer(connection) => connection.execute_with_params(sql, params).await,
+      // CSV 导入，在第三阶段
+      Self::Oracle(_) => Err(crate::services::oracle::unsupported("import")),
     }
   }
 
@@ -318,6 +341,7 @@ impl SessionConnection {
         connection.execute(sql).await.map(|done| done.rows_affected()).map_err(display_error)
       }
       Self::SqlServer(connection) => connection.execute_batch(sql).await,
+      Self::Oracle(connection) => connection.execute_batch(sql).await,
     }
   }
 
@@ -384,6 +408,7 @@ impl SessionConnection {
         execute_postgres_connection_streaming(connection, sql, options, sink).await
       }
       Self::SqlServer(connection) => connection.execute_streaming(sql, options, sink).await,
+      Self::Oracle(connection) => connection.execute_streaming(sql, options, sink).await,
     }
   }
 }

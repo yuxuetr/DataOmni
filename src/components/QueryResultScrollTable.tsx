@@ -170,6 +170,10 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
     [editability]
   );
   const readOnlyReason = (() => {
+    // 这类连接还没接上表格编辑：说这个，而不是去猜索引读没读到
+    if (editability && !supportsFeature(dialect, 'dataEditing')) {
+      return t('table.readOnly.pendingFeature');
+    }
     if (!editability || editability.editable) {
       return null;
     }
