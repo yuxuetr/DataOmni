@@ -156,6 +156,10 @@ ORDER BY a.attnum
 /// 所以这里：带引号的去引号并还原 `''` 与 `\\` 两种转义；裸的 `NULL` 是
 /// 没有默认值；其余裸的、又不是数字或位串字面量的，是表达式，补上
 /// `DEFAULT_GENERATED`，界面据此拒绝重述（与 MySQL 上同一条理由）。
+/// 反过来，没有默认值却带着 `DEFAULT_GENERATED` 的要摘掉：TiDB 给
+/// `TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP` 这种列也打这个标记，界面据此
+/// 拒绝重述，而那一列根本没有表达式默认值。
+///
 /// 数字的正则写成 `-{0,1}` 而不是 `-?`：参数个数那道门按问号数占位符。
 /// 反斜杠用 `CHAR(92)` 写，不在字面量里转义：`NO_BACKSLASH_ESCAPES` 打开时
 /// `'\\'` 就是两个字符了。
@@ -179,6 +183,7 @@ SELECT
   CAST(c.COLLATION_NAME AS CHAR) AS collation,
   CAST(NULLIF(c.COLUMN_COMMENT, '') AS CHAR) AS comment,
   CAST(CASE
+    WHEN c.COLUMN_DEFAULT IS NULL THEN TRIM(REPLACE(c.EXTRA, 'DEFAULT_GENERATED', ''))
     WHEN VERSION() LIKE '%MariaDB%'
       AND c.COLUMN_DEFAULT <> 'NULL'
       AND c.COLUMN_DEFAULT NOT LIKE '''%'
@@ -305,13 +310,17 @@ ORDER BY c.conname
 ///
 /// `EXPRESSION` 包在 `/*!80013 */` 里：MariaDB 的 `STATISTICS` 没有这一列，
 /// 直接写会让整段报 1054，结构页一条索引都显示不出来。这种注释 MySQL 8.0.13
-/// 起照常执行、MariaDB 跳过（两边都在真库上验过）——MariaDB 也没有函数索引，
-/// 跳过之后 `COALESCE` 只剩 `COLUMN_NAME` 一个参数，正好。
+/// 起执行、MariaDB 跳过、TiDB 不看版本号一律执行（三家都在真库上验过）。
+/// MariaDB 没有函数索引，跳过之后 `COALESCE` 只剩 `COLUMN_NAME`，正好。
+///
+/// `EXPRESSION` 放在前面：TiDB 在函数索引上给的 `COLUMN_NAME` 是**字符串**
+/// `NULL` 而不是 NULL，放后面就永远轮不到它。普通列上 `EXPRESSION` 是 NULL，
+/// 两种顺序在 MySQL 上等价。
 /// MySQL 没有部分索引，`is_partial` 恒假；也没有「未验证的索引」，`is_valid` 恒真。
 const MYSQL_INDEXES: &str = r#"
 SELECT
   CAST(s.INDEX_NAME AS CHAR) AS index_name,
-  CAST(COALESCE(s.COLUMN_NAME /*!80013 , s.EXPRESSION */) AS CHAR) AS column_name,
+  CAST(COALESCE(/*!80013 s.EXPRESSION, */ s.COLUMN_NAME) AS CHAR) AS column_name,
   s.SEQ_IN_INDEX AS ordinal,
   (s.NON_UNIQUE = 0) AS is_unique,
   (s.INDEX_NAME = 'PRIMARY') AS is_primary,

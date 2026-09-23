@@ -239,7 +239,7 @@ async fn mysql_supports_basic_read_write() {
   ];
   // MariaDB 的 JSON 是 LONGTEXT 的别名，线协议上就是一段文本，驱动认不出
   // 它是 JSON。界面照文本显示和编辑，不会丢字——只是没有 JSON 专用编辑器
-  if is_mariadb(&pool).await {
+  if mysql_flavor(&pool).await == MysqlFlavor::MariaDb {
     let QueryExecutionResult::Rows { rows, .. } = &precise else {
       panic!("expected a row result");
     };
@@ -772,7 +772,7 @@ async fn mysql_reports_indexes_foreign_keys_and_checks() {
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
 
   let fixture = MetaFixture::new("my");
-  for statement in fixture.ddl(mysql_flavor(&pool).await) {
+  for statement in fixture.ddl(mysql_flavor(&pool).await.fixture_dialect()) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL metadata fixture");
   }
 
@@ -821,7 +821,7 @@ async fn mysql_reports_indexes_foreign_keys_and_checks() {
     .find(|(name, ..)| name == &format!("ix_meta_child_expr_{}", fixture.suffix))
     .map(|(_, column, ..)| column.clone());
   assert!(
-    mysql_flavor(&pool).await == "mariadb"
+    mysql_flavor(&pool).await == MysqlFlavor::MariaDb
       || expression_column.as_deref().is_some_and(|text| text.contains("score")),
     "函数索引的 COLUMN_NAME 是 NULL，必须回退到 EXPRESSION，否则这一列是空的: {indexes:?}"
   );
@@ -865,9 +865,17 @@ async fn mysql_reports_indexes_foreign_keys_and_checks() {
     .iter()
     .map(|row| (row.get::<String, _>("constraint_name"), row.get::<String, _>("expression")))
     .collect();
-  assert_eq!(checks.len(), 1, "只应列出这张表的那一条 CHECK: {checks:?}");
-  assert_eq!(checks[0].0, format!("ck_meta_child_{}", fixture.suffix));
-  assert!(checks[0].1.contains("score"), "约束表达式应含列名: {:?}", checks[0].1);
+  // TiDB 上这一段恒为空，两层原因：默认不启用检查约束（建表时解析了就丢）；
+  // 打开之后 `TABLE_CONSTRAINTS` 也不列 CHECK，与 `CHECK_CONSTRAINTS` 接不上
+  // （在 TiDB 8.5 上打开开关验过）。结构页因此不显示——已知缺口，钉在这里，
+  // 哪天 TiDB 补上了这条会红
+  if mysql_flavor(&pool).await == MysqlFlavor::TiDb {
+    assert!(checks.is_empty(), "TiDB 的检查约束目录接上了，回来重估: {checks:?}");
+  } else {
+    assert_eq!(checks.len(), 1, "只应列出这张表的那一条 CHECK: {checks:?}");
+    assert_eq!(checks[0].0, format!("ck_meta_child_{}", fixture.suffix));
+    assert!(checks[0].1.contains("score"), "约束表达式应含列名: {:?}", checks[0].1);
+  }
 
   for table in [&fixture.child, &fixture.parent] {
     sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
@@ -976,7 +984,7 @@ async fn mysql_returns_the_authoritative_create_table_statement() {
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
 
   let fixture = MetaFixture::new("myddl");
-  for statement in fixture.ddl(mysql_flavor(&pool).await) {
+  for statement in fixture.ddl(mysql_flavor(&pool).await.fixture_dialect()) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL metadata fixture");
   }
 
@@ -1006,7 +1014,10 @@ async fn mysql_returns_the_authoritative_create_table_statement() {
   let ddl: String = row.get(1);
   assert!(ddl.starts_with("CREATE TABLE"), "应是建表语句原文: {ddl}");
   assert!(ddl.contains(&format!("fk_meta_child_{}", fixture.suffix)), "应含外键定义: {ddl}");
-  assert!(ddl.contains(&format!("ck_meta_child_{}", fixture.suffix)), "应含检查约束: {ddl}");
+  // TiDB 默认不启用检查约束：建表时解析了就丢，表里本来就没有它
+  if mysql_flavor(&pool).await != MysqlFlavor::TiDb {
+    assert!(ddl.contains(&format!("ck_meta_child_{}", fixture.suffix)), "应含检查约束: {ddl}");
+  }
   assert!(ddl.contains(&format!("ix_meta_child_label_{}", fixture.suffix)), "应含显式索引: {ddl}");
 
   for table in [&fixture.child, &fixture.parent] {
@@ -1121,7 +1132,7 @@ async fn mysql_accepts_the_parameters_the_ui_actually_sends() {
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
 
   let fixture = MetaFixture::new("myparams");
-  for statement in fixture.ddl(mysql_flavor(&pool).await) {
+  for statement in fixture.ddl(mysql_flavor(&pool).await.fixture_dialect()) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
   }
 
@@ -1417,22 +1428,27 @@ async fn mysql_catalog_results_are_decodable_by_the_plugin() {
   let function = format!("{}_fn", fixture.child);
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
   sqlx::raw_sql(&format!("DROP FUNCTION IF EXISTS {function}")).execute(&pool).await.ok();
-  for statement in fixture.ddl(mysql_flavor(&pool).await) {
+  for statement in fixture.ddl(mysql_flavor(&pool).await.fixture_dialect()) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
   }
   sqlx::query(&format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child))
     .execute(&pool)
     .await
     .expect("create view");
+  // TiDB 没有触发器与存储函数，建不出来；那两段目录在它上面恒为 0 行，
+  // 而 0 行的一段什么类型都没检查，只能不查
+  let flavor = mysql_flavor(&pool).await;
+  let stored_programs = flavor != MysqlFlavor::TiDb;
   // CREATE TRIGGER / FUNCTION 不收预处理协议（1295），走文本协议
-  for statement in [
+  let program_statements = [
     format!(
       "CREATE TRIGGER {}_trg BEFORE INSERT ON {} FOR EACH ROW SET NEW.score = 1",
       fixture.child, fixture.child
     ),
     format!("CREATE FUNCTION {function}(a INT) RETURNS INT DETERMINISTIC RETURN a + 1"),
-  ] {
-    sqlx::raw_sql(&statement).execute(&pool).await.expect("prepare MySQL objects");
+  ];
+  for statement in program_statements.iter().filter(|_| stored_programs) {
+    sqlx::raw_sql(statement).execute(&pool).await.expect("prepare MySQL objects");
   }
   let database: String =
     sqlx::query_scalar("SELECT DATABASE()").fetch_one(&pool).await.expect("current database");
@@ -1454,6 +1470,12 @@ async fn mysql_catalog_results_are_decodable_by_the_plugin() {
     objects.routine_definition,
     vec![Some(function.clone()), Some(database.clone())],
   ));
+  if !stored_programs {
+    // 检查约束目录在 TiDB 上也恒为空，原因见 `mysql_reports_indexes_foreign_keys_and_checks`
+    requests.retain(|request| {
+      !["triggers", "routine_definition", "check_constraints"].contains(&request.name)
+    });
+  }
 
   for request in &requests {
     let mut query = sqlx::query(&request.sql);
@@ -1683,21 +1705,25 @@ async fn mysql_returns_trigger_components_and_the_create_view_statement() {
   let view = format!("{}_v", fixture.child);
   let trigger = format!("{}_trg", fixture.child);
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
-  for statement in fixture.ddl(mysql_flavor(&pool).await) {
+  for statement in fixture.ddl(mysql_flavor(&pool).await.fixture_dialect()) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
   }
   sqlx::query(&format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child))
     .execute(&pool)
     .await
     .expect("create view");
+  // TiDB 没有触发器：视图那一半照查，触发器那一半只断言目录是空的
+  let has_triggers = mysql_flavor(&pool).await != MysqlFlavor::TiDb;
   // MySQL 的 CREATE TRIGGER 不支持预处理协议（错误 1295），只能走文本协议
-  sqlx::raw_sql(&format!(
-    "CREATE TRIGGER {trigger} BEFORE INSERT ON {} FOR EACH ROW SET NEW.score = 1",
-    fixture.child
-  ))
-  .execute(&pool)
-  .await
-  .expect("create trigger");
+  if has_triggers {
+    sqlx::raw_sql(&format!(
+      "CREATE TRIGGER {trigger} BEFORE INSERT ON {} FOR EACH ROW SET NEW.score = 1",
+      fixture.child
+    ))
+    .execute(&pool)
+    .await
+    .expect("create trigger");
+  }
 
   let queries =
     dataomni_lib::services::schema_metadata_queries(&dataomni_lib::models::DatabaseType::MySQL)
@@ -1724,6 +1750,10 @@ async fn mysql_returns_trigger_components_and_the_create_view_statement() {
     .fetch_all(&pool)
     .await
     .expect("run trigger query");
+  if !has_triggers {
+    assert!(rows.is_empty(), "TiDB 上触发器目录应是空的");
+    return;
+  }
   assert_eq!(rows.len(), 1);
   assert_eq!(rows[0].get::<String, _>("trigger_name"), trigger);
   // MySQL 只给拆开的组件，没有完整的 CREATE TRIGGER
@@ -1920,24 +1950,28 @@ async fn mysql_lists_tables_views_and_routines() {
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
   sqlx::raw_sql(&format!("DROP FUNCTION IF EXISTS {routine}")).execute(&pool).await.ok();
   sqlx::raw_sql(&format!("DROP PROCEDURE IF EXISTS {procedure}")).execute(&pool).await.ok();
-  for statement in fixture.ddl(mysql_flavor(&pool).await) {
+  for statement in fixture.ddl(mysql_flavor(&pool).await.fixture_dialect()) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
   }
   sqlx::query(&format!("CREATE VIEW {view} AS SELECT id FROM {}", fixture.child))
     .execute(&pool)
     .await
     .expect("create view");
+  // TiDB 没有存储函数与过程：表和视图照查，例程那一半跳过
+  let stored_programs = mysql_flavor(&pool).await != MysqlFlavor::TiDb;
   // CREATE FUNCTION / PROCEDURE 不支持预处理协议
-  sqlx::raw_sql(&format!(
-    "CREATE FUNCTION {routine}(a INT) RETURNS INT DETERMINISTIC RETURN a + 1"
-  ))
-  .execute(&pool)
-  .await
-  .expect("create function");
-  sqlx::raw_sql(&format!("CREATE PROCEDURE {procedure}() SELECT 1"))
+  if stored_programs {
+    sqlx::raw_sql(&format!(
+      "CREATE FUNCTION {routine}(a INT) RETURNS INT DETERMINISTIC RETURN a + 1"
+    ))
     .execute(&pool)
     .await
-    .expect("create procedure");
+    .expect("create function");
+    sqlx::raw_sql(&format!("CREATE PROCEDURE {procedure}() SELECT 1"))
+      .execute(&pool)
+      .await
+      .expect("create procedure");
+  }
 
   let database: String =
     sqlx::query_scalar("SELECT DATABASE()").fetch_one(&pool).await.expect("current database");
@@ -1959,17 +1993,19 @@ async fn mysql_lists_tables_views_and_routines() {
   let kind_of = |name: &str| objects.iter().find(|(n, _)| n == name).map(|(_, kind)| kind.clone());
   assert_eq!(kind_of(&fixture.child).as_deref(), Some("table"));
   assert_eq!(kind_of(&view).as_deref(), Some("view"));
-  assert_eq!(kind_of(&routine).as_deref(), Some("function"));
-  assert_eq!(kind_of(&procedure).as_deref(), Some("procedure"));
+  if stored_programs {
+    assert_eq!(kind_of(&routine).as_deref(), Some("function"));
+    assert_eq!(kind_of(&procedure).as_deref(), Some("procedure"));
 
-  let definition: String = sqlx::query(queries.routine_definition)
-    .bind(&routine)
-    .bind(Option::<String>::None)
-    .fetch_one(&pool)
-    .await
-    .expect("run routine definition query")
-    .get("definition");
-  assert!(definition.contains("a + 1"), "应给出语句体: {definition}");
+    let definition: String = sqlx::query(queries.routine_definition)
+      .bind(&routine)
+      .bind(Option::<String>::None)
+      .fetch_one(&pool)
+      .await
+      .expect("run routine definition query")
+      .get("definition");
+    assert!(definition.contains("a + 1"), "应给出语句体: {definition}");
+  }
 
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
   sqlx::raw_sql(&format!("DROP FUNCTION IF EXISTS {routine}")).execute(&pool).await.ok();
@@ -2116,7 +2152,7 @@ async fn mysql_er_diagram_reports_column_types_with_length() {
   let fixture = MetaFixture::new("myer");
   let view = format!("{}_v", fixture.child);
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
-  for statement in fixture.ddl(mysql_flavor(&pool).await) {
+  for statement in fixture.ddl(mysql_flavor(&pool).await.fixture_dialect()) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
   }
   sqlx::query(&format!("CREATE VIEW {view} AS SELECT id FROM {}", fixture.child))
@@ -2308,7 +2344,7 @@ async fn mysql_completion_catalog_lists_views_next_to_tables() {
   let fixture = MetaFixture::new("mycomp");
   let view = format!("{}_v", fixture.child);
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
-  for statement in fixture.ddl(mysql_flavor(&pool).await) {
+  for statement in fixture.ddl(mysql_flavor(&pool).await.fixture_dialect()) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
   }
   sqlx::query(&format!("CREATE VIEW {view} AS SELECT id, label FROM {}", fixture.child))
@@ -2505,11 +2541,11 @@ async fn mysql_use_is_rejected_by_the_prepared_protocol() {
   // 所以界面上那一栏在 MySQL 下恒等于连上去时选定的库。哪天改回文本协议，
   // 这条会红，提醒回来重估那一栏的说法。
   //
-  // MariaDB 不一样：它的预处理协议**收** `USE`。这正是下面那条用例要防的事，
-  // 这里照实钉住两家的差别——哪天 MariaDB 也拒了，那道防线就可以重估。
+  // MariaDB 与 TiDB 不一样：它们的预处理协议**收** `USE`。这正是下面那条
+  // 用例要防的事，这里照实钉住差别——哪天它们也拒了，那道防线就可以重估。
   let outcome = sqlx::query("USE information_schema").execute(&pool).await;
-  if is_mariadb(&pool).await {
-    assert!(outcome.is_ok(), "MariaDB 的预处理协议本来收 USE，实际: {outcome:?}");
+  if mysql_flavor(&pool).await != MysqlFlavor::MySql {
+    assert!(outcome.is_ok(), "MariaDB / TiDB 的预处理协议本来收 USE，实际: {outcome:?}");
     return;
   }
   let error = outcome.expect_err("prepared protocol must reject USE");
@@ -2552,12 +2588,35 @@ async fn mysql_use_cannot_move_a_pooled_connection_to_another_database() {
   assert_eq!(database.as_deref(), Some("dataomni_test"), "池子里的连接被挪走了");
 }
 
-/// 同一个 URL 可能指向 MySQL 也可能指向 MariaDB，两家只在少数地方真的不同，
+/// 同一个 URL 可能指向 MySQL、MariaDB 或 TiDB，几家只在少数地方真的不同，
 /// 用例在那几处按服务端自报的版本分开断言。
-async fn is_mariadb(pool: &sqlx::MySqlPool) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MysqlFlavor {
+  MySql,
+  MariaDb,
+  TiDb,
+}
+
+impl MysqlFlavor {
+  /// 给 `MetaFixture::ddl` 用的方言名：只有 MariaDB 建不出函数索引
+  fn fixture_dialect(self) -> &'static str {
+    match self {
+      Self::MariaDb => "mariadb",
+      Self::MySql | Self::TiDb => "mysql",
+    }
+  }
+}
+
+async fn mysql_flavor(pool: &sqlx::MySqlPool) -> MysqlFlavor {
   let version: String =
     sqlx::query_scalar("SELECT VERSION()").fetch_one(pool).await.expect("read server version");
-  version.contains("MariaDB")
+  if version.contains("MariaDB") {
+    MysqlFlavor::MariaDb
+  } else if version.contains("TiDB") {
+    MysqlFlavor::TiDb
+  } else {
+    MysqlFlavor::MySql
+  }
 }
 
 /// 目录里的序号列：MySQL 是 INT UNSIGNED，MariaDB 是 BIGINT。
@@ -2577,20 +2636,14 @@ fn mysql_ordinal(row: &sqlx::mysql::MySqlRow, column: &str) -> Option<i64> {
 /// - 整数类型带显示宽度：`int(11)`、`int(10) unsigned`。MySQL 8.0.19 起不再
 ///   显示它，MariaDB 照旧；宽度从来不影响取值范围。
 /// - 表达式小写带括号：`on update current_timestamp()`。
-/// - utf8mb4 的默认排序规则：没写 `COLLATE` 的列拿到的是服务端的默认值，
-///   MySQL 8 是 `utf8mb4_0900_ai_ci`，MariaDB 11.4 是 `utf8mb4_uca1400_ai_ci`。
-///   语料里写的是前者；这是服务端配置，不是我们生成的语句有什么不同。
 ///
-/// 只放这三条。默认值那种「意思也不同」的差别由目录查询自己换形状
+/// 只放这两条。默认值那种「意思也不同」的差别由目录查询自己换形状
 /// （见 `mysql_column_defaults_come_back_in_one_shape_on_mysql_and_mariadb`），
 /// 不能在用例里抹平——抹平了就看不见界面会拿到什么。
 fn mariadb_spelling_as_mysql(mut column: ddl_corpus::Column) -> ddl_corpus::Column {
   column.data_type = strip_integer_display_width(&column.data_type);
   column.extra =
     column.extra.map(|extra| extra.replace("current_timestamp()", "CURRENT_TIMESTAMP"));
-  if column.collation.as_deref() == Some("utf8mb4_uca1400_ai_ci") {
-    column.collation = Some("utf8mb4_0900_ai_ci".to_string());
-  }
   column
 }
 
@@ -2605,15 +2658,6 @@ fn strip_integer_display_width(data_type: &str) -> String {
       format!("{}{}", &prefix[..prefix.len() - 1], &rest[close + 1..])
     }
     _ => data_type.to_string(),
-  }
-}
-
-/// 给 `MetaFixture::ddl` 用的方言名
-async fn mysql_flavor(pool: &sqlx::MySqlPool) -> &'static str {
-  if is_mariadb(pool).await {
-    "mariadb"
-  } else {
-    "mysql"
   }
 }
 
@@ -2981,6 +3025,7 @@ async fn mysql_column_defaults_come_back_in_one_shape_on_mysql_and_mariadb() {
   };
   let pool =
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  let flavor = mysql_flavor(&pool).await;
   let table = "dataomni_default_shapes";
   sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.expect("drop");
   sqlx::query(&format!(
@@ -2996,7 +3041,7 @@ async fn mysql_column_defaults_come_back_in_one_shape_on_mysql_and_mariadb() {
        d_neg DECIMAL(5,2) DEFAULT -1.5,
        b_bit BIT(1) DEFAULT b'1',
        ts TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-       e_expr INT DEFAULT (1 + 1),
+       e_expr VARCHAR(36) DEFAULT (UUID()),
        s_ctsword VARCHAR(30) DEFAULT 'CURRENT_TIMESTAMP'
      )"
   ))
@@ -3027,7 +3072,8 @@ async fn mysql_column_defaults_come_back_in_one_shape_on_mysql_and_mariadb() {
       literal("s_notnull", None),
       literal("s_empty", Some("")),
       literal("i_zero", Some("0")),
-      literal("d_neg", Some("-1.50")),
+      // TiDB 不补足标度，写的是 `-1.5`；数值列的默认值原样重述，两种写法同一个值
+      literal("d_neg", Some(if flavor == MysqlFlavor::TiDb { "-1.5" } else { "-1.50" })),
       literal("b_bit", Some("b'1'")),
     ]
   );
@@ -3120,7 +3166,7 @@ async fn mysql_reports_declared_types_and_generated_columns() {
     .fetch_all(&pool)
     .await
     .expect("run MySQL column query");
-  let mariadb = is_mariadb(&pool).await;
+  let mariadb = mysql_flavor(&pool).await == MysqlFlavor::MariaDb;
   let columns: Vec<(String, String, i64, Option<i64>, i64)> = rows
     .iter()
     .map(|row| {
@@ -3227,7 +3273,7 @@ mod ddl_corpus {
   }
 
   /// 目录里一列的期望值。`None` 表示这个方言不报告该字段，不参与比对
-  #[derive(Debug, PartialEq, Eq)]
+  #[derive(Debug, Clone, PartialEq, Eq)]
   pub struct Column {
     pub name: String,
     pub data_type: String,
@@ -3430,7 +3476,30 @@ async fn mysql_runs_the_generated_ddl_from_the_shared_corpus() {
   let pool =
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
   let catalog = column_queries(dataomni_lib::models::DatabaseType::MySQL);
-  let mariadb = is_mariadb(&pool).await;
+  let flavor = mysql_flavor(&pool).await;
+  let mariadb = flavor == MysqlFlavor::MariaDb;
+  // 没写 `COLLATE` 的列拿到的是库的默认排序规则：MySQL 8 是 `utf8mb4_0900_ai_ci`，
+  // MariaDB 11.4 是 `utf8mb4_uca1400_ai_ci`，TiDB 是 `utf8mb4_bin`。语料照 MySQL 写，
+  // 换成这台服务端的默认值再比——换的是**期望**，不是数据库给的结果；而且只换
+  // 语料里那个「默认值」，显式写了 `utf8mb4_bin` 的列不受影响
+  let default_collation: String = sqlx::query_scalar(
+    "SELECT CAST(DEFAULT_COLLATION_NAME AS CHAR) FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = DATABASE()",
+  )
+  .fetch_one(&pool)
+  .await
+  .expect("read default collation");
+  let expected = |columns: &[ddl_corpus::Column]| -> Vec<ddl_corpus::Column> {
+    columns
+      .iter()
+      .cloned()
+      .map(|mut column| {
+        if column.collation.as_deref() == Some("utf8mb4_0900_ai_ci") {
+          column.collation = Some(default_collation.clone());
+        }
+        column
+      })
+      .collect()
+  };
   let comparable = |columns: Vec<ddl_corpus::Column>| {
     if mariadb {
       columns.into_iter().map(mariadb_spelling_as_mysql).collect()
@@ -3447,14 +3516,38 @@ async fn mysql_runs_the_generated_ddl_from_the_shared_corpus() {
     // 建表用例没有 origin——表还不存在
     if !case.origin.is_empty() {
       let origin = comparable(mysql_catalog_columns(&pool, catalog, &case.table).await);
-      assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+      assert_eq!(
+        origin,
+        expected(&case.origin),
+        "{}: 语料里的 origin 和数据库给的对不上",
+        case.name
+      );
     }
 
+    // TiDB 不收「一条 ALTER 里同时改列又改表名」（8200）。生成器为了原子性
+    // 恰好会这么写，所以在 TiDB 上改表名加改列会被整条拒绝——已知缺口，
+    // 但拒绝是整条的、什么都没改，也把原因说出来了。钉住的就是这个
+    let mut refused_by_tidb = false;
     for statement in &case.statements {
-      sqlx::query(statement)
-        .execute(&pool)
-        .await
-        .unwrap_or_else(|error| panic!("{}: 生成的语句跑不了\n{statement}\n{error}", case.name));
+      match sqlx::query(statement).execute(&pool).await {
+        Ok(_) => {}
+        Err(error)
+          if flavor == MysqlFlavor::TiDb
+            && error.to_string().contains("Unsupported multi schema change") =>
+        {
+          refused_by_tidb = true;
+          break;
+        }
+        Err(error) => panic!("{}: 生成的语句跑不了\n{statement}\n{error}", case.name),
+      }
+    }
+    if refused_by_tidb {
+      let untouched = comparable(mysql_catalog_columns(&pool, catalog, &case.table).await);
+      assert_eq!(untouched, expected(&case.origin), "{}: TiDB 拒绝之后表不该有任何变化", case.name);
+      for statement in &case.cleanup {
+        sqlx::query(statement).execute(&pool).await.ok();
+      }
+      continue;
     }
 
     for statement in &case.insert {
@@ -3465,7 +3558,7 @@ async fn mysql_runs_the_generated_ddl_from_the_shared_corpus() {
     }
 
     let after = comparable(mysql_catalog_columns(&pool, catalog, &case.final_table).await);
-    assert_eq!(after, case.after, "{}: 跑完之后的表和语料说的不一样", case.name);
+    assert_eq!(after, expected(&case.after), "{}: 跑完之后的表和语料说的不一样", case.name);
 
     for statement in &case.cleanup {
       sqlx::query(statement).execute(&pool).await.ok();
@@ -3739,6 +3832,7 @@ async fn mysql_explain_nests_the_join_and_names_both_tables() {
   };
   let pool =
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  let flavor = mysql_flavor(&pool).await;
   let db_pool = DbPool::MySql(pool);
   let sessions = QuerySessionState::default();
   let db_type = dataomni_lib::models::DatabaseType::MySQL;
@@ -3757,15 +3851,24 @@ async fn mysql_explain_nests_the_join_and_names_both_tables() {
       .expect("prepare fixture");
   }
 
-  let plan = explain_with_session(
-    &sessions,
-    &db_pool,
-    &url,
-    &db_type,
-    "SELECT p.code FROM explain_smoke p JOIN explain_smoke_child c ON c.parent = p.id WHERE p.n > 2",
-    false,
-  )
-  .await;
+  let query =
+    "SELECT p.code FROM explain_smoke p JOIN explain_smoke_child c ON c.parent = p.id WHERE p.n > 2";
+
+  // TiDB 不认 `FORMAT=JSON`，它自己的 `tidb_json` 是另一棵树。当前版本不解析它，
+  // 要钉的是「报出来」：服务端的原话一路送到界面上，而不是画一棵空树
+  if flavor == MysqlFlavor::TiDb {
+    let statement =
+      dataomni_lib::services::explain_statement(&db_type, query, false).expect("explain statement");
+    let error = sessions
+      .execute("plan", &url, &db_pool, &statement, 1, Duration::from_secs(30))
+      .await
+      .expect_err("TiDB rejects FORMAT=JSON");
+    assert!(error.message.contains("not supported"), "应是 TiDB 的原话: {}", error.message);
+    sessions.release("plan").await;
+    return;
+  }
+
+  let plan = explain_with_session(&sessions, &db_pool, &url, &db_type, query, false).await;
 
   let operations = all_operations(&plan);
   assert!(operations.contains(&"query_block".to_string()), "{operations:?}");
