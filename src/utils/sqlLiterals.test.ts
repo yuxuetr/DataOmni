@@ -45,3 +45,13 @@ describe('escapeLikePattern', () => {
     expect(escapeLikePattern('hello')).toBe('hello');
   });
 });
+
+describe('quoteSqlStringLiteral on SQL Server', () => {
+  it('writes a Unicode literal so that non-ASCII text survives the comparison', () => {
+    // '中文' 是按库的代码页存的非 Unicode 串，和 nvarchar 列比较前就变成了 '??'
+    expect(quoteSqlStringLiteral('中文', 'sqlserver')).toBe("N'中文'");
+    expect(quoteSqlStringLiteral("O'Brien", 'sqlserver')).toBe("N'O''Brien'");
+    // 反斜杠在 T-SQL 的字面量里没有特殊含义
+    expect(quoteSqlStringLiteral('C:\\temp', 'sqlserver')).toBe("N'C:\\temp'");
+  });
+});

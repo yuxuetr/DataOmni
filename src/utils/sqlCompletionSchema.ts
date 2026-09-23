@@ -1,5 +1,6 @@
 import type { Completion } from '@codemirror/autocomplete';
 import {
+  MSSQL,
   MySQL,
   PostgreSQL,
   SQLite,
@@ -115,7 +116,8 @@ export function buildCompletionSchema(
 
   return {
     schema,
-    defaultSchema: bySchema.has('public') ? 'public' : undefined
+    // 不带前缀的名字落在哪个 schema：PostgreSQL 是 public，SQL Server 是 dbo
+    defaultSchema: ['public', 'dbo'].find((name) => bySchema.has(name))
   };
 }
 
@@ -132,6 +134,8 @@ export function sqlDialectFor(dbType: DatabaseType): SQLDialect {
       return PostgreSQL;
     case DatabaseType.SQLite:
       return SQLite;
+    case DatabaseType.SqlServer:
+      return MSSQL;
     default:
       return StandardSQL;
   }

@@ -818,7 +818,7 @@ pub const USE_STATEMENT_REFUSED: &str = "DATAOMNI_USE_STATEMENT_REFUSED";
 /// 一条被 `USE` 挪走的连接还回池子，下一次拿到它的目录查询就列出另一个库的
 /// 表，而界面上的库名没变。MySQL 的预处理协议本来就拒绝 `USE`（1295），
 /// MariaDB 的不拒，所以这一道由我们自己挡，两家说同一句话。
-fn refuse_use_statement(sql: &str) -> Result<(), QueryError> {
+pub(crate) fn refuse_use_statement(sql: &str) -> Result<(), QueryError> {
   match crate::services::transaction_state::leading_keywords(sql).0.as_str() {
     "USE" => Err(QueryError::message(USE_STATEMENT_REFUSED)),
     _ => Ok(()),

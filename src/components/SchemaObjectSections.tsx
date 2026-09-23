@@ -209,8 +209,10 @@ function DdlSection({
         </pre>
       ) : (
         <p className="px-4 py-2 text-xs text-fg-subtle">
-          {dbType === DatabaseType.PostgreSQL
-            ? t('schema.definition.noCreateTable')
+          {dbType === DatabaseType.PostgreSQL || dbType === DatabaseType.SqlServer
+            ? t('schema.definition.noCreateTable', {
+              database: dbType === DatabaseType.PostgreSQL ? 'PostgreSQL' : 'SQL Server'
+            })
             : t('schema.definition.empty')}
         </p>
       )}

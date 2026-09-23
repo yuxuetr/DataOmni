@@ -1,3 +1,4 @@
+import { supportsFeature } from '../contracts/databaseSupport';
 import { useMemo, useState } from 'react';
 import { PLAIN_TEXT_INPUT } from './FormControls';
 import { invoke } from '@tauri-apps/api/core';
@@ -216,7 +217,7 @@ export function TableStructureEditor({
                 {t('ddl.preview')}
               </button>
             </>
-          ) : (
+          ) : supportsFeature(dialect, 'structureEditing') && (
             <button
               type="button"
               onClick={startEditing}

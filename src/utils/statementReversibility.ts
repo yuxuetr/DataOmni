@@ -64,7 +64,20 @@ const NON_TRANSACTIONAL: Record<SqlDialect, readonly KeywordPrefix[]> = {
     ['ALTER', 'SYSTEM']
   ],
   // SQLite 的 DDL 也是事务性的
-  sqlite: [['VACUUM'], ['ATTACH'], ['DETACH']]
+  sqlite: [['VACUUM'], ['ATTACH'], ['DETACH']],
+  // SQL Server 的 DDL 同样能回滚；库级与备份类的语句不许进用户事务，
+  // 全文目录的增删也不行
+  sqlserver: [
+    ['CREATE', 'DATABASE'],
+    ['ALTER', 'DATABASE'],
+    ['DROP', 'DATABASE'],
+    ['BACKUP'],
+    ['RESTORE'],
+    ['RECONFIGURE'],
+    ['CREATE', 'FULLTEXT', 'CATALOG'],
+    ['ALTER', 'FULLTEXT', 'CATALOG'],
+    ['DROP', 'FULLTEXT', 'CATALOG']
+  ]
 };
 
 /** 这一批里第一条事务包不住的语句，返回它的关键字；都能包住就是 `null` */

@@ -81,7 +81,7 @@
 | --- | --- |
 | 连接名称 | 只给自己看，列表和标签上显示它 |
 | 环境 | 开发 / 测试 / 预发 / 生产。见下面的[环境](#环境) |
-| 数据库类型 | MySQL、PostgreSQL、SQLite，以及 MariaDB、TiDB、CockroachDB。其余几种是计划中的，置灰选不了 |
+| 数据库类型 | MySQL、PostgreSQL、SQLite、SQL Server，以及 MariaDB、TiDB、CockroachDB。其余几种是计划中的，置灰选不了 |
 | 主机地址、端口 | 数据库服务器的地址。端口按类型自动填默认值 |
 | 数据库名称 | 连上之后默认进入的库。MySQL 必须填：对象树、补全和 ER 图都按这个库读 |
 | 用户名、密码 | 数据库账号 |
@@ -97,6 +97,16 @@
 MySQL / PostgreSQL 协议，连上之后的用法和 MySQL / PostgreSQL 一样。TiDB 与
 CockroachDB 那两格标着「有缺口」，选中时表单里会列出具体哪几项用不了；完整的
 对照见 README 的「兼容性矩阵」。
+
+**SQL Server** 在分阶段接入：能连接（TLS、SSH 隧道）、执行 SQL、浏览对象树、表结构、
+ER 图、翻看表数据、补全与格式化。表格里改数据、事务控制、执行计划、改表结构与新建表、
+CSV 导入、整表与完整结果导出这一版还没有，对应的按钮在 SQL Server 连接上不出现，
+连接表单里那一格列着同一份清单。另外两点：
+
+- 默认 TLS 是「优先使用 TLS」：SQL Server 装好就带自签证书，这一档加密但不校验。
+  要校验证书，选后两档并填 CA 证书路径（SQL Server 不支持客户端证书）。
+- 结果里有 `sql_variant` 或 CLR 类型（geography、hierarchyid）的列时驱动读不了，
+  报错里会给出写法：在查询里 `CAST(... AS nvarchar(...))` 再取。
 
 ### 打开 SQLite 文件
 

@@ -258,6 +258,10 @@ async fn sql_server_errors_carry_the_error_number_and_point_at_the_line() {
   assert_eq!(syntax.position(), Some(13), "{syntax:?}");
   assert!(syntax.message.contains("WHERE"), "{syntax:?}");
 
+  // USE 换的是会话连接的库，对象树与表数据还在原来的库上读——和 MySQL 一样拒绝
+  let refused = connection.execute("USE master", 10).await.expect_err("USE is refused");
+  assert_eq!(refused.message, dataomni_lib::services::USE_STATEMENT_REFUSED);
+
   // 出过错的连接照样能用
   let rows = rows_of(connection.execute("SELECT 1 AS ok", 10).await.expect("still usable"));
   assert_eq!(rows[0]["ok"], json!(1));
@@ -562,4 +566,67 @@ async fn sql_server_catalog_queries_describe_the_fixture() {
   let where_am_i = pool.select(target.sql, &[]).await.expect("session target");
   assert_eq!(text(&where_am_i[0]["schema_name"]), "dbo");
   assert_eq!(where_am_i[0]["read_only"], json!(false));
+}
+
+/// 会话选项要和 SSMS 一样开着 `QUOTED_IDENTIFIER` 与 ANSI 那几项：表上有过滤
+/// 索引、计算列索引或索引视图时，这几项不对 SQL Server 直接拒绝写入（1934）。
+/// sqlcmd 默认就是关着的——建这份夹具时实际撞上过。
+#[tokio::test]
+async fn sql_server_sessions_use_the_options_that_filtered_indexes_require() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool).await;
+  let rows = rows_of(
+    connection
+      .execute(
+        "SELECT
+           CAST(SESSIONPROPERTY('QUOTED_IDENTIFIER') AS int) AS quoted_identifier,
+           CAST(SESSIONPROPERTY('ANSI_NULLS') AS int) AS ansi_nulls,
+           CAST(SESSIONPROPERTY('ANSI_PADDING') AS int) AS ansi_padding,
+           CAST(SESSIONPROPERTY('ANSI_WARNINGS') AS int) AS ansi_warnings,
+           CAST(SESSIONPROPERTY('CONCAT_NULL_YIELDS_NULL') AS int) AS concat_null_yields_null",
+        10,
+      )
+      .await
+      .expect("session options"),
+  );
+  for option in
+    ["quoted_identifier", "ansi_nulls", "ansi_padding", "ansi_warnings", "concat_null_yields_null"]
+  {
+    assert_eq!(rows[0][option], json!(1), "{option} 没开");
+  }
+}
+
+/// 驱动不认识的列类型：tiberius 在读 `sql_variant` 的列元数据时是 `todo!()`，
+/// 直接 panic。没接住的话这次调用永远不回来，界面一直转着「执行中」。
+/// 接住之后是一条能照着做的错误，而且会话还能继续用。
+#[tokio::test]
+async fn sql_server_driver_panics_become_errors_and_the_session_recovers() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool).await;
+  let error = connection
+    .execute("SELECT SERVERPROPERTY('Edition') AS edition", 10)
+    .await
+    .expect_err("sql_variant is not decodable");
+  assert!(
+    error.message.starts_with(dataomni_lib::services::sql_server::SQL_SERVER_DRIVER_FAILURE),
+    "{error:?}"
+  );
+  let rows = rows_of(
+    connection
+      .execute("SELECT CAST(SERVERPROPERTY('Edition') AS nvarchar(128)) AS edition", 10)
+      .await
+      .expect("the CAST that the error suggests works"),
+  );
+  assert!(text(&rows[0]["edition"]).contains("Developer"), "{rows:?}");
+  // 目录查询那条路一样要接住
+  let catalog_error = pool
+    .select("SELECT SERVERPROPERTY('Edition') AS edition", &[])
+    .await
+    .expect_err("catalog path");
+  assert!(
+    catalog_error
+      .message
+      .starts_with(dataomni_lib::services::sql_server::SQL_SERVER_DRIVER_FAILURE),
+    "{catalog_error:?}"
+  );
 }

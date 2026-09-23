@@ -3,7 +3,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { DatabaseType } from './connection';
 import {
+  PENDING_FEATURES,
   SQLX_DRIVER_FEATURES,
+  STANDALONE_DRIVER_CRATES,
+  supportsFeature,
   SUPPORTED_DATABASE_TYPES,
   isDatabaseTypeSupported
 } from './databaseSupport';
@@ -37,11 +40,19 @@ function sqlxDriverFeatures(): Set<string> {
   return new Set(declared.filter((feature) => feature in SQLX_DRIVER_FEATURES));
 }
 
+/** `[dependencies]` 里声明了哪些独立驱动 */
+function standaloneDrivers(): DatabaseType[] {
+  return Object.entries(STANDALONE_DRIVER_CRATES)
+    .filter(([crate]) => CARGO_TOML.split('\n').some((line) => line.startsWith(`${crate} =`)))
+    .map(([, type]) => type);
+}
+
 describe('数据库类型支持范围', () => {
-  it('与后端实际编进去的 sqlx 驱动完全一致', () => {
-    const fromBackend = [...sqlxDriverFeatures()]
-      .map((feature) => SQLX_DRIVER_FEATURES[feature])
-      .sort();
+  it('与后端实际编进去的驱动完全一致', () => {
+    const fromBackend = [
+      ...[...sqlxDriverFeatures()].map((feature) => SQLX_DRIVER_FEATURES[feature]),
+      ...standaloneDrivers()
+    ].sort();
 
     expect([...SUPPORTED_DATABASE_TYPES].sort()).toEqual(fromBackend);
   });
@@ -62,6 +73,33 @@ describe('数据库类型支持范围', () => {
       DatabaseType.Elasticsearch
     ]) {
       expect(isDatabaseTypeSupported(type)).toBe(false);
+    }
+  });
+});
+
+describe('分阶段接入的类型', () => {
+  const README = readFileSync(fileURLToPath(new URL('../../README.md', import.meta.url)), 'utf8');
+  const MATRIX_NAMES: Partial<Record<DatabaseType, string>> = {
+    [DatabaseType.SqlServer]: 'SQL Server'
+  };
+
+  it('README 兼容性矩阵把它们标成「有缺口」，全都做完之后就不再是', () => {
+    for (const [type, name] of Object.entries(MATRIX_NAMES)) {
+      const row = README.split('\n').find((line) => line.startsWith(`| ${name} |`));
+      expect(row, `README 兼容性矩阵里没有 ${name}`).toBeDefined();
+      const verdict = row?.split('|')[4]?.trim() ?? '';
+      const pending = PENDING_FEATURES[type as DatabaseType]?.length ?? 0;
+      expect(verdict.startsWith('⚠️'), `${name}: 还缺 ${pending} 项，矩阵写的是「${verdict}」`)
+        .toBe(pending > 0);
+    }
+  });
+
+  it('只有列在清单里的功能才被挡住', () => {
+    expect(supportsFeature(DatabaseType.SqlServer, 'explain')).toBe(false);
+    expect(supportsFeature('sqlserver', 'dataEditing')).toBe(false);
+    for (const type of [DatabaseType.MySQL, DatabaseType.PostgreSQL, DatabaseType.SQLite]) {
+      expect(supportsFeature(type, 'explain')).toBe(true);
+      expect(supportsFeature(type, 'dataEditing')).toBe(true);
     }
   });
 });

@@ -24,9 +24,11 @@ use crate::services::query_executor::{
   QueryResultBatch, QueryRow, QueryTruncationReason, StreamOptions,
 };
 use crate::services::QueryError;
-use futures_util::TryStreamExt;
+use futures_util::{FutureExt, TryStreamExt};
 use serde_json::{Map, Value as JsonValue};
 use std::collections::HashMap;
+use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tiberius::{AuthMethod, Client, ColumnData, ColumnType, Config, EncryptionLevel, FromSql};
@@ -65,6 +67,14 @@ pub const SQL_SERVER_SCHEME: &str = "sqlserver://";
 
 /// 这一阶段还没做的操作。前端把它译成一句「SQL Server 还不支持……」
 pub const SQL_SERVER_UNSUPPORTED: &str = "DATAOMNI_SQL_SERVER_UNSUPPORTED";
+
+/// tiberius 在它没实现的地方直接 panic：`sql_variant` 与 CLR 类型（geography、
+/// hierarchyid）的列元数据是 `todo!()`，服务端要求的加密级别对不上时也是
+/// `panic!`。没接住的话那一次调用永远不回来，界面一直转着「执行中」。
+/// 冒号后面是 panic 的原话。
+pub const SQL_SERVER_DRIVER_FAILURE: &str = "DATAOMNI_SQL_SERVER_DRIVER_FAILURE";
+/// 驱动失败之后这条连接的协议状态不可知，和断线一样不再复用
+const DRIVER_FAILURE_CODE: &str = "SQL_SERVER_DRIVER_FAILURE";
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -133,11 +143,11 @@ fn tls_settings(mode: TlsMode) -> (EncryptionLevel, bool) {
 
 pub async fn connect(target: &SqlServerTarget) -> Result<SqlServerClient, QueryError> {
   let config = target.config();
-  let attempt = async {
+  let attempt = guarded(async {
     let tcp = TcpStream::connect(config.get_addr()).await.map_err(connection_lost)?;
     tcp.set_nodelay(true).map_err(connection_lost)?;
     Client::connect(config, tcp.compat_write()).await.map_err(|error| query_error(error, None))
-  };
+  });
   tokio::time::timeout(CONNECT_TIMEOUT, attempt).await.map_err(|_| {
     QueryError::with_code(
       CONNECTION_LOST_CODE,
@@ -218,10 +228,12 @@ impl SqlServerConnection {
     if options.non_query == NonQueryHandling::Refuse {
       return Err(QueryError::message(format!("{SQL_SERVER_UNSUPPORTED}: export")));
     }
+    // 和 MySQL 同一个理由：会话连接换了库，对象树与表数据还在原来那个库上读
+    crate::services::query_executor::refuse_use_statement(sql)?;
     let mut client = self.take_client().await?;
-    let result = stream_first_result(&mut client, sql, options, sink).await;
-    // 连接本身断了就不放回：下一次用的时候重连
-    if !matches!(&result, Err(error) if error.code.as_deref() == Some(CONNECTION_LOST_CODE)) {
+    let result = guarded(stream_first_result(&mut client, sql, options, sink)).await;
+    // 连接本身断了、或者驱动在半路失败了，就不放回：下一次用的时候重连
+    if keeps_connection(&result) {
       self.client = Some(client);
     }
     result
@@ -230,13 +242,13 @@ impl SqlServerConnection {
   /// 一次没有结果集可言的执行（事务控制这类）。
   pub async fn execute_batch(&mut self, sql: &str) -> Result<u64, QueryError> {
     let mut client = self.take_client().await?;
-    let result: Result<u64, QueryError> = async {
+    let result: Result<u64, QueryError> = guarded(async {
       let stream = client.simple_query(sql).await.map_err(|error| query_error(error, Some(sql)))?;
       stream.into_results().await.map_err(|error| query_error(error, Some(sql)))?;
       Ok(0)
-    }
+    })
     .await;
-    if !matches!(&result, Err(error) if error.code.as_deref() == Some(CONNECTION_LOST_CODE)) {
+    if keeps_connection(&result) {
       self.client = Some(client);
     }
     result
@@ -292,8 +304,8 @@ impl SqlServerPool {
   ) -> Result<Vec<QueryRow>, QueryError> {
     let mut connection = self.acquire_reusable().await?;
     let mut client = connection.take_client().await?;
-    let result = select_rows(&mut client, sql, params).await;
-    if !matches!(&result, Err(error) if error.code.as_deref() == Some(CONNECTION_LOST_CODE)) {
+    let result = guarded(select_rows(&mut client, sql, params)).await;
+    if keeps_connection(&result) {
       connection.client = Some(client);
     }
     result
@@ -374,7 +386,7 @@ async fn stream_first_result(
           .map(|(ordinal, (column, name))| QueryColumnMetadata {
             name: name.clone(),
             ordinal,
-            database_type: format!("{:?}", column.column_type()),
+            database_type: type_name(column.column_type()).to_string(),
             logical_type: logical_type(column.column_type()).to_string(),
             nullable: None,
           })
@@ -463,6 +475,46 @@ fn label_columns<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
       }
     })
     .collect()
+}
+
+/// 结果列头上显示的类型名，照 SQL Server 自己的叫法。
+///
+/// TDS 只给到类型族：`intn` 可能是 tinyint 到 bigint 里的任何一种、`nvarchar`
+/// 不带长度。比 tiberius 的内部名（`Intn`、`Decimaln`）好读，但精确的声明
+/// 类型要看结构页。
+fn type_name(column_type: ColumnType) -> &'static str {
+  match column_type {
+    ColumnType::Null => "null",
+    ColumnType::Bit | ColumnType::Bitn => "bit",
+    ColumnType::Int1 => "tinyint",
+    ColumnType::Int2 => "smallint",
+    ColumnType::Int4 | ColumnType::Intn => "int",
+    ColumnType::Int8 => "bigint",
+    ColumnType::Float4 => "real",
+    ColumnType::Float8 | ColumnType::Floatn => "float",
+    ColumnType::Money | ColumnType::Money4 => "money",
+    ColumnType::Decimaln => "decimal",
+    ColumnType::Numericn => "numeric",
+    ColumnType::Datetime | ColumnType::Datetimen => "datetime",
+    ColumnType::Datetime4 => "smalldatetime",
+    ColumnType::Daten => "date",
+    ColumnType::Timen => "time",
+    ColumnType::Datetime2 => "datetime2",
+    ColumnType::DatetimeOffsetn => "datetimeoffset",
+    ColumnType::Guid => "uniqueidentifier",
+    ColumnType::BigVarBin => "varbinary",
+    ColumnType::BigBinary => "binary",
+    ColumnType::Image => "image",
+    ColumnType::BigVarChar => "varchar",
+    ColumnType::BigChar => "char",
+    ColumnType::NVarchar => "nvarchar",
+    ColumnType::NChar => "nchar",
+    ColumnType::Text => "text",
+    ColumnType::NText => "ntext",
+    ColumnType::Xml => "xml",
+    ColumnType::Udt => "udt",
+    ColumnType::SSVariant => "sql_variant",
+  }
 }
 
 fn logical_type(column_type: ColumnType) -> &'static str {
@@ -572,6 +624,35 @@ pub fn format_numeric(value: i128, scale: u8) -> String {
   let padded = format!("{digits:0>width$}", width = scale + 1);
   let (whole, fraction) = padded.split_at(padded.len() - scale);
   format!("{sign}{whole}.{fraction}")
+}
+
+/// 把驱动里的 panic 变成一条查询错误。
+///
+/// `AssertUnwindSafe` 成立的前提：panic 之后被借用的那条连接一律丢掉
+/// （见 [`keeps_connection`]），不会有人再看到它半路停下的状态。
+async fn guarded<T>(future: impl Future<Output = Result<T, QueryError>>) -> Result<T, QueryError> {
+  match AssertUnwindSafe(future).catch_unwind().await {
+    Ok(result) => result,
+    Err(payload) => {
+      let reason = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("unknown");
+      Err(QueryError::with_code(
+        DRIVER_FAILURE_CODE,
+        format!("{SQL_SERVER_DRIVER_FAILURE}: {reason}"),
+      ))
+    }
+  }
+}
+
+/// 这次执行之后连接还能不能接着用：服务端报的错可以，断线与驱动失败不行
+fn keeps_connection<T>(result: &Result<T, QueryError>) -> bool {
+  !matches!(
+    result,
+    Err(error) if matches!(error.code.as_deref(), Some(CONNECTION_LOST_CODE | DRIVER_FAILURE_CODE))
+  )
 }
 
 fn connection_lost(error: impl std::fmt::Display) -> QueryError {

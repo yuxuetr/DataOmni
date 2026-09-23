@@ -55,11 +55,12 @@ export interface ObjectTreeNode {
  * 顶层是否保留 schema 一层。
  *
  * MySQL 与 SQLite 上不保留：连接时已经选定了库，再显示一层库名是噪音。
- * PostgreSQL 上保留：一个连接能横跨 public、业务 schema、扩展装的 schema，
+ * PostgreSQL 与 SQL Server 上保留：一个连接能横跨 public / dbo、业务 schema，
  * schema 是真实维度，抹掉它会让两个同名表挤在一起。
  */
 export function showsSchemaLevel(dbType: DatabaseType): boolean {
-  return dbType === DatabaseType.PostgreSQL;
+  // SQL Server 与 PostgreSQL 一样：一个库里有 dbo 和业务 schema，schema 是真实维度
+  return dbType === DatabaseType.PostgreSQL || dbType === DatabaseType.SqlServer;
 }
 
 /** 表、视图、物化视图有行，能用表视图打开；函数与序列没有。 */

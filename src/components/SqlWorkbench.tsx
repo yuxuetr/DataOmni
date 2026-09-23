@@ -1,3 +1,5 @@
+import { identifierDialectFor } from '../utils/sqlIdentifiers';
+import { firstRowsQuery } from '../utils/tablePagination';
 import React, { useEffect, useState } from 'react';
 import { 
   Database, 
@@ -74,9 +76,12 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
       selectTable(selectedTable.name, selectedTable.schema);
       
       // 生成查询表格数据的SQL
-      const query = selectedTable.schema 
-        ? `SELECT * FROM ${selectedTable.schema}.${selectedTable.name} LIMIT 100;`
-        : `SELECT * FROM ${selectedTable.name} LIMIT 100;`;
+      const query = firstRowsQuery(
+        selectedTable.name,
+        selectedTable.schema,
+        100,
+        identifierDialectFor(connection.db_type)
+      );
       
       setSqlInput(query);
       parseStatements();

@@ -507,8 +507,16 @@ fn validate_tls_configuration(config: &ConnectionProfile) -> Result<(), String> 
     config.ca_certificate_path.as_ref().is_some_and(|path| !path.is_empty())
       || has_client_certificate;
   if has_certificate_paths
-    && !matches!(config.db_type, DatabaseType::MySQL | DatabaseType::PostgreSQL)
+    && !matches!(
+      config.db_type,
+      DatabaseType::MySQL | DatabaseType::PostgreSQL | DatabaseType::SqlServer
+    )
   {
+    return Err(TLS_CERTIFICATES_UNSUPPORTED.to_string());
+  }
+  // tiberius 能按 CA 校验服务端，但不带客户端证书登录——填了也不会生效，
+  // 而用户会以为双向认证已经开着
+  if has_client_certificate && config.db_type == DatabaseType::SqlServer {
     return Err(TLS_CERTIFICATES_UNSUPPORTED.to_string());
   }
 

@@ -29,7 +29,7 @@
 
 ### 🔗 数据库支持
 
-- **可连接并执行查询**: MySQL, PostgreSQL, SQLite
+- **可连接并执行查询**: MySQL, PostgreSQL, SQLite, SQL Server（分阶段接入，见兼容性矩阵）
 - **计划中，当前版本连不上**: MongoDB, Redis, Neo4j, DuckDB, ClickHouse, Elasticsearch
 
   不是「能连上但不能查」——`tauri-plugin-sql` 与 `sqlx` 都只编入了
@@ -52,6 +52,7 @@ MySQL 一组 21 条、PostgreSQL 一组 21 条），不是按协议兼容推断�
 | MariaDB | 11.4 | MySQL | ✅ 支持 | 21 / 21 |
 | TiDB | 8.5 | MySQL | ⚠️ 可用，有缺口 | 21 / 21（缺口由用例钉住） |
 | CockroachDB | 25.2 | PostgreSQL | ⚠️ 可用，有缺口 | 21 / 21（缺口由用例钉住） |
+| SQL Server | 2022 | SQL Server | ⚠️ 可用，有缺口 | 6 / 6（独立用例，`sql_server_smoke.rs`） |
 
 - **MariaDB**：JSON 列是 LONGTEXT 的别名，按文本显示与编辑，没有 JSON 专用
   编辑器；没有函数索引。
@@ -62,6 +63,12 @@ MySQL 一组 21 条、PostgreSQL 一组 21 条），不是按协议兼容推断�
 - **CockroachDB 的缺口**：结构页的触发器一段读不到（它没有
   `pg_get_triggerdef()`，目录表里也查不到触发器），那一段单独显示原因，其余照常；
   执行计划不可用（不认 `EXPLAIN (FORMAT JSON)`）；错误里没有出错位置和表名。
+- **SQL Server 在分阶段接入**：能连接（含 TLS 与 SSH 隧道）、执行 SQL（结果上限、
+  超时、取消、错误号与出错行）、浏览对象树 / 表结构 / ER 图、翻看表数据、补全。
+  还不能：在表格里改数据、事务控制、执行计划、改表结构与新建表、CSV 导入、整表与
+  完整结果导出——这几个按钮在 SQL Server 连接上不出现，连接表单那一格列着同一份
+  清单。脚本里的 `GO` 分隔符还不认，语句之间用分号。`sql_variant` 与 CLR 类型
+  （geography、hierarchyid）的列驱动读不了，报错会给出 `CAST` 的写法。
 - 在编辑器里用 `USE` 切库在 MySQL 类服务端上一律拒绝：它会让侧边栏的对象树
   悄悄换成另一个库。MySQL 本来就拒，MariaDB 与 TiDB 不拒，所以由应用来挡。
 

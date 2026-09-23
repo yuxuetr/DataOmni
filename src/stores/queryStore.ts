@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import Database from '@tauri-apps/plugin-sql';
+import { openDatabase, SQL_SERVER_SCHEME, type DatabaseHandle } from '../utils/databaseHandle';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import {
   completeQueryExecution,
@@ -70,7 +70,7 @@ export interface QueryState {
   connectionString: string | null;
   connectionId: string | null; // 保存的连接配置 ID，用于草稿和元数据
   session: DatabaseSession | null;
-  database: Database | null;
+  database: DatabaseHandle | null;
   /** 每个 SQL 标签一份独立文档，键为工作区标签 id */
   documents: Record<string, SqlDocument>;
   activeDocumentId: string | null;
@@ -174,6 +174,9 @@ const getSqlDialect = (connectionString: string | null): SqlDialect => {
   }
   if (connectionString?.startsWith('postgres://')) {
     return 'postgresql';
+  }
+  if (connectionString?.startsWith(SQL_SERVER_SCHEME)) {
+    return 'sqlserver';
   }
   return 'sqlite';
 };
@@ -397,7 +400,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       const safeConnectionString = connectionString.replace(/:([^:@]+)@/, ':***@');
       console.log('🔗 连接到数据库:', safeConnectionString);
       
-      const db = await Database.load(connectionString);
+      const db = await openDatabase(connectionString);
       
       set({ 
         database: db, 

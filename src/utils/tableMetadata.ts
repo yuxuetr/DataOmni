@@ -1,4 +1,4 @@
-import type Database from '@tauri-apps/plugin-sql';
+import type { DatabaseHandle } from './databaseHandle';
 import { invoke } from '@tauri-apps/api/core';
 import type { ColumnInfo } from '../contracts';
 import { describeRowIdentity, type RowIdentityResult } from './rowIdentity';
@@ -67,7 +67,7 @@ const UNAVAILABLE: TableMetadata = {
  * 是瓶颈再按 `schemaVersion` 缓存。
  */
 export async function loadTableMetadata(
-  database: Database | null,
+  database: DatabaseHandle | null,
   dbType: string,
   tableName: string,
   schema?: string

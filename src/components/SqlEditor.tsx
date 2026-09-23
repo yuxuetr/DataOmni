@@ -48,6 +48,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { describeError } from '../utils/describeError';
 import { appEditorTheme } from '../utils/editorTheme';
 import { editorPhrases } from '../utils/editorPhrases';
+import { supportsFeature } from '../contracts/databaseSupport';
 import { useLanguageStore } from '../stores/languageStore';
 import { useCompletionCatalog } from '../hooks/useCompletionCatalog';
 import {
@@ -532,6 +533,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
             <span>{t('editor.runSelection')}</span>
           </button>
 
+          {supportsFeature(connection.db_type, 'explain') && (
           <button
             onClick={explainCurrentStatement}
             disabled={statements.length === 0 || isConnecting}
@@ -541,6 +543,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
             <Network size={14} />
             <span>{t('plan.button')}</span>
           </button>
+          )}
 
           <button
             onClick={executeCurrentStatement}

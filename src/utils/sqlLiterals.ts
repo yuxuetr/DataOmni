@@ -23,6 +23,12 @@ export function quoteSqlStringLiteral(value: string, dialect: SqlIdentifierDiale
     escaped = escaped.split('\\').join('\\\\');
   }
 
+  // SQL Server 的 '…' 是按库的代码页存的非 Unicode 串：拿 '中文' 去比一列
+  // nvarchar，两边在转换时就成了 '??'，条件静默地什么也匹配不上。N'…' 才是
+  // Unicode 字面量；和 varchar 列比较时它会被隐式转换，照样能用
+  if (dialect === 'sqlserver') {
+    return `N'${escaped}'`;
+  }
   return `'${escaped}'`;
 }
 

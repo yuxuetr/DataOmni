@@ -1,7 +1,7 @@
 import type { ColumnInfo } from '../contracts';
 import type { ColumnSort } from './resultSorting';
 import type { SqlIdentifierDialect } from './sqlIdentifiers';
-import { quoteSqlIdentifier } from './sqlIdentifiers';
+import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from './sqlIdentifiers';
 import { translateNow } from '../stores/languageStore';
 import { primaryKeyColumns } from './rowIdentity';
 
@@ -117,4 +117,37 @@ export function createSortedOrderClause(
   }
 
   return `ORDER BY ${terms.join(', ')}`;
+}
+
+/**
+ * 排序子句之后的那一段：取第几页。
+ *
+ * SQL Server 没有 `LIMIT`，要写 `OFFSET … ROWS FETCH NEXT … ROWS ONLY`，而且
+ * **必须**跟在 `ORDER BY` 后面。分页排序总是给得出列，这里仍然兜一句
+ * `ORDER BY (SELECT NULL)`：少了它是一条语法错误，而不是一页顺序不稳的数据。
+ */
+export function pageClause(
+  orderClause: string,
+  limit: number,
+  offset: number,
+  dialect: SqlIdentifierDialect
+): string {
+  if (dialect === 'sqlserver') {
+    const order = orderClause.trim() || 'ORDER BY (SELECT NULL)';
+    return `${order} OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`;
+  }
+  return `${orderClause} LIMIT ${limit} OFFSET ${offset}`;
+}
+
+/** 「先看前几行」的那条查询。名字要引用：带空格或保留字的表名此前直接语法错误 */
+export function firstRowsQuery(
+  table: string,
+  schema: string | undefined,
+  count: number,
+  dialect: SqlIdentifierDialect
+): string {
+  const name = quoteQualifiedSqlIdentifier(schema ? [schema, table] : [table], dialect);
+  return dialect === 'sqlserver'
+    ? `SELECT TOP ${count} * FROM ${name};`
+    : `SELECT * FROM ${name} LIMIT ${count};`;
 }

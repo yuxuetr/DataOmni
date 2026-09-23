@@ -1488,6 +1488,30 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     4. 执行计划（`SHOWPLAN_XML`）、改结构、CSV 导入、整表导出
   - Oracle 另议：只有 `oracle` crate（ODPI-C），运行时要用户机器上装
     Oracle Instant Client，这是打包与许可的问题，不是代码的问题。
+  - **第一阶段完成（2026-09-23，`46bf00c` 起）**：连接（TLS 五档映射、CA 校验、
+    SSH 隧道）、编辑器执行（结果上限、超时、取消、错误号与出错行）、对象树
+    （按 schema 分组）、表数据只读浏览（`OFFSET … FETCH`）、结构页、ER 图、补全
+    （MSSQL 方言、默认 schema `dbo`）、格式化（`transactsql`）、会话位置。
+    还没接上的功能**一处声明**（`PENDING_FEATURES`）：对应按钮不出现、会话能力
+    标记、表单那一格的「有缺口」说明、表数据页的只读说明都读它；README 矩阵
+    的 ⚠️ 由 `databaseSupport.test.ts` 对齐。真库用例 8 条
+    （`tests/sql_server_smoke.rs`），Linux 打包版上连 SQL Server 2022 渲染过。
+  - 这一阶段真库上抓到、用例钉住的：
+    (1) 影响行数第一版拼在用户语句后面，**没写完的语句报「';' 附近有语法错误」**，
+    指着用户没写过的文字；改为另发一批 `SELECT @@ROWCOUNT`（先验过它跨批保留）。
+    (2) **tiberius 在 `sql_variant` / CLR 类型的列元数据上是 `todo!()`**，
+    `SELECT SERVERPROPERTY('Edition')` 这种常见查询直接 panic，调用永远不回来；
+    所有进 tiberius 的调用包 `catch_unwind`，变成一条带 `CAST` 写法的错误并重置
+    连接。加密级别对不上时它也是 panic（`pre_login.rs`），同一处接住。
+    (3) 被放弃的查询不会在服务端停下（不发 attention）：执行期间把客户端取出来，
+    future 被丢掉时连接随之关闭；用例查 `sys.dm_exec_requests` 确认那条
+    `WAITFOR` 没了，把客户端留在原处的变异会红。
+    (4) SQL Server 的 `'…'` 是非 Unicode 串，拿中文去比 nvarchar 列静默匹配
+    不上：筛选里的字面量一律写成 `N'…'`。
+    (5) sqlcmd 默认 `QUOTED_IDENTIFIER OFF`，有过滤索引的表写入报 1934；
+    查过 tiberius 的会话这几项是开着的，用例钉住，免得升级驱动时悄悄变了。
+  - 已知不做（这一阶段）：脚本里的 `GO` 分隔符（语句之间用分号）；
+    money 经 tiberius 解成 f64，超过约 9×10¹¹ 的值末位可能不准。
 - [ ] 为每个新数据库补齐连接、元数据、执行、分页、导入导出和测试
 - [ ] 新数据库达到核心验收标准后才能标记为“已支持”
 - [x] ~~前置重构：前端直连收进后端命令~~ **评估完成（2026-09-23）：当前版本不做，

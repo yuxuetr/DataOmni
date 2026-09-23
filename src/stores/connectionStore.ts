@@ -98,6 +98,17 @@ export const createDefaultConfig = (
         port: 5432,
         database: 'postgres',
       };
+    // 装好就带着自签证书：「优先使用 TLS」加密而不校验，本地与云上都连得上；
+    // 要校验就换后两档并给 CA
+    case DatabaseType.SqlServer:
+      return {
+        ...baseConfig,
+        port: 1433,
+        database: 'master',
+        username: 'sa',
+        ssl: true,
+        tls_mode: 'preferred',
+      };
     case DatabaseType.MongoDB:
       return {
         ...baseConfig,
@@ -152,6 +163,8 @@ export const getDefaultPort = (type: DatabaseType): number => {
       return 5432;
     case DatabaseType.SQLite:
       return 0;
+    case DatabaseType.SqlServer:
+      return 1433;
     case DatabaseType.MongoDB:
       return 27017;
     case DatabaseType.Redis:
@@ -278,8 +291,8 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       
       // 然后尝试实际连接数据库
       try {
-        const Database = (await import('@tauri-apps/plugin-sql')).default;
-        const db = await Database.load(connectionString);
+        const { openDatabase } = await import('../utils/databaseHandle');
+        const db = await openDatabase(connectionString);
         await db.close();
         
         set({

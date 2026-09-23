@@ -1,4 +1,4 @@
-import type Database from '@tauri-apps/plugin-sql';
+import type { DatabaseHandle } from './databaseHandle';
 import { translateNow } from '../stores/languageStore';
 
 /**
@@ -11,7 +11,7 @@ import { translateNow } from '../stores/languageStore';
  * 句柄为 null 是正常状态，不是异常：ER 图这类标签页会从工作区快照里恢复，
  * 在任何连接建立之前就挂载。
  */
-export function requireDatabase(database: Database | null): Database {
+export function requireDatabase(database: DatabaseHandle | null): DatabaseHandle {
   if (!database) {
     throw new Error(translateNow('error.notConnected'));
   }

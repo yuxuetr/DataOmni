@@ -2,6 +2,7 @@ export enum DatabaseType {
   MySQL = 'mysql',
   PostgreSQL = 'postgresql',
   SQLite = 'sqlite',
+  SqlServer = 'sqlserver',
   MongoDB = 'mongodb',
   Redis = 'redis',
   Neo4j = 'neo4j',

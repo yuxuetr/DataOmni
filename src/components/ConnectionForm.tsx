@@ -21,7 +21,11 @@ import {
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
-import { isDatabaseTypeSupported } from '../contracts/databaseSupport';
+import {
+  isDatabaseTypeSupported,
+  PENDING_FEATURES,
+  type PendingFeature
+} from '../contracts/databaseSupport';
 import type { ConnectionDiagnosis } from '../contracts/connectionDiagnosis';
 import {
   diagnosisConclusionKey,
@@ -64,6 +68,16 @@ interface ConnectionFormProps {
   mode: 'create' | 'edit';
 }
 
+/** 还没接上的功能的名字，列在「有缺口」说明里 */
+const PENDING_FEATURE_KEYS: Record<PendingFeature, TranslationKey> = {
+  dataEditing: 'feature.dataEditing',
+  transactions: 'feature.transactions',
+  explain: 'feature.explain',
+  structureEditing: 'feature.structureEditing',
+  import: 'feature.import',
+  streamingExport: 'feature.streamingExport'
+};
+
 /** 存文案键：模块级常量用不了 hook，而分类名要跟着语言走 */
 const DATABASE_CATEGORIES = [
   { key: 'form.category.relational', icon: Database },
@@ -99,6 +113,13 @@ const databaseTypes: ReadonlyArray<{
     icon: <Database size={16} />,
     categoryKey: 'form.category.relational',
     descriptionKey: 'form.db.postgresql.desc'
+  },
+  {
+    type: DatabaseType.SqlServer,
+    name: 'SQL Server',
+    icon: <Database size={16} />,
+    categoryKey: 'form.category.relational',
+    descriptionKey: 'form.db.sqlserver.desc'
   },
   {
     type: DatabaseType.MongoDB,
@@ -491,7 +512,14 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             >
                               <span className="shrink-0">{dbType.icon}</span>
                               <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm">{dbType.name}</span>
+                                <span className="flex items-center gap-1.5">
+                                  <span className="truncate text-sm">{dbType.name}</span>
+                                  {supported && (PENDING_FEATURES[dbType.type]?.length ?? 0) > 0 && (
+                                    <span className="shrink-0 rounded-control border border-warning-line bg-warning-soft px-1 text-[10px] leading-tight text-warning">
+                                      {t('form.db.gapsTag')}
+                                    </span>
+                                  )}
+                                </span>
                                 {!supported && (
                                   <span className="block text-[11px] leading-tight">{t('form.unsupported')}</span>
                                 )}
@@ -539,6 +567,17 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 ))}
               </div>
               {/* 选中有缺口的服务端时把缺口摆出来：让人先知道，而不是用到那一项才撞上 */}
+              {/* 分阶段接入的类型：列出这一版还用不了的功能，清单和按钮的显隐是同一份 */}
+              {!selectedPreset && formData.db_type && (PENDING_FEATURES[formData.db_type]?.length ?? 0) > 0 && (
+                <p className="mt-2 rounded-control border border-warning-line bg-warning-soft px-3 py-2 text-xs text-warning">
+                  {t('form.db.pendingFeatures', {
+                    database: databaseTypes.find((entry) => entry.type === formData.db_type)?.name ?? '',
+                    features: (PENDING_FEATURES[formData.db_type] ?? [])
+                      .map((feature) => t(PENDING_FEATURE_KEYS[feature]))
+                      .join(t('common.listSeparator'))
+                  })}
+                </p>
+              )}
               {selectedPreset && SERVER_PRESETS[selectedPreset].gapsKey && (
                 <p className="mt-2 rounded-control border border-warning-line bg-warning-soft px-3 py-2 text-xs text-warning">
                   {t(SERVER_PRESETS[selectedPreset].gapsKey)}
@@ -639,6 +678,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 {/* 数据库名称 - 某些数据库类型不需要 */}
                 {(formData.db_type === DatabaseType.MySQL || 
                   formData.db_type === DatabaseType.PostgreSQL || 
+                  formData.db_type === DatabaseType.SqlServer ||
                   formData.db_type === DatabaseType.MongoDB ||
                   formData.db_type === DatabaseType.Neo4j ||
                   formData.db_type === DatabaseType.ClickHouse) && (
@@ -655,6 +695,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       placeholder={
                         formData.db_type === DatabaseType.MySQL ? "mysql" :
                         formData.db_type === DatabaseType.PostgreSQL ? "postgres" :
+                        formData.db_type === DatabaseType.SqlServer ? "master" :
                         formData.db_type === DatabaseType.MongoDB ? "admin" :
                         formData.db_type === DatabaseType.Neo4j ? "neo4j" :
                         formData.db_type === DatabaseType.ClickHouse ? "default" : ""
@@ -686,6 +727,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 {/* 用户名密码 - 某些数据库类型不需要用户名 */}
                 {(formData.db_type === DatabaseType.MySQL || 
                   formData.db_type === DatabaseType.PostgreSQL || 
+                  formData.db_type === DatabaseType.SqlServer ||
                   formData.db_type === DatabaseType.MongoDB ||
                   formData.db_type === DatabaseType.Neo4j ||
                   formData.db_type === DatabaseType.ClickHouse ||
@@ -957,6 +999,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 {/* TLS 选项 - 仅对支持 TLS 的数据库显示 */}
                 {(formData.db_type === DatabaseType.MySQL || 
                   formData.db_type === DatabaseType.PostgreSQL ||
+                  formData.db_type === DatabaseType.SqlServer ||
                   formData.db_type === DatabaseType.Elasticsearch) && (
                   <div className="space-y-4">
                     <div>
@@ -985,7 +1028,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                     </div>
 
                     {(formData.db_type === DatabaseType.MySQL
-                      || formData.db_type === DatabaseType.PostgreSQL)
+                      || formData.db_type === DatabaseType.PostgreSQL
+                      || formData.db_type === DatabaseType.SqlServer)
                       && (formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')) !== 'disabled' && (
                       <div className="space-y-3 rounded-control border border-line bg-surface-sunken p-3">
                         {/* 这一组要有自己的标题：里面的「客户端私钥路径」和
@@ -1009,6 +1053,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             {...PLAIN_TEXT_INPUT}
                           />
                         </div>
+                        {/* tiberius 只能校验服务端证书，不带客户端证书登录 */}
+                        {formData.db_type !== DatabaseType.SqlServer && (
+                        <>
                         <div>
                           <label htmlFor="client-certificate" className="block text-sm font-medium text-fg mb-1">
                             {t('form.clientCertPath')}
@@ -1043,6 +1090,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             {...PLAIN_TEXT_INPUT}
                           />
                         </div>
+                        </>
+                        )}
                       </div>
                     )}
                   </div>

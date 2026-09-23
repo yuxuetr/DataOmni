@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { supportsFeature } from '../contracts/databaseSupport';
 import { useLanguageStore } from '../stores/languageStore';
 import { runReadQuery, useQueryStore } from '../stores/queryStore';
 import { isTaggedResultValue, unwrapResultValue } from '../utils/resultValues';
@@ -36,7 +37,8 @@ import { identifierDialectFor, quoteQualifiedSqlIdentifier } from '../utils/sqlI
 import {
   createSortedOrderClause,
   createTablePaginationOrder,
-  type TablePaginationOrder
+  type TablePaginationOrder,
+  pageClause
 } from '../utils/tablePagination';
 import { buildTableExportQuery } from '../utils/tableExportQuery';
 import { nextColumnSort, type ColumnSort } from '../utils/resultSorting';
@@ -420,9 +422,8 @@ export default function TableDataViewer({
       // 用户排序列拼在前，分页排序列追加在后作决胜条件——按不唯一的列排序时，
       // 没有决胜条件翻页会重复或漏行
       const orderClause = createSortedOrderClause(order, sortRef.current, dialect);
-      const dataQuery =
-        `SELECT * FROM ${tableReference} ${whereClause} ${orderClause} `
-        + `LIMIT ${limitValue} OFFSET ${offsetValue}`;
+      const dataQuery = `SELECT * FROM ${tableReference} ${whereClause} `
+        + pageClause(orderClause, limitValue, offsetValue, dialect);
 
       const dataResult = await runReadQuery(dataQuery);
 
@@ -531,8 +532,13 @@ export default function TableDataViewer({
     () => new Set(rowIdentity.identity?.columns ?? []),
     [rowIdentity]
   );
-  const editable = rowIdentity.identity !== null;
+  // 能定位到行是必要条件；SQL Server 这一阶段还没接上写入，同样只读
+  const editable = rowIdentity.identity !== null && supportsFeature(dialect, 'dataEditing');
   const readOnlyMessage = (() => {
+    // 定位得到行、只是这个类型还没接上写入：说清楚是哪一种，免得有人去查主键
+    if (rowIdentity.identity !== null && !supportsFeature(dialect, 'dataEditing')) {
+      return t('table.readOnly.pendingFeature');
+    }
     switch (rowIdentity.absence) {
       case 'no-unique-key':
         return t('table.readOnly.noUniqueKey');
@@ -650,7 +656,7 @@ export default function TableDataViewer({
           }) + hiddenColumnsNote
       }
     ];
-    if (wholeTableExportSql) {
+    if (wholeTableExportSql && supportsFeature(dialect, 'streamingExport')) {
       list.push({
         id: 'table',
         label: t('export.scope.wholeTable'),
@@ -675,6 +681,7 @@ export default function TableDataViewer({
   }, [
     cells.selection,
     currentPage,
+    dialect,
     hiddenColumnsNote,
     t,
     tableData.length,
@@ -1202,6 +1209,7 @@ export default function TableDataViewer({
                       <span>{t('result.export')}</span>
                     </button>
 
+                    {supportsFeature(dialect, 'import') && (
                     <button
                       onClick={() => setShowImport(true)}
                       disabled={!tableSchema}
@@ -1211,6 +1219,7 @@ export default function TableDataViewer({
                       <Upload size={14} />
                       <span>{t('import.title')}</span>
                     </button>
+                    )}
                   </>
                 )}
                 

@@ -1,4 +1,5 @@
 import { DatabaseType, type ConnectionProfile } from './connection';
+import { supportsFeature } from './databaseSupport';
 
 export interface SessionCapabilities {
   schemas: boolean;
@@ -29,8 +30,11 @@ export function createDatabaseSession(
   const isSupportedRelationalDatabase = [
     DatabaseType.MySQL,
     DatabaseType.PostgreSQL,
-    DatabaseType.SQLite
+    DatabaseType.SQLite,
+    DatabaseType.SqlServer
   ].includes(profile.db_type);
+  const has = (feature: Parameters<typeof supportsFeature>[1]) =>
+    isSupportedRelationalDatabase && supportsFeature(profile.db_type, feature);
 
   return {
     id,
@@ -38,11 +42,13 @@ export function createDatabaseSession(
     database: profile.database ?? null,
     connectedAt: new Date().toISOString(),
     capabilities: {
-      schemas: profile.db_type === DatabaseType.MySQL || profile.db_type === DatabaseType.PostgreSQL,
-      transactions: isSupportedRelationalDatabase,
+      schemas: profile.db_type === DatabaseType.MySQL
+        || profile.db_type === DatabaseType.PostgreSQL
+        || profile.db_type === DatabaseType.SqlServer,
+      transactions: has('transactions'),
       cancellation: false,
-      explain: isSupportedRelationalDatabase,
-      dataEditing: isSupportedRelationalDatabase
+      explain: has('explain'),
+      dataEditing: has('dataEditing')
     },
     transaction: {
       status: 'idle',

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { ColumnInfo } from '../contracts';
-import { createSortedOrderClause, createTablePaginationOrder } from './tablePagination';
+import {
+  createSortedOrderClause,
+  createTablePaginationOrder,
+  firstRowsQuery,
+  pageClause
+} from './tablePagination';
 
 const column = (
   name: string,
@@ -123,5 +128,28 @@ describe('没有列的表', () => {
    */
   it('抛错而不是拼出一条没有次序的查询', () => {
     expect(() => createTablePaginationOrder([], 'mysql')).toThrow();
+  });
+});
+
+describe('pageClause', () => {
+  it('uses LIMIT / OFFSET where it exists', () => {
+    expect(pageClause('ORDER BY "id"', 50, 100, 'postgresql')).toBe('ORDER BY "id" LIMIT 50 OFFSET 100');
+    expect(pageClause('ORDER BY `id`', 50, 0, 'mysql')).toBe('ORDER BY `id` LIMIT 50 OFFSET 0');
+  });
+
+  it('uses OFFSET … FETCH on SQL Server, which has no LIMIT and needs an ORDER BY', () => {
+    expect(pageClause('ORDER BY [id]', 50, 100, 'sqlserver'))
+      .toBe('ORDER BY [id] OFFSET 100 ROWS FETCH NEXT 50 ROWS ONLY');
+    expect(pageClause('', 25, 0, 'sqlserver'))
+      .toBe('ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 25 ROWS ONLY');
+  });
+});
+
+describe('firstRowsQuery', () => {
+  it('quotes the names and uses the dialect\'s own row limit', () => {
+    expect(firstRowsQuery('order items', 'sales', 100, 'postgresql'))
+      .toBe('SELECT * FROM "sales"."order items" LIMIT 100;');
+    expect(firstRowsQuery('order', undefined, 100, 'mysql')).toBe('SELECT * FROM `order` LIMIT 100;');
+    expect(firstRowsQuery('order]x', 'dbo', 100, 'sqlserver')).toBe('SELECT TOP 100 * FROM [dbo].[order]]x];');
   });
 });

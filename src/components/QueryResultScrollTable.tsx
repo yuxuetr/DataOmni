@@ -46,6 +46,7 @@ import { ColumnSortButton } from './ColumnSortButton';
 import { nextColumnSort, sortRowsByColumn, type ColumnSort } from '../utils/resultSorting';
 import { useCellSelection } from '../hooks/useCellSelection';
 import { selectionSubset } from '../utils/cellSelection';
+import { supportsFeature } from '../contracts/databaseSupport';
 import { useLanguageStore } from '../stores/languageStore';
 import { ExportResultDialog, type ExportScope } from './ExportResultDialog';
 import { ResultChartDialog } from './ResultChartDialog';
@@ -136,7 +137,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   // currentRows 取，而不是导出对话框拿到的那份排过序的全部结果
   const exportScopes = React.useMemo(() => {
     const list: ExportScope[] = [{ id: 'current', label: t('export.scope.currentResult') }];
-    if (result.truncated && resultSql) {
+    if (result.truncated && resultSql && supportsFeature(dialect, 'streamingExport')) {
       list.push({
         id: 'full',
         label: t('export.scope.fullResult'),
@@ -158,12 +159,12 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
       });
     }
     return list;
-  }, [cells.selection, currentRows, result.columns, result.truncated, resultSql, t]);
+  }, [cells.selection, currentRows, dialect, result.columns, result.truncated, resultSql, t]);
   
   // 能不能改由 `describeResultEditability` 证明过：认得出是单表 SELECT，
   // 键来自目录，且键列在投影里。这里只读结论，不再自己拼条件判断
   const editability = result.editability;
-  const canEdit = editability?.editable === true;
+  const canEdit = editability?.editable === true && supportsFeature(dialect, 'dataEditing');
   const keyColumns = React.useMemo(
     () => new Set(editability?.editable ? editability.keyColumns : []),
     [editability]

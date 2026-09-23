@@ -18,6 +18,7 @@ import {
   X
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { supportsFeature } from '../contracts/databaseSupport';
 import { useLanguageStore } from '../stores/languageStore';
 import {
   buildObjectTree,
@@ -382,6 +383,7 @@ export default function DatabaseExplorer({
               <GitBranch size={14} />
             </button>
           )}
+          {supportsFeature(connection.db_type, 'structureEditing') && (
           <button
             onClick={() => setCreatingTable(true)}
             disabled={!connectionReady}
@@ -391,6 +393,7 @@ export default function DatabaseExplorer({
           >
             <Plus size={14} />
           </button>
+          )}
           <button
             onClick={() => loadDatabaseMetadata(true)}
             disabled={loading}
