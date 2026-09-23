@@ -771,6 +771,8 @@ export const en: Translations = {
   'form.section.connection': 'Connection',
   'form.name': 'Name *',
   'form.namePlaceholder': 'Enter a connection name',
+  'form.environment': 'Environment',
+  'form.environmentHint': 'Production and staging connections carry a permanent badge. Whether a statement asks for confirmation follows this environment\'s threshold under Settings → Confirm risky statements.',
   'form.dbType': 'Database type *',
   'form.unsupported': 'Not supported yet',
   'form.unsupportedTitle': '{name}: not supported yet',

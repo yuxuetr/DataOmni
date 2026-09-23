@@ -38,3 +38,24 @@ const BADGES: Record<ConnectionEnvironment, EnvironmentBadge | null> = {
 export function environmentBadge(environment: ConnectionEnvironment): EnvironmentBadge | null {
   return BADGES[environment] ?? null;
 }
+
+/** 全部环境，按危险程度从低到高——设置里的阈值表和连接表单的选项都按这个顺序 */
+export const ENVIRONMENTS: readonly ConnectionEnvironment[] = [
+  'development',
+  'testing',
+  'staging',
+  'production'
+];
+
+/**
+ * 环境全名，不是徽标上那个短标签。
+ *
+ * 借用 `environment.staging` 会让设置里那一行显示成「预发 [预发]」——名字和徽标
+ * 是同一个词，重复一遍不提供任何信息。
+ */
+export const ENVIRONMENT_NAME_KEYS: Record<ConnectionEnvironment, TranslationKey> = {
+  development: 'environment.name.development',
+  testing: 'environment.name.testing',
+  staging: 'environment.name.staging',
+  production: 'environment.name.production'
+};

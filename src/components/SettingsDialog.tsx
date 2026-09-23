@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
-import type { ConnectionEnvironment } from '../contracts';
-import { environmentBadge } from '../contracts/environment';
+import { ENVIRONMENTS, ENVIRONMENT_NAME_KEYS, environmentBadge } from '../contracts/environment';
 import {
   CONFIRMATION_THRESHOLDS,
   type ConfirmationThreshold
@@ -21,32 +20,12 @@ interface SettingsDialogProps {
   onClose: () => void;
 }
 
-const ENVIRONMENTS: readonly ConnectionEnvironment[] = [
-  'development',
-  'testing',
-  'staging',
-  'production'
-];
-
 const THRESHOLD_LABEL_KEYS: Record<ConfirmationThreshold, TranslationKey> = {
   never: 'settings.threshold.never',
   destructive: 'settings.threshold.destructive',
   'bulk-write': 'settings.threshold.bulk-write',
   'scoped-write': 'settings.threshold.scoped-write',
   append: 'settings.threshold.append'
-};
-
-/**
- * 环境全名，不是徽标上那个短标签。
- *
- * 借用 `environment.staging` 会让这一行显示成「预发 [预发]」——名字和徽标
- * 是同一个词，重复一遍不提供任何信息。
- */
-const ENVIRONMENT_LABEL_KEYS: Record<ConnectionEnvironment, TranslationKey> = {
-  development: 'environment.name.development',
-  testing: 'environment.name.testing',
-  staging: 'environment.name.staging',
-  production: 'environment.name.production'
 };
 
 export function SettingsDialog({ onClose }: SettingsDialogProps) {
@@ -115,7 +94,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                     className="flex items-center justify-between gap-3 rounded-control px-2 py-1.5 hover:bg-surface-hover"
                   >
                     <span className="flex min-w-0 items-center gap-2 text-sm text-fg">
-                      {t(ENVIRONMENT_LABEL_KEYS[environment])}
+                      {t(ENVIRONMENT_NAME_KEYS[environment])}
                       {badge && (
                         <span
                           className={
@@ -136,7 +115,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                           event.target.value as ConfirmationThreshold
                         )
                       }
-                      aria-label={`${t(ENVIRONMENT_LABEL_KEYS[environment])} · ${t('settings.confirmation.threshold')}`}
+                      aria-label={`${t(ENVIRONMENT_NAME_KEYS[environment])} · ${t('settings.confirmation.threshold')}`}
                       className="shrink-0 rounded-control border border-line-strong bg-surface px-2 py-1 text-sm text-fg"
                     >
                       {CONFIRMATION_THRESHOLDS.map((threshold) => (

@@ -48,6 +48,8 @@ import {
   useConnectionStore 
 } from '../stores/connectionStore';
 import { useLanguageStore } from '../stores/languageStore';
+import { ENVIRONMENTS, ENVIRONMENT_NAME_KEYS } from '../contracts/environment';
+import type { ConnectionEnvironment } from '../contracts';
 import type { TranslationKey } from '../i18n/translate';
 
 interface ConnectionFormProps {
@@ -403,6 +405,30 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
               {validationErrors.name && (
                 <p className="text-danger text-sm mt-1">{validationErrors.name}</p>
               )}
+            </div>
+
+            {/* 环境。此前表单里没有这一项，每个连接都是「开发环境」：生产标识不会出现，
+                设置里按环境分的确认门槛也永远只用到开发那一行 */}
+            <div>
+              <label htmlFor="connection-environment" className="block text-sm font-medium text-fg mb-1">
+                {t('form.environment')}
+              </label>
+              <select
+                id="connection-environment"
+                value={formData.environment ?? 'development'}
+                onChange={(event) => setFormData((previous) => ({
+                  ...previous,
+                  environment: event.target.value as ConnectionEnvironment
+                }))}
+                className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+              >
+                {ENVIRONMENTS.map((environment) => (
+                  <option key={environment} value={environment}>
+                    {t(ENVIRONMENT_NAME_KEYS[environment])}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-fg-subtle">{t('form.environmentHint')}</p>
             </div>
 
             {/* 数据库类型 */}
