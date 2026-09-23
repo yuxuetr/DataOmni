@@ -159,6 +159,10 @@ ORDER BY a.attnum
 /// 反过来，没有默认值却带着 `DEFAULT_GENERATED` 的要摘掉：TiDB 给
 /// `TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP` 这种列也打这个标记，界面据此
 /// 拒绝重述，而那一列根本没有表达式默认值。
+/// 同样在 TiDB 上：`DEFAULT CURRENT_TIMESTAMP` 不带 `ON UPDATE` 时它**不**打这个
+/// 标记，`EXTRA` 是空的，与字符串默认值 `'CURRENT_TIMESTAMP'` 分不开，界面就会
+/// 重述成 `DEFAULT 'CURRENT_TIMESTAMP'`。靠类型分：时间类型的列不可能以这串
+/// 文字为字符串默认值，所以在 timestamp / datetime 上它一定是表达式。
 ///
 /// 数字的正则写成 `-{0,1}` 而不是 `-?`：参数个数那道门按问号数占位符。
 /// 反斜杠用 `CHAR(92)` 写，不在字面量里转义：`NO_BACKSLASH_ESCAPES` 打开时
@@ -189,6 +193,10 @@ SELECT
       AND c.COLUMN_DEFAULT NOT LIKE '''%'
       AND c.COLUMN_DEFAULT NOT REGEXP '^-{0,1}[0-9]'
       AND c.COLUMN_DEFAULT NOT LIKE 'b''%'
+      THEN TRIM(CONCAT('DEFAULT_GENERATED ', c.EXTRA))
+    WHEN c.DATA_TYPE IN ('timestamp', 'datetime')
+      AND UPPER(c.COLUMN_DEFAULT) LIKE 'CURRENT_TIMESTAMP%'
+      AND c.EXTRA NOT LIKE '%DEFAULT_GENERATED%'
       THEN TRIM(CONCAT('DEFAULT_GENERATED ', c.EXTRA))
     ELSE c.EXTRA
   END AS CHAR) AS column_extra

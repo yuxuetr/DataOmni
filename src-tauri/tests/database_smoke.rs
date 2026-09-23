@@ -3132,7 +3132,9 @@ async fn mysql_column_defaults_come_back_in_one_shape_on_mysql_and_mariadb() {
        b_bit BIT(1) DEFAULT b'1',
        ts TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
        e_expr VARCHAR(36) DEFAULT (UUID()),
-       s_ctsword VARCHAR(30) DEFAULT 'CURRENT_TIMESTAMP'
+       s_ctsword VARCHAR(30) DEFAULT 'CURRENT_TIMESTAMP',
+       ts_plain TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+       dt_frac DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
      )"
   ))
   .execute(&pool)
@@ -3173,6 +3175,11 @@ async fn mysql_column_defaults_come_back_in_one_shape_on_mysql_and_mariadb() {
     assert!(*generated && default_value.is_some(), "{name} 应被认成表达式: {shapes:?}");
   }
   assert_eq!(shapes[12], literal("s_ctsword", Some("CURRENT_TIMESTAMP")));
+  // 没有 ON UPDATE 的那两列：TiDB 只给带 ON UPDATE 的打 DEFAULT_GENERATED，
+  // 这两列的 EXTRA 是空的，和上面那列字符串 'CURRENT_TIMESTAMP' 长得一模一样
+  for (name, default_value, generated) in &shapes[13..15] {
+    assert!(*generated && default_value.is_some(), "{name} 应被认成表达式: {shapes:?}");
+  }
 
   sqlx::query(&format!("DROP TABLE {table}")).execute(&pool).await.ok();
 }
