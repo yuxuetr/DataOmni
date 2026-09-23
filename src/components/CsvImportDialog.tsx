@@ -20,12 +20,14 @@ import { useLanguageStore } from '../stores/languageStore';
 import { useTaskStore } from '../stores/taskStore';
 import type { TranslationKey } from '../i18n/translate';
 import { Checkbox, Field, SegmentedControl } from './FormControls';
+import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
 
 interface CsvImportDialogProps {
   connectionId: string;
   schema: string | null;
   table: string;
   columns: readonly ColumnInfo[];
+  dialect: SqlIdentifierDialect;
   onClose: () => void;
   /**
    * 导入已经交给后台任务，这是它的 id。
@@ -72,6 +74,7 @@ export function CsvImportDialog({
   schema,
   table,
   columns,
+  dialect,
   onClose,
   onStarted
 }: CsvImportDialogProps) {
@@ -147,8 +150,8 @@ export function CsvImportDialog({
   };
 
   const issues = useMemo<ImportIssue[]>(
-    () => (preview ? validateImport(mappings, columns, preview, nullText) : []),
-    [preview, mappings, columns, nullText]
+    () => (preview ? validateImport(mappings, columns, preview, nullText, dialect) : []),
+    [preview, mappings, columns, nullText, dialect]
   );
   const blocking = issues.filter((issue) => issue.level === 'error');
 
@@ -251,6 +254,7 @@ export function CsvImportDialog({
               columns={columns}
               mappings={mappings}
               nullText={nullText}
+              dialect={dialect}
               onChange={setMappings}
               onReset={() => setMappings(autoMapColumns(preview.headers, columns))}
             />
@@ -444,6 +448,7 @@ function MappingStep({
   columns,
   mappings,
   nullText,
+  dialect,
   onChange,
   onReset
 }: {
@@ -451,6 +456,7 @@ function MappingStep({
   columns: readonly ColumnInfo[];
   mappings: readonly ColumnMapping[];
   nullText: string;
+  dialect: SqlIdentifierDialect;
   onChange: (mappings: ColumnMapping[]) => void;
   onReset: () => void;
 }) {
@@ -494,7 +500,7 @@ function MappingStep({
           <tbody>
             {mappings.map((mapping) => {
               const column = byName.get(mapping.target);
-              const kind = column ? columnKind(column.data_type) : 'text';
+              const kind = column ? columnKind(column.data_type, dialect) : 'text';
               // 样例优先挑**不合类型的**那个值：挑第一个非空值的话，屏幕上会出现
               // 一个看着没问题的样例，底下却挂着一条说这列有坏值的提醒
               const values =

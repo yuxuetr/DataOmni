@@ -651,6 +651,8 @@ export default function TableDataViewer({
       return;
     }
     setImportTaskId(null);
+    // 导入改了表的行数：不清掉缓存的话，表格里多了行，表头还是导入之前的总数
+    rowCountCacheRef.current = null;
     void loadTableData(currentPage);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importFinishedAt]);
@@ -1678,6 +1680,7 @@ export default function TableDataViewer({
           schema={schema ?? null}
           table={tableName}
           columns={tableSchema.columns}
+          dialect={dialect}
           onClose={() => setShowImport(false)}
           onStarted={setImportTaskId}
         />

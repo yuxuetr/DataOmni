@@ -2,6 +2,7 @@ import type { ColumnInfo } from '../contracts/databaseMetadata';
 import type { TranslationKey, TranslationParams } from '../i18n/translate';
 import { isRequiredColumn } from './cellInput';
 import { columnTypeToken } from './columnTypes';
+import type { SqlIdentifierDialect } from './sqlIdentifiers';
 
 /** 后端 `preview_csv_file` 的返回。表头那一行不在 `rows` 里。 */
 export interface CsvPreview {
@@ -84,8 +85,10 @@ const TIME_TOKENS = new Set(['time', 'timetz']);
 const TIMESTAMP_TOKENS = new Set(['timestamp', 'timestamptz', 'datetime', 'smalldatetime']);
 const JSON_TOKENS = new Set(['json', 'jsonb']);
 
-export function columnKind(dataType: string): ColumnKind {
+export function columnKind(dataType: string, dialect?: SqlIdentifierDialect): ColumnKind {
   const token = columnTypeToken(dataType);
+  // Oracle 的 DATE 带时分秒（`columnEditorKind` 同一个理由）
+  if (dialect === 'oracle' && token === 'date') return 'timestamp';
   if (INTEGER_TOKENS.has(token)) return 'integer';
   if (NUMBER_TOKENS.has(token)) return 'number';
   if (BOOLEAN_TOKENS.has(token)) return 'boolean';
@@ -168,7 +171,8 @@ export function sampleMismatches(
   mappings: readonly ColumnMapping[],
   columns: readonly ColumnInfo[],
   rows: readonly string[][],
-  nullText: string
+  nullText: string,
+  dialect?: SqlIdentifierDialect
 ): ColumnSampleIssue[] {
   const byName = new Map(columns.map((column) => [column.name, column]));
   const issues: ColumnSampleIssue[] = [];
@@ -178,7 +182,7 @@ export function sampleMismatches(
     if (mapping.source === null || !column) {
       continue;
     }
-    const kind = columnKind(column.data_type);
+    const kind = columnKind(column.data_type, dialect);
     if (kind === 'text') {
       continue;
     }
@@ -209,7 +213,8 @@ export function validateImport(
   mappings: readonly ColumnMapping[],
   columns: readonly ColumnInfo[],
   preview: CsvPreview,
-  nullText: string
+  nullText: string,
+  dialect?: SqlIdentifierDialect
 ): ImportIssue[] {
   const issues: ImportIssue[] = [];
   const mapped = mappings.filter((mapping) => mapping.source !== null);
@@ -255,7 +260,7 @@ export function validateImport(
     });
   }
 
-  for (const mismatch of sampleMismatches(mappings, columns, preview.rows, nullText)) {
+  for (const mismatch of sampleMismatches(mappings, columns, preview.rows, nullText, dialect)) {
     const column = byName.get(mismatch.target);
     issues.push({
       level: 'warning',

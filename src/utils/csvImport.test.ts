@@ -118,6 +118,17 @@ describe('sampleMismatches', () => {
     const skipped: ColumnMapping[] = [{ target: 'n', source: null }];
     expect(sampleMismatches(skipped, columns, [['a']], '')).toEqual([]);
   });
+
+  it('Oracle 的 DATE 带时分秒，样例里的时间不是坏值', () => {
+    const at = [column({ name: 'AT', data_type: 'DATE' })];
+    const mapped: ColumnMapping[] = [{ target: 'AT', source: 0 }];
+    const rows = [['2024-01-03 08:30:00']];
+    expect(sampleMismatches(mapped, at, rows, '', 'oracle')).toEqual([]);
+    // 另外几家的 DATE 只存日期，时分秒会被丢掉，照旧提醒
+    expect(sampleMismatches(mapped, at, rows, '', 'postgresql')).toEqual([
+      { target: 'AT', value: '2024-01-03 08:30:00' }
+    ]);
+  });
 });
 
 describe('validateImport', () => {
