@@ -628,7 +628,12 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     }
 
     set((state) => writeSqlDocument(state, documentId, () => ({
-      statements: reconcileSqlStatements(sqlInput, statements)
+      statements: reconcileSqlStatements(
+        sqlInput,
+        statements,
+        undefined,
+        getSqlDialect(get().connectionString)
+      )
     })));
   },
 

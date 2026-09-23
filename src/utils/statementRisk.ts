@@ -3,7 +3,8 @@ import {
   DEFAULT_CONFIRMATION_POLICY,
   type ConfirmationPolicy
 } from './confirmationPolicy';
-import { topLevelKeywords } from './sqlStatements';
+import type { SqlDialect } from '../contracts/queryExecution';
+import { splitSqlStatements, topLevelKeywords } from './sqlStatements';
 import type { TranslationKey } from '../i18n/translate';
 
 /**
@@ -131,16 +132,40 @@ export const RISK_DESCRIPTION_KEYS: Record<StatementRisk, TranslationKey> = {
   read: 'risk.read'
 };
 
+const ROUTINE_KINDS = new Set(['PROCEDURE', 'PROC', 'FUNCTION', 'TRIGGER', 'VIEW']);
+
+/**
+ * 一「条」里可能不止一条语句：SQL Server 的脚本按 `GO` 分批，一批原样发出去，
+ * 里面的分号不切。只按第一个词定级，`SELECT 1; DELETE FROM t` 会被当成只读、
+ * 不弹确认。所以一批先按分号拆开，取最危险的那条。
+ *
+ * 例外是定义过程、函数、触发器、视图的那一批：过程体此刻不执行，里面的
+ * `DELETE` 不该让「建一个过程」弹出整表删除的确认。
+ */
+export function classifyBatchRisk(sql: string, dialect?: SqlDialect): StatementRisk {
+  const [first, second, third, fourth] = topLevelKeywords(sql);
+  const definesRoutine = (first === 'CREATE' || first === 'ALTER')
+    && (ROUTINE_KINDS.has(second) || (second === 'OR' && ROUTINE_KINDS.has(fourth ?? third)));
+  const parts = definesRoutine ? [sql] : splitSqlStatements(sql, dialect);
+  return parts
+    .map(classifyStatementRisk)
+    .reduce<StatementRisk>(
+      (worst, risk) => (RISK_ORDER.indexOf(risk) > RISK_ORDER.indexOf(worst) ? risk : worst),
+      'read'
+    );
+}
+
 /** 一批语句里最危险的那个等级；没有需要确认的就返回 null */
 export function highestRiskNeedingConfirmation(
   statements: readonly string[],
   environment: ConnectionEnvironment,
-  policy?: ConfirmationPolicy
+  policy?: ConfirmationPolicy,
+  dialect?: SqlDialect
 ): { sql: string; risk: StatementRisk } | null {
   let worst: { sql: string; risk: StatementRisk } | null = null;
 
   for (const sql of statements) {
-    const risk = classifyStatementRisk(sql);
+    const risk = classifyBatchRisk(sql, dialect);
     if (!requiresConfirmation(risk, environment, policy)) {
       continue;
     }

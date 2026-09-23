@@ -97,6 +97,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
   } = useQueryStore();
 
   const [autoParseEnabled, setAutoParseEnabled] = useState(true);
+  // 切语句要按方言：SQL Server 的 `GO`、`#临时表` 与 `[标识符]`
+  const statementDialect = identifierDialectFor(connection.db_type);
+
   // 等待确认的一次执行。run 留着原本要做的事，确认后原样放行。
   const [pendingRun, setPendingRun] = useState<
     { sql: string; risk: StatementRisk; statements: string[]; run: () => void } | null
@@ -107,7 +110,12 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
    * 不需要确认时直接执行，不额外加一次点击。
    */
   const runGuarded = (candidates: string[], run: () => void) => {
-    const worst = highestRiskNeedingConfirmation(candidates, environment, confirmationPolicy);
+    const worst = highestRiskNeedingConfirmation(
+      candidates,
+      environment,
+      confirmationPolicy,
+      statementDialect
+    );
     if (!worst) {
       run();
       return;
@@ -159,7 +167,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
   // 编辑器跟随应用主题。此前这里有个只管 CodeMirror 的「深色模式」勾选框，
   // 勾上以后只有代码框变深、其余界面仍是浅色——它表达的不是用户想要的那件事。
   // 语句在文档里的位置。出错位置是相对语句的，要加上它才能跳
-  const statementRanges = useMemo(() => getSqlStatementRanges(sqlInput), [sqlInput]);
+  const statementRanges = useMemo(
+    () => getSqlStatementRanges(sqlInput, statementDialect),
+    [sqlInput, statementDialect]
+  );
 
   const resolvedTheme = useThemeStore((state) => state.resolved);
   const theme = resolvedTheme === 'dark' ? oneDark : undefined;
@@ -188,7 +199,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
   const executeCurrentStatement = () => {
     const view = editorViewRef.current;
     const cursor = view?.state.selection.main.head ?? 0;
-    const current = findSqlStatementAtOffset(sqlInput, cursor);
+    const current = findSqlStatementAtOffset(sqlInput, cursor, statementDialect);
     if (!current) {
       return;
     }
@@ -213,7 +224,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
   const explainCurrentStatement = () => {
     const view = editorViewRef.current;
     const cursor = view?.state.selection.main.head ?? 0;
-    const current = findSqlStatementAtOffset(sqlInput, cursor);
+    const current = findSqlStatementAtOffset(sqlInput, cursor, statementDialect);
     setExplaining(current?.sql ?? statements[0]?.sql ?? null);
   };
 
@@ -224,7 +235,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
     }
 
     const selectedStatements = splitSqlStatements(
-      sqlInput.slice(selection.from, selection.to)
+      sqlInput.slice(selection.from, selection.to),
+      statementDialect
     );
 
     runGuarded(selectedStatements, () => {

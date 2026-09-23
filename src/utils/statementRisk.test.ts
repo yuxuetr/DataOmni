@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  classifyBatchRisk,
   classifyStatementRisk,
   highestRiskNeedingConfirmation,
   requiresConfirmation
@@ -140,5 +141,25 @@ describe('一批语句里最危险的那条', () => {
     const statements = ['UPDATE users SET a = 1 WHERE id = 1'];
     expect(highestRiskNeedingConfirmation(statements, 'development')).toBeNull();
     expect(highestRiskNeedingConfirmation(statements, 'production')?.risk).toBe('scoped-write');
+  });
+});
+
+describe('按 GO 分出来的一批', () => {
+  it('一批里有多条语句时取最危险的那条', () => {
+    expect(classifyBatchRisk('SELECT 1;\nDELETE FROM t;', 'sqlserver')).toBe('bulk-write');
+    expect(classifyBatchRisk('SELECT 1 INTO #t;\nDROP TABLE x', 'sqlserver')).toBe('destructive');
+  });
+
+  it('定义过程、视图的那一批不按过程体里的语句定级', () => {
+    const procedure = 'CREATE OR ALTER PROCEDURE dbo.p AS BEGIN DELETE FROM t; END';
+    expect(classifyBatchRisk(procedure, 'sqlserver')).toBe('scoped-write');
+    expect(classifyBatchRisk('ALTER VIEW v AS SELECT 1', 'sqlserver')).toBe('scoped-write');
+  });
+});
+
+describe('方括号里的关键字', () => {
+  it('DELETE FROM [where] 仍然是整表删除', () => {
+    expect(classifyStatementRisk('DELETE FROM [where]')).toBe('bulk-write');
+    expect(classifyStatementRisk('DELETE FROM [t] WHERE [id] = 1')).toBe('scoped-write');
   });
 });

@@ -1,13 +1,15 @@
 import type { QueryExecutionError } from '../contracts/queryExecution';
 import type { QueryResult, SqlStatement } from '../contracts/query';
+import type { SqlDialect } from '../contracts/queryExecution';
 import { splitSqlStatements } from './sqlStatements';
 
 export function reconcileSqlStatements(
   sqlText: string,
   previousStatements: SqlStatement[],
-  createId: (index: number) => string = (index) => `stmt_${crypto.randomUUID()}_${index}`
+  createId: (index: number) => string = (index) => `stmt_${crypto.randomUUID()}_${index}`,
+  dialect?: SqlDialect
 ): SqlStatement[] {
-  const sqlStatements = splitSqlStatements(sqlText).map(withTrailingSemicolon);
+  const sqlStatements = splitSqlStatements(sqlText, dialect).map(withTrailingSemicolon);
   const assignments = new Map<number, SqlStatement>();
   const usedPreviousIndexes = new Set<number>();
 

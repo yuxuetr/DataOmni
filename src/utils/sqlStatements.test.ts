@@ -157,3 +157,55 @@ describe('returnsResultSet', () => {
     expect(returnsResultSet('DELETE FROM users')).toBe(false);
   });
 });
+
+describe('按方言切语句', () => {
+  it('# 只有 MySQL 是注释', () => {
+    // SQL Server 的临时表、PostgreSQL 的按位异或：当成注释，那一行的分号就被吞了
+    expect(splitSqlStatements('SELECT 1 INTO #t; SELECT * FROM #t;', 'sqlserver'))
+      .toEqual(['SELECT 1 INTO #t', 'SELECT * FROM #t']);
+    expect(splitSqlStatements('SELECT 5 # 3; SELECT 2;', 'postgresql'))
+      .toEqual(['SELECT 5 # 3', 'SELECT 2']);
+    expect(splitSqlStatements('SELECT 1 # note; still comment\nSELECT 2;', 'mysql'))
+      .toEqual(['SELECT 1 # note; still comment\nSELECT 2']);
+  });
+
+  it('SQL Server 的方括号标识符里的引号与分号不算数', () => {
+    expect(splitSqlStatements("SELECT [it's; odd]]name] FROM t; SELECT 2;", 'sqlserver'))
+      .toEqual(["SELECT [it's; odd]]name] FROM t", 'SELECT 2']);
+  });
+
+  it('有 GO 行时只按 GO 切，过程体里的分号不切', () => {
+    const script = [
+      'CREATE PROCEDURE dbo.p AS',
+      'BEGIN',
+      '  SELECT 1;',
+      '  SELECT 2;',
+      'END',
+      'go  -- 第一批完',
+      'EXEC dbo.p;',
+      'GO'
+    ].join('\n');
+    expect(splitSqlStatements(script, 'sqlserver')).toEqual([
+      'CREATE PROCEDURE dbo.p AS\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND',
+      'EXEC dbo.p;'
+    ]);
+  });
+
+  it('GO 带次数、在字符串里、在一行中间都不是分隔符', () => {
+    expect(splitSqlStatements('SELECT 1\nGO 5\n', 'sqlserver')).toEqual(['SELECT 1\nGO 5']);
+    expect(splitSqlStatements("SELECT 'a\nGO\nb'; SELECT 2;", 'sqlserver'))
+      .toEqual(["SELECT 'a\nGO\nb'", 'SELECT 2']);
+    expect(splitSqlStatements('SELECT go FROM t; SELECT 2;', 'sqlserver'))
+      .toEqual(['SELECT go FROM t', 'SELECT 2']);
+    // 别的方言里 GO 行没有意义，照旧按分号切
+    expect(splitSqlStatements('SELECT 1;\nGO\nSELECT 2;', 'postgresql'))
+      .toEqual(['SELECT 1', 'GO\nSELECT 2']);
+  });
+
+  it('语句范围照同一套规则算', () => {
+    const script = 'SELECT 1;\nGO\nSELECT 2;';
+    expect(getSqlStatementRanges(script, 'sqlserver').map((range) => range.sql))
+      .toEqual(['SELECT 1;', 'SELECT 2;']);
+    expect(findSqlStatementAtOffset(script, script.length, 'sqlserver')?.sql).toBe('SELECT 2;');
+  });
+});
