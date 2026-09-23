@@ -925,11 +925,17 @@ fn decode_sqlite(value: SqliteValueRef<'_>) -> Result<JsonValue, QueryError> {
     }
     "REAL" => json_value(ValueRef::to_owned(&value).try_decode::<f64>()),
     "BOOLEAN" => json_value(ValueRef::to_owned(&value).try_decode::<bool>()),
-    "DATE" => tagged_display_value("date", ValueRef::to_owned(&value).try_decode::<Date>()),
-    "TIME" => tagged_display_value("time", ValueRef::to_owned(&value).try_decode::<Time>()),
-    "DATETIME" => {
-      tagged_display_value("datetime", ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>())
+    "DATE" => {
+      tagged_formatted_value("date", ValueRef::to_owned(&value).try_decode::<Date>(), format_date)
     }
+    "TIME" => {
+      tagged_formatted_value("time", ValueRef::to_owned(&value).try_decode::<Time>(), format_time)
+    }
+    "DATETIME" => tagged_formatted_value(
+      "datetime",
+      ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>(),
+      format_datetime,
+    ),
     "BLOB" => tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>()),
     "NULL" => Ok(JsonValue::Null),
     type_name => Err(QueryError::message(format!("{UNSUPPORTED_COLUMN_TYPE}: {type_name}"))),
@@ -964,18 +970,31 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, QueryError> {
     "FLOAT" => json_value(ValueRef::to_owned(&value).try_decode::<f32>()),
     "DOUBLE" => json_value(ValueRef::to_owned(&value).try_decode::<f64>()),
     "BOOLEAN" => json_value(ValueRef::to_owned(&value).try_decode::<bool>()),
-    "DATE" => tagged_display_value("date", ValueRef::to_owned(&value).try_decode::<Date>()),
+    "DATE" => {
+      tagged_formatted_value("date", ValueRef::to_owned(&value).try_decode::<Date>(), format_date)
+    }
     // MySQL 的 TIME 是时长而非时刻（-838:59:59 ~ 838:59:59），装不进 time::Time
     "TIME" => {
       let duration =
         ValueRef::to_owned(&value).try_decode::<time::Duration>().map_err(QueryError::from)?;
       Ok(tagged_value("time", format_mysql_time(duration)))
     }
-    "DATETIME" => {
-      tagged_display_value("datetime", ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>())
-    }
+    "DATETIME" => tagged_formatted_value(
+      "datetime",
+      ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>(),
+      format_datetime,
+    ),
     "TIMESTAMP" => {
-      tagged_display_value("datetime", ValueRef::to_owned(&value).try_decode::<OffsetDateTime>())
+      // sqlx 连接时把会话时区设成 +00:00，读出来的就是 UTC；按 MySQL 自己的文本
+      // 形式不带时区写出，写回时同一个会话按同一个时区解释，往返不变
+      tagged_formatted_value(
+        "datetime",
+        ValueRef::to_owned(&value).try_decode::<OffsetDateTime>(),
+        |value| {
+          let utc = value.to_offset(time::UtcOffset::UTC);
+          format_datetime(PrimitiveDateTime::new(utc.date(), utc.time()))
+        },
+      )
     }
     "TINYBLOB" | "MEDIUMBLOB" | "BLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" | "GEOMETRY" => {
       tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>())
@@ -1010,11 +1029,17 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
     "FLOAT4" => json_value(ValueRef::to_owned(&value).try_decode::<f32>()),
     "FLOAT8" => json_value(ValueRef::to_owned(&value).try_decode::<f64>()),
     "BOOL" => json_value(ValueRef::to_owned(&value).try_decode::<bool>()),
-    "DATE" => tagged_display_value("date", ValueRef::to_owned(&value).try_decode::<Date>()),
-    "TIME" => tagged_display_value("time", ValueRef::to_owned(&value).try_decode::<Time>()),
-    "TIMESTAMP" => {
-      tagged_display_value("datetime", ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>())
+    "DATE" => {
+      tagged_formatted_value("date", ValueRef::to_owned(&value).try_decode::<Date>(), format_date)
     }
+    "TIME" => {
+      tagged_formatted_value("time", ValueRef::to_owned(&value).try_decode::<Time>(), format_time)
+    }
+    "TIMESTAMP" => tagged_formatted_value(
+      "datetime",
+      ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>(),
+      format_datetime,
+    ),
     "TIMESTAMPTZ" => {
       let value =
         ValueRef::to_owned(&value).try_decode::<DateTime<Utc>>().map_err(QueryError::from)?;
@@ -1036,6 +1061,27 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
     "VOID" => Ok(JsonValue::Null),
     _ => Err(QueryError::message(format!("{UNSUPPORTED_COLUMN_TYPE}: {type_name}"))),
   }
+}
+
+/// `time` 的 Display 是给人读的调试形态：`7:04:05.0`——小时不补零、秒后面恒带
+/// 小数，`OffsetDateTime` 还挂一段 ` +00:00:00`。数据库自己不这么写，日期选择器
+/// 认不出（小时要两位），拿它去比较或写回也要赌服务端的宽容。
+/// 这里照数据库的文本输出：两位小时，小数秒只在非零时出现并去掉末尾的 0
+/// （PostgreSQL 就是这么输出的；MySQL 按列的精度补 0，值相同）。
+fn format_date(date: Date) -> String {
+  format!("{:04}-{:02}-{:02}", date.year(), u8::from(date.month()), date.day())
+}
+
+fn format_time(time: Time) -> String {
+  let whole = format!("{:02}:{:02}:{:02}", time.hour(), time.minute(), time.second());
+  match time.microsecond() {
+    0 => whole,
+    micros => format!("{whole}.{}", format!("{micros:06}").trim_end_matches('0')),
+  }
+}
+
+fn format_datetime(value: PrimitiveDateTime) -> String {
+  format!("{} {}", format_date(value.date()), format_time(value.time()))
 }
 
 /// MySQL 的 TIME 是带符号时长，按它自己的 `[-]HH:MM:SS` 文本形式呈现。
@@ -1085,6 +1131,17 @@ where
   value.map(|value| tagged_value(value_type, value.to_string())).map_err(display_error)
 }
 
+fn tagged_formatted_value<T, E>(
+  value_type: &str,
+  value: Result<T, E>,
+  format: impl FnOnce(T) -> String,
+) -> Result<JsonValue, QueryError>
+where
+  E: std::fmt::Display,
+{
+  value.map(|value| tagged_value(value_type, format(value))).map_err(display_error)
+}
+
 fn tagged_json_value<E>(value: Result<JsonValue, E>) -> Result<JsonValue, QueryError>
 where
   E: std::fmt::Display,
@@ -1125,6 +1182,20 @@ mod tests {
   use super::*;
   use sqlx::sqlite::SqlitePoolOptions;
   use std::future::pending;
+
+  #[test]
+  fn date_and_time_values_come_out_the_way_the_database_writes_them() {
+    let date = Date::from_calendar_date(2026, time::Month::September, 3).expect("valid date");
+    let morning = Time::from_hms(7, 4, 5).expect("valid time");
+    assert_eq!(format_date(date), "2026-09-03");
+    assert_eq!(format_time(morning), "07:04:05");
+    assert_eq!(format_datetime(PrimitiveDateTime::new(date, morning)), "2026-09-03 07:04:05");
+    // 小数秒去掉末尾的 0，但不丢前导 0
+    let fractional = Time::from_hms_micro(0, 0, 0, 50_000).expect("valid time");
+    assert_eq!(format_time(fractional), "00:00:00.05");
+    let micro = Time::from_hms_micro(23, 59, 59, 1).expect("valid time");
+    assert_eq!(format_time(micro), "23:59:59.000001");
+  }
 
   #[test]
   fn refuses_use_but_not_statements_that_merely_start_like_it() {

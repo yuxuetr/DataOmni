@@ -472,7 +472,7 @@ async fn mysql_decodes_common_column_types() {
        12345678901234.5678, 1.5, 2.5, b'10101010',
        'chr', 'varchar', 'text', 'a', 'x,y',
        0x00FF1020, 0x0102, 0x03,
-       '2026-09-20', '12:34:56', '2026-09-20 12:34:56', '2026-09-20 12:34:56',
+       '2026-09-20', '07:04:05', '2026-09-20 07:04:05', '2026-09-20 07:04:05',
        2026, '{\"k\": 1}'
      )",
   )
@@ -493,6 +493,11 @@ async fn mysql_decodes_common_column_types() {
       ("col_decimal", "decimal", "12345678901234.5678"),
       ("col_binary", "binary", "00ff1020"),
       ("col_date", "date", "2026-09-20"),
+      // 单位数的小时是陷阱：`time` 的 Display 写成 `7:04:05.0`，日期选择器认不出，
+      // TIMESTAMP 还多挂一段 ` +00:00:00`
+      ("col_time", "time", "07:04:05"),
+      ("col_datetime", "datetime", "2026-09-20 07:04:05"),
+      ("col_timestamp", "datetime", "2026-09-20 07:04:05"),
     ],
   );
 }
@@ -550,7 +555,7 @@ async fn postgres_decodes_common_column_types() {
        'chr', 'varchar', 'text',
        '00000000-0000-0000-0000-000000000001',
        '\\x00ff1020'::bytea,
-       '2026-09-20', '12:34:56', '2026-09-20 12:34:56', '2026-09-20 12:34:56+00',
+       '2026-09-20', '07:04:05', '2026-09-20 07:04:05.25', '2026-09-20 12:34:56+00',
        '1 day', '{\"k\": 1}', '{\"k\": 1}',
        ARRAY['a', 'b'], ARRAY[1, 2],
        false
@@ -571,6 +576,9 @@ async fn postgres_decodes_common_column_types() {
       ("col_numeric", "decimal", "12345678901234.5678"),
       ("col_bytea", "binary", "00ff1020"),
       ("col_date", "date", "2026-09-20"),
+      ("col_time", "time", "07:04:05"),
+      // 小数秒照 PostgreSQL 自己的文本输出，去掉末尾的 0
+      ("col_timestamp", "datetime", "2026-09-20 07:04:05.25"),
     ],
   );
 }
