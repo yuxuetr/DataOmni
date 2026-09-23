@@ -3,6 +3,7 @@ import type { ColumnInfo } from '../contracts';
 import {
   buildCreateTable,
   buildTableDdl,
+  defaultCreateSchema,
   columnDefaultSql,
   incompleteDraftColumns,
   type ColumnDraft,
@@ -406,5 +407,14 @@ describe('buildCreateTable', () => {
       columns: [draft('line', 'text'), draft('gone', 'int', { dropped: true })]
     });
     expect(plan.statements).toEqual(['CREATE TABLE `log` (\n  `line` text\n)']);
+  });
+});
+
+describe('defaultCreateSchema', () => {
+  it('先选这一家不写 schema 时默认落的地方', () => {
+    expect(defaultCreateSchema(['dataomni_meta', 'dbo'], 'sqlserver')).toBe('dbo');
+    expect(defaultCreateSchema(['analytics', 'public'], 'postgresql')).toBe('public');
+    expect(defaultCreateSchema(['sales'], 'sqlserver')).toBe('sales');
+    expect(defaultCreateSchema([], 'mysql')).toBe('');
   });
 });

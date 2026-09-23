@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   estimateAccuracy,
   flattenPlan,
+  formatPlanCost,
   formatPlanMs,
   formatPlanRows,
   worstEstimate,
@@ -105,5 +106,14 @@ describe('格式化', () => {
     expect(formatPlanMs(12.34)).toBe('12.3 ms');
     expect(formatPlanMs(2_500)).toBe('2.50 s');
     expect(formatPlanMs(null)).toBe('—');
+  });
+});
+
+describe('formatPlanCost', () => {
+  it('小代价留有效数字，不写成一排 0.00', () => {
+    expect(formatPlanCost(0.0032831)).toBe('0.00328');
+    expect(formatPlanCost(0.00657156)).toBe('0.00657');
+    expect(formatPlanCost(1234.5)).toBe('1234.50');
+    expect(formatPlanCost(0)).toBe('0.00');
   });
 });

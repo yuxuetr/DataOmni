@@ -307,7 +307,7 @@ async fn assert_transaction_binding(
         pool: pool.into(),
         sql: "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5",
         autocommit: true,
-        assume_rows: false,
+        explain_plan: false,
         row_limit: 5,
         byte_limit: 16 * 1024 * 1024,
         batch_size: 2,
@@ -3360,96 +3360,8 @@ async fn sqlite_reports_generated_columns_that_table_info_hides() {
 ///
 /// `origin` 也在这里被核对：它是前端做 diff 的起点，手写一份假设就等于把
 /// 两边的起点分开了。先建表、再用列目录读一遍、逐字段比对。
-mod ddl_corpus {
-  use serde_json::Value as JsonValue;
-
-  pub struct Case {
-    pub name: String,
-    pub table: String,
-    pub final_table: String,
-    pub fixture: Vec<String>,
-    pub statements: Vec<String>,
-    /// 建表用例跑完之后不写主键值插一行：写错的自增表现不是建表失败，
-    /// 而是建出来了但**插不进行**
-    pub insert: Vec<String>,
-    pub origin: Vec<Column>,
-    pub after: Vec<Column>,
-    pub cleanup: Vec<String>,
-  }
-
-  /// 目录里一列的期望值。`None` 表示这个方言不报告该字段，不参与比对
-  #[derive(Debug, Clone, PartialEq, Eq)]
-  pub struct Column {
-    pub name: String,
-    pub data_type: String,
-    pub nullable: bool,
-    pub primary_key_ordinal: Option<i64>,
-    pub default_value: Option<String>,
-    pub generated: bool,
-    pub collation: Option<String>,
-    pub comment: Option<String>,
-    pub extra: Option<String>,
-  }
-
-  fn text(value: &JsonValue, key: &str) -> Option<String> {
-    value.get(key).and_then(|found| found.as_str()).map(str::to_string)
-  }
-
-  fn columns(value: &JsonValue, key: &str) -> Vec<Column> {
-    value
-      .get(key)
-      .and_then(|found| found.as_array())
-      .map(|entries| {
-        entries
-          .iter()
-          .map(|entry| Column {
-            name: text(entry, "name").unwrap_or_default(),
-            data_type: text(entry, "dataType").unwrap_or_default(),
-            nullable: entry.get("nullable").and_then(|found| found.as_bool()).unwrap_or(false),
-            primary_key_ordinal: entry.get("primaryKeyOrdinal").and_then(|found| found.as_i64()),
-            default_value: text(entry, "defaultValue"),
-            generated: entry.get("generated").and_then(|found| found.as_bool()).unwrap_or(false),
-            collation: text(entry, "collation"),
-            comment: text(entry, "comment"),
-            extra: text(entry, "extra"),
-          })
-          .collect()
-      })
-      .unwrap_or_default()
-  }
-
-  fn strings(value: &JsonValue, key: &str) -> Vec<String> {
-    value
-      .get(key)
-      .and_then(|found| found.as_array())
-      .map(|entries| {
-        entries.iter().filter_map(|entry| entry.as_str().map(str::to_string)).collect()
-      })
-      .unwrap_or_default()
-  }
-
-  pub fn load(dialect: &str) -> Vec<Case> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ddl-conformance.json");
-    let source = std::fs::read_to_string(path).expect("读取改结构语料");
-    let parsed: JsonValue = serde_json::from_str(&source).expect("解析改结构语料");
-    let cases = parsed.get("cases").and_then(|found| found.as_array()).expect("语料里要有 cases");
-    cases
-      .iter()
-      .filter(|case| text(case, "dialect").as_deref() == Some(dialect))
-      .map(|case| Case {
-        name: text(case, "name").unwrap_or_default(),
-        table: text(case, "table").unwrap_or_default(),
-        final_table: text(case, "newTableName").unwrap_or_default(),
-        fixture: strings(case, "fixture"),
-        statements: strings(case, "statements"),
-        insert: strings(case, "insert"),
-        origin: columns(case, "origin"),
-        after: columns(case, "after"),
-        cleanup: strings(case, "cleanup"),
-      })
-      .collect()
-  }
-}
+#[path = "support/ddl_corpus.rs"]
+mod ddl_corpus;
 
 /// 三种方言的目录行读法各不相同：PostgreSQL 给真布尔，另两家给 1/0；
 /// 键内次序在 MySQL 的 information_schema 里是无符号整数。所以是三个函数，
@@ -3748,7 +3660,7 @@ async fn postgres_aborts_the_whole_transaction_after_one_failed_statement() {
     pool: (&db_pool).into(),
     sql,
     autocommit: true,
-    assume_rows: false,
+    explain_plan: false,
     row_limit: 100,
     byte_limit: 1 << 20,
     batch_size: 10,
@@ -3804,7 +3716,7 @@ async fn mysql_keeps_the_transaction_usable_after_a_failed_statement() {
     pool: (&db_pool).into(),
     sql,
     autocommit: true,
-    assume_rows: false,
+    explain_plan: false,
     row_limit: 100,
     byte_limit: 1 << 20,
     batch_size: 10,
@@ -3857,7 +3769,7 @@ async fn explain_with_session(
 ) -> dataomni_lib::services::QueryPlan {
   let statement =
     dataomni_lib::services::explain_statement(db_type, sql, analyze).expect("explain statement");
-  // 和 `explain_query` 命令走同一条路径，包括 assume_rows——MySQL 在预处理
+  // 和 `explain_query` 命令走同一条路径，包括 explain_plan——MySQL 在预处理
   // `EXPLAIN FORMAT=JSON` 时报告 0 列，不带这个标志就拿不到那一行
   let mut rows = Vec::new();
   sessions
@@ -3868,7 +3780,7 @@ async fn explain_with_session(
         pool: pool.into(),
         sql: &statement,
         autocommit: true,
-        assume_rows: true,
+        explain_plan: true,
         row_limit: 10_000,
         byte_limit: 16 * 1024 * 1024,
         batch_size: 200,

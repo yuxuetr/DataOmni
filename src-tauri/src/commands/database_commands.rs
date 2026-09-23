@@ -15,7 +15,7 @@ use tokio::time::Duration;
 
 pub const QUERY_CANCELLED_CODE: &str = "QUERY_CANCELLED";
 
-use crate::services::query_executor::{sql_server_unsupported, PoolRef};
+use crate::services::query_executor::PoolRef;
 use crate::services::{QueryError, SqlServerRegistry, TunnelRegistry, SQL_SERVER_SCHEME};
 
 /// 池子按连接串做键，查不到说明前端 `Database.load` 用的串和这里算的不是
@@ -74,16 +74,6 @@ impl ResolvedPool<'_> {
       Self::SqlServer(pool) => Ok(PoolRef::SqlServer(pool)),
     }
   }
-}
-
-/// 导出、导入还没接到 SQL Server 上（第四阶段）。不在这里拦的话，
-/// 它们去插件的 `DbInstances` 里找池子找不到，报的是「会话未连接」——
-/// 而界面上连接明明是绿的
-fn refuse_sql_server(connection_string: &str, operation: &str) -> Result<(), QueryError> {
-  if connection_string.starts_with(SQL_SERVER_SCHEME) {
-    return Err(sql_server_unsupported(operation));
-  }
-  Ok(())
 }
 
 #[derive(Deserialize)]
@@ -191,7 +181,7 @@ pub async fn execute_query(
         pool,
         sql: &request.sql,
         autocommit: request.autocommit,
-        assume_rows: false,
+        explain_plan: false,
         row_limit: request.row_limit,
         byte_limit: request.byte_limit,
         batch_size: DEFAULT_QUERY_BATCH_SIZE,
@@ -266,6 +256,7 @@ pub async fn export_query_to_file(
   tunnels: State<'_, TunnelRegistry>,
   database_instances: State<'_, DbInstances>,
   cancellation_state: State<'_, QueryCancellationState>,
+  sql_server: State<'_, SqlServerRegistry>,
 ) -> Result<ExportSummary, QueryError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&request.connection_id).await;
@@ -280,11 +271,8 @@ pub async fn export_query_to_file(
       .map_err(QueryError::message)?
   };
 
-  refuse_sql_server(&connection_string, "export")?;
-  let instances = database_instances.0.read().await;
-  let pool = instances
-    .get(&connection_string)
-    .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED))?;
+  let resolved = ResolvedPool::resolve(connection_string, &database_instances, &sql_server).await?;
+  let pool = resolved.pool_ref()?;
 
   // 取消与查询共用同一个登记表：取消的语义、重复 ID 的检查、结束时的清理
   // 都已经在那里了，再立一套只会多出一处要同步的状态。
@@ -384,6 +372,8 @@ pub struct CsvImportRequest {
 }
 
 /// 把一个 CSV 文件导入一张表。
+// 参数都是 Tauri 注入的 State，由框架按类型逐个填，合不成一个结构
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn import_csv_file(
   request: CsvImportRequest,
@@ -393,6 +383,7 @@ pub async fn import_csv_file(
   database_instances: State<'_, DbInstances>,
   cancellation_state: State<'_, QueryCancellationState>,
   pause_state: State<'_, ImportPauseState>,
+  sql_server: State<'_, SqlServerRegistry>,
 ) -> Result<ImportSummary, QueryError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&request.connection_id).await;
@@ -407,11 +398,8 @@ pub async fn import_csv_file(
       .map_err(QueryError::message)?
   };
 
-  refuse_sql_server(&connection_string, "import")?;
-  let instances = database_instances.0.read().await;
-  let pool = instances
-    .get(&connection_string)
-    .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED))?;
+  let resolved = ResolvedPool::resolve(connection_string, &database_instances, &sql_server).await?;
+  let pool = resolved.pool_ref()?;
 
   let mut receiver =
     cancellation_state.register(&request.import_id).await.map_err(QueryError::message)?;
@@ -526,6 +514,7 @@ pub async fn explain_query(
   tunnels: State<'_, TunnelRegistry>,
   database_instances: State<'_, DbInstances>,
   query_session_state: State<'_, QuerySessionState>,
+  sql_server: State<'_, SqlServerRegistry>,
 ) -> Result<crate::services::explain::QueryPlan, QueryError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&request.connection_id).await;
@@ -550,11 +539,10 @@ pub async fn explain_query(
   let statement =
     crate::services::explain::explain_statement(&db_type, &request.sql, request.analyze)?;
 
-  let instances = database_instances.0.read().await;
-  let pool = instances
-    .get(&connection_string)
-    .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED))?;
-  // 走 streaming 而不是 execute：要带上 assume_rows。MySQL 在预处理
+  let resolved =
+    ResolvedPool::resolve(connection_string.clone(), &database_instances, &sql_server).await?;
+  let pool = resolved.pool_ref()?;
+  // 走 streaming 而不是 execute：要带上 explain_plan。MySQL 在预处理
   // `EXPLAIN FORMAT=JSON` 时报告 0 列，按 describe 的说法走会拿回一个
   // Affected，计划就此消失
   let mut rows = Vec::new();
@@ -563,10 +551,10 @@ pub async fn explain_query(
       StreamingQueryOptions {
         session_id: &request.session_id,
         pool_key: &connection_string,
-        pool: PoolRef::Sqlx(pool),
+        pool,
         sql: &statement,
         autocommit: request.autocommit,
-        assume_rows: true,
+        explain_plan: true,
         row_limit: EXPLAIN_ROW_LIMIT,
         byte_limit: EXPLAIN_BYTE_LIMIT,
         batch_size: DEFAULT_QUERY_BATCH_SIZE,

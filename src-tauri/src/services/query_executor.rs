@@ -78,12 +78,14 @@ pub struct StreamOptions {
   pub byte_limit: usize,
   pub batch_size: usize,
   pub non_query: NonQueryHandling,
-  /// describe 说「没有列」时，仍然去取结果集。
+  /// 这是取执行计划的那一次执行。各家要照顾的地方不同：
   ///
-  /// MySQL 在预处理 `EXPLAIN FORMAT=JSON` 时报告 **0 列**，而它执行起来确实
-  /// 返回一行 JSON。按 describe 的说法走会拿回一个 `Affected`，执行计划就此
-  /// 消失，而调用方只看到「这条语句没有执行计划」。
-  pub assume_rows: bool,
+  /// - MySQL 在预处理 `EXPLAIN FORMAT=JSON` 时报告 **0 列**，而它执行起来确实
+  ///   返回一行 JSON。按 describe 的说法走会拿回一个 `Affected`，执行计划就此
+  ///   消失——所以 describe 说「没有列」时仍然去取结果集。
+  /// - SQL Server 没有 `EXPLAIN`：语句原样，前后各发一批 `SET SHOWPLAN_XML`，
+  ///   服务端只编译不执行，返回一份 XML 计划。
+  pub explain_plan: bool,
 }
 
 impl StreamOptions {
@@ -93,13 +95,13 @@ impl StreamOptions {
       byte_limit,
       batch_size,
       non_query: NonQueryHandling::Execute,
-      assume_rows: false,
+      explain_plan: false,
     }
   }
 
-  /// 调用方知道这条语句返回结果集，不信 describe 的说法
-  pub fn assuming_rows(mut self) -> Self {
-    self.assume_rows = true;
+  /// 见 [`StreamOptions::explain_plan`]
+  pub fn for_explain(mut self) -> Self {
+    self.explain_plan = true;
     self
   }
 
@@ -110,7 +112,7 @@ impl StreamOptions {
       byte_limit: usize::MAX,
       batch_size,
       non_query: NonQueryHandling::Refuse,
-      assume_rows: false,
+      explain_plan: false,
     }
   }
 }
@@ -202,14 +204,6 @@ pub enum SessionConnection {
   SqlServer(Box<crate::services::sql_server::SqlServerConnection>),
 }
 
-/// SQL Server 这一阶段还没接上的操作
-pub(crate) fn sql_server_unsupported(operation: &str) -> QueryError {
-  QueryError::message(format!(
-    "{}: {operation}",
-    crate::services::sql_server::SQL_SERVER_UNSUPPORTED
-  ))
-}
-
 impl SessionConnection {
   pub async fn acquire<'a>(pool: impl Into<PoolRef<'a>>) -> Result<Self, QueryError> {
     match pool.into() {
@@ -266,8 +260,7 @@ impl SessionConnection {
       Self::Sqlite(connection) => describe_sqlite_columns(connection, sql).await,
       Self::MySql(connection) => describe_mysql_columns(connection, sql).await,
       Self::Postgres(connection) => describe_postgres_columns(connection, sql).await,
-      // 导出要先写表头；SQL Server 要 `sp_describe_first_result_set`，在第四阶段
-      Self::SqlServer(_) => Err(sql_server_unsupported("describe")),
+      Self::SqlServer(connection) => connection.describe_columns(sql).await,
     }
   }
 
@@ -303,8 +296,7 @@ impl SessionConnection {
         }
         connection.execute(query).await.map(|done| done.rows_affected()).map_err(display_error)
       }
-      // CSV 导入走这里，在第四阶段
-      Self::SqlServer(_) => Err(sql_server_unsupported("import")),
+      Self::SqlServer(connection) => connection.execute_with_params(sql, params).await,
     }
   }
 
@@ -490,7 +482,7 @@ async fn execute_sqlite_connection_streaming(
   let column_metadata = describe_sqlite_columns(connection, sql).await?;
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
-  if columns.is_empty() && !options.assume_rows {
+  if columns.is_empty() && !options.explain_plan {
     refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
@@ -610,7 +602,7 @@ async fn execute_mysql_connection_streaming(
   let column_metadata = describe_mysql_columns(connection, sql).await?;
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
-  if columns.is_empty() && !options.assume_rows {
+  if columns.is_empty() && !options.explain_plan {
     refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
@@ -730,7 +722,7 @@ async fn execute_postgres_connection_streaming(
   let column_metadata = describe_postgres_columns(connection, sql).await?;
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
-  if columns.is_empty() && !options.assume_rows {
+  if columns.is_empty() && !options.explain_plan {
     refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });

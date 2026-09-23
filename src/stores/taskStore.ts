@@ -8,6 +8,7 @@ import {
   type TaskKind,
   type TaskLogEntry
 } from '../utils/backgroundTasks';
+import { translateBackendMessage } from '../utils/backendError';
 import { describeError } from '../utils/describeError';
 import { formatBytes } from '../utils/formatBytes';
 import { translateNow } from './languageStore';
@@ -126,10 +127,12 @@ export const useTaskStore = create<TaskState>((set, get) => {
         request: { ...payload, importId: id }
       });
 
+      // 行错误也可能是我们自己的码（字段数不够、值转不过去），和命令级的错误
+      // 一样要翻译；数据库报的原话认不出码，原样留着
       const entries: TaskLogEntry[] = summary.errors.map((rowError) =>
         entry(
           'warn',
-          `${translateNow('import.errorLine', { line: rowError.line })} ${rowError.message}`
+          `${translateNow('import.errorLine', { line: rowError.line })} ${translateBackendMessage(rowError.message)}`
         )
       );
       if (summary.errorsTruncated) {

@@ -8,6 +8,7 @@ import { describeError } from '../utils/describeError';
 import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
 import {
   buildCreateTable,
+  defaultCreateSchema,
   incompleteDraftColumns,
   usableDraftColumns,
   type ColumnDraft,
@@ -58,7 +59,7 @@ export function CreateTableDialog({
   const markSchemaChanged = useAppStore((state) => state.markSchemaChanged);
 
   const [table, setTable] = useState('');
-  const [schema, setSchema] = useState(schemas[0] ?? '');
+  const [schema, setSchema] = useState(() => defaultCreateSchema(schemas, dialect));
   const [drafts, setDrafts] = useState<ColumnDraft[]>([
     { ...BLANK, name: 'id', dataType: defaultKeyType(dialect), nullable: false, primaryKey: true },
     { ...BLANK }
@@ -243,10 +244,13 @@ export function CreateTableDialog({
   );
 }
 
-/** 主键那一列的起手类型：三家各自最常见的自增写法 */
+/** 主键那一列的起手类型：各家最常见的自增写法（SQL Server 那句在改结构语料里跑过真库） */
 function defaultKeyType(dialect: SqlIdentifierDialect): string {
   if (dialect === 'postgresql') {
     return 'integer GENERATED ALWAYS AS IDENTITY';
+  }
+  if (dialect === 'sqlserver') {
+    return 'int IDENTITY(1,1)';
   }
   return dialect === 'mysql' ? 'INT AUTO_INCREMENT' : 'INTEGER';
 }

@@ -552,13 +552,6 @@ mod tests {
   #[test]
   fn every_supported_type_can_produce_a_plan_even_if_it_cannot_analyze() {
     for db_type in ALL_DATABASE_TYPES {
-      // SQL Server 是唯一的例外，而且是**按阶段**的例外：执行计划排在第四阶段
-      // （`SHOWPLAN_XML`），连接表单上那一格的「有缺口」说明里写着。做完那一阶段
-      // 就删掉这一行——断言会逼着你删
-      if db_type == super::DatabaseType::SqlServer {
-        assert!(crate::services::explain_statement(&db_type, "SELECT 1", false).is_err());
-        continue;
-      }
       assert_eq!(
         db_type.has_driver(),
         crate::services::explain_statement(&db_type, "SELECT 1", false).is_ok(),

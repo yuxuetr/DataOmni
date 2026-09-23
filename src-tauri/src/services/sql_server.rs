@@ -73,9 +73,6 @@ pub(crate) use sql_server_type_name;
 /// 连接串的 scheme。前端据此认出这条连接不归插件管
 pub const SQL_SERVER_SCHEME: &str = "sqlserver://";
 
-/// 这一阶段还没做的操作。前端把它译成一句「SQL Server 还不支持……」
-pub const SQL_SERVER_UNSUPPORTED: &str = "DATAOMNI_SQL_SERVER_UNSUPPORTED";
-
 /// tiberius 在它没实现的地方直接 panic：`sql_variant` 与 CLR 类型（geography、
 /// hierarchyid）的列元数据是 `todo!()`，服务端要求的加密级别对不上时也是
 /// `panic!`。没接住的话那一次调用永远不回来，界面一直转着「执行中」。
@@ -250,13 +247,17 @@ impl SqlServerConnection {
     options: StreamOptions,
     sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
   ) -> Result<QueryExecutionSummary, QueryError> {
-    // 导出要求「不返回结果集就别执行」，而这里只有执行之后才知道——先执行再
-    // 拒绝等于把一条 DELETE 真的跑了。在有 describe 之前一律不做
-    if options.non_query == NonQueryHandling::Refuse {
-      return Err(QueryError::message(format!("{SQL_SERVER_UNSUPPORTED}: export")));
+    // 导出要求「不返回结果集就别执行」，而执行之后才知道就晚了——那条 DELETE
+    // 已经删了。先描述一遍（只编译不执行），0 列就不执行
+    if options.non_query == NonQueryHandling::Refuse && self.describe_columns(sql).await?.is_empty()
+    {
+      crate::services::query_executor::refuse_non_query(options.non_query)?;
     }
     // 和 MySQL 同一个理由：会话连接换了库，对象树与表数据还在原来那个库上读
     crate::services::query_executor::refuse_use_statement(sql)?;
+    if options.explain_plan {
+      return self.show_plan(sql, options, sink).await;
+    }
     let mut client = self.take_client().await?;
     let outcome = guarded(stream_first_result(&mut client, sql, options, sink)).await;
     self
@@ -277,6 +278,87 @@ impl SqlServerConnection {
     })
     .await;
     self.finish(client, outcome, |_, rows_affected| rows_affected).await
+  }
+
+  /// 一条带参数的语句，返回影响行数（CSV 导入走这里）。值一律按 nvarchar 绑，
+  /// 由服务端转成列的类型——和另外三家一样，CSV 给的本来就只有文本与空。
+  pub async fn execute_with_params(
+    &mut self,
+    sql: &str,
+    params: &[Option<String>],
+  ) -> Result<u64, QueryError> {
+    let mut client = self.take_client().await?;
+    let outcome = guarded(async {
+      let mut query = tiberius::Query::new(sql);
+      for param in params {
+        query.bind(param.clone());
+      }
+      let stream = query.query(&mut client).await.map_err(|error| query_error(error, Some(sql)))?;
+      stream.into_results().await.map_err(|error| query_error(error, Some(sql)))?;
+      Ok(0)
+    })
+    .await;
+    self.finish(client, outcome, |_, rows_affected| rows_affected).await
+  }
+
+  /// 这条会话连接上的一次带参数的查询，返回不带类型标签的行
+  pub async fn select(
+    &mut self,
+    sql: &str,
+    params: &[JsonValue],
+  ) -> Result<Vec<QueryRow>, QueryError> {
+    let mut client = self.take_client().await?;
+    let outcome = guarded(select_rows(&mut client, sql, params)).await;
+    self.finish(client, outcome, |rows, _| rows).await
+  }
+
+  /// 只问「这条语句返回哪些列」，不执行。
+  ///
+  /// `sp_describe_first_result_set` 只编译：一条 `DELETE` 在这里报 0 列，一行
+  /// 也不会删。导出据此在执行之前就拒绝不返回结果集的语句。
+  pub async fn describe_columns(
+    &mut self,
+    sql: &str,
+  ) -> Result<Vec<QueryColumnMetadata>, QueryError> {
+    // 表值函数的形式把「描述不了」（语法错误、引用了不存在的表）放在
+    // `error_number` / `error_message` 两列里返回，而不是报错——不看这两列，
+    // 一条写错的语句会被当成「不返回结果集」
+    let rows = self
+      .select(
+        "SELECT name, system_type_name, error_number, error_message
+         FROM sys.dm_exec_describe_first_result_set(@P1, NULL, 0)
+         WHERE is_hidden = 0 OR error_number IS NOT NULL ORDER BY column_ordinal",
+        &[JsonValue::from(sql)],
+      )
+      .await?;
+    if let Some(row) = rows.iter().find(|row| !row["error_number"].is_null()) {
+      return Err(QueryError {
+        message: row["error_message"].as_str().unwrap_or_default().to_string(),
+        code: Some(row["error_number"].to_string()),
+        details: None,
+      });
+    }
+    let names = label_columns(
+      rows.iter().map(|row| row.get("name").and_then(JsonValue::as_str).unwrap_or("")),
+    );
+    Ok(
+      names
+        .into_iter()
+        .zip(&rows)
+        .enumerate()
+        .map(|(ordinal, (name, row))| {
+          let declared = row.get("system_type_name").and_then(JsonValue::as_str).unwrap_or("");
+          QueryColumnMetadata {
+            name,
+            ordinal,
+            database_type: declared.to_string(),
+            // 导出只用列名；逻辑类型要到真的取回一行时才从 TDS 的类型上定
+            logical_type: "unknown".to_string(),
+            nullable: None,
+          }
+        })
+        .collect(),
+    )
   }
 
   /// 一次执行之后：问服务端这条语句留下了什么，再决定连接留不留。
@@ -302,6 +384,35 @@ impl SqlServerConnection {
     self.client = Some(client);
     self.transaction = after.transaction(started_at);
     outcome.map(|value| with_row_count(value, after.row_count))
+  }
+
+  /// 只编译不执行，取估算的执行计划。
+  ///
+  /// `SET SHOWPLAN_XML` 必须独占一批。打开期间这条连接上的**任何**语句都只
+  /// 返回计划不执行——包括 [`Self::finish`] 那一句 `@@ROWCOUNT`，所以这里不问，
+  /// 事务状态也不变（计划不碰数据）。关不掉就把连接丢掉：留着它，后面每一条
+  /// 语句都「成功」地什么也没做。
+  async fn show_plan(
+    &mut self,
+    sql: &str,
+    options: StreamOptions,
+    sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+  ) -> Result<QueryExecutionSummary, QueryError> {
+    let mut client = self.take_client().await?;
+    if let Err(error) = run_simple(&mut client, "SET SHOWPLAN_XML ON").await {
+      if !breaks_connection(&error) {
+        self.client = Some(client);
+      }
+      return Err(error);
+    }
+    let outcome = guarded(stream_first_result(&mut client, sql, options, sink)).await;
+    // 连接断了、或者关不掉：`client` 不放回，随之丢掉
+    if !keeps_connection(&outcome) {
+      return outcome;
+    }
+    run_simple(&mut client, "SET SHOWPLAN_XML OFF").await?;
+    self.client = Some(client);
+    outcome
   }
 
   /// 服务端上一次报的事务状态。
@@ -349,11 +460,23 @@ async fn after_statement(client: &mut SqlServerClient) -> Result<AfterStatement,
     .into_row()
     .await
     .map_err(|error| query_error(error, None))?;
+  // `try_get` 而不是 `get`：后者在类型对不上时 panic
   let (count, depth) = match &row {
-    Some(row) => (row.get::<i64, _>(0).unwrap_or(0), row.get::<i32, _>(1).unwrap_or(0)),
+    Some(row) => (int_cell::<i64>(row, 0)?, int_cell::<i32>(row, 1)?),
     None => (0, 0),
   };
   Ok(AfterStatement { row_count: u64::try_from(count).unwrap_or(0), depth })
+}
+
+/// 一格整数；空值当 0
+fn int_cell<T>(row: &tiberius::Row, index: usize) -> Result<T, QueryError>
+where
+  T: for<'a> FromSql<'a> + Default,
+{
+  row
+    .try_get::<T, _>(index)
+    .map(Option::unwrap_or_default)
+    .map_err(|error| query_error(error, None))
 }
 
 /// 这条语句是不是在开、关事务——关掉自动提交时，这种语句前面不补
@@ -542,7 +665,8 @@ async fn write_in_transaction(
     let rows = results
       .last()
       .and_then(|set| set.first())
-      .and_then(|row| row.get::<i64, _>(0))
+      .map(|row| int_cell::<i64>(row, 0))
+      .transpose()?
       .and_then(|count| u64::try_from(count).ok())
       .unwrap_or(0);
     if let Some(expected) = statement.expect_rows {

@@ -20,6 +20,8 @@ pub const EXPLAIN_ANALYZE_UNSUPPORTED: &str = "DATAOMNI_EXPLAIN_ANALYZE_UNSUPPOR
 /// 查询跑了，但计划是空的。当成错误而不是一棵空树——空树会让人以为计划就是空的
 pub const EXPLAIN_EMPTY: &str = "DATAOMNI_EXPLAIN_EMPTY";
 pub const EXPLAIN_NOT_JSON: &str = "DATAOMNI_EXPLAIN_NOT_JSON";
+/// SQL Server 的计划解析不了。数据是解析器的原话
+pub const EXPLAIN_NOT_XML: &str = "DATAOMNI_EXPLAIN_NOT_XML";
 
 /// 计划树上的一个节点。
 ///
@@ -117,6 +119,9 @@ pub fn explain_statement(
     }),
     DatabaseType::MySQL => Ok(format!("EXPLAIN FORMAT=JSON {sql}")),
     DatabaseType::SQLite => Ok(format!("EXPLAIN QUERY PLAN {sql}")),
+    // 没有 EXPLAIN：语句原样，由执行那一侧用 `SET SHOWPLAN_XML` 包住
+    // （见 `StreamOptions::explain_plan`）
+    DatabaseType::SqlServer => Ok(sql.to_string()),
     other => Err(QueryError::message(format!("{EXPLAIN_UNSUPPORTED}: {other:?}"))),
   }
 }
@@ -175,6 +180,7 @@ pub fn parse_plan(
     DatabaseType::PostgreSQL => parse_postgres(rows, analyze),
     DatabaseType::MySQL => parse_mysql(rows),
     DatabaseType::SQLite => Ok(parse_sqlite(rows)),
+    DatabaseType::SqlServer => parse_sql_server(rows),
     other => Err(QueryError::message(format!("{EXPLAIN_UNSUPPORTED}: {other:?}"))),
   }
 }
@@ -362,6 +368,150 @@ fn parse_sqlite(rows: &[Map<String, JsonValue>]) -> QueryPlan {
 
   let raw = entries.iter().map(|(_, _, detail)| detail.clone()).collect::<Vec<_>>().join("\n");
   QueryPlan { roots, analyzed: false, planning_ms: None, execution_ms: None, raw }
+}
+
+/// SQL Server：一批一份 `ShowPlanXML`，每条语句一个 `QueryPlan`，里面是嵌套的
+/// `RelOp`。
+///
+/// 子节点**不是** `RelOp` 的直接子元素：中间隔着一层运算符自己的元素
+/// （`RelOp/NestedLoops/RelOp`、`RelOp/Hash/RelOp`），而谓词、列清单里也有
+/// 深浅不一的嵌套。所以往下走的规矩是「遇到下一个 `RelOp` 就停」——它是
+/// 子节点，它下面的东西归它。只认直接子元素的写法会得到一棵只有根的树。
+fn parse_sql_server(rows: &[Map<String, JsonValue>]) -> Result<QueryPlan, QueryError> {
+  let texts: Vec<String> = rows.iter().filter_map(first_cell).collect();
+  if texts.iter().all(|text| text.trim().is_empty()) {
+    return Err(QueryError::message(EXPLAIN_EMPTY));
+  }
+
+  let mut roots = Vec::new();
+  for text in &texts {
+    let document = roxmltree::Document::parse(text)
+      .map_err(|error| QueryError::message(format!("{EXPLAIN_NOT_XML}: {error}")))?;
+    // `SET`、`DECLARE` 这类语句也有 StmtSimple，但没有 QueryPlan
+    for plan in document.descendants().filter(|node| is_element(node, "QueryPlan")) {
+      roots.extend(plan.children().filter(|node| is_element(node, "RelOp")).map(sql_server_node));
+    }
+  }
+  if roots.is_empty() {
+    return Err(QueryError::message(EXPLAIN_EMPTY));
+  }
+
+  Ok(QueryPlan {
+    roots,
+    analyzed: false,
+    planning_ms: None,
+    execution_ms: None,
+    // 一行到底的 XML 没法读；每个标签起一行。标签之间的空白在 XML 里不算内容，
+    // 换行之后仍是同一份计划，另存成 .sqlplan 照样能在 SSMS 里打开
+    raw: texts.join("\n").replace("><", ">\n<"),
+  })
+}
+
+/// 按本地名比，不管命名空间：整份计划都在 showplan 的命名空间里
+fn is_element(node: &roxmltree::Node<'_, '_>, name: &str) -> bool {
+  node.is_element() && node.tag_name().name() == name
+}
+
+fn sql_server_node(relop: roxmltree::Node<'_, '_>) -> PlanNode {
+  let attribute = |name: &str| relop.attribute(name);
+  let physical = attribute("PhysicalOp").unwrap_or("?");
+  let mut node = PlanNode::new(physical);
+  node.estimated_rows = attribute("EstimateRows").and_then(|value| value.parse().ok());
+  node.cost = attribute("EstimatedTotalSubtreeCost").and_then(|value| value.parse().ok());
+
+  let mut owned = OwnedElements::default();
+  collect_owned(relop, &mut owned);
+  node.children = owned.children.into_iter().map(sql_server_node).collect();
+
+  if let Some(object) = owned.object {
+    let part = |name: &str| object.attribute(name).map(|value| value.trim_matches(['[', ']']));
+    node.target = match (part("Schema"), part("Table")) {
+      (Some(schema), Some(table)) => Some(format!("{schema}.{table}")),
+      (None, Some(table)) => Some(table.to_string()),
+      _ => None,
+    };
+    if let Some(index) = part("Index") {
+      node.detail.push(PlanDetail { key: "Index".to_string(), value: index.to_string() });
+    }
+  }
+  if let Some(logical) = attribute("LogicalOp").filter(|logical| *logical != physical) {
+    node.detail.push(PlanDetail { key: "LogicalOp".to_string(), value: logical.to_string() });
+  }
+  for (key, text) in owned.predicates {
+    node.detail.push(PlanDetail { key, value: text });
+  }
+  for key in ["EstimateIO", "EstimateCPU", "AvgRowSize", "EstimatedExecutionMode", "Parallel"] {
+    if let Some(value) = attribute(key) {
+      node.detail.push(PlanDetail { key: key.to_string(), value: value.to_string() });
+    }
+  }
+  node
+}
+
+/// 索引查找的范围，`id GT (1)`。它没有现成的文本：列在 `RangeColumns`，
+/// 比较方式在 `ScanType`，值在 `RangeExpressions`，要自己拼
+fn seek_ranges(seek: roxmltree::Node<'_, '_>) -> String {
+  seek
+    .descendants()
+    .filter(|node| matches!(node.tag_name().name(), "Prefix" | "StartRange" | "EndRange"))
+    .map(|range| {
+      let columns = range
+        .descendants()
+        .filter(|node| {
+          is_element(node, "ColumnReference")
+            && node.parent().is_some_and(|parent| is_element(&parent, "RangeColumns"))
+        })
+        .filter_map(|column| column.attribute("Column"))
+        .collect::<Vec<_>>()
+        .join(", ");
+      let values = range
+        .descendants()
+        .filter(|node| is_element(node, "ScalarOperator"))
+        .filter_map(|value| value.attribute("ScalarString"))
+        .collect::<Vec<_>>()
+        .join(", ");
+      format!("{columns} {} {values}", range.attribute("ScanType").unwrap_or("="))
+    })
+    .collect::<Vec<_>>()
+    .join(" AND ")
+}
+
+/// 一个 `RelOp` 自己名下的东西：到下一个 `RelOp` 为止
+#[derive(Default)]
+struct OwnedElements<'a, 'input> {
+  children: Vec<roxmltree::Node<'a, 'input>>,
+  object: Option<roxmltree::Node<'a, 'input>>,
+  /// 谓词的元素名（`Predicate`、`SeekPredicates`…）与服务端写好的那段文本
+  predicates: Vec<(String, String)>,
+}
+
+fn collect_owned<'a, 'input>(
+  node: roxmltree::Node<'a, 'input>,
+  owned: &mut OwnedElements<'a, 'input>,
+) {
+  for child in node.children().filter(roxmltree::Node::is_element) {
+    let name = child.tag_name().name();
+    if name == "RelOp" {
+      owned.children.push(child);
+      continue;
+    }
+    if name == "Object" && owned.object.is_none() {
+      owned.object = Some(child);
+    }
+    if name == "SeekPredicates" {
+      owned.predicates.push((name.to_string(), seek_ranges(child)));
+      continue;
+    }
+    if matches!(name, "Predicate" | "ProbeResidual" | "Residual") {
+      // 谓词的可读文本在它下面第一个带 ScalarString 的元素上
+      let text = child.descendants().find_map(|element| element.attribute("ScalarString"));
+      if let Some(text) = text {
+        owned.predicates.push((name.to_string(), text.to_string()));
+        continue;
+      }
+    }
+    collect_owned(child, owned);
+  }
 }
 
 #[cfg(test)]
@@ -619,5 +769,39 @@ mod tests {
   #[test]
   fn unsupported_databases_say_so_instead_of_returning_broken_sql() {
     assert!(explain_statement(&DatabaseType::MongoDB, "SELECT 1", false).is_err());
+  }
+
+  /// 真库上取回来的一份计划（`fixtures/sqlserver-showplan.xml`，两表连接加排序）
+  #[test]
+  fn sql_server_plans_nest_through_the_operator_elements() {
+    let xml = include_str!("../../../fixtures/sqlserver-showplan.xml");
+    let plan = parse_plan(&DatabaseType::SqlServer, &json_row(xml), false).expect("parses");
+
+    assert!(!plan.analyzed);
+    assert_eq!(plan.roots.len(), 1);
+    let join = &plan.roots[0];
+    assert_eq!(join.operation, "Nested Loops");
+    assert_eq!(join.estimated_rows, Some(1.0));
+    assert!(join.cost.is_some_and(|cost| cost > 0.0));
+    assert!(join.detail.iter().any(|d| d.key == "LogicalOp" && d.value == "Inner Join"));
+
+    // 子节点隔着 NestedLoops 那一层；只认直接子元素会得到一棵只有根的树
+    let operations: Vec<&str> = join.children.iter().map(|c| c.operation.as_str()).collect();
+    assert_eq!(operations, ["Index Scan", "Clustered Index Seek"]);
+    let seek = &join.children[1];
+    assert_eq!(seek.target.as_deref(), Some("dataomni_meta.child"));
+    assert!(seek.detail.iter().any(|d| d.key == "Index" && d.value == "pk_child"));
+    let range = seek.detail.iter().find(|d| d.key == "SeekPredicates").expect("seek range");
+    assert_eq!(range.value, "id GT (1)");
+    // 下一层的对象不能被算到上一层头上
+    assert_eq!(join.target, None);
+    assert!(plan.raw.lines().count() > 10, "原文要一行一个标签");
+  }
+
+  #[test]
+  fn a_sql_server_plan_that_is_not_xml_is_named() {
+    let error = parse_plan(&DatabaseType::SqlServer, &json_row("<ShowPlanXML"), false)
+      .expect_err("broken xml");
+    assert!(error.message.starts_with(EXPLAIN_NOT_XML), "{}", error.message);
   }
 }

@@ -10,12 +10,17 @@
 //! - **一行坏掉不该毁掉一整批。** 多行 INSERT 出错时数据库只说「这条语句失败」，
 //!   不会说是哪一行；所以出错的那一批要退回保存点，再逐行重放一遍，
 //!   代价只在真的含坏行的批次上付。
+//! - **SQL Server 的类型转换错误不止毁掉一批。** `'abc'` 转 int（245）、坏日期
+//!   （241）会让服务端把**整个事务**回滚，保存点跟着没了，后面的语句落在自动
+//!   提交里。所以那边每一批先用 `TRY_CONVERT` 查一遍哪些值转不过去（它不报错），
+//!   坏行当场记下、不进 INSERT；剩下那些错误（主键冲突、非空、截断）只终止
+//!   语句本身，照常退回保存点。万一还是有错误带走了事务，就停下来说清楚，
+//!   不在一个已经没有了的事务里接着写。
 
 use crate::services::query_error::QueryError;
 use crate::services::query_executor::SessionConnection;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tauri_plugin_sql::DbPool;
 
 /// 分隔符不是一个字符。数据里带的是用户填的那一串
 pub const CSV_DELIMITER_INVALID: &str = "DATAOMNI_CSV_DELIMITER_INVALID";
@@ -24,6 +29,11 @@ pub const CSV_PARSE_FAILED: &str = "DATAOMNI_CSV_PARSE_FAILED";
 pub const CSV_NO_COLUMN_MAPPED: &str = "DATAOMNI_CSV_NO_COLUMN_MAPPED";
 /// 列类型名不合法。数据是 `列名 · 填的类型`
 pub const CSV_COLUMN_TYPE_INVALID: &str = "DATAOMNI_CSV_COLUMN_TYPE_INVALID";
+/// 这个值转不成目标列的类型（SQL Server 在插入之前查出来的）。数据是
+/// `列名 · 类型 · 值`
+pub const CSV_VALUE_NOT_CONVERTIBLE: &str = "DATAOMNI_CSV_VALUE_NOT_CONVERTIBLE";
+/// 服务端把导入的事务整个回滚了。数据是那条错误的原话
+pub const CSV_TRANSACTION_LOST: &str = "DATAOMNI_CSV_TRANSACTION_LOST";
 /// 这一行字段数不够。数据是 `实际字段数 · 要取第几个 · 映射到哪一列`
 pub const CSV_ROW_TOO_SHORT: &str = "DATAOMNI_CSV_ROW_TOO_SHORT";
 pub const FILE_OPEN_FAILED: &str = "DATAOMNI_FILE_OPEN_FAILED";
@@ -43,6 +53,10 @@ pub const MAX_RECORDED_ERRORS: usize = 100;
 /// 三家都有上限：PostgreSQL 是 65535，MySQL 的 `?` 也是 65535，SQLite 较新的
 /// 版本是 32766。取最小的那个，再按列数换算成「一条语句能放几行」。
 const MAX_BIND_PARAMS: usize = 32766;
+
+/// SQL Server 的两道上限：一次调用最多 2100 个参数，一个 `VALUES` 最多 1000 行
+const SQL_SERVER_MAX_PARAMS: usize = 2100;
+const SQL_SERVER_MAX_VALUES_ROWS: usize = 1000;
 
 /// 进度回报的最小间隔，与导出同一个理由：按批报会变成每秒上千条 IPC 消息。
 const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(120);
@@ -267,8 +281,9 @@ pub struct ImportColumn {
   pub target: String,
   /// 目标列的声明类型，例如 `character varying(32)`。
   ///
-  /// 只有 PostgreSQL 用得上：那边把文本绑进 integer 列会直接报类型错，
-  /// 所以占位符要写成 `$1::text::integer`。MySQL 与 SQLite 自己会转。
+  /// PostgreSQL 用它：那边把文本绑进 integer 列会直接报类型错，所以占位符
+  /// 要写成 `$1::text::integer`。SQL Server 用它在插入前查哪些值转不过去。
+  /// MySQL 与 SQLite 自己会转。
   pub target_type: String,
 }
 
@@ -329,26 +344,157 @@ enum Dialect {
   Sqlite,
   MySql,
   Postgres,
+  SqlServer,
 }
 
 impl Dialect {
-  fn of(connection: &SessionConnection) -> Result<Self, QueryError> {
+  fn of(connection: &SessionConnection) -> Self {
     match connection {
-      SessionConnection::Sqlite(_) => Ok(Self::Sqlite),
-      SessionConnection::MySql(_) => Ok(Self::MySql),
-      SessionConnection::Postgres(_) => Ok(Self::Postgres),
-      // 导入排在第四阶段：一条 INSERT 最多 2100 个参数，批量大小要按它重算
-      SessionConnection::SqlServer(_) => {
-        Err(crate::services::query_executor::sql_server_unsupported("import"))
-      }
+      SessionConnection::Sqlite(_) => Self::Sqlite,
+      SessionConnection::MySql(_) => Self::MySql,
+      SessionConnection::Postgres(_) => Self::Postgres,
+      SessionConnection::SqlServer(_) => Self::SqlServer,
     }
   }
 
   fn quote(&self, identifier: &str) -> String {
+    if *self == Self::SqlServer {
+      return format!("[{}]", identifier.replace(']', "]]"));
+    }
     let quote = if *self == Self::MySql { '`' } else { '"' };
     let escaped = identifier.replace(quote, &format!("{quote}{quote}"));
     format!("{quote}{escaped}{quote}")
   }
+
+  /// T-SQL 里单独的 `BEGIN` 是语句块
+  fn begin(&self) -> &'static str {
+    if *self == Self::SqlServer {
+      "BEGIN TRANSACTION"
+    } else {
+      "BEGIN"
+    }
+  }
+
+  fn savepoint(&self, name: &str) -> String {
+    if *self == Self::SqlServer {
+      format!("SAVE TRANSACTION {name}")
+    } else {
+      format!("SAVEPOINT {name}")
+    }
+  }
+
+  fn rollback_to(&self, name: &str) -> String {
+    if *self == Self::SqlServer {
+      format!("ROLLBACK TRANSACTION {name}")
+    } else {
+      format!("ROLLBACK TO SAVEPOINT {name}")
+    }
+  }
+
+  /// SQL Server 没有释放保存点这回事，保存点随事务结束
+  fn release(&self, name: &str) -> Option<String> {
+    (*self != Self::SqlServer).then(|| format!("RELEASE SAVEPOINT {name}"))
+  }
+
+  /// 一条语句放几行：受占位符上限约束，SQL Server 另有 `VALUES` 的行数上限
+  fn rows_per_statement(&self, batch_size: usize, columns: usize) -> usize {
+    if columns == 0 {
+      return 0;
+    }
+    let (params, rows) = match self {
+      Self::SqlServer => (SQL_SERVER_MAX_PARAMS, SQL_SERVER_MAX_VALUES_ROWS),
+      _ => (MAX_BIND_PARAMS, usize::MAX),
+    };
+    batch_size.clamp(1, (params / columns).clamp(1, rows))
+  }
+}
+
+async fn savepoint(connection: &mut SessionConnection, name: &str) -> Result<(), QueryError> {
+  let sql = Dialect::of(connection).savepoint(name);
+  connection.execute_unprepared(&sql).await.map(|_| ())
+}
+
+async fn rollback_to(connection: &mut SessionConnection, name: &str) -> Result<(), QueryError> {
+  let sql = Dialect::of(connection).rollback_to(name);
+  connection.execute_unprepared(&sql).await.map(|_| ())
+}
+
+async fn release(connection: &mut SessionConnection, name: &str) -> Result<(), QueryError> {
+  match Dialect::of(connection).release(name) {
+    Some(sql) => connection.execute_unprepared(&sql).await.map(|_| ()),
+    None => Ok(()),
+  }
+}
+
+/// 一条语句失败之后，事务还在不在。
+///
+/// 只有 SQL Server 报得出（每条语句之后问 `@@TRANCOUNT`）；另外三家的语句
+/// 错误不会结束事务，PostgreSQL 的「废止」由退回保存点解除。不在了就停下：
+/// 接着往下写会落在自动提交里，而界面仍会说「单事务，出错全部回滚」。
+fn ensure_transaction(
+  connection: &SessionConnection,
+  error: &QueryError,
+) -> Result<(), QueryError> {
+  match connection.observed_transaction() {
+    Some(state) if !state.in_transaction() => {
+      Err(QueryError::message(format!("{CSV_TRANSACTION_LOST}: {}", error.message)))
+    }
+    _ => Ok(()),
+  }
+}
+
+/// 不用查转换的类型：文本进文本不会转换失败（太长是截断，只终止语句）
+fn converts_without_failing(target_type: &str) -> bool {
+  let token = target_type.split(['(', ' ']).next().unwrap_or("").to_ascii_lowercase();
+  matches!(token.as_str(), "char" | "varchar" | "nchar" | "nvarchar" | "text" | "ntext" | "sysname")
+}
+
+/// SQL Server：这一批里哪些值转不成目标类型。返回 `(第几行, 第几列)`，每行只报
+/// 第一个转不过去的列。`None` 表示这张表的映射里没有需要查的列。
+///
+/// 用 `TRY_CONVERT`：转不过去给 NULL，而不是像 INSERT 那样报 245 把事务带走。
+/// 参数和 INSERT 是同一份，排列也一样，所以不会超过参数上限。
+fn conversion_check(columns: &[ImportColumn], rows: usize) -> Result<Option<String>, QueryError> {
+  let checked: Vec<(usize, &ImportColumn)> = columns
+    .iter()
+    .enumerate()
+    .filter(|(_, column)| !converts_without_failing(&column.target_type))
+    .collect();
+  if checked.is_empty() {
+    return Ok(None);
+  }
+  for (_, column) in &checked {
+    if !valid_type_name(&column.target_type) {
+      return Err(QueryError::message(format!(
+        "{CSV_COLUMN_TYPE_INVALID}: {} · {}",
+        column.target, column.target_type
+      )));
+    }
+  }
+  let width = columns.len();
+  let tuples = (0..rows)
+    .map(|row| {
+      let values =
+        (0..width).map(|column| format!("@P{}", row * width + column + 1)).collect::<Vec<_>>();
+      format!("({row}, {})", values.join(", "))
+    })
+    .collect::<Vec<_>>()
+    .join(", ");
+  let aliases = (0..width).map(|column| format!("c{column}")).collect::<Vec<_>>().join(", ");
+  let fails = |index: usize, column: &ImportColumn| {
+    format!("(v.c{index} IS NOT NULL AND TRY_CONVERT({}, v.c{index}) IS NULL)", column.target_type)
+  };
+  let first_bad = checked
+    .iter()
+    .map(|(index, column)| format!("WHEN {} THEN {index}", fails(*index, column)))
+    .collect::<Vec<_>>()
+    .join(" ");
+  let any_bad =
+    checked.iter().map(|(index, column)| fails(*index, column)).collect::<Vec<_>>().join(" OR ");
+  Ok(Some(format!(
+    "SELECT v.i AS row_index, CASE {first_bad} END AS column_index \
+     FROM (VALUES {tuples}) AS v(i, {aliases}) WHERE {any_bad} ORDER BY v.i"
+  )))
 }
 
 /// 目标类型里允许出现的字符。
@@ -399,6 +545,7 @@ fn build_insert(
           // 参数本身推断成 integer，而我们绑进去的是一串文本
           placeholders.push(format!("${next}::text::{}", column.target_type));
         }
+        Dialect::SqlServer => placeholders.push(format!("@P{next}")),
         _ => placeholders.push("?".to_string()),
       }
       next += 1;
@@ -407,17 +554,6 @@ fn build_insert(
   }
 
   Ok(format!("INSERT INTO {qualified} ({names}) VALUES {}", tuples.join(", ")))
-}
-
-/// 一条语句放几行。
-///
-/// 受占位符上限约束；列特别多的表上这个值会小于用户选的批量大小，
-/// 那是必须的——超了之后数据库直接拒绝整条语句。
-fn rows_per_statement(batch_size: usize, columns: usize) -> usize {
-  if columns == 0 {
-    return 0;
-  }
-  batch_size.clamp(1, (MAX_BIND_PARAMS / columns).max(1))
 }
 
 /// 从一条 CSV 记录里取出要绑定的值。
@@ -456,8 +592,8 @@ struct Batch {
 ///
 /// 用的是另开的一条连接，与导出同一个理由：一次导入可能跑几分钟，占着编辑器
 /// 那条 Session 会让 SQL 编辑器在这期间完全按不动。
-pub async fn import_csv(
-  pool: &DbPool,
+pub async fn import_csv<'a>(
+  pool: impl Into<crate::services::query_executor::PoolRef<'a>>,
   request: &ImportRequest,
   progress: &mut (dyn FnMut(ImportProgress) + Send),
   cancelled: &mut (dyn FnMut() -> bool + Send),
@@ -479,8 +615,8 @@ pub async fn import_csv(
     })?;
 
   let mut connection = SessionConnection::acquire(pool).await?;
-  let dialect = Dialect::of(&connection)?;
-  let per_statement = rows_per_statement(request.batch_size, request.columns.len());
+  let dialect = Dialect::of(&connection);
+  let per_statement = dialect.rows_per_statement(request.batch_size, request.columns.len());
   let batch_sql = build_insert(
     dialect,
     request.schema.as_deref(),
@@ -502,7 +638,7 @@ pub async fn import_csv(
   let single = request.strategy == TransactionStrategy::SingleTransaction;
 
   if single {
-    connection.execute_unprepared("BEGIN").await?;
+    connection.execute_unprepared(dialect.begin()).await?;
   }
 
   let mut batch = Batch {
@@ -677,28 +813,32 @@ async fn flush(
   batch: &mut Batch,
   state: &mut ImportState,
 ) -> Result<Flushed, QueryError> {
+  let dialect = Dialect::of(connection);
+  if dialect == Dialect::SqlServer
+    && !drop_unconvertible_rows(connection, request, batch, state).await?
+  {
+    batch.records.clear();
+    batch.lines.clear();
+    batch.params.clear();
+    return Ok(Flushed::Aborted);
+  }
   let rows = batch.records.len();
   if rows == 0 {
     return Ok(Flushed::Ok);
   }
   let per_batch = request.strategy == TransactionStrategy::PerBatch;
   if per_batch {
-    connection.execute_unprepared("BEGIN").await?;
+    connection.execute_unprepared(dialect.begin()).await?;
   }
 
-  connection.execute_unprepared("SAVEPOINT dataomni_import").await?;
+  savepoint(connection, "dataomni_import").await?;
   // 最后一批通常不满，占位符数量对不上整批那条语句，得按实际行数重拼一条
   let tail_sql;
   let sql = if rows == per_statement {
     batch_sql
   } else {
-    tail_sql = build_insert(
-      Dialect::of(connection)?,
-      request.schema.as_deref(),
-      &request.table,
-      &request.columns,
-      rows,
-    )?;
+    tail_sql =
+      build_insert(dialect, request.schema.as_deref(), &request.table, &request.columns, rows)?;
     &tail_sql
   };
 
@@ -707,11 +847,12 @@ async fn flush(
 
   match outcome {
     Ok(_) => {
-      connection.execute_unprepared("RELEASE SAVEPOINT dataomni_import").await?;
+      release(connection, "dataomni_import").await?;
       state.rows_inserted += rows as u64;
     }
     Err(batch_error) => {
-      connection.execute_unprepared("ROLLBACK TO SAVEPOINT dataomni_import").await?;
+      ensure_transaction(connection, &batch_error)?;
+      rollback_to(connection, "dataomni_import").await?;
       if request.on_error == ErrorPolicy::Abort {
         // 整批一起失败时报不出是哪一行，所以停下来之前也要逐行找一遍——
         // 「第 12000 行的日期格式不对」和「这一批失败了」是两种可用性
@@ -727,7 +868,7 @@ async fn flush(
       } else {
         replay(connection, single_sql, request, batch, state).await?;
       }
-      connection.execute_unprepared("RELEASE SAVEPOINT dataomni_import").await?;
+      release(connection, "dataomni_import").await?;
     }
   }
 
@@ -742,6 +883,72 @@ async fn flush(
   Ok(if aborted { Flushed::Aborted } else { Flushed::Ok })
 }
 
+/// SQL Server：先把转不过去的行挑出来记成失败，不让它们进 INSERT。
+///
+/// 返回 false 表示按「出错即中止」该停了——此时这一批一行都没写。
+async fn drop_unconvertible_rows(
+  connection: &mut SessionConnection,
+  request: &ImportRequest,
+  batch: &mut Batch,
+  state: &mut ImportState,
+) -> Result<bool, QueryError> {
+  let SessionConnection::SqlServer(sql_server) = connection else {
+    return Ok(true);
+  };
+  let rows = batch.records.len();
+  let Some(check) = conversion_check(&request.columns, rows)? else {
+    return Ok(true);
+  };
+  let params: Vec<serde_json::Value> = batch
+    .params
+    .iter()
+    .map(|value| value.clone().map_or(serde_json::Value::Null, Into::into))
+    .collect();
+  let bad = sql_server.select(&check, &params).await?;
+  if bad.is_empty() {
+    return Ok(true);
+  }
+
+  let width = request.columns.len();
+  let mut rejected = vec![false; rows];
+  for found in &bad {
+    let (Some(row), Some(column)) = (found["row_index"].as_u64(), found["column_index"].as_u64())
+    else {
+      continue;
+    };
+    let (row, column) = (row as usize, column as usize);
+    let (Some(record), Some(target)) = (batch.records.get(row), request.columns.get(column)) else {
+      continue;
+    };
+    let value = batch.params.get(row * width + column).cloned().flatten().unwrap_or_default();
+    state.fail(
+      batch.lines.get(row).copied().unwrap_or(0),
+      format!("{CSV_VALUE_NOT_CONVERTIBLE}: {} · {} · {value}", target.target, target.target_type),
+      record.iter().map(|field| field.to_string()).collect(),
+    );
+    rejected[row] = true;
+    if request.on_error == ErrorPolicy::Abort {
+      return Ok(false);
+    }
+  }
+
+  let mut kept = Batch {
+    records: Vec::with_capacity(rows),
+    lines: Vec::with_capacity(rows),
+    params: Vec::with_capacity(batch.params.len()),
+  };
+  for (row, reject) in rejected.into_iter().enumerate() {
+    if reject {
+      continue;
+    }
+    kept.records.push(batch.records[row].clone());
+    kept.lines.push(batch.lines[row]);
+    kept.params.extend_from_slice(&batch.params[row * width..(row + 1) * width]);
+  }
+  *batch = kept;
+  Ok(true)
+}
+
 /// 逐行重放，坏行记下来，好行留在库里。
 async fn replay(
   connection: &mut SessionConnection,
@@ -753,15 +960,16 @@ async fn replay(
   let width = request.columns.len();
   for (index, record) in batch.records.iter().enumerate() {
     let params = &batch.params[index * width..(index + 1) * width];
-    connection.execute_unprepared("SAVEPOINT dataomni_row").await?;
+    savepoint(connection, "dataomni_row").await?;
     match connection.execute_with_params(single_sql, params).await {
       Ok(_) => {
-        connection.execute_unprepared("RELEASE SAVEPOINT dataomni_row").await?;
+        release(connection, "dataomni_row").await?;
         state.rows_inserted += 1;
       }
       Err(error) => {
-        connection.execute_unprepared("ROLLBACK TO SAVEPOINT dataomni_row").await?;
-        connection.execute_unprepared("RELEASE SAVEPOINT dataomni_row").await?;
+        ensure_transaction(connection, &error)?;
+        rollback_to(connection, "dataomni_row").await?;
+        release(connection, "dataomni_row").await?;
         state.fail(
           batch.lines.get(index).copied().unwrap_or(0),
           error.to_string(),
@@ -784,10 +992,13 @@ async fn find_culprit(
   let width = request.columns.len();
   for (index, record) in batch.records.iter().enumerate() {
     let params = &batch.params[index * width..(index + 1) * width];
-    connection.execute_unprepared("SAVEPOINT dataomni_probe").await?;
+    savepoint(connection, "dataomni_probe").await?;
     let outcome = connection.execute_with_params(single_sql, params).await;
-    connection.execute_unprepared("ROLLBACK TO SAVEPOINT dataomni_probe").await?;
-    connection.execute_unprepared("RELEASE SAVEPOINT dataomni_probe").await?;
+    if let Err(error) = &outcome {
+      ensure_transaction(connection, error)?;
+    }
+    rollback_to(connection, "dataomni_probe").await?;
+    release(connection, "dataomni_probe").await?;
     if let Err(error) = outcome {
       state.fail(
         batch.lines.get(index).copied().unwrap_or(0),
@@ -805,6 +1016,7 @@ mod tests {
   use super::*;
   use sqlx::sqlite::SqlitePoolOptions;
   use sqlx::{Row, Sqlite};
+  use tauri_plugin_sql::DbPool;
 
   #[test]
   fn the_delimiter_is_the_one_that_cuts_even_rows() {
@@ -842,10 +1054,39 @@ mod tests {
   #[test]
   fn a_statement_never_exceeds_the_bind_limit() {
     // 超了之后数据库拒绝的是整条语句，报的错和 CSV 一点关系都没有
-    assert_eq!(rows_per_statement(1000, 3), 1000);
-    assert_eq!(rows_per_statement(1000, 200), MAX_BIND_PARAMS / 200);
+    assert_eq!(Dialect::MySql.rows_per_statement(1000, 3), 1000);
+    assert_eq!(Dialect::MySql.rows_per_statement(1000, 200), MAX_BIND_PARAMS / 200);
     // 列多到一行就撑满时也得能发出去一行
-    assert_eq!(rows_per_statement(1000, 40_000), 1);
+    assert_eq!(Dialect::MySql.rows_per_statement(1000, 40_000), 1);
+    // SQL Server：2100 个参数，一个 VALUES 最多 1000 行
+    assert_eq!(Dialect::SqlServer.rows_per_statement(5000, 1), 1000);
+    assert_eq!(Dialect::SqlServer.rows_per_statement(1000, 3), 700);
+    assert_eq!(Dialect::SqlServer.rows_per_statement(1000, 3000), 1);
+  }
+
+  #[test]
+  fn sql_server_checks_conversions_only_where_they_can_fail() {
+    let columns = vec![
+      ImportColumn { source: 0, target: "id".into(), target_type: "int".into() },
+      ImportColumn { source: 1, target: "name".into(), target_type: "nvarchar(32)".into() },
+      ImportColumn { source: 2, target: "at".into(), target_type: "datetime2(3)".into() },
+    ];
+    let sql = conversion_check(&columns, 2).expect("builds").expect("has checked columns");
+    assert!(sql.contains("VALUES (0, @P1, @P2, @P3), (1, @P4, @P5, @P6)"), "{sql}");
+    assert!(sql.contains("TRY_CONVERT(int, v.c0)"), "{sql}");
+    assert!(sql.contains("TRY_CONVERT(datetime2(3), v.c2)"), "{sql}");
+    assert!(!sql.contains("v.c1)"), "文本列不用查: {sql}");
+
+    let text_only =
+      vec![ImportColumn { source: 0, target: "n".into(), target_type: "varchar(max)".into() }];
+    assert_eq!(conversion_check(&text_only, 3).expect("builds"), None);
+
+    let injected = vec![ImportColumn {
+      source: 0,
+      target: "x".into(),
+      target_type: "int); DROP TABLE t; --".into(),
+    }];
+    assert!(conversion_check(&injected, 1).is_err(), "类型名会拼进语句，要校验");
   }
 
   #[test]

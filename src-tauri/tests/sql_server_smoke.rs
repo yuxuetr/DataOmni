@@ -312,7 +312,7 @@ async fn sql_server_timeout_closes_the_connection_so_the_server_stops_the_statem
     pool: PoolRef::SqlServer(&pool),
     sql,
     autocommit: true,
-    assume_rows: false,
+    explain_plan: false,
     row_limit: 10,
     byte_limit: 16 * 1024 * 1024,
     batch_size: 10,
@@ -747,7 +747,7 @@ fn session_options<'a>(
     pool: PoolRef::SqlServer(pool),
     sql,
     autocommit,
-    assume_rows: false,
+    explain_plan: false,
     row_limit: 100,
     byte_limit: 16 * 1024 * 1024,
     batch_size: 100,
@@ -851,4 +851,326 @@ async fn sql_server_catalog_reads_give_up_on_a_lock_instead_of_hanging() {
 
   run_in(&sessions, &pool, id, "ROLLBACK", true).await.expect("rollback");
   assert_eq!(names(&pool).await, ["甲", "乙"], "锁放开之后照常能读");
+}
+
+// ---------------------------------------------------------------------------
+// 第四阶段
+// ---------------------------------------------------------------------------
+
+/// 执行计划：`SET SHOWPLAN_XML` 包住语句，只编译不执行。关键在「之后」：
+/// 没关掉的话这条会话上后面每一条语句都只返回计划，而且看上去是成功的。
+#[tokio::test]
+async fn sql_server_plans_are_estimated_and_leave_the_session_as_it_was() {
+  let Some(pool) = pool().await else { return };
+  write_fixture(&pool).await;
+  let sessions = QuerySessionState::default();
+  let id = "sql-server-plan";
+
+  run_in(&sessions, &pool, id, "BEGIN TRANSACTION", true).await.expect("begin");
+  let sql = "DELETE FROM dbo.dataomni_write WHERE id = 1";
+  let statement = dataomni_lib::services::explain_statement(&DatabaseType::SqlServer, sql, false)
+    .expect("statement");
+  let mut rows = Vec::new();
+  sessions
+    .execute_streaming(
+      StreamingQueryOptions { explain_plan: true, ..session_options(&pool, id, &statement, true) },
+      &mut |batch| {
+        rows.extend(batch.rows);
+        Ok(())
+      },
+    )
+    .await
+    .expect("plan");
+  let plan =
+    dataomni_lib::services::parse_plan(&DatabaseType::SqlServer, &rows, false).expect("parse plan");
+  let root = &plan.roots[0];
+  assert!(root.operation.contains("Delete"), "{root:?}");
+  fn targets(node: &dataomni_lib::services::PlanNode, out: &mut Vec<String>) {
+    out.extend(node.target.clone());
+    node.children.iter().for_each(|child| targets(child, out));
+  }
+  let mut seen = Vec::new();
+  targets(root, &mut seen);
+  assert!(seen.iter().any(|target| target == "dbo.dataomni_write"), "{seen:?}");
+
+  // 只编译没执行：那一行还在
+  assert_eq!(names(&pool).await, ["甲", "乙"]);
+  // SHOWPLAN 关掉了：普通语句拿回的是它自己的结果，不是一份计划
+  let mut rows = Vec::new();
+  sessions
+    .execute_streaming(session_options(&pool, id, "SELECT 1 AS ok", true), &mut |batch| {
+      rows.extend(batch.rows);
+      Ok(())
+    })
+    .await
+    .expect("plain select");
+  assert_eq!(rows[0]["ok"], json!(1));
+  // 事务还开着，还是原来那一个
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Active);
+  run_in(&sessions, &pool, id, "ROLLBACK", true).await.expect("rollback");
+}
+
+fn export_options() -> dataomni_lib::services::ExportOptions {
+  dataomni_lib::services::ExportOptions {
+    format: dataomni_lib::services::ExportFormat::Csv,
+    delimiter: ",".to_string(),
+    include_header: true,
+    null_text: String::new(),
+    byte_order_mark: false,
+  }
+}
+
+/// 整表导出：列名在执行之前从 `sys.dm_exec_describe_first_result_set` 取；
+/// 不返回结果集的语句一行都不执行；写错的语句报它自己的错，不是「不返回结果集」。
+#[tokio::test]
+async fn sql_server_exports_stream_to_a_file_and_refuse_non_queries_before_running_them() {
+  let Some(pool) = pool().await else { return };
+  write_fixture(&pool).await;
+  let dir = std::env::temp_dir().join(format!("dataomni-mssql-export-{}", std::process::id()));
+  std::fs::create_dir_all(&dir).expect("temp dir");
+  let target = dir.join("out.csv");
+  let export = |sql: &'static str| {
+    let pool = Arc::clone(&pool);
+    let target = target.clone();
+    async move {
+      dataomni_lib::services::export_query(
+        PoolRef::SqlServer(&pool),
+        sql,
+        &target,
+        export_options(),
+        &mut |_| {},
+        &mut || false,
+      )
+      .await
+    }
+  };
+
+  let summary =
+    export("SELECT id, name, note, CAST(1 AS int) + id FROM dbo.dataomni_write ORDER BY id")
+      .await
+      .expect("export");
+  assert_eq!(summary.rows_written, 2);
+  let contents = std::fs::read_to_string(&target).expect("read back");
+  assert_eq!(contents, "id,name,note,(No column name)\n1,甲,,2\n2,乙,,3");
+
+  let error = export("DELETE FROM dbo.dataomni_write").await.expect_err("refused");
+  assert_eq!(error.message, dataomni_lib::services::query_executor::NON_QUERY_MESSAGE);
+  assert_eq!(names(&pool).await, ["甲", "乙"], "拒绝之前不能已经删了");
+
+  let error = export("SELECT * FROM dbo.no_such_table").await.expect_err("bad sql");
+  assert_eq!(error.code.as_deref(), Some("208"), "{error:?}");
+  std::fs::remove_dir_all(&dir).ok();
+}
+
+async fn import_fixture(pool: &Arc<SqlServerPool>) {
+  run_all(
+    pool,
+    &[
+      "IF OBJECT_ID('dbo.dataomni_import') IS NOT NULL DROP TABLE dbo.dataomni_import",
+      "CREATE TABLE dbo.dataomni_import (id int PRIMARY KEY, n int NOT NULL, at date NULL, name nvarchar(5) NULL)",
+    ],
+  )
+  .await;
+}
+
+/// 两类错误混在一个文件里：类型转换（245 / 241，服务端会把整个事务回滚）与
+/// 只终止语句的那几种（主键冲突、截断、非空）。
+const IMPORT_CSV: &str = "id,n,at,name
+1,10,2024-01-01,a
+2,abc,2024-01-02,b
+3,30,2024-13-45,c
+1,40,,d
+5,50,,toolong
+6,,,f
+7,70,2024-02-02,g
+";
+
+fn import_request(
+  path: &std::path::Path,
+  on_error: dataomni_lib::services::ErrorPolicy,
+) -> dataomni_lib::services::ImportRequest {
+  let column =
+    |source, target: &str, target_type: &str| dataomni_lib::services::csv_import::ImportColumn {
+      source,
+      target: target.to_string(),
+      target_type: target_type.to_string(),
+    };
+  dataomni_lib::services::ImportRequest {
+    path: path.to_string_lossy().to_string(),
+    schema: Some("dbo".into()),
+    table: "dataomni_import".into(),
+    csv: dataomni_lib::services::CsvOptions {
+      delimiter: ",".into(),
+      has_header: true,
+      null_text: String::new(),
+    },
+    columns: vec![
+      column(0, "id", "int"),
+      column(1, "n", "int"),
+      column(2, "at", "date"),
+      column(3, "name", "nvarchar(5)"),
+    ],
+    batch_size: 3,
+    strategy: dataomni_lib::services::TransactionStrategy::SingleTransaction,
+    on_error,
+  }
+}
+
+async fn run_import(
+  pool: &Arc<SqlServerPool>,
+  request: &dataomni_lib::services::ImportRequest,
+) -> dataomni_lib::services::ImportSummary {
+  dataomni_lib::services::import_csv(
+    PoolRef::SqlServer(pool),
+    request,
+    &mut |_| {},
+    &mut || false,
+    &mut || false,
+  )
+  .await
+  .expect("import runs")
+}
+
+async fn imported_ids(pool: &Arc<SqlServerPool>) -> Vec<i64> {
+  pool
+    .select("SELECT id FROM dbo.dataomni_import ORDER BY id", &[])
+    .await
+    .expect("read back")
+    .iter()
+    .filter_map(|row| row["id"].as_i64())
+    .collect()
+}
+
+#[tokio::test]
+async fn sql_server_import_skips_bad_rows_without_losing_the_transaction() {
+  let Some(pool) = pool().await else { return };
+  import_fixture(&pool).await;
+  let path = std::env::temp_dir().join(format!("dataomni-mssql-import-{}.csv", std::process::id()));
+  std::fs::write(&path, IMPORT_CSV).expect("write csv");
+
+  let summary =
+    run_import(&pool, &import_request(&path, dataomni_lib::services::ErrorPolicy::Skip)).await;
+  assert!(!summary.rolled_back, "{summary:?}");
+  assert_eq!(summary.rows_read, 7);
+  assert_eq!(summary.rows_inserted, 2, "{summary:?}");
+  assert_eq!(summary.rows_failed, 5);
+  // 单事务：要是 245 把事务带走了，1 号那行也不会在
+  assert_eq!(imported_ids(&pool).await, [1, 7]);
+
+  let by_line = |line: u64| {
+    summary.errors.iter().find(|error| error.line == line).map(|error| error.message.clone())
+  };
+  let conversion = dataomni_lib::services::csv_import::CSV_VALUE_NOT_CONVERTIBLE;
+  assert!(
+    by_line(3).is_some_and(|m| m.starts_with(conversion) && m.contains("abc")),
+    "{:?}",
+    by_line(3)
+  );
+  assert!(by_line(4).is_some_and(|m| m.starts_with(conversion) && m.contains("2024-13-45")));
+  assert!(by_line(5).is_some_and(|m| m.contains("PRIMARY KEY")), "{:?}", by_line(5));
+  assert!(by_line(6).is_some_and(|m| m.contains("truncated")), "{:?}", by_line(6));
+  assert!(by_line(7).is_some_and(|m| m.contains("NULL")), "{:?}", by_line(7));
+  std::fs::remove_file(&path).ok();
+}
+
+#[tokio::test]
+async fn sql_server_import_aborts_on_the_first_bad_row_and_leaves_nothing_behind() {
+  let Some(pool) = pool().await else { return };
+  import_fixture(&pool).await;
+  let path =
+    std::env::temp_dir().join(format!("dataomni-mssql-import-abort-{}.csv", std::process::id()));
+  std::fs::write(&path, IMPORT_CSV).expect("write csv");
+
+  let summary =
+    run_import(&pool, &import_request(&path, dataomni_lib::services::ErrorPolicy::Abort)).await;
+  assert!(summary.rolled_back);
+  assert_eq!(summary.rows_inserted, 0);
+  assert_eq!(summary.errors.len(), 1);
+  assert_eq!(summary.errors[0].line, 3, "{:?}", summary.errors);
+  assert!(imported_ids(&pool).await.is_empty());
+  std::fs::remove_file(&path).ok();
+}
+
+#[path = "support/ddl_corpus.rs"]
+mod ddl_corpus;
+
+async fn sql_server_catalog_columns(
+  pool: &Arc<SqlServerPool>,
+  table: &str,
+) -> Vec<ddl_corpus::Column> {
+  let queries = schema_metadata_queries(&DatabaseType::SqlServer).expect("SQL Server catalog");
+  pool
+    .select(queries.columns, &[json!(table), json!("dbo")])
+    .await
+    .expect("read column catalog")
+    .iter()
+    .map(|row| ddl_corpus::Column {
+      name: text(&row["column_name"]),
+      data_type: text(&row["data_type"]),
+      nullable: row["is_nullable"] == json!(true),
+      primary_key_ordinal: row["primary_key_ordinal"].as_i64(),
+      default_value: row["column_default"].as_str().map(str::to_string),
+      generated: row["is_generated"] == json!(true),
+      collation: row["collation"].as_str().map(str::to_string),
+      comment: row["comment"].as_str().map(str::to_string),
+      extra: row["column_extra"].as_str().map(str::to_string),
+    })
+    .collect()
+}
+
+/// 改结构语料的 SQL Server 用例：语句走的是界面上同一条路——`execute_write_batch`，
+/// 一个事务，每条语句后面拼着 `@@ROWCOUNT`——跑完再读列目录核对。
+#[tokio::test]
+async fn sql_server_runs_the_generated_ddl_from_the_shared_corpus() {
+  let Some(pool) = pool().await else { return };
+  // 没写 COLLATE 的列拿的是库的默认排序规则。语料照默认安装写，换成这台
+  // 服务端的默认值再比——换的是期望，不是数据库给的结果
+  let default_collation = pool
+    .select("SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), 'Collation') AS nvarchar(128)) AS c", &[])
+    .await
+    .expect("default collation")[0]["c"]
+    .as_str()
+    .unwrap_or_default()
+    .to_string();
+  let expected = |columns: &[ddl_corpus::Column]| -> Vec<ddl_corpus::Column> {
+    columns
+      .iter()
+      .cloned()
+      .map(|mut column| {
+        if column.collation.as_deref() == Some("SQL_Latin1_General_CP1_CI_AS") {
+          column.collation = Some(default_collation.clone());
+        }
+        column
+      })
+      .collect()
+  };
+
+  let cases = ddl_corpus::load("sqlserver");
+  assert!(!cases.is_empty(), "语料里要有 SQL Server 的用例");
+  for case in cases {
+    run_all(&pool, &case.fixture.iter().map(String::as_str).collect::<Vec<_>>()).await;
+    if !case.origin.is_empty() {
+      let origin = sql_server_catalog_columns(&pool, &case.table).await;
+      assert_eq!(
+        origin,
+        expected(&case.origin),
+        "{}: 语料里的 origin 和数据库给的对不上",
+        case.name
+      );
+    }
+
+    let statements: Vec<WriteStatement> =
+      case.statements.iter().map(|sql| write(sql, Vec::new(), None)).collect();
+    execute_write_batch(PoolRef::SqlServer(&pool), &statements).await.unwrap_or_else(|error| {
+      panic!(
+        "{}: 生成的语句跑不了（第 {} 条）\n{:?}",
+        case.name, error.statement_index, error.error
+      )
+    });
+    run_all(&pool, &case.insert.iter().map(String::as_str).collect::<Vec<_>>()).await;
+
+    let after = sql_server_catalog_columns(&pool, &case.final_table).await;
+    assert_eq!(after, expected(&case.after), "{}: 跑完之后的表和语料说的不一样", case.name);
+    run_all(&pool, &case.cleanup.iter().map(String::as_str).collect::<Vec<_>>()).await;
+  }
 }

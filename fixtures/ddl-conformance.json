@@ -574,6 +574,207 @@
         }
       ],
       "cleanup": []
+    },
+    {
+      "name": "sqlserver-rename-retype-keep-collation-drop-a-defaulted-column-and-rename-table",
+      "dialect": "sqlserver",
+      "schema": "dbo",
+      "table": "ddl_conf_ms",
+      "newTableName": "ddl_conf_ms_renamed",
+      "fixture": [
+        "IF OBJECT_ID(N'dbo.ddl_conf_ms_renamed') IS NOT NULL DROP TABLE dbo.ddl_conf_ms_renamed",
+        "IF OBJECT_ID(N'dbo.ddl_conf_ms') IS NOT NULL DROP TABLE dbo.ddl_conf_ms",
+        "CREATE TABLE dbo.ddl_conf_ms (id int IDENTITY(1,1) NOT NULL CONSTRAINT pk_ddl_conf_ms PRIMARY KEY, code nvarchar(32) COLLATE Latin1_General_CS_AS NOT NULL DEFAULT N'a', amount decimal(10,2) NULL, gone int NULL DEFAULT 0)"
+      ],
+      "origin": [
+        {
+          "name": "id",
+          "dataType": "int",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": true
+        },
+        {
+          "name": "code",
+          "dataType": "nvarchar(32)",
+          "nullable": false,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "(N'a')",
+          "generated": false,
+          "collation": "Latin1_General_CS_AS"
+        },
+        {
+          "name": "amount",
+          "dataType": "decimal(10,2)",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false
+        },
+        {
+          "name": "gone",
+          "dataType": "int",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "((0))",
+          "generated": false
+        }
+      ],
+      "draft": [
+        {
+          "origin": "id"
+        },
+        {
+          "origin": "code",
+          "name": "sku",
+          "dataType": "nvarchar(64)",
+          "nullable": true,
+          "defaultValue": "N'b'"
+        },
+        {
+          "origin": "amount"
+        },
+        {
+          "origin": "gone",
+          "dropped": true
+        },
+        {
+          "origin": null,
+          "name": "note",
+          "dataType": "nvarchar(max)",
+          "nullable": false,
+          "defaultValue": "N''"
+        }
+      ],
+      "statements": [
+        "EXEC sp_rename N'[dbo].[ddl_conf_ms].[code]', N'sku', N'COLUMN'",
+        "DECLARE @drop nvarchar(max) = (SELECT N'ALTER TABLE ' + N'[dbo].[ddl_conf_ms]' + N' DROP CONSTRAINT ' + QUOTENAME(dc.name)\n  FROM sys.default_constraints dc\n  JOIN sys.columns c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id\n  WHERE dc.parent_object_id = OBJECT_ID(N'[dbo].[ddl_conf_ms]') AND c.name = N'gone');\nIF @drop IS NOT NULL EXEC sp_executesql @drop",
+        "ALTER TABLE [dbo].[ddl_conf_ms] DROP COLUMN [gone]",
+        "ALTER TABLE [dbo].[ddl_conf_ms] ALTER COLUMN [sku] nvarchar(64) COLLATE Latin1_General_CS_AS NULL",
+        "DECLARE @drop nvarchar(max) = (SELECT N'ALTER TABLE ' + N'[dbo].[ddl_conf_ms]' + N' DROP CONSTRAINT ' + QUOTENAME(dc.name)\n  FROM sys.default_constraints dc\n  JOIN sys.columns c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id\n  WHERE dc.parent_object_id = OBJECT_ID(N'[dbo].[ddl_conf_ms]') AND c.name = N'sku');\nIF @drop IS NOT NULL EXEC sp_executesql @drop",
+        "ALTER TABLE [dbo].[ddl_conf_ms] ADD DEFAULT N'b' FOR [sku]",
+        "ALTER TABLE [dbo].[ddl_conf_ms] ADD [note] nvarchar(max) NOT NULL DEFAULT N''",
+        "EXEC sp_rename N'[dbo].[ddl_conf_ms]', N'ddl_conf_ms_renamed'"
+      ],
+      "refusals": [],
+      "impacts": [
+        "gone"
+      ],
+      "after": [
+        {
+          "name": "id",
+          "dataType": "int",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": true
+        },
+        {
+          "name": "sku",
+          "dataType": "nvarchar(64)",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "(N'b')",
+          "generated": false,
+          "collation": "Latin1_General_CS_AS"
+        },
+        {
+          "name": "amount",
+          "dataType": "decimal(10,2)",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false
+        },
+        {
+          "name": "note",
+          "dataType": "nvarchar(max)",
+          "nullable": false,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "(N'')",
+          "generated": false,
+          "collation": "SQL_Latin1_General_CP1_CI_AS"
+        }
+      ],
+      "cleanup": [
+        "IF OBJECT_ID(N'dbo.ddl_conf_ms_renamed') IS NOT NULL DROP TABLE dbo.ddl_conf_ms_renamed"
+      ]
+    },
+    {
+      "name": "sqlserver-create-with-identity-key",
+      "kind": "create",
+      "dialect": "sqlserver",
+      "schema": "dbo",
+      "table": "ddl_conf_ms_new",
+      "newTableName": "ddl_conf_ms_new",
+      "fixture": [
+        "IF OBJECT_ID(N'dbo.ddl_conf_ms_new') IS NOT NULL DROP TABLE dbo.ddl_conf_ms_new"
+      ],
+      "origin": [],
+      "draft": [
+        {
+          "origin": null,
+          "name": "id",
+          "dataType": "int IDENTITY(1,1)",
+          "nullable": false,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        {
+          "origin": null,
+          "name": "code",
+          "dataType": "nvarchar(32)",
+          "nullable": false,
+          "defaultValue": "N'x'"
+        },
+        {
+          "origin": null,
+          "name": "note",
+          "dataType": "nvarchar(max)",
+          "nullable": true,
+          "defaultValue": null
+        }
+      ],
+      "statements": [
+        "CREATE TABLE [dbo].[ddl_conf_ms_new] (\n  [id] int IDENTITY(1,1) NOT NULL,\n  [code] nvarchar(32) NOT NULL DEFAULT N'x',\n  [note] nvarchar(max),\n  PRIMARY KEY ([id])\n)"
+      ],
+      "insert": [
+        "INSERT INTO dbo.ddl_conf_ms_new (code) VALUES (N'a')"
+      ],
+      "refusals": [],
+      "impacts": [],
+      "after": [
+        {
+          "name": "id",
+          "dataType": "int",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": true
+        },
+        {
+          "name": "code",
+          "dataType": "nvarchar(32)",
+          "nullable": false,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "(N'x')",
+          "generated": false,
+          "collation": "SQL_Latin1_General_CP1_CI_AS"
+        },
+        {
+          "name": "note",
+          "dataType": "nvarchar(max)",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "collation": "SQL_Latin1_General_CP1_CI_AS"
+        }
+      ],
+      "cleanup": [
+        "IF OBJECT_ID(N'dbo.ddl_conf_ms_new') IS NOT NULL DROP TABLE dbo.ddl_conf_ms_new"
+      ]
     }
   ],
   "createCasesProveTheKeyWorks": "建表用例多一步 insert：不写主键值插一行。三家的自增写法各不相同（identity / AUTO_INCREMENT / rowid 别名），而写错的表现不是建表失败，是**建出来了但插不进行**——这正是 2ba8ac6 修掉的那个缺陷的另一种形态。insert 跑不通测试就红。"

@@ -1,6 +1,6 @@
 import type { ColumnInfo } from '../contracts';
 import type { TranslationKey } from '../i18n/translate';
-import { isNumericColumnType } from './columnTypes';
+import { columnTypeToken, isNumericColumnType } from './columnTypes';
 import {
   quoteQualifiedSqlIdentifier,
   quoteSqlIdentifier,
@@ -144,7 +144,7 @@ export function columnDefaultSql(
   return isNumericColumnType(column.data_type) ? raw : quoteSqlStringLiteral(raw, 'mysql');
 }
 
-/** 一列在 ADD COLUMN 里的定义。三家通用的那一小段 */
+/** 一列在 ADD COLUMN 里的定义。四家通用的那一小段（SQL Server 不写 COLUMN 这个词） */
 function addColumnDefinition(column: ColumnDraft, dialect: SqlIdentifierDialect): string {
   const parts = [quoteSqlIdentifier(column.name, dialect), column.dataType.trim()];
   if (!column.nullable) {
@@ -250,6 +250,9 @@ function diffColumn(column: ColumnDraft, dialect: SqlIdentifierDialect): ColumnC
  */
 export function buildTableDdl(request: TableDdlRequest): DdlPlan {
   const { dialect } = request;
+  if (dialect === 'sqlserver') {
+    return buildSqlServerTableDdl(request);
+  }
   const statements: string[] = [];
   const refusals: DdlRefusal[] = [];
   const impacts: DdlImpact[] = [];
@@ -377,6 +380,115 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
   return { statements, refusals, impacts };
 }
 
+const SQL_SERVER_CHARACTER_TYPES = new Set(['char', 'varchar', 'nchar', 'nvarchar', 'text', 'ntext']);
+
+/**
+ * 删掉一列上的默认值约束。
+ *
+ * SQL Server 的默认值是一个**有名字的约束**，建表时没起名就是系统起的
+ * `DF__t__col__7FEAFD3E`——前端不知道这个名字，所以在服务端现查现删。
+ * 删列之前也必须先删它：约束还在时 `DROP COLUMN` 报 5074。
+ */
+function sqlServerDropDefault(table: string, column: string): string {
+  const tableLiteral = quoteSqlStringLiteral(table, 'sqlserver');
+  // `EXEC (...)` 里只能拼字面量与变量，不能调函数：`QUOTENAME` 得先算进变量
+  return [
+    `DECLARE @drop nvarchar(max) = (SELECT N'ALTER TABLE ' + ${tableLiteral} + N' DROP CONSTRAINT ' + QUOTENAME(dc.name)`,
+    '  FROM sys.default_constraints dc',
+    '  JOIN sys.columns c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id',
+    `  WHERE dc.parent_object_id = OBJECT_ID(${tableLiteral}) AND c.name = ${quoteSqlStringLiteral(column, 'sqlserver')});`,
+    'IF @drop IS NOT NULL EXEC sp_executesql @drop'
+  ].join('\n');
+}
+
+/**
+ * SQL Server 的改结构。和另外三家的差别都在语法之外：
+ *
+ * - `ALTER COLUMN` 一次重述类型与可空性，**不写 COLLATE 就重置成库的默认
+ *   排序规则**（已在 SQL Server 2022 上核对：`Latin1_General_CS_AS` 变成了
+ *   `SQL_Latin1_General_CP1_CI_AS`，语句照样成功）。所以字符型一律带上原列的
+ *   排序规则，不写 NULL / NOT NULL 也不行——省略时按会话设置定。
+ * - 默认值不能 `SET DEFAULT`，只能删约束再加一个；删列前同样要先删它。
+ * - 改名走 `sp_rename`，新名字**不带方括号**（带了就成了名字的一部分）。
+ * - 自增、计算列与 rowversion 除了改名什么都不能改，点名拒绝。
+ *
+ * DDL 在 SQL Server 里是事务性的，一批语句由 `execute_write_batch` 兜住，
+ * 所以每个动作单独一句，不用像 MySQL 那样挤进一条。
+ */
+function buildSqlServerTableDdl(request: TableDdlRequest): DdlPlan {
+  const current = tableReference(request, request.table);
+  const quote = (name: string) => quoteSqlIdentifier(name, 'sqlserver');
+  const literal = (text: string) => quoteSqlStringLiteral(text, 'sqlserver');
+  const refusals: DdlRefusal[] = [];
+  const impacts: DdlImpact[] = [];
+  const renames: string[] = [];
+  const drops: string[] = [];
+  const alters: string[] = [];
+  const adds: string[] = [];
+
+  for (const column of request.columns) {
+    const origin = column.origin;
+    if (column.dropped) {
+      if (origin) {
+        drops.push(sqlServerDropDefault(current, origin.name));
+        drops.push(`ALTER TABLE ${current} DROP COLUMN ${quote(origin.name)}`);
+        impacts.push({ kind: 'drop-column', column: origin.name });
+      }
+      continue;
+    }
+    if (!origin) {
+      if (!isBlankDraft(column)) {
+        adds.push(`ALTER TABLE ${current} ADD ${addColumnDefinition(column, 'sqlserver')}`);
+      }
+      continue;
+    }
+
+    const change = diffColumn(column, 'sqlserver');
+    if (change.renamed) {
+      renames.push(
+        `EXEC sp_rename ${literal(`${current}.${quote(origin.name)}`)}, ${literal(column.name)}, N'COLUMN'`
+      );
+    }
+    const others = changedDdlActions(change).filter((action) => action !== 'rename-column');
+    if (others.length === 0) {
+      continue;
+    }
+    if (origin.is_generated) {
+      for (const action of others) {
+        refusals.push({ column: column.name, action, reason: 'ddl.refuse.sqlServerGeneratedColumn' });
+      }
+      continue;
+    }
+
+    const quoted = quote(column.name);
+    if (change.typeChanged || change.nullabilityChanged) {
+      const dataType = column.dataType.trim();
+      // 排序规则名要拼进语句：来自目录，但照样只放行真实名字里会有的字符
+      const collation = origin.collation
+        && /^[A-Za-z0-9_]+$/.test(origin.collation)
+        && SQL_SERVER_CHARACTER_TYPES.has(columnTypeToken(dataType))
+        ? ` COLLATE ${origin.collation}`
+        : '';
+      alters.push(
+        `ALTER TABLE ${current} ALTER COLUMN ${quoted} ${dataType}${collation} ${column.nullable ? 'NULL' : 'NOT NULL'}`
+      );
+    }
+    if (change.defaultChanged) {
+      alters.push(sqlServerDropDefault(current, column.name));
+      if (column.defaultValue != null) {
+        alters.push(`ALTER TABLE ${current} ADD DEFAULT ${column.defaultValue} FOR ${quoted}`);
+      }
+    }
+  }
+
+  const statements = [...renames, ...drops, ...alters, ...adds];
+  // 改表名放最后：前面几条都还在用旧名字
+  if (request.newTableName !== request.table) {
+    statements.push(`EXEC sp_rename ${literal(current)}, ${literal(request.newTableName)}`);
+  }
+  return { statements, refusals, impacts };
+}
+
 function defaultAction(quotedColumn: string, defaultValue: string | null): string {
   return defaultValue == null
     ? `ALTER COLUMN ${quotedColumn} DROP DEFAULT`
@@ -453,4 +565,19 @@ export function buildCreateTable(request: CreateTableRequest): DdlPlan {
     refusals: [],
     impacts: []
   };
+}
+
+/**
+ * 新建表时 schema 的起手值。
+ *
+ * 列表按字母排，第一个未必是用户平时建表的地方：SQL Server 上 `dataomni_meta`
+ * 排在 `dbo` 前面，PostgreSQL 上 `analytics` 排在 `public` 前面。各家不写 schema
+ * 时默认落在哪里，这里就先选哪里；那个 schema 不在列表里再退回第一个。
+ */
+export function defaultCreateSchema(
+  schemas: readonly string[],
+  dialect: SqlIdentifierDialect
+): string {
+  const preferred = dialect === 'sqlserver' ? 'dbo' : dialect === 'postgresql' ? 'public' : null;
+  return preferred && schemas.includes(preferred) ? preferred : schemas[0] ?? '';
 }

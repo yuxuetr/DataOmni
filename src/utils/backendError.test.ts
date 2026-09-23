@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { zh } from '../i18n/zh';
-import { parseBackendError } from './backendError';
+import { parseBackendError, translateBackendMessage } from './backendError';
 
 
 describe('backendError', () => {
@@ -162,5 +162,15 @@ describe('backendError', () => {
     }
 
     expect(offenders, '这些字符串会原样印到英文界面上').toEqual([]);
+  });
+});
+
+describe('导入的行错误', () => {
+  it('SQL Server 那两条码有译文，数据原样带出', () => {
+    for (const code of ['DATAOMNI_CSV_VALUE_NOT_CONVERTIBLE', 'DATAOMNI_CSV_TRANSACTION_LOST']) {
+      const translated = translateBackendMessage(`${code}: n · int · abc`);
+      expect(translated).not.toContain(code);
+      expect(translated).toContain('n · int · abc');
+    }
   });
 });

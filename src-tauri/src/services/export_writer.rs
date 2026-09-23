@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use tauri_plugin_sql::DbPool;
 
 pub const EXPORT_WRITE_FAILED: &str = "DATAOMNI_EXPORT_WRITE_FAILED";
 pub const DIRECTORY_MISSING: &str = "DATAOMNI_DIRECTORY_MISSING";
@@ -368,8 +367,8 @@ pub const EXPORT_CANCELLED_CODE: &str = "EXPORT_CANCELLED";
 /// 用的是**另开的一条连接**，不是编辑器那条 Session：一次整表导出可能跑几分钟，
 /// 占着 Session 会让 SQL 编辑器在这期间完全按不动。代价是导出看不到 Session 里
 /// 未提交的事务，而这对「导出这张表现在的样子」正是想要的语义。
-pub async fn export_query(
-  pool: &DbPool,
+pub async fn export_query<'a>(
+  pool: impl Into<crate::services::query_executor::PoolRef<'a>>,
   sql: &str,
   path: &Path,
   options: ExportOptions,
@@ -447,6 +446,7 @@ fn part_path_for(path: &Path) -> PathBuf {
 mod tests {
   use super::*;
   use serde_json::json;
+  use tauri_plugin_sql::DbPool;
 
   /// 前后端共用的语料。路径写死在编译期：运行时去找文件，文件没了测试会
   /// 「跳过」而不是变红，而一道不会红的门等于没有门。

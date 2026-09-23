@@ -95,10 +95,17 @@ describe('分阶段接入的类型', () => {
   });
 
   it('只有列在清单里的功能才被挡住', () => {
-    expect(supportsFeature(DatabaseType.SqlServer, 'explain')).toBe(false);
-    expect(supportsFeature('sqlserver', 'import')).toBe(false);
-    expect(supportsFeature('sqlserver', 'dataEditing')).toBe(true);
-    for (const type of [DatabaseType.MySQL, DatabaseType.PostgreSQL, DatabaseType.SQLite]) {
+    for (const [type, features] of Object.entries(PENDING_FEATURES)) {
+      for (const feature of features ?? []) {
+        expect(supportsFeature(type, feature)).toBe(false);
+      }
+    }
+    for (const type of [
+      DatabaseType.MySQL,
+      DatabaseType.PostgreSQL,
+      DatabaseType.SQLite,
+      DatabaseType.SqlServer
+    ]) {
       expect(supportsFeature(type, 'explain')).toBe(true);
       expect(supportsFeature(type, 'dataEditing')).toBe(true);
     }

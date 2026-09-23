@@ -138,12 +138,12 @@ describe('改结构语料', () => {
     });
   }
 
-  it('三种方言的改结构与建表都有用例——少一种就是那一种从没跑过真库', () => {
+  it('每种方言的改结构与建表都有用例——少一种就是那一种从没跑过真库', () => {
     for (const kind of [undefined, 'create'] as const) {
       expect(new Set(
         corpus.cases.filter((testCase) => testCase.kind === kind)
           .map((testCase) => testCase.dialect)
-      )).toEqual(new Set(['postgresql', 'mysql', 'sqlite']));
+      )).toEqual(new Set(['postgresql', 'mysql', 'sqlite', 'sqlserver']));
     }
   });
 });

@@ -46,15 +46,11 @@ export type PendingFeature =
   | 'import'
   | 'streamingExport';
 
-export const PENDING_FEATURES: Readonly<Partial<Record<DatabaseType, readonly PendingFeature[]>>> = {
-  // 见 TODOs 4.2「SQL Server」的四个阶段
-  [DatabaseType.SqlServer]: [
-    'explain',
-    'structureEditing',
-    'import',
-    'streamingExport'
-  ]
-};
+/**
+ * SQL Server 的四个阶段已经全部接上（TODOs 4.2）。清单空着，机制留着：
+ * 下一个分阶段接入的类型照同样的办法登记。
+ */
+export const PENDING_FEATURES: Readonly<Partial<Record<DatabaseType, readonly PendingFeature[]>>> = {};
 
 /** `dbType` 收字符串：调用方手里常常只有方言名（`'sqlserver'`），它与类型值同形 */
 export function supportsFeature(dbType: string, feature: PendingFeature): boolean {

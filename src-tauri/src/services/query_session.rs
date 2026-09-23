@@ -84,8 +84,8 @@ pub struct StreamingQueryOptions<'a> {
   /// （它是客户端概念，psql 的 `\set AUTOCOMMIT off` 与 JDBC 的
   /// `setAutoCommit(false)` 都是这么做的），SQLite 也没有。
   pub autocommit: bool,
-  /// 见 `StreamOptions::assume_rows`
-  pub assume_rows: bool,
+  /// 见 `StreamOptions::explain_plan`
+  pub explain_plan: bool,
   pub row_limit: usize,
   pub byte_limit: usize,
   pub batch_size: usize,
@@ -166,8 +166,8 @@ impl QuerySessionState {
           {
             let stream =
               StreamOptions::limited(options.row_limit, options.byte_limit, options.batch_size);
-            if options.assume_rows {
-              stream.assuming_rows()
+            if options.explain_plan {
+              stream.for_explain()
             } else {
               stream
             }
@@ -315,7 +315,7 @@ mod tests {
           pool: pool.into(),
           sql,
           autocommit,
-          assume_rows: false,
+          explain_plan: false,
           row_limit: 100,
           byte_limit: 1 << 20,
           batch_size: 10,

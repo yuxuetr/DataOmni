@@ -114,6 +114,18 @@ export function formatPlanRows(value: number | null): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
+/**
+ * 代价。各家的单位不一样：PostgreSQL 动辄几千，SQL Server 的估算代价常常是
+ * 0.0033 这样的数——固定两位小数会把整棵树都写成 0.00，看不出哪一步贵。
+ * 小于 1 的保留三位有效数字。
+ */
+export function formatPlanCost(value: number): string {
+  if (value === 0 || Math.abs(value) >= 1) {
+    return value.toFixed(2);
+  }
+  return String(Number(value.toPrecision(3)));
+}
+
 /** 毫秒；不到 1ms 的保留小数，否则一串 0ms 什么也说明不了 */
 export function formatPlanMs(value: number | null): string {
   if (value === null) {

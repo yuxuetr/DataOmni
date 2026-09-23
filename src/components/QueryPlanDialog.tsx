@@ -7,6 +7,7 @@ import { useQueryStore } from '../stores/queryStore';
 import { describeError } from '../utils/describeError';
 import {
   estimateAccuracy,
+  formatPlanCost,
   formatPlanMs,
   formatPlanRows,
   worstEstimate,
@@ -274,7 +275,7 @@ function PlanNodeRow({ node, depth }: { node: PlanNode; depth: number }) {
         )}
         {node.cost !== null && (
           <span className="text-xs text-fg-subtle">
-            {t('plan.cost')} {node.cost.toFixed(2)}
+            {t('plan.cost')} {formatPlanCost(node.cost)}
           </span>
         )}
       </div>
