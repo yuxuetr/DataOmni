@@ -10,6 +10,7 @@ import {
 /** 拖动时允许比自动估算的上限更宽：用户明确要看宽一列 */
 const DRAG_MAX_WIDTH = 1200;
 const DRAG_MIN_WIDTH = 48;
+const NO_BADGES: readonly number[] = [];
 
 export interface ResizableColumns {
   /** 与 columns 一一对应的像素宽度 */
@@ -33,7 +34,9 @@ export interface ResizableColumns {
  */
 export function useResizableColumns(
   columns: readonly string[],
-  rows: readonly (readonly SerializedResultValue[])[]
+  rows: readonly (readonly SerializedResultValue[])[],
+  /** 各列表头徽标的宽度，见 `headerBadgeWidth`；查询结果的表头没有徽标 */
+  headerBadges: readonly number[] = NO_BADGES
 ): ResizableColumns {
   const [overrides, setOverrides] = useState<Record<string, number>>({});
   const [resizingIndex, setResizingIndex] = useState<number | null>(null);
@@ -44,11 +47,12 @@ export function useResizableColumns(
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [columnsKey, rows]
   );
+  const badgesKey = headerBadges.join(',');
   const measured = useMemo(
-    () => measureColumnWidths(columns, rows),
+    () => measureColumnWidths(columns, rows, { headerBadges }),
     // columnsKey 而不是 columns：数组每次渲染都是新引用，直接依赖会每帧重算
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [columnsKey, rows]
+    [columnsKey, badgesKey, rows]
   );
 
   // 换了一组列就是另一份结果，手动宽度不再适用

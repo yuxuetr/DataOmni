@@ -31,11 +31,25 @@ export interface ColumnWidthOptions {
   /** 左右内边距加边框 */
   padding?: number;
   /**
-   * 表头里除列名之外还占掉的宽度：排序按钮、主键钥匙、非空星号。
+   * 每一列表头都有的、列名之外的宽度：排序按钮和它后面的间距。
    * 不算进去的话，短列名（name、balance）会被自己的表头截断——列宽够放内容，
    * 却不够放「按钮 + 列名」。
    */
   headerExtra?: number;
+  /**
+   * 只有某些列才有的表头徽标（主键钥匙、非空星号）的宽度，按下标与 columns 对应，
+   * 用 {@link headerBadgeWidth} 算。曾经把它们算进 headerExtra 的固定 26px 里，
+   * 结果主键 `id` 的表头被挤得只剩一个「i」。
+   */
+  headerBadges?: readonly number[];
+}
+
+/** 钥匙是 12px 的 emoji 加一个间距，星号是一个字符加一个间距 */
+const PRIMARY_KEY_BADGE_WIDTH = 20;
+const NOT_NULL_BADGE_WIDTH = 10;
+
+export function headerBadgeWidth(column: { isPrimaryKey: boolean; isRequired: boolean }): number {
+  return (column.isPrimaryKey ? PRIMARY_KEY_BADGE_WIDTH : 0) + (column.isRequired ? NOT_NULL_BADGE_WIDTH : 0);
 }
 
 /**
@@ -48,7 +62,8 @@ export const COLUMN_WIDTH_DEFAULTS: Required<ColumnWidthOptions> = {
   sampleRows: 200,
   charWidth: 7.9,
   padding: 26,
-  headerExtra: 26
+  headerExtra: 26,
+  headerBadges: []
 };
 
 /**
@@ -105,7 +120,7 @@ export function measureColumnWidths(
   rows: readonly (readonly SerializedResultValue[])[],
   options: ColumnWidthOptions = {}
 ): number[] {
-  const { minWidth, maxWidth, sampleRows, charWidth, padding, headerExtra } =
+  const { minWidth, maxWidth, sampleRows, charWidth, padding, headerExtra, headerBadges } =
     { ...COLUMN_WIDTH_DEFAULTS, ...options };
   const sample = rows.length > sampleRows ? rows.slice(0, sampleRows) : rows;
 
@@ -124,7 +139,8 @@ export function measureColumnWidths(
 
     // 表头和内容各自算一遍取大：两者的额外开销不一样，表头多一个排序按钮
     const contentPixels = widestContent * charWidth + padding;
-    const headerPixels = displayWidthInChars(column) * charWidth + padding + headerExtra;
+    const headerPixels =
+      displayWidthInChars(column) * charWidth + padding + headerExtra + (headerBadges[index] ?? 0);
 
     return clampColumnWidth(Math.max(contentPixels, headerPixels), { minWidth, maxWidth });
   });

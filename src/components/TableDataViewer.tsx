@@ -49,7 +49,7 @@ import { nextColumnSort, type ColumnSort } from '../utils/resultSorting';
 import { ColumnSortButton } from './ColumnSortButton';
 import { useCellSelection } from '../hooks/useCellSelection';
 import { selectionSubset } from '../utils/cellSelection';
-import { toPositionalRows } from '../utils/columnWidths';
+import { headerBadgeWidth, toPositionalRows } from '../utils/columnWidths';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { ExportResultDialog, type ExportScope } from './ExportResultDialog';
@@ -595,6 +595,14 @@ export default function TableDataViewer({
         return null;
     }
   })();
+  // 与下面表头里画钥匙和星号的条件是同一组
+  const headerBadges = React.useMemo(
+    () => tableSchema?.columns.map((column) => headerBadgeWidth({
+      isPrimaryKey: column.is_primary_key,
+      isRequired: !column.is_nullable
+    })) ?? [],
+    [tableSchema]
+  );
   const positionalRows = React.useMemo(
     () => toPositionalRows(columnNames, tableData),
     [columnNames, tableData]
@@ -605,7 +613,7 @@ export default function TableDataViewer({
     startResize,
     autoFitColumn,
     resizingIndex
-  } = useResizableColumns(columnNames, positionalRows);
+  } = useResizableColumns(columnNames, positionalRows, headerBadges);
 
   const visibleIndexes = React.useMemo(
     () => visibleColumnIndexes(columnNames, hiddenColumns),

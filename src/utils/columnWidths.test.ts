@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   clampColumnWidth,
   displayWidthInChars,
+  headerBadgeWidth,
   measureColumnAlignments,
   measureColumnWidths,
   toPositionalRows
@@ -29,6 +30,29 @@ describe('显示宽度', () => {
   it('emoji 不会被当成两个半角字符', () => {
     // 按 length 算是 2（代理对），按码点算是 1
     expect(displayWidthInChars('🔑')).toBe(1);
+  });
+});
+
+describe('表头徽标', () => {
+  it('主键加非空的短列名，表头放得下钥匙和星号', () => {
+    // 回归：徽标曾被算进所有列共用的固定 headerExtra，`id` 的表头被挤成「i」
+    const bare = measureColumnWidths(['id'], [['1']])[0];
+    const badged = measureColumnWidths(['id'], [['1']], {
+      headerBadges: [headerBadgeWidth({ isPrimaryKey: true, isRequired: true })]
+    })[0];
+    expect(badged - bare).toBe(30);
+  });
+
+  it('徽标按下标只加给自己那一列', () => {
+    const widths = measureColumnWidths(['id', 'name'], [], {
+      ...options,
+      headerBadges: [headerBadgeWidth({ isPrimaryKey: true, isRequired: false }), 0]
+    });
+    expect(widths).toEqual([22, 10]);
+  });
+
+  it('没有徽标的列不变宽', () => {
+    expect(headerBadgeWidth({ isPrimaryKey: false, isRequired: false })).toBe(0);
   });
 });
 
