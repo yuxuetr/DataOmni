@@ -238,14 +238,14 @@ export function TableStructureEditor({
         </div>
       </div>
 
-      {editing && incomplete.length > 0 && (
-        <p className="border-b border-warning-line bg-warning-soft px-4 py-2 text-xs text-warning">
-          {t('ddl.incomplete', { columns: incomplete.join(', ') })}
-        </p>
-      )}
+      {/* 「还缺名字或类型」与键列说明共用一行：单独一条横幅的话，新列填了名字、
+          还没填类型的那一刻它冒出来，整张表往下挪一行，正在打字的那格也跟着跑 */}
       {editing && (
-        <p className="border-b border-line px-4 py-2 text-xs text-fg-subtle">
-          {t('ddl.keyColumnsReadOnly')}
+        <p className="flex flex-wrap justify-between gap-x-4 border-b border-line px-4 py-2 text-xs text-fg-subtle">
+          <span>{t('ddl.keyColumnsReadOnly')}</span>
+          {incomplete.length > 0 && (
+            <span className="text-warning">{t('ddl.incomplete', { columns: incomplete.join(', ') })}</span>
+          )}
         </p>
       )}
       {!editing && error && (
