@@ -36,7 +36,7 @@ use futures_util::{FutureExt, TryStreamExt};
 use serde_json::{Map, Value as JsonValue};
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tiberius::{AuthMethod, Client, ColumnData, ColumnType, Config, EncryptionLevel, FromSql};
 use tokio::net::TcpStream;

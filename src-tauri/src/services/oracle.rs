@@ -35,7 +35,7 @@ use oracle::sql_type::{OracleType, Timestamp};
 use oracle::{Connection, Connector, InitParams, SqlValue};
 use serde_json::{Map, Value as JsonValue};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 
 pub type OracleRegistry = crate::services::pool_registry::PoolRegistry<OraclePool>;
 
