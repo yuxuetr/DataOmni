@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Plus,
   Database,
@@ -19,7 +19,7 @@ import { LanguageToggle } from './LanguageToggle';
 import { SettingsDialog } from './SettingsDialog';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useAppStore } from '../stores/appStore';
-import { confirm } from '@tauri-apps/plugin-dialog';
+import { useConfirmPrompt } from './ConfirmPrompt';
 import { useProfileConnector } from '../hooks/useProfileConnector';
 import { describeError } from '../utils/describeError';
 import { useLanguageStore, translateNow } from '../stores/languageStore';
@@ -49,9 +49,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { connections, loadConnections, deleteConnection } = useConnectionStore();
   const { connectionForm, openConnectionForm, closeConnectionForm } = useAppStore();
   const [showConnectionMenu, setShowConnectionMenu] = useState(false);
+  const connectionMenuRef = useRef<HTMLDivElement>(null);
   // 只装本组件自己产生的错误（加载列表、删除连接）；连接过程的错误由 connector 持有
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const { ask, prompt: confirmPrompt } = useConfirmPrompt();
   const {
     connect,
     connectingProfileId,
@@ -89,6 +91,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  // 下拉菜单盖在对象树上面：点到别处或按 Esc 就收起。此前只能再点一次按钮，
+  // 点树上的集合、按 Esc 都关不掉。挂在 mousedown 上，那一下点击照常落到它该去的地方
+  useEffect(() => {
+    if (!showConnectionMenu) {
+      return;
+    }
+    const closeOutside = (event: MouseEvent) => {
+      if (!connectionMenuRef.current?.contains(event.target as Node)) {
+        setShowConnectionMenu(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setShowConnectionMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [showConnectionMenu]);
+
   // 处理编辑连接
   const handleEditConnection = (connection: ConnectionConfig) => {
     openConnectionForm(connection);
@@ -97,10 +123,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   // 处理删除连接
   const handleDeleteConnection = async (connection: ConnectionConfig) => {
-    const userConfirmed = await confirm(
-      t('connection.deleteConfirm', { name: connection.name }),
-      { title: t('connection.deleteConfirmTitle'), kind: 'warning' }
-    );
+    // 先收起菜单：确认框画在它上面的话，菜单里那一行还亮着，像是两个框在问同一件事
+    setShowConnectionMenu(false);
+    const userConfirmed = await ask({
+      title: t('connection.deleteConfirmTitle'),
+      message: t('connection.deleteConfirm', { name: connection.name }),
+      confirmLabel: t('connection.delete'),
+      destructive: true
+    });
     
     if (userConfirmed) {
       try {
@@ -121,7 +151,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* 头部 - 连接选择器 */}
       <div className="px-4 py-4 border-b border-line bg-surface-sunken">
         <div className="flex items-center gap-2">
-        <div className="relative min-w-0 flex-1">
+        <div ref={connectionMenuRef} className="relative min-w-0 flex-1">
           <button
             onClick={() => setShowConnectionMenu(!showConnectionMenu)}
             className="flex w-full items-center justify-between rounded-control border border-line bg-surface px-2.5 py-1.5 text-sm transition-colors hover:bg-surface-hover"
@@ -286,6 +316,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {showSettings && <SettingsDialog onClose={() => setShowSettings(false)} />}
+      {confirmPrompt}
 
       {/* 连接表单弹窗 */}
       {connectionForm && (
