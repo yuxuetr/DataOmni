@@ -137,6 +137,11 @@ interface TableDataViewerProps {
   schema?: string;
   initialTab?: TabType;
   onClose?: () => void;
+  /**
+   * 结构页上改了表名。这个标签钉的是旧名字，接着读它只会得到「读不到列」，
+   * 所以交给外面换成新名字的标签
+   */
+  onRenamed?: (newTable: string) => void;
 }
 
 // 标签页类型
@@ -154,7 +159,8 @@ export default function TableDataViewer({
   tableName, 
   schema, 
   initialTab,
-  onClose 
+  onClose,
+  onRenamed 
 }: TableDataViewerProps) {
   const t = useLanguageStore((state) => state.t);
   const [tableSchema, setTableSchema] = useState<TableSchema | null>(null);
@@ -190,6 +196,12 @@ export default function TableDataViewer({
   const [droppingIndex, setDroppingIndex] = useState<string | null>(null);
   const [indexRunning, setIndexRunning] = useState(false);
   const [indexError, setIndexError] = useState<string | null>(null);
+  /**
+   * `VERSION()` 的原话，只在 MySQL 连接的结构页上读：TiDB 走同一个连接类型，
+   * 改结构时要把改表名拆出来（见 `renamesApart`）。读不到就当 MySQL——
+   * 那样发的是原子的一条，TiDB 上被整条拒绝、什么都不改
+   */
+  const [serverVersion, setServerVersion] = useState<string | null>(null);
   const sortRef = useRef<ColumnSort | null>(null);
   sortRef.current = sort;
   const [totalRows, setTotalRows] = useState(0);
@@ -220,6 +232,18 @@ export default function TableDataViewer({
   );
   // 标识符引用方言。此前这行三元式在四个函数里各抄了一份
   const dialect = identifierDialectFor(connection.db_type);
+  useEffect(() => {
+    if (activeTab !== 'schema' || dialect !== 'mysql' || serverVersion !== null || !database) {
+      return;
+    }
+    database
+      .select('SELECT VERSION() AS version')
+      .then((rows) => {
+        const first = Array.isArray(rows) ? (rows[0] as Record<string, unknown> | undefined) : undefined;
+        setServerVersion(String(first?.version ?? ''));
+      })
+      .catch(() => setServerVersion(''));
+  }, [activeTab, dialect, serverVersion, database]);
 
   // COUNT(*) 在大表上是全表扫描（InnoDB 与 PostgreSQL 都没有常数级行数），
   // 按数据集身份缓存，使翻页和调整页大小不再重复付这笔代价。
@@ -1121,7 +1145,12 @@ export default function TableDataViewer({
                 table={tableName}
                 columns={tableSchema.columns}
                 dialect={dialect}
-                onApplied={() => {
+                serverVersion={serverVersion}
+                onApplied={(appliedName) => {
+                  if (appliedName !== tableName && onRenamed) {
+                    onRenamed(appliedName);
+                    return;
+                  }
                   // 改完结构必须重读：列可能少了、改名了，而数据页的
                   // 可见列、行标识与分页次序全是按这份列算出来的
                   setTableSchema(null);

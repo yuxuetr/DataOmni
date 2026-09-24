@@ -94,9 +94,9 @@
 
 **MariaDB、TiDB、CockroachDB** 各有一个入口，选了会填好它自己的默认端口（TiDB 是
 4000，CockroachDB 是 26257）和默认库，TLS 设成「优先使用 TLS」。它们走的是
-MySQL / PostgreSQL 协议，连上之后的用法和 MySQL / PostgreSQL 一样。TiDB 与
-CockroachDB 那两格标着「有缺口」，选中时表单里会列出具体哪几项用不了；完整的
-对照见 README 的「兼容性矩阵」。
+MySQL / PostgreSQL 协议，连上之后的用法和 MySQL / PostgreSQL 一样。CockroachDB
+那一格标着「有缺口」，选中时表单里会列出具体哪几项用不了；完整的对照见 README 的
+「兼容性矩阵」。
 
 **SQL Server** 的功能和 MySQL / PostgreSQL 一样齐：连接（TLS、SSH 隧道）、执行、
 对象树与表结构、ER 图、表格编辑、事务、执行计划、改结构与建表、CSV 导入、整表导出。
@@ -350,7 +350,8 @@ PostgreSQL 还有「真的执行一遍」：语句会**真的执行**，换来�
 估算和实际差了一个数量级以上的那一步会被标出来，这通常就是慢的原因。写语句也会
 真的写进去，想安全地试，先关掉自动提交，跑完回滚。
 
-TiDB 和 CockroachDB 不支持应用用的计划格式，点了会显示服务端的原话。
+CockroachDB 同样可以「真的执行一遍」（`EXPLAIN ANALYZE`），「原文」一栏是它自己的
+文本树。TiDB 给的是估算的计划（`tidb_json`），没有「真的执行一遍」。
 
 ## 查询结果
 
@@ -467,7 +468,8 @@ TiDB 和 CockroachDB 不支持应用用的计划格式，点了会显示服务�
 SQLite 改列类型（要重建整张表）、MySQL 改一个默认值是表达式的列或计算列的类型
 （重述出来的未必是原来那个表达式）。
 
-TiDB 上同时改列和改表名会被整条拒绝，分两次保存即可。
+TiDB 上同时改列和改表名会拆成两条语句（它不收一条 ALTER 里两件事都做）：两条不是
+一个整体，第二条失败时列已经改了、表名还是原来的，预览里会写明。
 
 ### 索引
 

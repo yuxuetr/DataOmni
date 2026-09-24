@@ -35,6 +35,7 @@ import {
   createErDiagramWorkspaceTab,
   createSqlWorkspaceTab,
   createTableWorkspaceTab,
+  tabsShowingTable,
   workspaceTabId
 } from './contracts/workspace';
 import { useSessionManager } from './utils/stateSync';
@@ -721,6 +722,12 @@ function App() {
         schema={activeTab.object.schema ?? undefined}
         initialTab={activeTab.kind === 'table-structure' ? 'schema' : 'data'}
         onClose={() => closeWorkspaceTab(activeTab.id)}
+        onRenamed={(table) => {
+          // 数据页与结构页都钉着旧名字；关掉它们，换一个新名字的结构页
+          tabsShowingTable(tabs, activeTab.binding.profileId, activeTab.object)
+            .forEach((tab) => finishCloseTab(tab.id, false));
+          openTableTab(table, activeTab.object.schema ?? undefined, 'table-structure');
+        }}
       />
     );
   };

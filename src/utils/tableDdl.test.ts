@@ -6,6 +6,7 @@ import {
   defaultCreateSchema,
   columnDefaultSql,
   incompleteDraftColumns,
+  renamesApart,
   type ColumnDraft,
   type TableDdlRequest
 } from './tableDdl';
@@ -495,5 +496,16 @@ describe('defaultCreateSchema', () => {
     expect(defaultCreateSchema([], 'mysql')).toBe('');
     expect(defaultCreateSchema(['APEX', 'DATAOMNI'], 'oracle', 'dataomni')).toBe('DATAOMNI');
     expect(defaultCreateSchema(['APEX', 'HR'], 'oracle', 'dataomni')).toBe('APEX');
+  });
+});
+
+describe('renamesApart', () => {
+  it('只有 VERSION() 带 TiDB 的 MySQL 连接才拆', () => {
+    expect(renamesApart('mysql', '8.0.11-TiDB-v8.5.3')).toBe(true);
+    expect(renamesApart('mysql', '8.4.2')).toBe(false);
+    expect(renamesApart('mysql', '11.4.3-MariaDB')).toBe(false);
+    // 还没读到版本时按 MySQL 走：原子的那一条，TiDB 上被整条拒绝、什么都不改
+    expect(renamesApart('mysql', null)).toBe(false);
+    expect(renamesApart('postgresql', 'TiDB')).toBe(false);
   });
 });

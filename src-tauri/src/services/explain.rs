@@ -95,37 +95,118 @@ pub fn supports_analyze(db_type: &DatabaseType) -> bool {
   matches!(db_type, DatabaseType::PostgreSQL)
 }
 
+/// 发哪一种 EXPLAIN、按哪一种形状解析。
+///
+/// 比连接类型细一层：TiDB 与 CockroachDB 说 MySQL / PostgreSQL 的线协议，
+/// EXPLAIN 却各说各的——TiDB 不认 `FORMAT=JSON`，有自己的 `tidb_json`；
+/// CockroachDB 没有 JSON 格式，给的是一棵文本树。
+///
+/// 分辨靠连上之后读 `VERSION()`（[`SERVER_VERSION_QUERY`]），不看连接表单上
+/// 记的入口：那一格只供显示，从 MySQL 入口连 TiDB 的人同样该拿到计划。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanDialect {
+  PostgreSql,
+  CockroachDb,
+  MySql,
+  TiDb,
+  Sqlite,
+  SqlServer,
+  Oracle,
+  /// 没有 EXPLAIN 的类型；带着类型名，报错时说得出是谁
+  Unsupported(String),
+}
+
+/// 分辨服务端要发的那一句。MySQL 与 PostgreSQL 两边都认
+pub const SERVER_VERSION_QUERY: &str = "SELECT VERSION()";
+
+impl From<&DatabaseType> for PlanDialect {
+  fn from(db_type: &DatabaseType) -> Self {
+    match db_type {
+      DatabaseType::PostgreSQL => Self::PostgreSql,
+      DatabaseType::MySQL => Self::MySql,
+      DatabaseType::SQLite => Self::Sqlite,
+      DatabaseType::SqlServer => Self::SqlServer,
+      DatabaseType::Oracle => Self::Oracle,
+      other => Self::Unsupported(format!("{other:?}")),
+    }
+  }
+}
+
+impl PlanDialect {
+  /// 这个类型要不要先读一次 `VERSION()` 才分得清
+  pub fn needs_server_version(db_type: &DatabaseType) -> bool {
+    matches!(db_type, DatabaseType::MySQL | DatabaseType::PostgreSQL)
+  }
+
+  /// `VERSION()` 的原话：TiDB 是 `8.0.11-TiDB-v8.5.3`，CockroachDB 是
+  /// `CockroachDB CCL v25.2.x ...`
+  pub fn detect(db_type: &DatabaseType, server_version: &str) -> Self {
+    match Self::from(db_type) {
+      Self::MySql if server_version.contains("TiDB") => Self::TiDb,
+      Self::PostgreSql if server_version.contains("CockroachDB") => Self::CockroachDb,
+      other => other,
+    }
+  }
+
+  fn supports_analyze(&self) -> bool {
+    matches!(self, Self::PostgreSql | Self::CockroachDb)
+  }
+
+  fn label(&self) -> &str {
+    match self {
+      Self::PostgreSql => "PostgreSQL",
+      Self::CockroachDb => "CockroachDB",
+      Self::MySql => "MySQL",
+      Self::TiDb => "TiDB",
+      Self::Sqlite => "SQLite",
+      Self::SqlServer => "SqlServer",
+      Self::Oracle => "Oracle",
+      Self::Unsupported(name) => name,
+    }
+  }
+}
+
 /// 取计划要发的那条语句。
 ///
 /// 一律用结构化格式：文本格式好看，但为了它再发一次 EXPLAIN，在 ANALYZE
 /// 下就是把查询跑第二遍。
 pub fn explain_statement(
-  db_type: &DatabaseType,
+  dialect: impl Into<PlanDialect>,
   sql: &str,
   analyze: bool,
 ) -> Result<String, QueryError> {
-  if analyze && !supports_analyze(db_type) {
+  let dialect = dialect.into();
+  if analyze && !dialect.supports_analyze() {
     // 悄悄降级成普通 EXPLAIN 才是最糟的：界面说「真的跑了一遍」，
     // 而给出的是估算值
-    return Err(QueryError::message(format!("{EXPLAIN_ANALYZE_UNSUPPORTED}: {db_type:?}")));
+    return Err(QueryError::message(format!("{EXPLAIN_ANALYZE_UNSUPPORTED}: {}", dialect.label())));
   }
   let sql = sql.trim().trim_end_matches(';');
-  match db_type {
-    DatabaseType::PostgreSQL => Ok(if analyze {
+  match dialect {
+    PlanDialect::PostgreSql => Ok(if analyze {
       // BUFFERS 一起要：知道「读了多少块、命中多少」才看得出慢在 I/O 还是 CPU
       format!("EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) {sql}")
     } else {
       format!("EXPLAIN (VERBOSE, FORMAT JSON) {sql}")
     }),
-    DatabaseType::MySQL => Ok(format!("EXPLAIN FORMAT=JSON {sql}")),
-    DatabaseType::SQLite => Ok(format!("EXPLAIN QUERY PLAN {sql}")),
+    // 文本树是它唯一的格式；VERBOSE 多给列与过滤条件
+    PlanDialect::CockroachDb => Ok(if analyze {
+      format!("EXPLAIN ANALYZE (VERBOSE) {sql}")
+    } else {
+      format!("EXPLAIN (VERBOSE) {sql}")
+    }),
+    PlanDialect::MySql => Ok(format!("EXPLAIN FORMAT=JSON {sql}")),
+    PlanDialect::TiDb => Ok(format!("EXPLAIN FORMAT='tidb_json' {sql}")),
+    PlanDialect::Sqlite => Ok(format!("EXPLAIN QUERY PLAN {sql}")),
     // 没有 EXPLAIN：语句原样，由执行那一侧用 `SET SHOWPLAN_XML` 包住
     // （见 `StreamOptions::explain_plan`）
-    DatabaseType::SqlServer => Ok(sql.to_string()),
+    PlanDialect::SqlServer => Ok(sql.to_string()),
     // 同样原样：`EXPLAIN PLAN` 要写进 PLAN_TABLE 再读出来、再撤掉，是执行那一侧的
     // 几步（见 `oracle::explain_plan`）
-    DatabaseType::Oracle => Ok(sql.to_string()),
-    other => Err(QueryError::message(format!("{EXPLAIN_UNSUPPORTED}: {other:?}"))),
+    PlanDialect::Oracle => Ok(sql.to_string()),
+    PlanDialect::Unsupported(name) => {
+      Err(QueryError::message(format!("{EXPLAIN_UNSUPPORTED}: {name}")))
+    }
   }
 }
 
@@ -175,17 +256,21 @@ fn first_cell(row: &Map<String, JsonValue>) -> Option<String> {
 
 /// 把整棵计划解析出来。`rows` 是 EXPLAIN 自己的结果集。
 pub fn parse_plan(
-  db_type: &DatabaseType,
+  dialect: impl Into<PlanDialect>,
   rows: &[Map<String, JsonValue>],
   analyze: bool,
 ) -> Result<QueryPlan, QueryError> {
-  match db_type {
-    DatabaseType::PostgreSQL => parse_postgres(rows, analyze),
-    DatabaseType::MySQL => parse_mysql(rows),
-    DatabaseType::SQLite => Ok(parse_sqlite(rows)),
-    DatabaseType::SqlServer => parse_sql_server(rows),
-    DatabaseType::Oracle => parse_oracle(rows),
-    other => Err(QueryError::message(format!("{EXPLAIN_UNSUPPORTED}: {other:?}"))),
+  match dialect.into() {
+    PlanDialect::PostgreSql => parse_postgres(rows, analyze),
+    PlanDialect::CockroachDb => parse_cockroach(rows, analyze),
+    PlanDialect::MySql => parse_mysql(rows),
+    PlanDialect::TiDb => parse_tidb(rows),
+    PlanDialect::Sqlite => Ok(parse_sqlite(rows)),
+    PlanDialect::SqlServer => parse_sql_server(rows),
+    PlanDialect::Oracle => parse_oracle(rows),
+    PlanDialect::Unsupported(name) => {
+      Err(QueryError::message(format!("{EXPLAIN_UNSUPPORTED}: {name}")))
+    }
   }
 }
 
@@ -329,6 +414,162 @@ fn mysql_node(key: &str, value: &JsonValue) -> Option<PlanNode> {
     }
     _ => None,
   }
+}
+
+/// TiDB 的 `tidb_json`：顶层是数组，子节点在 `subOperators` 里。
+fn parse_tidb(rows: &[Map<String, JsonValue>]) -> Result<QueryPlan, QueryError> {
+  let (parsed, raw) = parse_json_payload(rows)?;
+  let roots: Vec<PlanNode> = parsed
+    .as_array()
+    .map(|operators| operators.iter().map(tidb_node).collect())
+    .unwrap_or_default();
+  if roots.is_empty() {
+    return Err(QueryError::message(EXPLAIN_EMPTY));
+  }
+  Ok(QueryPlan { roots, analyzed: false, planning_ms: None, execution_ms: None, raw })
+}
+
+fn tidb_node(operator: &JsonValue) -> PlanNode {
+  let text = |key: &str| operator.get(key).and_then(scalar_text).filter(|value| !value.is_empty());
+  let id = text("id").unwrap_or_else(|| "?".to_string());
+  let mut node = PlanNode::new(tidb_operation(&id));
+  node.target = text("accessObject");
+  node.estimated_rows = number(operator.get("estRows"));
+  // 标签照 TiDB 自己普通 EXPLAIN 的列名写，读过它文档的人认得
+  for (key, label) in [("taskType", "task"), ("operatorInfo", "operator info"), ("id", "id")] {
+    if let Some(value) = text(key) {
+      node.detail.push(PlanDetail { key: label.to_string(), value });
+    }
+  }
+  node.children = operator
+    .get("subOperators")
+    .and_then(JsonValue::as_array)
+    .map(|children| children.iter().map(tidb_node).collect())
+    .unwrap_or_default();
+  node
+}
+
+/// `HashJoin_27` → `HashJoin`，`IndexReader_32(Build)` → `IndexReader (Build)`。
+///
+/// 编号只是优化器内部的序号，树上一眼要看的是算子与它在连接里的角色；
+/// 完整的 id 仍在 detail 里。
+fn tidb_operation(id: &str) -> String {
+  let (name, role) = match id.split_once('(') {
+    Some((name, role)) => (name, Some(role.trim_end_matches(')'))),
+    None => (id, None),
+  };
+  let base = match name.rsplit_once('_') {
+    Some((base, number)) if !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()) => {
+      base
+    }
+    _ => name,
+  };
+  match role {
+    Some(role) => format!("{base} ({role})"),
+    None => base.to_string(),
+  }
+}
+
+/// CockroachDB：一行一行的文本树。
+///
+/// ```text
+/// planning time: 2ms            ← 只有 ANALYZE 才有的头部
+/// • group (streaming)           ← `•` 所在的列就是深度
+/// │ estimated row count: 1      ← 属于上面最近的那个节点
+/// └── • scan
+///       table: plan_a@idx_code
+///
+/// index recommendations: 1      ← 顶格、不带 `•`：树结束了
+/// ```
+///
+/// 深度按 `•` 的字符位置算，不按字节：前面的 `│ ├ └ ─` 都是多字节字符。
+fn parse_cockroach(
+  rows: &[Map<String, JsonValue>],
+  analyze: bool,
+) -> Result<QueryPlan, QueryError> {
+  let lines: Vec<String> = rows.iter().filter_map(first_cell).collect();
+  let mut plan = QueryPlan {
+    roots: Vec::new(),
+    analyzed: analyze,
+    planning_ms: None,
+    execution_ms: None,
+    raw: lines.join("\n"),
+  };
+  let mut stack: Vec<(usize, PlanNode)> = Vec::new();
+  let mut started = false;
+
+  for line in &lines {
+    if let Some(depth) = line.chars().position(|c| c == '•') {
+      let operation = line.split_once('•').map(|(_, rest)| rest.trim()).unwrap_or_default();
+      close_deeper(&mut stack, &mut plan.roots, depth);
+      stack.push((depth, PlanNode::new(operation)));
+      started = true;
+      continue;
+    }
+    let content = line.trim_start_matches([' ', '│', '├', '└', '─']);
+    let Some((key, value)) = content.split_once(": ") else {
+      continue;
+    };
+    let indented = content.len() != line.len();
+    match stack.last_mut() {
+      Some((_, node)) if indented => apply_cockroach_attribute(node, key, value.trim()),
+      // 顶格的一行出现在树之后：树结束了，下面是索引建议之类，只留在原文里
+      _ if started => close_deeper(&mut stack, &mut plan.roots, 0),
+      _ => match key {
+        "planning time" => plan.planning_ms = duration_ms(value),
+        "execution time" => plan.execution_ms = duration_ms(value),
+        _ => {}
+      },
+    }
+  }
+  close_deeper(&mut stack, &mut plan.roots, 0);
+
+  if plan.roots.is_empty() {
+    return Err(QueryError::message(EXPLAIN_EMPTY));
+  }
+  Ok(plan)
+}
+
+/// 把栈里深度 ≥ `depth` 的节点收起来，挂到各自的父节点上（栈底的挂成根）
+fn close_deeper(stack: &mut Vec<(usize, PlanNode)>, roots: &mut Vec<PlanNode>, depth: usize) {
+  while stack.last().is_some_and(|(top, _)| *top >= depth) {
+    let Some((_, node)) = stack.pop() else { break };
+    match stack.last_mut() {
+      Some((_, parent)) => parent.children.push(node),
+      None => roots.push(node),
+    }
+  }
+}
+
+fn apply_cockroach_attribute(node: &mut PlanNode, key: &str, value: &str) {
+  match key {
+    "estimated row count" => node.estimated_rows = leading_number(value),
+    "actual row count" => node.actual_rows = leading_number(value),
+    "execution time" => node.actual_ms = duration_ms(value),
+    "table" => node.target = Some(value.to_string()),
+    _ => node.detail.push(PlanDetail { key: key.to_string(), value: value.to_string() }),
+  }
+}
+
+/// `1,000 (missing stats)` → 1000
+fn leading_number(value: &str) -> Option<f64> {
+  value.split_whitespace().next()?.replace(',', "").parse().ok()
+}
+
+/// `432µs` / `4ms` / `1.5s` → 毫秒
+fn duration_ms(value: &str) -> Option<f64> {
+  let value = value.trim();
+  let split = value.find(|c: char| !(c.is_ascii_digit() || c == '.'))?;
+  let (number, unit) = value.split_at(split);
+  let number: f64 = number.parse().ok()?;
+  let scale = match unit.trim() {
+    "ns" => 1e-6,
+    "µs" | "us" => 1e-3,
+    "ms" => 1.0,
+    "s" => 1e3,
+    _ => return None,
+  };
+  Some(number * scale)
 }
 
 /// SQLite：扁平的行，靠 `parent` 指回另一行的 `id` 组成树。
@@ -926,5 +1167,146 @@ mod tests {
     let error = parse_plan(&DatabaseType::SqlServer, &json_row("<ShowPlanXML"), false)
       .expect_err("broken xml");
     assert!(error.message.starts_with(EXPLAIN_NOT_XML), "{}", error.message);
+  }
+
+  /// TiDB 8.5 的 `EXPLAIN FORMAT='tidb_json'`，原样取自真库（`fixtures/tidb-plan.json`）
+  const TIDB_PLAN: &str = include_str!("../../../fixtures/tidb-plan.json");
+
+  fn find<'a>(node: &'a PlanNode, operation: &str) -> Option<&'a PlanNode> {
+    if node.operation == operation {
+      return Some(node);
+    }
+    node.children.iter().find_map(|child| find(child, operation))
+  }
+
+  #[test]
+  fn tidb_plan_nests_by_sub_operators_and_keeps_the_join_roles() {
+    let rows = vec![row(&[("TiDB_JSON", JsonValue::String(TIDB_PLAN.to_string()))])];
+    let plan = parse_plan(PlanDialect::TiDb, &rows, false).expect("parse");
+    assert_eq!(plan.roots.len(), 1);
+    assert_eq!(plan.roots[0].operation, "Sort");
+
+    let join = find(&plan.roots[0], "HashJoin").expect("HashJoin 在树上");
+    let sides: Vec<&str> = join.children.iter().map(|child| child.operation.as_str()).collect();
+    assert_eq!(sides, vec!["IndexReader (Build)", "TableReader (Probe)"]);
+
+    let scan = find(&plan.roots[0], "IndexRangeScan").expect("索引扫描");
+    assert_eq!(scan.target.as_deref(), Some("table:a, index:idx_code(code)"));
+    assert_eq!(scan.estimated_rows, Some(10.0));
+    // 去掉的编号还在 detail 里
+    assert!(scan
+      .detail
+      .iter()
+      .any(|entry| entry.key == "id" && entry.value == "IndexRangeScan_31"));
+  }
+
+  #[test]
+  fn tidb_operation_drops_the_optimizer_serial_but_not_a_real_suffix() {
+    assert_eq!(tidb_operation("HashJoin_27"), "HashJoin");
+    assert_eq!(tidb_operation("TableReader_30(Probe)"), "TableReader (Probe)");
+    assert_eq!(tidb_operation("Point_Get_1"), "Point_Get");
+    assert_eq!(tidb_operation("Projection"), "Projection");
+  }
+
+  fn cockroach_rows(key: &str) -> Vec<Map<String, JsonValue>> {
+    let fixture: JsonValue =
+      serde_json::from_str(include_str!("../../../fixtures/cockroach-plan.json")).expect("fixture");
+    fixture[key]
+      .as_array()
+      .expect("lines")
+      .iter()
+      .map(|line| row(&[("info", line.clone())]))
+      .collect()
+  }
+
+  #[test]
+  fn cockroach_text_tree_nests_by_the_bullet_column() {
+    let plan =
+      parse_plan(PlanDialect::CockroachDb, &cockroach_rows("plain"), false).expect("parse");
+    assert_eq!(plan.roots.len(), 1, "{:?}", plan.roots);
+    let root = &plan.roots[0];
+    assert_eq!(root.operation, "group (streaming)");
+    assert_eq!(root.estimated_rows, Some(1.0));
+
+    let join = find(root, "hash join (inner)").expect("连接");
+    let scans: Vec<(&str, Option<f64>)> = join
+      .children
+      .iter()
+      .map(|child| (child.target.as_deref().unwrap_or(""), child.estimated_rows))
+      .collect();
+    // `├──` 与 `└──` 下的两个 scan 是兄弟，不是一个挂在另一个下面
+    assert_eq!(scans, vec![("plan_a@idx_code", Some(1.0)), ("plan_b@plan_b_pkey", Some(2.0))]);
+    assert!(join.children.iter().all(|child| child.children.is_empty()));
+    assert!(root.actual_rows.is_none(), "没 ANALYZE 就不该有实际行数");
+    assert!(plan.raw.starts_with("distribution: local"), "原文一行不少");
+  }
+
+  #[test]
+  fn cockroach_stops_the_tree_at_the_first_flush_left_line() {
+    // 缺索引时树后面跟着索引建议，取自统计信息还没收齐时的真实输出
+    let lines = [
+      "• scan",
+      "  estimated row count: 1,000 (missing stats)",
+      "  table: plan_b@plan_b_pkey",
+      "",
+      "index recommendations: 1",
+      "1. type: index creation",
+      "   SQL command: CREATE INDEX ON plan_b (a_id) STORING (amount);",
+    ];
+    let rows: Vec<_> =
+      lines.iter().map(|line| row(&[("info", JsonValue::String(line.to_string()))])).collect();
+    let plan = parse_plan(PlanDialect::CockroachDb, &rows, false).expect("parse");
+    let scan = &plan.roots[0];
+    // 千分位的逗号要认
+    assert_eq!(scan.estimated_rows, Some(1000.0));
+    assert!(
+      scan.detail.iter().all(|entry| !entry.value.contains("CREATE INDEX")),
+      "索引建议不是这个节点的属性: {:?}",
+      scan.detail
+    );
+  }
+
+  #[test]
+  fn cockroach_analyze_gives_actual_rows_and_both_times() {
+    let plan =
+      parse_plan(PlanDialect::CockroachDb, &cockroach_rows("analyze"), true).expect("parse");
+    assert!(plan.analyzed);
+    assert_eq!(plan.planning_ms, Some(2.0));
+    assert_eq!(plan.execution_ms, Some(7.0));
+    let root = &plan.roots[0];
+    // 节点里的 execution time 是这一步的耗时，不是头部那个
+    assert_eq!(root.actual_ms, Some(0.099));
+    let join = find(root, "hash join (inner)").expect("连接");
+    let actual: Vec<Option<f64>> = join.children.iter().map(|child| child.actual_rows).collect();
+    assert_eq!(actual, vec![Some(1.0), Some(2.0)]);
+  }
+
+  #[test]
+  fn the_server_version_decides_the_dialect_not_the_connection_type_alone() {
+    let mysql = DatabaseType::MySQL;
+    let postgres = DatabaseType::PostgreSQL;
+    assert_eq!(PlanDialect::detect(&mysql, "8.0.11-TiDB-v8.5.3"), PlanDialect::TiDb);
+    assert_eq!(PlanDialect::detect(&mysql, "8.4.2"), PlanDialect::MySql);
+    assert_eq!(PlanDialect::detect(&mysql, "11.4.3-MariaDB"), PlanDialect::MySql);
+    assert_eq!(
+      PlanDialect::detect(&postgres, "CockroachDB CCL v25.2.1 (x86_64-pc-linux-gnu)"),
+      PlanDialect::CockroachDb
+    );
+    assert_eq!(PlanDialect::detect(&postgres, "PostgreSQL 16.4"), PlanDialect::PostgreSql);
+    // 同一句版本串落在别的类型上不改变什么
+    assert_eq!(PlanDialect::detect(&DatabaseType::SQLite, "TiDB"), PlanDialect::Sqlite);
+  }
+
+  #[test]
+  fn tidb_and_cockroach_get_their_own_explain_and_only_cockroach_can_analyze() {
+    assert_eq!(
+      explain_statement(PlanDialect::TiDb, "SELECT 1;", false).expect("tidb"),
+      "EXPLAIN FORMAT='tidb_json' SELECT 1"
+    );
+    assert!(explain_statement(PlanDialect::TiDb, "SELECT 1", true).is_err());
+    assert_eq!(
+      explain_statement(PlanDialect::CockroachDb, "SELECT 1", true).expect("crdb"),
+      "EXPLAIN ANALYZE (VERBOSE) SELECT 1"
+    );
   }
 }

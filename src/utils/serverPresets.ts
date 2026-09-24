@@ -54,7 +54,7 @@ export const SERVER_PRESETS: Record<ServerPreset, ServerPresetSpec> = {
     database: 'test',
     username: 'root',
     tlsMode: 'preferred',
-    gapsKey: 'form.db.gaps.tidb'
+    gapsKey: null
   },
   cockroachdb: {
     name: 'CockroachDB',

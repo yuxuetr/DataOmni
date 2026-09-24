@@ -15,6 +15,7 @@ import {
   buildTableDdl,
   columnDefaultSql,
   incompleteDraftColumns,
+  renamesApart,
   type ColumnDraft,
   type DdlPlan
 } from '../utils/tableDdl';
@@ -30,6 +31,8 @@ interface TableStructureEditorProps {
   table: string;
   columns: readonly ColumnInfo[];
   dialect: SqlIdentifierDialect;
+  /** `VERSION()` 的原话；只有 MySQL 连接会读，别的是 null */
+  serverVersion?: string | null;
   /** 语句跑完之后重新读结构；改了表名时带上新名字 */
   onApplied: (newTableName: string) => void;
 }
@@ -49,6 +52,7 @@ export function TableStructureEditor({
   table,
   columns,
   dialect,
+  serverVersion = null,
   onApplied
 }: TableStructureEditorProps) {
   const t = useLanguageStore((state) => state.t);
@@ -133,7 +137,8 @@ export function TableStructureEditor({
       table,
       newTableName: tableName.trim() || table,
       dialect,
-      columns: drafts
+      columns: drafts,
+      renameApart: renamesApart(dialect, serverVersion)
     }));
   };
 
@@ -268,6 +273,7 @@ export function TableStructureEditor({
         <DdlPreviewDialog
           plan={preview}
           dialect={dialect}
+          renameApart={renamesApart(dialect, serverVersion)}
           running={running}
           error={error}
           onApply={() => apply(preview)}

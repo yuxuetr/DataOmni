@@ -26,7 +26,10 @@ pub use csv_import::{
   ImportSummary, TransactionStrategy, PREVIEW_ROWS,
 };
 pub use er_diagram::{er_diagram_queries, ErDiagramQueries};
-pub use explain::{explain_statement, parse_plan, supports_analyze, PlanNode, QueryPlan};
+pub use explain::{
+  explain_statement, parse_plan, supports_analyze, PlanDialect, PlanNode, QueryPlan,
+  SERVER_VERSION_QUERY,
+};
 pub use export_writer::{
   export_query, ExportFormat, ExportOptions, ExportProgress, ExportSummary, ExportWriter,
   EXPORT_CANCELLED_CODE,

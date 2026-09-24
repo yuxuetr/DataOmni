@@ -3557,15 +3557,16 @@ async fn mysql_runs_the_generated_ddl_from_the_shared_corpus() {
       );
     }
 
-    // TiDB 不收「一条 ALTER 里同时改列又改表名」（8200）。生成器为了原子性
-    // 恰好会这么写，所以在 TiDB 上改表名加改列会被整条拒绝——已知缺口，
-    // 但拒绝是整条的、什么都没改，也把原因说出来了。钉住的就是这个
+    // TiDB 不收「一条 ALTER 里同时改列又改表名」（8200）。MySQL 形状的用例为了
+    // 原子性恰好这么写，在 TiDB 上被整条拒绝、什么都没改——钉住的是这一点。
+    // 界面在 TiDB 上发的是拆开的那一种（`renameApart` 的用例），它在三家上都要跑通
     let mut refused_by_tidb = false;
     for statement in &case.statements {
       match sqlx::query(statement).execute(&pool).await {
         Ok(_) => {}
         Err(error)
           if flavor == MysqlFlavor::TiDb
+            && !case.rename_apart
             && error.to_string().contains("Unsupported multi schema change") =>
         {
           refused_by_tidb = true;
@@ -3763,12 +3764,12 @@ async fn explain_with_session(
   sessions: &QuerySessionState,
   pool: &DbPool,
   pool_key: &str,
-  db_type: &dataomni_lib::models::DatabaseType,
+  dialect: &dataomni_lib::services::PlanDialect,
   sql: &str,
   analyze: bool,
 ) -> dataomni_lib::services::QueryPlan {
-  let statement =
-    dataomni_lib::services::explain_statement(db_type, sql, analyze).expect("explain statement");
+  let statement = dataomni_lib::services::explain_statement(dialect.clone(), sql, analyze)
+    .expect("explain statement");
   // 和 `explain_query` 命令走同一条路径，包括 explain_plan——MySQL 在预处理
   // `EXPLAIN FORMAT=JSON` 时报告 0 列，不带这个标志就拿不到那一行
   let mut rows = Vec::new();
@@ -3793,7 +3794,36 @@ async fn explain_with_session(
     )
     .await
     .unwrap_or_else(|error| panic!("跑不了: {statement}\n{error}"));
-  dataomni_lib::services::parse_plan(db_type, &rows, analyze).expect("parse plan")
+  dataomni_lib::services::parse_plan(dialect.clone(), &rows, analyze).expect("parse plan")
+}
+
+/// 和 `explain_query` 命令一样：先读 `VERSION()`，再定发哪一种 EXPLAIN
+async fn plan_dialect(
+  sessions: &QuerySessionState,
+  pool: &DbPool,
+  pool_key: &str,
+  db_type: &dataomni_lib::models::DatabaseType,
+) -> dataomni_lib::services::PlanDialect {
+  let result = sessions
+    .execute(
+      "plan",
+      pool_key,
+      pool,
+      dataomni_lib::services::SERVER_VERSION_QUERY,
+      1,
+      Duration::from_secs(30),
+    )
+    .await
+    .expect("VERSION()");
+  let version = match result {
+    dataomni_lib::services::QueryExecutionResult::Rows { rows, .. } => rows
+      .first()
+      .and_then(|row| row.values().next())
+      .and_then(|value| value.as_str().map(str::to_string))
+      .unwrap_or_default(),
+    other => panic!("VERSION() 应返回一行: {other:?}"),
+  };
+  dataomni_lib::services::PlanDialect::detect(db_type, &version)
 }
 
 #[tokio::test]
@@ -3822,23 +3852,18 @@ async fn postgres_explain_gives_a_tree_with_real_numbers_when_analyzed() {
 
   let sql = "SELECT code FROM explain_smoke WHERE n > 2 ORDER BY code LIMIT 5";
 
-  // CockroachDB 的 EXPLAIN 没有 JSON 格式，给的是它自己的文本树。当前版本不解析，
-  // 要钉的是「报出来」：服务端的原话送到界面上，而不是画一棵空树
-  if cockroach {
-    let statement =
-      dataomni_lib::services::explain_statement(&db_type, sql, false).expect("explain statement");
-    let error = sessions
-      .execute("plan", &url, &db_pool, &statement, 1, Duration::from_secs(30))
-      .await
-      .expect_err("CockroachDB rejects FORMAT JSON");
-    assert!(error.message.contains("syntax error"), "应是服务端原话: {}", error.message);
-    sessions.release("plan").await;
-    return;
-  }
+  // CockroachDB 没有 JSON 格式，给的是它自己的文本树（`EXPLAIN (VERBOSE)`）。
+  // 同一套断言对两家都成立：有扫描、没 ANALYZE 就没有实际行数、ANALYZE 给出耗时
+  let dialect = plan_dialect(&sessions, &db_pool, &url, &db_type).await;
+  assert_eq!(
+    dialect == dataomni_lib::services::PlanDialect::CockroachDb,
+    cockroach,
+    "按 VERSION() 分辨出来的和夹具判断的不一致"
+  );
 
-  let plain = explain_with_session(&sessions, &db_pool, &url, &db_type, sql, false).await;
+  let plain = explain_with_session(&sessions, &db_pool, &url, &dialect, sql, false).await;
   let operations = all_operations(&plain);
-  assert!(operations.iter().any(|name| name.contains("Scan")), "{operations:?}");
+  assert!(operations.iter().any(|name| name.to_lowercase().contains("scan")), "{operations:?}");
   assert!(
     plain.roots.iter().all(|node| node.actual_rows.is_none()),
     "没 ANALYZE 就不该有实际行数: {:?}",
@@ -3846,7 +3871,7 @@ async fn postgres_explain_gives_a_tree_with_real_numbers_when_analyzed() {
   );
   assert!(!plain.raw.trim().is_empty(), "文本那一页要有东西");
 
-  let analyzed = explain_with_session(&sessions, &db_pool, &url, &db_type, sql, true).await;
+  let analyzed = explain_with_session(&sessions, &db_pool, &url, &dialect, sql, true).await;
   assert!(analyzed.execution_ms.is_some(), "ANALYZE 要给出执行耗时: {analyzed:?}");
   let has_actual = {
     let mut found = false;
@@ -3902,21 +3927,47 @@ async fn mysql_explain_nests_the_join_and_names_both_tables() {
   let query =
     "SELECT p.code FROM explain_smoke p JOIN explain_smoke_child c ON c.parent = p.id WHERE p.n > 2";
 
-  // TiDB 不认 `FORMAT=JSON`，它自己的 `tidb_json` 是另一棵树。当前版本不解析它，
-  // 要钉的是「报出来」：服务端的原话一路送到界面上，而不是画一棵空树
+  let dialect = plan_dialect(&sessions, &db_pool, &url, &db_type).await;
+  assert_eq!(
+    dialect == dataomni_lib::services::PlanDialect::TiDb,
+    flavor == MysqlFlavor::TiDb,
+    "按 VERSION() 分辨出来的和夹具判断的不一致"
+  );
+  let plan = explain_with_session(&sessions, &db_pool, &url, &dialect, query, false).await;
+
+  // TiDB 不认 `FORMAT=JSON`，发的是它自己的 `tidb_json`：算子按 `subOperators` 嵌套，
+  // 表写在 accessObject 里（`table:p`）。钉的是两张表都在连接下面
   if flavor == MysqlFlavor::TiDb {
-    let statement =
-      dataomni_lib::services::explain_statement(&db_type, query, false).expect("explain statement");
-    let error = sessions
-      .execute("plan", &url, &db_pool, &statement, 1, Duration::from_secs(30))
-      .await
-      .expect_err("TiDB rejects FORMAT=JSON");
-    assert!(error.message.contains("not supported"), "应是 TiDB 的原话: {}", error.message);
+    let operations = all_operations(&plan);
+    let mut stack: Vec<&dataomni_lib::services::PlanNode> = plan.roots.iter().collect();
+    let mut join = None;
+    while let Some(node) = stack.pop() {
+      if node.operation.contains("Join") {
+        join = Some(node);
+        break;
+      }
+      stack.extend(node.children.iter());
+    }
+    let join = join.unwrap_or_else(|| panic!("要有一个连接算子: {operations:?}"));
+    let mut tables = Vec::new();
+    let mut stack: Vec<&dataomni_lib::services::PlanNode> = join.children.iter().collect();
+    while let Some(node) = stack.pop() {
+      if let Some(target) = &node.target {
+        tables.push(target.split(',').next().unwrap_or_default().to_string());
+      }
+      stack.extend(node.children.iter());
+    }
+    tables.sort();
+    tables.dedup();
+    assert_eq!(tables, vec!["table:c", "table:p"], "{operations:?}");
+    for statement in
+      ["DROP TABLE IF EXISTS explain_smoke_child", "DROP TABLE IF EXISTS explain_smoke"]
+    {
+      sessions.execute("plan", &url, &db_pool, statement, 1, Duration::from_secs(30)).await.ok();
+    }
     sessions.release("plan").await;
     return;
   }
-
-  let plan = explain_with_session(&sessions, &db_pool, &url, &db_type, query, false).await;
 
   let operations = all_operations(&plan);
   assert!(operations.contains(&"query_block".to_string()), "{operations:?}");
@@ -3980,7 +4031,7 @@ async fn sqlite_explain_query_plan_names_the_index_it_will_use() {
     &sessions,
     &db_pool,
     "sqlite::memory:",
-    &db_type,
+    &(&db_type).into(),
     "SELECT code FROM explain_smoke WHERE n = 3",
     false,
   )

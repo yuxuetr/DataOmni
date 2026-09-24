@@ -50,20 +50,22 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 | PostgreSQL | 16 | PostgreSQL | ✅ 支持 | 22 / 22 |
 | SQLite | 随应用内置 | SQLite | ✅ 支持 | 全部 |
 | MariaDB | 11.4 | MySQL | ✅ 支持 | 22 / 22 |
-| TiDB | 8.5 | MySQL | ⚠️ 可用，有缺口 | 22 / 22（缺口由用例钉住） |
+| TiDB | 8.5 | MySQL | ✅ 支持 | 22 / 22 |
 | CockroachDB | 25.2 | PostgreSQL | ⚠️ 可用，有缺口 | 22 / 22（缺口由用例钉住） |
 | SQL Server | 2022 | SQL Server | ✅ 支持 | 17 / 17（独立用例，`sql_server_smoke.rs`，含改结构语料） |
 | Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 14 / 14（独立用例，`oracle_smoke.rs`，含改结构语料） |
 
 - **MariaDB**：JSON 列是 LONGTEXT 的别名，按文本显示与编辑，没有 JSON 专用
   编辑器；没有函数索引。
-- **TiDB 的缺口**：执行计划不可用（TiDB 不认 `EXPLAIN FORMAT=JSON`，界面显示
-  服务端原话）；结构页不显示检查约束（TiDB 默认不启用，启用后目录里也接不上）；
-  改结构时「改列」与「改表名」同时做会被整条拒绝（8200），分两次保存即可；
-  没有触发器与存储过程。
+- **TiDB**：执行计划发的是它自己的 `EXPLAIN FORMAT='tidb_json'`（不认
+  `FORMAT=JSON`），没有「真的执行一遍」；改结构时同时改列和改表名会拆成两条
+  语句（它不收一条 ALTER 里两件事都做，8200），不再是一个整体，预览里写明。
+  服务端本身没有的：结构页不显示检查约束（默认不启用，启用后目录里也接不上）、
+  没有触发器与存储过程。按连上之后 `VERSION()` 分辨，从 MySQL 入口连的也一样。
 - **CockroachDB 的缺口**：结构页的触发器一段读不到（它没有
-  `pg_get_triggerdef()`，目录表里也查不到触发器），那一段单独显示原因，其余照常；
-  执行计划不可用（不认 `EXPLAIN (FORMAT JSON)`）；错误里没有出错位置和表名。
+  `pg_get_triggerdef()`，目录表里也查不到触发器，只有 `SHOW CREATE TRIGGER`
+  看得见），那一段单独显示原因，其余照常；错误里没有出错位置和表名。执行计划
+  解析的是它的 `EXPLAIN (VERBOSE)` 文本树，「真的执行一遍」走 `EXPLAIN ANALYZE`。
 - **SQL Server**：四个阶段都已接上（连接、执行、对象与结构浏览、表格编辑、事务、
   执行计划、改结构与建表、CSV 导入、整表导出）。与另外几家不同、值得知道的几处：
   - 脚本里单独一行的 `GO` 按 SSMS 的约定分批；有 `GO` 时只按它切，一批原样发出去

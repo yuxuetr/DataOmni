@@ -254,6 +254,140 @@
       ]
     },
     {
+      "name": "tidb-renames-the-table-in-a-second-statement",
+      "dialect": "mysql",
+      "schema": null,
+      "table": "ddl_conf_ti",
+      "newTableName": "ddl_conf_ti_renamed",
+      "fixture": [
+        "DROP TABLE IF EXISTS ddl_conf_ti_renamed",
+        "DROP TABLE IF EXISTS ddl_conf_ti",
+        "CREATE TABLE ddl_conf_ti (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, code VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT 'a' COMMENT 'hello', ts TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP, gone INT)"
+      ],
+      "origin": [
+        {
+          "name": "id",
+          "dataType": "int",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": true,
+          "extra": "auto_increment"
+        },
+        {
+          "name": "code",
+          "dataType": "varchar(32)",
+          "nullable": false,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "a",
+          "generated": false,
+          "collation": "utf8mb4_bin",
+          "comment": "hello",
+          "extra": ""
+        },
+        {
+          "name": "ts",
+          "dataType": "timestamp",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "extra": "on update CURRENT_TIMESTAMP"
+        },
+        {
+          "name": "gone",
+          "dataType": "int",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "extra": ""
+        }
+      ],
+      "draft": [
+        {
+          "origin": "id",
+          "name": "order_id"
+        },
+        {
+          "origin": "code",
+          "name": "sku",
+          "dataType": "varchar(64)",
+          "nullable": true,
+          "defaultValue": "'b'"
+        },
+        {
+          "origin": "ts",
+          "dataType": "datetime"
+        },
+        {
+          "origin": "gone",
+          "dropped": true
+        },
+        {
+          "origin": null,
+          "name": "note",
+          "dataType": "text",
+          "nullable": true,
+          "defaultValue": null
+        }
+      ],
+      "statements": [
+        "ALTER TABLE `ddl_conf_ti` DROP COLUMN `gone`, RENAME COLUMN `id` TO `order_id`, CHANGE COLUMN `code` `sku` varchar(64) COLLATE utf8mb4_bin NULL DEFAULT 'b' COMMENT 'hello', MODIFY COLUMN `ts` datetime NULL ON UPDATE CURRENT_TIMESTAMP, ADD COLUMN `note` text",
+        "ALTER TABLE `ddl_conf_ti` RENAME TO `ddl_conf_ti_renamed`"
+      ],
+      "refusals": [],
+      "impacts": [
+        "gone"
+      ],
+      "after": [
+        {
+          "name": "order_id",
+          "dataType": "int",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": true,
+          "extra": "auto_increment"
+        },
+        {
+          "name": "sku",
+          "dataType": "varchar(64)",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "b",
+          "generated": false,
+          "collation": "utf8mb4_bin",
+          "comment": "hello",
+          "extra": ""
+        },
+        {
+          "name": "ts",
+          "dataType": "datetime",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "extra": "on update CURRENT_TIMESTAMP"
+        },
+        {
+          "name": "note",
+          "dataType": "text",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "collation": "utf8mb4_0900_ai_ci",
+          "comment": null,
+          "extra": ""
+        }
+      ],
+      "cleanup": [
+        "DROP TABLE IF EXISTS ddl_conf_ti_renamed"
+      ],
+      "renameApart": true
+    },
+    {
       "name": "sqlite-only-the-four-forms-it-really-has",
       "dialect": "sqlite",
       "schema": null,
@@ -991,5 +1125,6 @@
     }
   ],
   "createCasesProveTheKeyWorks": "建表用例多一步 insert：不写主键值插一行。三家的自增写法各不相同（identity / AUTO_INCREMENT / rowid 别名），而写错的表现不是建表失败，是**建出来了但插不进行**——这正是 2ba8ac6 修掉的那个缺陷的另一种形态。insert 跑不通测试就红。",
-  "oracleDefaultsKeepTheirTrailingSpace": "Oracle 的 DATA_DEFAULT 是 LONG，存的是写在 DEFAULT 后面、直到下一个记号之前的原文：DEFAULT 'x' NOT NULL 存成 \"'x' \"（带一个空格），DEFAULT 0, 存成 \"0\"。SQL 里 TRIM 不了 LONG，所以 after 照真库写，归一在前端的 columnDefaultSql 里做。自增列的默认值是背后那个序列的 nextval，序列名每次建表都不一样，用例里写成 <identity>，oracle_smoke.rs 读目录时同样替换。"
+  "oracleDefaultsKeepTheirTrailingSpace": "Oracle 的 DATA_DEFAULT 是 LONG，存的是写在 DEFAULT 后面、直到下一个记号之前的原文：DEFAULT 'x' NOT NULL 存成 \"'x' \"（带一个空格），DEFAULT 0, 存成 \"0\"。SQL 里 TRIM 不了 LONG，所以 after 照真库写，归一在前端的 columnDefaultSql 里做。自增列的默认值是背后那个序列的 nextval，序列名每次建表都不一样，用例里写成 <identity>，oracle_smoke.rs 读目录时同样替换。",
+  "tidbRenamesApart": "TiDB 不收「一条 ALTER 里同时改列又改表名」（8200，Unsupported multi schema change）。界面在 VERSION() 带 TiDB 时把改表名单独成句放在最后（renameApart）；同一份语句在 MySQL 与 MariaDB 上也照样跑通，所以这条用例三家都跑。"
 }

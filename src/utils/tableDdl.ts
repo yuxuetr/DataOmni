@@ -53,6 +53,17 @@ export interface TableDdlRequest {
   newTableName: string;
   dialect: SqlIdentifierDialect;
   columns: readonly ColumnDraft[];
+  /**
+   * 改表名单独成句，放在最后。TiDB 要这样：它不收一条 ALTER 里同时改列又改表名
+   * （8200）。代价是不再原子——第二条失败时列已经改了，预览里照实说。
+   * 由 [`renamesApart`] 按服务端版本决定，别处不该手写 true
+   */
+  renameApart?: boolean;
+}
+
+/** `VERSION()` 里带 `TiDB` 的 MySQL 连接要把改表名拆出来 */
+export function renamesApart(dialect: SqlIdentifierDialect, serverVersion: string | null): boolean {
+  return dialect === 'mysql' && (serverVersion ?? '').includes('TiDB');
 }
 
 export type DdlAction =
@@ -376,7 +387,7 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
   const ordered = [...drops, ...alters, ...adds];
   if (request.newTableName !== request.table) {
     const renameTo = `RENAME TO ${quoteSqlIdentifier(request.newTableName, dialect)}`;
-    if (combines) {
+    if (combines && !request.renameApart) {
       ordered.push(renameTo);
     } else {
       renameTable = `ALTER TABLE ${current} ${renameTo}`;

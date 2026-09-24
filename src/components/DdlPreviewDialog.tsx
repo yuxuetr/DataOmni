@@ -8,6 +8,8 @@ import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
 interface DdlPreviewDialogProps {
   plan: DdlPlan;
   dialect: SqlIdentifierDialect;
+  /** 改表名被拆成了单独一条（TiDB） */
+  renameApart?: boolean;
   running: boolean;
   error: string | null;
   onApply: () => void;
@@ -35,6 +37,7 @@ const ACTION_KEYS: Record<DdlAction, TranslationKey> = {
 export function DdlPreviewDialog({
   plan,
   dialect,
+  renameApart = false,
   running,
   error,
   onApply,
@@ -62,6 +65,9 @@ export function DdlPreviewDialog({
     && plan.statements.some((sql) => sql.includes('MODIFY COLUMN') || sql.includes('CHANGE COLUMN'));
   // Oracle 的 DDL 逐条隐式提交：只有一条时它本身是原子的，不用多说
   const commitsEach = dialect === 'oracle' && plan.statements.length > 1;
+  // 只有改表名之外还有别的改动时才真的拆成了两条
+  const splitRename = renameApart && plan.statements.length > 1
+    && plan.statements.some((sql) => sql.includes('RENAME TO'));
 
   return (
     <div
@@ -129,6 +135,7 @@ export function DdlPreviewDialog({
           )}
 
           {restates && <p className="text-xs text-fg-subtle">{t('ddl.mysqlRestates')}</p>}
+          {splitRename && <p className="text-xs text-fg-subtle">{t('ddl.tidbRenameApart')}</p>}
           {commitsEach && (
             <p className="text-xs text-fg-subtle">
               {t('ddl.oracleCommitsEach', { count: plan.statements.length })}

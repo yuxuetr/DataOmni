@@ -13,6 +13,10 @@ pub struct Case {
   pub origin: Vec<Column>,
   pub after: Vec<Column>,
   pub cleanup: Vec<String>,
+  /// 改表名单独成句的那种（TiDB 上界面发的就是它）：任何一家都不许拒绝。
+  /// 只有 MySQL 系的用例读它，另两份用例文件里是死字段
+  #[allow(dead_code)]
+  pub rename_apart: bool,
 }
 
 /// 目录里一列的期望值。`None` 表示这个方言不报告该字段，不参与比对
@@ -82,6 +86,7 @@ pub fn load(dialect: &str) -> Vec<Case> {
       origin: columns(case, "origin"),
       after: columns(case, "after"),
       cleanup: strings(case, "cleanup"),
+      rename_apart: case.get("renameApart").and_then(JsonValue::as_bool).unwrap_or(false),
     })
     .collect()
 }

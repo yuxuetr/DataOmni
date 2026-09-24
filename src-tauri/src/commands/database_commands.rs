@@ -17,6 +17,7 @@ pub const QUERY_CANCELLED_CODE: &str = "QUERY_CANCELLED";
 
 use crate::services::oracle::{OracleRegistry, ORACLE_SCHEME};
 use crate::services::query_executor::PoolRef;
+use crate::services::{PlanDialect, SERVER_VERSION_QUERY};
 use crate::services::{QueryError, SqlServerRegistry, TunnelRegistry, SQL_SERVER_SCHEME};
 
 /// 池子按连接串做键，查不到说明前端 `Database.load` 用的串和这里算的不是
@@ -557,13 +558,44 @@ pub async fn explain_query(
     )
   };
 
-  let statement =
-    crate::services::explain::explain_statement(&db_type, &request.sql, request.analyze)?;
-
   let resolved =
     ResolvedPool::resolve(connection_string.clone(), &database_instances, &sql_server, &oracle)
       .await?;
   let pool = resolved.pool_ref()?;
+
+  // TiDB 与 CockroachDB 走 MySQL / PostgreSQL 的连接类型，EXPLAIN 却各说各的。
+  // 每次都问一句而不缓存：多一个往返，换来不必操心连接串指向的服务端换没换过
+  let dialect = if PlanDialect::needs_server_version(&db_type) {
+    let mut version = String::new();
+    query_session_state
+      .execute_streaming(
+        StreamingQueryOptions {
+          session_id: &request.session_id,
+          pool_key: &connection_string,
+          pool,
+          sql: SERVER_VERSION_QUERY,
+          autocommit: request.autocommit,
+          explain_plan: false,
+          row_limit: 1,
+          byte_limit: EXPLAIN_BYTE_LIMIT,
+          batch_size: DEFAULT_QUERY_BATCH_SIZE,
+          timeout_duration: Duration::from_secs(10),
+        },
+        &mut |batch| {
+          if let Some(cell) = batch.rows.first().and_then(|row| row.values().next()) {
+            version = cell.as_str().map(str::to_string).unwrap_or_else(|| cell.to_string());
+          }
+          Ok(())
+        },
+      )
+      .await?;
+    PlanDialect::detect(&db_type, &version)
+  } else {
+    PlanDialect::from(&db_type)
+  };
+
+  let statement =
+    crate::services::explain::explain_statement(dialect.clone(), &request.sql, request.analyze)?;
   // 走 streaming 而不是 execute：要带上 explain_plan。MySQL 在预处理
   // `EXPLAIN FORMAT=JSON` 时报告 0 列，按 describe 的说法走会拿回一个
   // Affected，计划就此消失
@@ -588,7 +620,7 @@ pub async fn explain_query(
       },
     )
     .await?;
-  crate::services::explain::parse_plan(&db_type, &rows, request.analyze)
+  crate::services::explain::parse_plan(dialect, &rows, request.analyze)
 }
 
 /// 计划的行数上限。SQLite 的 `EXPLAIN QUERY PLAN` 一行一步，复杂查询几十行；

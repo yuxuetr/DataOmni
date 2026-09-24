@@ -1,0 +1,81 @@
+[
+    {
+        "id": "Sort_10",
+        "estRows": "8.00",
+        "taskType": "root",
+        "operatorInfo": "dataomni_test.plan_a.code",
+        "subOperators": [
+            {
+                "id": "Projection_12",
+                "estRows": "8.00",
+                "taskType": "root",
+                "operatorInfo": "dataomni_test.plan_a.code, Column#6",
+                "subOperators": [
+                    {
+                        "id": "HashAgg_13",
+                        "estRows": "8.00",
+                        "taskType": "root",
+                        "operatorInfo": "group by:Column#8, funcs:sum(Column#7)->Column#6, funcs:firstrow(Column#8)->dataomni_test.plan_a.code",
+                        "subOperators": [
+                            {
+                                "id": "Projection_35",
+                                "estRows": "12.50",
+                                "taskType": "root",
+                                "operatorInfo": "cast(dataomni_test.plan_b.amount, decimal(10,0) BINARY)->Column#7, dataomni_test.plan_a.code->Column#8",
+                                "subOperators": [
+                                    {
+                                        "id": "HashJoin_27",
+                                        "estRows": "12.50",
+                                        "taskType": "root",
+                                        "operatorInfo": "inner join, equal:[eq(dataomni_test.plan_a.id, dataomni_test.plan_b.a_id)]",
+                                        "subOperators": [
+                                            {
+                                                "id": "IndexReader_32(Build)",
+                                                "estRows": "10.00",
+                                                "taskType": "root",
+                                                "operatorInfo": "index:IndexRangeScan_31",
+                                                "subOperators": [
+                                                    {
+                                                        "id": "IndexRangeScan_31",
+                                                        "estRows": "10.00",
+                                                        "taskType": "cop[tikv]",
+                                                        "accessObject": "table:a, index:idx_code(code)",
+                                                        "operatorInfo": "range:[\"x\",\"x\"], keep order:false, stats:pseudo"
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "id": "TableReader_30(Probe)",
+                                                "estRows": "9990.00",
+                                                "taskType": "root",
+                                                "operatorInfo": "data:Selection_29",
+                                                "subOperators": [
+                                                    {
+                                                        "id": "Selection_29",
+                                                        "estRows": "9990.00",
+                                                        "taskType": "cop[tikv]",
+                                                        "operatorInfo": "not(isnull(dataomni_test.plan_b.a_id))",
+                                                        "subOperators": [
+                                                            {
+                                                                "id": "TableFullScan_28",
+                                                                "estRows": "10000.00",
+                                                                "taskType": "cop[tikv]",
+                                                                "accessObject": "table:b",
+                                                                "operatorInfo": "keep order:false, stats:pseudo"
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+]
+

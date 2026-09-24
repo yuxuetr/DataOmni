@@ -1512,15 +1512,45 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
   - 测试库放 cu，只绑 `127.0.0.1`、经 ssh 转发访问，带内存上限，一次只开一个
     （cu 可用内存约 3G，不挤别的服务）。
   - 产出：README 的兼容性矩阵（版本 × 验过哪些用例），数据来自这一轮真跑的结果。
-- [ ] **TiDB / CockroachDB 补缺口**（2026-09-24 立项）
-  - 目标：两家从「可用，有缺口」里去掉能由我们修的几项；剩下的是服务端本身
-    没有的东西（CockroachDB 的触发器目录、错误位置），照旧写明。
-  - 服务端之间的差异照原来的约定按 `VERSION()` 分支，不看连接表单上记的入口
-    （那一格只供显示；从 MySQL 入口连 TiDB 的人同样该得到对的行为）。
-  - [ ] TiDB 执行计划：`EXPLAIN FORMAT='tidb_json'`，按 `subOperators` 建树。
-  - [ ] CockroachDB 执行计划：`EXPLAIN (VERBOSE)` 的文本树按缩进建树；
-    「真的执行一遍」走 `EXPLAIN ANALYZE (VERBOSE)`，取 actual row count。
-  - [ ] TiDB 改结构：改列与改表名拆成两条 ALTER（8200），预览里说明不是一次完成。
+- [x] **TiDB / CockroachDB 补缺口**（2026-09-24 立项并完成）
+  - 结论：TiDB 收为「✅ 支持」——剩下的都是服务端本身没有的（检查约束默认不启用、
+    启用后目录里也接不上；没有触发器与存储过程），和 MariaDB 的 JSON 那条同类，表单上
+    的「有缺口」标记去掉（`serverPresets.test.ts` 那道门跟着 README 走）。CockroachDB
+    仍是「⚠️ 可用，有缺口」：触发器它有，只是只有 `SHOW CREATE TRIGGER` 看得见，
+    我们读不到；错误不带位置。重估条件：结构页的触发器段改走 `SHOW CREATE TRIGGER`。
+  - 分辨服务端照原来的约定按 `VERSION()`，不看连接表单记的入口：`PlanDialect::detect`
+    （后端，执行计划）与 `renamesApart`（前端，改结构）。渲染时的 TiDB 连接是从 MySQL
+    入口建的，两件事都照样对。
+  - [x] **执行计划**：`explain_query` 在同一个会话上先问一句 `SELECT VERSION()`，再按
+    `PlanDialect` 发 EXPLAIN（多一个往返，换来不必操心连接串后面的服务端换没换）。
+    `explain_statement` / `parse_plan` 改收 `impl Into<PlanDialect>`，原来传
+    `&DatabaseType` 的调用点一处没动。
+    - TiDB：`EXPLAIN FORMAT='tidb_json'`，按 `subOperators` 建树；算子名去掉优化器序号、
+      保留 Build / Probe（`IndexReader (Build)`），完整 id 留在 detail。没有「真的执行
+      一遍」（前端按 MySQL 类型本来就禁掉，后端再拒一次）。
+    - CockroachDB：`EXPLAIN (VERBOSE)` 的文本树，一行一格 `info`；深度是 `•` 的
+      **字符**位置（前面的 `│ ├ └ ─` 是多字节），属性归最近的节点，顶格的一行出现在树
+      之后即树结束（索引建议之类只留在原文里）。「真的执行一遍」走
+      `EXPLAIN ANALYZE (VERBOSE)`：节点的 actual row count / execution time，头部的
+      planning / execution time。
+    - 夹具取自真库：`fixtures/tidb-plan.json`、`fixtures/cockroach-plan.json`。**中途
+      踩到一次**：探查时的计划有两个并列的 scan，取夹具时统计信息刚收齐，优化器换成一条
+      直线的 lookup join，没有兄弟节点——按缩进挂父子那段就测不到了。改用
+      `INNER HASH JOIN` 提示重取；索引建议与千分位逗号那两种输出另写成内联用例。
+    - 反向验证：兄弟判断 `>=` 改成 `>`，三条用例红；去掉「顶格即结束」，那一条红。
+    - 冒烟：原来钉「服务端拒绝」的两段换成真的断言——CockroachDB 与 PostgreSQL 同一套
+      （有扫描、没 ANALYZE 无实际行数、ANALYZE 有执行耗时与实际行数），TiDB 断言连接
+      下面恰好是 `table:c` 与 `table:p`。MySQL、MariaDB、TiDB、PostgreSQL、CockroachDB
+      五家全绿。
+  - [x] **TiDB 改结构**：改列与改表名同时做时把 `RENAME TO` 单独成句放最后（8200）。
+    预览里说明两条不是一个整体。语料加了一条 `renameApart` 的用例，三家（MySQL /
+    MariaDB / TiDB）都跑；原来 MySQL 形状那条在 TiDB 上仍被整条拒绝、表不变，但那条
+    拒绝分支对 `renameApart` 的用例**不放行**——否则它被拒了也算过。
+  - 渲染（Linux 打包版连 TiDB 8.5 与 CockroachDB 25.2）：两家的计划树与详情、TiDB 上
+    「真的执行一遍」置灰、CockroachDB 上勾选后的实际行数与耗时、TiDB 预览的两条语句与
+    说明，执行后对象树变成新表名。又抓到一处**各方言都有的旧缺陷**：结构页改了表名之后，
+    标签还钉着旧名字，重读得到「读不到这张表的列」。改为交给外面：关掉钉着旧名字的
+    数据页与结构页，开一个新名字的结构页。
 - [x] **SQL Server**（2026-09-23 立项，用户要求「可以尝试做」；同日四个阶段完成）
   - 为什么现在做：用户点名要 Oracle 与 SQL Server；两者都有官方 Docker 镜像，
     测试环境搭得起来（cu 上 `dataomni-mssql`，SQL Server 2022 Developer）。
