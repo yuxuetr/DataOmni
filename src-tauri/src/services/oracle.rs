@@ -265,13 +265,24 @@ async fn blocking<T: Send + 'static>(
 /// 一台服务器的连接：一份连接参数，加几条空闲连接（目录查询用）。
 pub struct OraclePool {
   target: OracleTarget,
-  idle: Mutex<Vec<Arc<Connection>>>,
+  idle: crate::services::pool_registry::IdleConnections<Arc<Connection>>,
+}
+
+/// 关掉连接要走一次网络（登出）；对端已经悄悄没了的话，这一步会一直等。
+/// 放到自己的线程上，不占异步运行时的工作线程
+fn release_in_background(connections: Vec<Arc<Connection>>) {
+  if !connections.is_empty() {
+    std::thread::spawn(move || drop(connections));
+  }
 }
 
 impl OraclePool {
   /// `first` 是测试连接时连上的那一条，直接留着用，省一次登录
   pub fn new(target: OracleTarget, first: Arc<Connection>) -> Arc<Self> {
-    Arc::new(Self { target, idle: Mutex::new(vec![first]) })
+    Arc::new(Self {
+      target,
+      idle: crate::services::pool_registry::IdleConnections::new(first, MAX_IDLE),
+    })
   }
 
   /// 给一个会话用的连接：用完不放回，理由和 SQL Server 一样——会话上可能开着
@@ -292,7 +303,8 @@ impl OraclePool {
     sql: &str,
     params: &[JsonValue],
   ) -> Result<Vec<QueryRow>, QueryError> {
-    let idle = self.idle.lock().ok().and_then(|mut idle| idle.pop());
+    let (idle, stale) = self.idle.take();
+    release_in_background(stale);
     let connection = match idle {
       Some(connection) => connection,
       None => connect(&self.target).await?,
@@ -302,11 +314,7 @@ impl OraclePool {
     let worker = Arc::clone(&connection);
     let result = blocking(move || select_rows(&worker, &sql, &params)).await;
     if keeps_connection(&result) {
-      if let Ok(mut idle) = self.idle.lock() {
-        if idle.len() < MAX_IDLE {
-          idle.push(connection);
-        }
-      }
+      self.idle.put(connection);
     }
     result
   }
@@ -323,7 +331,8 @@ impl OraclePool {
     if statements.is_empty() {
       return Ok(Vec::new());
     }
-    let idle = self.idle.lock().ok().and_then(|mut idle| idle.pop());
+    let (idle, stale) = self.idle.take();
+    release_in_background(stale);
     let connection = match idle {
       Some(connection) => connection,
       None => connect(&self.target).await.map_err(|error| WriteBatchError::at(0, error))?,
@@ -344,11 +353,7 @@ impl OraclePool {
       Err((_, error)) => error.code.as_deref() != Some(CONNECTION_LOST_CODE),
     };
     if reusable {
-      if let Ok(mut idle) = self.idle.lock() {
-        if idle.len() < MAX_IDLE {
-          idle.push(connection);
-        }
-      }
+      self.idle.put(connection);
     }
     outcome.map_err(|(index, error)| WriteBatchError::at(index, error))
   }
@@ -530,6 +535,33 @@ enum Fetched {
 }
 
 impl OracleConnection {
+  /// 这条连接在 `limit` 之内答不答话。用途见 `SessionConnection::responds_within`。
+  ///
+  /// 超时靠驱动自己的 call timeout：阻塞线程上的 ping 被外面的 tokio 超时丢下之后
+  /// 还会一直卡着；让驱动在 `limit` 到了自己放弃，那条线程才回得来
+  pub async fn ping(&mut self, limit: std::time::Duration) -> bool {
+    let Some(connection) = self.connection.clone() else {
+      return true;
+    };
+    let probe = blocking(move || {
+      connection.set_call_timeout(Some(limit)).map_err(|error| query_error(&error, None))?;
+      let answered = connection.ping().is_ok();
+      // 连接还活着才需要把超时改回去；死了的连接会被丢掉
+      if answered {
+        let _ = connection.set_call_timeout(None);
+      }
+      Ok(answered)
+    });
+    let answered = matches!(
+      tokio::time::timeout(limit + std::time::Duration::from_secs(1), probe).await,
+      Ok(Ok(true))
+    );
+    if !answered {
+      release_in_background(self.connection.take().into_iter().collect());
+    }
+    answered
+  }
+
   async fn take_connection(&mut self) -> Result<Arc<Connection>, QueryError> {
     match self.connection.take() {
       Some(connection) => Ok(connection),

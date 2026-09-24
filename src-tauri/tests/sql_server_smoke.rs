@@ -5,6 +5,9 @@
 //! （**不要写进任何文件**），并设 `DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS=1`
 //! 让缺了连接串的时候报错而不是跳过。
 //!
+//! 要带 `-- --test-threads=1`：用例共用 `dataomni_import`、`dataomni_write` 这些表名，
+//! 并行跑会互相撞上「There is already an object named …」。
+//!
 //! 单独一个文件而不是塞进 `database_smoke.rs`：那边全是 sqlx 的池子与插件的
 //! `DbPool`，这边是后端自己持有的连接，两边的夹具没有一行能共用。
 

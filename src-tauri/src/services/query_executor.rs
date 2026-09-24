@@ -367,13 +367,15 @@ impl SessionConnection {
   /// 悄悄丢掉，不发 RST——实测经 Shadowrocket 隧道空闲 3 分钟还在、6 分钟就没了。
   /// 那之后第一条语句会一直等到查询超时。先用一个短超时的 ping 问一句，答不上
   /// 就换一条新的，而不是让用户等满超时再看一句「连接丢了」。
-  /// SQLite 在本机；SQL Server、Oracle 的会话连接由各自的池管，不在这里判。
+  /// SQLite 在本机，不问。
   pub async fn responds_within(&mut self, limit: Duration) -> bool {
     use sqlx::Connection;
     let ping = match self {
       Self::MySql(connection) => timeout(limit, connection.ping()).await,
       Self::Postgres(connection) => timeout(limit, connection.ping()).await,
-      Self::Sqlite(_) | Self::SqlServer(_) | Self::Oracle(_) => return true,
+      Self::SqlServer(connection) => return connection.ping(limit).await,
+      Self::Oracle(connection) => return connection.ping(limit).await,
+      Self::Sqlite(_) => return true,
     };
     matches!(ping, Ok(Ok(())))
   }

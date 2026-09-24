@@ -170,7 +170,7 @@ pub async fn connect(target: &SqlServerTarget) -> Result<SqlServerClient, QueryE
 /// 一台服务器的连接：一份连接参数，加几条空闲连接。
 pub struct SqlServerPool {
   target: SqlServerTarget,
-  idle: Mutex<Vec<SqlServerClient>>,
+  idle: crate::services::pool_registry::IdleConnections<SqlServerClient>,
 }
 
 impl SqlServerPool {
@@ -180,7 +180,10 @@ impl SqlServerPool {
     mut first: SqlServerClient,
   ) -> Result<Arc<Self>, QueryError> {
     run_simple(&mut first, POOL_LOCK_TIMEOUT).await?;
-    Ok(Arc::new(Self { target, idle: Mutex::new(vec![first]) }))
+    Ok(Arc::new(Self {
+      target,
+      idle: crate::services::pool_registry::IdleConnections::new(first, MAX_IDLE),
+    }))
   }
 
   /// 给一个会话用的连接：用完**不放回**。
@@ -198,7 +201,8 @@ impl SqlServerPool {
 
   /// 给一次目录查询用的连接：用完放回。
   async fn acquire_reusable(self: &Arc<Self>) -> Result<SqlServerConnection, QueryError> {
-    let idle = self.idle.lock().ok().and_then(|mut idle| idle.pop());
+    // 放太久的直接丢：tiberius 的客户端 drop 只是关掉本地套接字，不走网络
+    let (idle, _stale) = self.idle.take();
     let client = match idle {
       Some(client) => client,
       None => {
@@ -232,6 +236,25 @@ pub struct SqlServerConnection {
 }
 
 impl SqlServerConnection {
+  /// 这条连接在 `limit` 之内答不答话。答不上就把客户端丢掉（下一次用时重连）。
+  /// 用途见 `SessionConnection::responds_within`
+  pub async fn ping(&mut self, limit: Duration) -> bool {
+    let Some(mut client) = self.client.take() else {
+      return true;
+    };
+    let answered = matches!(
+      tokio::time::timeout(limit, async {
+        client.simple_query("SELECT 1").await?.into_results().await
+      })
+      .await,
+      Ok(Ok(_))
+    );
+    if answered {
+      self.client = Some(client);
+    }
+    answered
+  }
+
   /// 取出客户端开始一次执行；上一次被放弃过就先重连。
   async fn take_client(&mut self) -> Result<SqlServerClient, QueryError> {
     match self.client.take() {
@@ -498,11 +521,7 @@ impl Drop for SqlServerConnection {
     let (Some(pool), Some(client)) = (self.pool.take(), self.client.take()) else {
       return;
     };
-    if let Ok(mut idle) = pool.idle.lock() {
-      if idle.len() < MAX_IDLE {
-        idle.push(client);
-      }
-    };
+    pool.idle.put(client);
   }
 }
 
