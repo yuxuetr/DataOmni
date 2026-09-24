@@ -496,3 +496,125 @@ async fn the_structure_shows_indexes_validator_and_view_definition() {
     .expect("plain");
   assert_eq!(plain.options, "");
 }
+
+fn export_path(name: &str) -> std::path::PathBuf {
+  let path = std::env::temp_dir().join(format!("dataomni-{name}-{}.json", std::process::id()));
+  std::fs::remove_file(&path).ok();
+  path
+}
+
+/// 导出要跨过好几批游标（默认一批 101 个），条件与排序照用；canonical 写法按
+/// mongoimport 的读法读回来，每个文档都要与库里那份一模一样，类型也算
+#[tokio::test]
+async fn an_export_writes_every_matching_document_in_order_with_types_intact() {
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_export").await;
+  let stored: Vec<Document> = (0..250)
+    .map(|n| {
+      mongo_shell::parse_document(&format!(
+        "{{ n: {n}, long: Long('{n}'), double: 3.0, decimal: Decimal128('1.50'), \
+         at: ISODate('2024-01-05T12:30:45.123Z'), tags: ['a', {{ deep: null }}] }}"
+      ))
+      .expect("document")
+    })
+    .collect();
+  collection.insert_many(stored).await.expect("insert");
+  let path = export_path("export-canonical");
+  let filter = doc! { "n": { "$gte": 10 } };
+  let sort = doc! { "n": -1 };
+
+  let mut reports = 0;
+  let summary = mongo::export_to_file(
+    &client,
+    DATABASE,
+    "smoke_export",
+    filter.clone(),
+    sort.clone(),
+    mongo::ExtendedJson::Canonical,
+    &path,
+    &mut |_| reports += 1,
+    &mut || false,
+  )
+  .await
+  .expect("export");
+  assert_eq!(summary.rows_written, 240);
+  assert!(reports >= 1, "the final count is always reported");
+
+  let text = std::fs::read_to_string(&path).expect("exported file");
+  assert_eq!(summary.bytes_written, text.len() as u64);
+  let exported: Vec<Document> = text
+    .lines()
+    .map(|line| {
+      let value: serde_json::Value = serde_json::from_str(line).expect("one JSON value per line");
+      match mongodb::bson::Bson::try_from(value).expect("extended JSON") {
+        mongodb::bson::Bson::Document(document) => document,
+        other => panic!("not a document: {other:?}"),
+      }
+    })
+    .collect();
+  let expected: Vec<Document> = futures_util::TryStreamExt::try_collect(
+    collection.find(filter).sort(sort).await.expect("find"),
+  )
+  .await
+  .expect("collect");
+  assert_eq!(exported, expected);
+  assert!(!mongodb_part_path(&path).exists());
+
+  // relaxed 是 mongoexport 的默认：好读，Long 写成普通数字
+  let relaxed = export_path("export-relaxed");
+  mongo::export_to_file(
+    &client,
+    DATABASE,
+    "smoke_export",
+    doc! { "n": 5 },
+    Document::new(),
+    mongo::ExtendedJson::Relaxed,
+    &relaxed,
+    &mut |_| {},
+    &mut || false,
+  )
+  .await
+  .expect("relaxed export");
+  let line = std::fs::read_to_string(&relaxed).expect("relaxed file");
+  assert!(line.contains("\"long\":5,"), "{line}");
+  assert!(line.contains("\"double\":3.0,"), "{line}");
+  std::fs::remove_file(&path).ok();
+  std::fs::remove_file(&relaxed).ok();
+}
+
+fn mongodb_part_path(path: &std::path::Path) -> std::path::PathBuf {
+  let mut name = path.file_name().expect("file name").to_os_string();
+  name.push(".part");
+  path.with_file_name(name)
+}
+
+/// 取消之后既没有目标文件，也没有半份的 `.part`
+#[tokio::test]
+async fn a_cancelled_export_leaves_no_file_behind() {
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_export_cancel").await;
+  collection.insert_many((0..10).map(|n| doc! { "n": n })).await.expect("insert");
+  let path = export_path("export-cancelled");
+
+  let mut asked = 0;
+  let error = mongo::export_to_file(
+    &client,
+    DATABASE,
+    "smoke_export_cancel",
+    Document::new(),
+    Document::new(),
+    mongo::ExtendedJson::Relaxed,
+    &path,
+    &mut |_| {},
+    // 写了三个之后按取消
+    &mut || {
+      asked += 1;
+      asked > 3
+    },
+  )
+  .await
+  .expect_err("cancelled");
+  assert_eq!(error.code.as_deref(), Some("EXPORT_CANCELLED"));
+  assert!(!path.exists());
+  assert!(!mongodb_part_path(&path).exists());
+}

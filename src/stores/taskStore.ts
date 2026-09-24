@@ -25,12 +25,27 @@ export interface ImportTaskPayload {
   onError: 'abort' | 'skip';
 }
 
-export interface ExportTaskPayload {
+export interface SqlExportTaskPayload {
   connectionId: string;
   sql: string;
   path: string;
   options: ExportOptions;
 }
+
+/** MongoDB 集合按条件导出：每行一个文档，与 mongoexport 的输出同一种格式 */
+export interface MongoExportTaskPayload {
+  mongo: {
+    connectionString: string;
+    database: string;
+    collection: string;
+    filter: string;
+    sort: string;
+    format: 'relaxed' | 'canonical';
+  };
+  path: string;
+}
+
+export type ExportTaskPayload = SqlExportTaskPayload | MongoExportTaskPayload;
 
 export type TaskRequest =
   | { kind: 'import'; title: string; payload: ImportTaskPayload }
@@ -187,16 +202,22 @@ export const useTaskStore = create<TaskState>((set, get) => {
     });
 
     try {
-      const summary = await invoke<ExportSummary>('export_query_to_file', {
-        onProgress,
-        request: {
-          connectionId: payload.connectionId,
-          exportId: id,
-          sql: payload.sql,
-          path: payload.path,
-          options: payload.options
-        }
-      });
+      // 两条命令共用取消（`cancel_export`）与进度的形状，任务面板不分来源
+      const summary = 'mongo' in payload
+        ? await invoke<ExportSummary>('mongodb_export_to_file', {
+          onProgress,
+          request: { ...payload.mongo, exportId: id, path: payload.path }
+        })
+        : await invoke<ExportSummary>('export_query_to_file', {
+          onProgress,
+          request: {
+            connectionId: payload.connectionId,
+            exportId: id,
+            sql: payload.sql,
+            path: payload.path,
+            options: payload.options
+          }
+        });
       log(id, [entry('info', summary.path)]);
       finish(
         id,

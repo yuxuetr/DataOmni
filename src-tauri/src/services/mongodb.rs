@@ -13,15 +13,23 @@
 //!   改文档时编辑的，都是这一种，而且往返不丢类型。
 
 use crate::models::{ConnectionProfile, TlsMode};
+use crate::services::export_writer::{
+  part_path_for, ExportProgress, ExportSummary, PartFile, DIRECTORY_MISSING, EXPORT_CANCELLED,
+  EXPORT_CANCELLED_CODE, EXPORT_WRITE_FAILED, FILE_CREATE_FAILED, FILE_RENAME_FAILED,
+  PROGRESS_INTERVAL,
+};
 use crate::services::mongo_shell::{self, Layout};
 use crate::services::pool_registry::PoolRegistry;
+use crate::services::query_error::QueryError;
 use futures_util::TryStreamExt;
 use indexmap::IndexMap;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::options::{ClientOptions, Credential, ServerAddress, Tls, TlsOptions};
 use mongodb::results::CollectionType;
 use mongodb::Client;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::io::{BufWriter, Write};
+use std::path::Path;
 use std::time::Duration;
 
 /// 与前端 `MONGODB_SCHEME` 一致：连接串以它开头就归这里管
@@ -475,6 +483,89 @@ pub async fn delete_document(
     }
   };
   with_deadline(timeout, write).await
+}
+
+/// 导出文件里每个文档的 JSON 写法，即 mongoexport 的 `--jsonFormat`
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExtendedJson {
+  /// mongoexport 的默认：数字、日期写成普通 JSON，好读；读回来 `Long(5)` 会变成 Int32
+  Relaxed,
+  /// 每个值都带类型（`{"$numberLong":"5"}`），mongoimport 读回来与原来一模一样
+  Canonical,
+}
+
+/// 把符合条件的**全部**文档按排序写成文件，每行一个，与 `mongoexport` 的默认输出同一种
+/// 格式，`mongoimport` 直接读得回去。
+///
+/// 不设时限：导出一个大集合要多久是未知的，停下来靠取消。和 SQL 的导出一样先写
+/// `.part` 再改名，中途失败或取消时那半份文件被删掉
+#[allow(clippy::too_many_arguments)]
+pub async fn export_to_file(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  filter: Document,
+  sort: Document,
+  format: ExtendedJson,
+  path: &Path,
+  progress: &mut (dyn FnMut(ExportProgress) + Send),
+  cancelled: &mut (dyn FnMut() -> bool + Send),
+) -> Result<ExportSummary, QueryError> {
+  if let Some(parent) = path.parent() {
+    if !parent.as_os_str().is_empty() && !parent.exists() {
+      return Err(QueryError::message(format!("{DIRECTORY_MISSING}: {}", parent.display())));
+    }
+  }
+  let collection = client.database(database).collection::<Document>(collection);
+  let mut action = collection.find(filter);
+  if !sort.is_empty() {
+    action = action.sort(sort);
+  }
+  let mut cursor = action.await.map_err(|error| QueryError::message(describe_error(error)))?;
+
+  let part_path = part_path_for(path);
+  let mut guard = PartFile { path: part_path.clone(), armed: true };
+  let file = std::fs::File::create(&part_path).map_err(|error| {
+    QueryError::message(format!("{FILE_CREATE_FAILED}: {} · {error}", part_path.display()))
+  })?;
+  let mut writer = BufWriter::new(file);
+  let write_failed =
+    |error: std::io::Error| QueryError::message(format!("{EXPORT_WRITE_FAILED}: {error}"));
+
+  let mut rows_written = 0u64;
+  let mut bytes_written = 0u64;
+  let mut last_report = std::time::Instant::now();
+  while let Some(document) =
+    cursor.try_next().await.map_err(|error| QueryError::message(describe_error(error)))?
+  {
+    if cancelled() {
+      return Err(QueryError::with_code(EXPORT_CANCELLED_CODE, EXPORT_CANCELLED));
+    }
+    let value = match format {
+      ExtendedJson::Relaxed => Bson::Document(document).into_relaxed_extjson(),
+      ExtendedJson::Canonical => Bson::Document(document).into_canonical_extjson(),
+    };
+    let mut line = serde_json::to_vec(&value)
+      .map_err(|error| QueryError::message(format!("{EXPORT_WRITE_FAILED}: {error}")))?;
+    line.push(b'\n');
+    writer.write_all(&line).map_err(write_failed)?;
+    rows_written += 1;
+    bytes_written += line.len() as u64;
+    if last_report.elapsed() >= PROGRESS_INTERVAL {
+      last_report = std::time::Instant::now();
+      progress(ExportProgress { rows_written, bytes_written });
+    }
+  }
+  writer.flush().map_err(write_failed)?;
+  drop(writer);
+  std::fs::rename(&part_path, path).map_err(|error| {
+    QueryError::message(format!("{FILE_RENAME_FAILED}: {} · {error}", path.display()))
+  })?;
+  guard.armed = false;
+
+  progress(ExportProgress { rows_written, bytes_written });
+  Ok(ExportSummary { rows_written, bytes_written, path: path.to_string_lossy().to_string() })
 }
 
 /// 服务端的 `maxTimeMS` 管不到网络：一条被丢掉的连接上请求能一直挂着。本机再

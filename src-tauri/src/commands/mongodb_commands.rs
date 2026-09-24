@@ -3,16 +3,21 @@
 //! 条件、排序、`_id` 都以 mongosh 写法的**文本**过来，在这里解析：解析器只有
 //! 一份，报错的位置对着用户输入的那段文字。
 
-use crate::commands::database_commands::TIMEOUT_OUT_OF_RANGE;
+use crate::commands::database_commands::{QueryCancellationState, TIMEOUT_OUT_OF_RANGE};
+use crate::services::export_writer::{ExportProgress, ExportSummary};
 use crate::services::mongo_shell;
 use crate::services::mongodb::{
-  self, CollectionEntry, FindRequest, MongoCollectionStructure, MongoFindPage, MongoRegistry,
-  MONGO_NOT_CONNECTED,
+  self, CollectionEntry, ExtendedJson, FindRequest, MongoCollectionStructure, MongoFindPage,
+  MongoRegistry, MONGO_NOT_CONNECTED,
 };
+use crate::services::query_error::QueryError;
 use ::mongodb::Client;
+use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
+use tauri::ipc::Channel;
 use tauri::State;
+use tokio::sync::oneshot;
 
 /// 一页最多多少个文档。与网格的 `MAX_UNVIRTUALIZED_ROWS` 同值，理由相同
 const MAX_PAGE_SIZE: u64 = 200;
@@ -162,4 +167,54 @@ pub async fn mongodb_collection_structure(
 #[tauri::command]
 pub fn close_mongodb(connection_string: String, registry: State<'_, MongoRegistry>) -> bool {
   registry.remove(&connection_string)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MongoExportRequest {
+  connection_string: String,
+  export_id: String,
+  database: String,
+  collection: String,
+  filter: String,
+  sort: String,
+  format: ExtendedJson,
+  path: String,
+}
+
+/// 按条件与排序导出全部文档。取消与 SQL 的导出共用 `cancel_export`：同一张登记表、
+/// 同一个「已取消」的码，任务面板不用分两套
+#[tauri::command]
+pub async fn mongodb_export_to_file(
+  request: MongoExportRequest,
+  on_progress: Channel<ExportProgress>,
+  registry: State<'_, MongoRegistry>,
+  cancellation_state: State<'_, QueryCancellationState>,
+) -> Result<ExportSummary, QueryError> {
+  let filter = mongo_shell::parse_document(&request.filter)
+    .map_err(|error| QueryError::message(error.to_string()))?;
+  let sort = mongo_shell::parse_document(&request.sort)
+    .map_err(|error| QueryError::message(error.to_string()))?;
+  let client = client(&registry, &request.connection_string).map_err(QueryError::message)?;
+
+  let mut receiver =
+    cancellation_state.register(&request.export_id).await.map_err(QueryError::message)?;
+  let mut report = |progress| {
+    on_progress.send(progress).ok();
+  };
+  let mut cancelled = || !matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty));
+  let result = mongodb::export_to_file(
+    &client,
+    &request.database,
+    &request.collection,
+    filter,
+    sort,
+    request.format,
+    std::path::Path::new(&request.path),
+    &mut report,
+    &mut cancelled,
+  )
+  .await;
+  cancellation_state.finish(&request.export_id).await;
+  result
 }

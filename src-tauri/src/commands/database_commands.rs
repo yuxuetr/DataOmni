@@ -118,7 +118,7 @@ pub struct QueryCancellationState {
 }
 
 impl QueryCancellationState {
-  async fn register(&self, execution_id: &str) -> Result<oneshot::Receiver<()>, String> {
+  pub(crate) async fn register(&self, execution_id: &str) -> Result<oneshot::Receiver<()>, String> {
     let (sender, receiver) = oneshot::channel();
     let mut senders = self.senders.lock().await;
     if senders.contains_key(execution_id) {
@@ -138,7 +138,7 @@ impl QueryCancellationState {
       .unwrap_or(false)
   }
 
-  async fn finish(&self, execution_id: &str) {
+  pub(crate) async fn finish(&self, execution_id: &str) {
     self.senders.lock().await.remove(execution_id);
   }
 }

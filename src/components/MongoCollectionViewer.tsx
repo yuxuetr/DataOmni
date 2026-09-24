@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Download,
   Plus,
   RefreshCw,
   Search
@@ -26,6 +27,7 @@ import {
 import { PLAIN_TEXT_INPUT } from './FormControls';
 import { MongoDocumentPanel } from './MongoDocumentPanel';
 import { useConfirmPrompt } from './ConfirmPrompt';
+import { MongoExportDialog } from './MongoExportDialog';
 
 interface MongoCollectionViewerProps {
   database: string;
@@ -85,6 +87,7 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
   const [countError, setCountError] = useState<string | null>(null);
   const [panel, setPanel] = useState<DocumentPanelState>({ kind: 'closed' });
   const [panelDirty, setPanelDirty] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const { ask, prompt: confirmPrompt } = useConfirmPrompt();
   const selectedId = panel.kind === 'document' ? panel.id : null;
   const [documentText, setDocumentText] = useState<string | null>(null);
@@ -395,6 +398,14 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
             </button>
           )}
           <button
+            onClick={() => setExporting(true)}
+            disabled={!connectionString}
+            className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg transition-colors hover:bg-surface-hover disabled:opacity-50"
+          >
+            <Download size={14} />
+            <span>{t('mongo.export')}</span>
+          </button>
+          <button
             onClick={refresh}
             disabled={loading}
             className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg transition-colors hover:bg-surface-hover disabled:opacity-50"
@@ -639,6 +650,17 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
         )}
       </div>
       {confirmPrompt}
+      {exporting && connectionString && (
+        <MongoExportDialog
+          connectionString={connectionString}
+          database={database}
+          collection={collection}
+          filter={applied.filter}
+          sort={applied.sort}
+          total={total}
+          onClose={() => setExporting(false)}
+        />
+      )}
     </div>
   );
 }

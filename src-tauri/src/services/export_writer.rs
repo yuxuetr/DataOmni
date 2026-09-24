@@ -343,9 +343,9 @@ fn number_text(number: &serde_json::Number) -> String {
 ///
 /// 取消是把整个导出 future 丢掉，之后没有任何代码会再碰到它，所以清理只能挂
 /// 在 Drop 上。一份写到一半的 CSV 和一份完整的 CSV 在文件管理器里长得一模一样。
-struct PartFile {
-  path: PathBuf,
-  armed: bool,
+pub(crate) struct PartFile {
+  pub(crate) path: PathBuf,
+  pub(crate) armed: bool,
 }
 
 impl Drop for PartFile {
@@ -358,7 +358,7 @@ impl Drop for PartFile {
 
 /// 进度回报的最小间隔。按批次报会在窄表上变成每秒上千条 IPC 消息，
 /// 而界面上一秒刷新几次就够了。
-const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(120);
+pub(crate) const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(120);
 
 pub const EXPORT_CANCELLED_CODE: &str = "EXPORT_CANCELLED";
 
@@ -436,7 +436,7 @@ pub async fn export_query<'a>(
 }
 
 /// 先写 `.part` 再改名，是为了让「文件存在」等于「导出完成」。
-fn part_path_for(path: &Path) -> PathBuf {
+pub(crate) fn part_path_for(path: &Path) -> PathBuf {
   let mut name = path.file_name().map(|name| name.to_os_string()).unwrap_or_default();
   name.push(".part");
   path.with_file_name(name)
