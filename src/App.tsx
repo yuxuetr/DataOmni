@@ -3,6 +3,7 @@ import { clsx } from 'clsx';
 import { CLOSE_TAB_MENU_EVENT, SHORTCUTS, currentPlatform, matchesShortcut } from './utils/shortcuts';
 import { PanelLeftOpen } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { RenderErrorBoundary } from './components/RenderErrorBoundary';
 import { Sidebar } from './components/Sidebar';
 import { TaskCenter } from './components/TaskCenter';
 import { SqlWorkbench } from './components/SqlWorkbench';
@@ -822,7 +823,10 @@ function App() {
           // Tab 过来要先空按一下才进得了编辑器
           className="flex-1 flex flex-col overflow-hidden"
         >
-          {renderActiveTab()}
+          {/* key 跟着标签走：换一个标签就是一块新的边界，不会带着上一块的错误 */}
+          <RenderErrorBoundary key={activeTab?.id ?? 'welcome'} scope="tab">
+            {renderActiveTab()}
+          </RenderErrorBoundary>
         </div>
       </div>
 

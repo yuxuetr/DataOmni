@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
 import "./index.css";
 import { installConsoleRedaction } from "./utils/logRedaction";
 import { restoreWorkspaceFromSnapshot } from "./utils/workspacePersistence";
@@ -17,6 +18,8 @@ restoreWorkspaceFromSnapshot();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <RenderErrorBoundary scope="app">
+      <App />
+    </RenderErrorBoundary>
   </React.StrictMode>,
 );
