@@ -303,7 +303,13 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       try {
         const { openDatabase } = await import('../utils/databaseHandle');
         const db = await openDatabase(connectionString);
-        await db.close();
+        // 池子按连接串登记：测的若正是连着的那一条，这里关掉的就是它正在用的池子。
+        // 刚开的这个已经顶替了旧的，照常能用，留着即可。动态导入：queryStore 引用了本模块
+        const { useQueryStore } = await import('./queryStore');
+        const live = useQueryStore.getState();
+        if (!(live.database && live.connectionString === connectionString)) {
+          await db.close();
+        }
         
         set({
           testResult: { ok: true, message: translateNow('connect.testSucceeded') },
