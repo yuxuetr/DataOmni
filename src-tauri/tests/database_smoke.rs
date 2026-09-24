@@ -1196,8 +1196,9 @@ async fn mysql_accepts_the_parameters_the_ui_actually_sends() {
 // 目录查询的结果：界面那一侧的解码器认不认
 // ---------------------------------------------------------------------------
 
-/// 目录查询在应用里是前端经 `tauri-plugin-sql` 的 `select` 发的，解码用的是
-/// **插件自己的**类型表，不是 `query_executor`。上面那些用例拿 sqlx 的
+/// 目录查询在应用里不走 `query_executor`：SQLite 经 `tauri-plugin-sql` 的 `select`，
+/// MySQL / PostgreSQL 经 `sqlx_pool::select`，解码用的是 `services/plugin_decode.rs`
+/// ——插件 2.4.1 那两份解码器的照抄，类型表与插件相同。上面那些用例拿 sqlx 的
 /// `row.get::<T>` 取值，走的是第三套解码——所以「SQL 在真库上跑得通」与
 /// 「界面上显示得出来」之间一直隔着一道没人比过的缝。84495ab 就掉在这道缝里：
 /// MySQL 的 `information_schema` 标识符列是 VARBINARY，查询本身没错，界面报
@@ -1267,7 +1268,8 @@ const PLUGIN_DECODES_SQLITE: &[&str] =
 
 /// 上面三张表是照着某一个版本的源码抄的。插件一升级，这条先红——
 /// 去 `~/.cargo/registry/src/*/tauri-plugin-sql-<新版本>/src/decode/` 重核一遍
-/// 再改版本号，而不是只改版本号。
+/// 再改版本号，而不是只改版本号。MySQL / PostgreSQL 那两份已经照抄进
+/// `plugin_decode.rs`，升级时要决定它们跟不跟。
 #[test]
 fn plugin_decoder_tables_were_read_from_the_locked_version() {
   let lock = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.lock"))
@@ -1411,6 +1413,22 @@ where
   );
 }
 
+/// 再按应用真走的那条路（`sqlx_pool::select`：插件的绑参规矩 + 照抄的解码器）跑一遍。
+/// 上面那道门只比类型名；这里连「数字按 f64 绑」和逐列解码一起过
+async fn assert_app_select_decodes(dialect: &str, request: &CatalogRequest, pool: &DbPool) {
+  let params = request
+    .params
+    .iter()
+    .map(|param| param.clone().map_or(serde_json::Value::Null, serde_json::Value::String))
+    .collect();
+  let rows =
+    dataomni_lib::services::sqlx_pool::select(pool, &request.sql, params).await.unwrap_or_else(
+      |error| panic!("{dialect} 的 {} 经应用的 select 跑不通: {error}", request.name),
+    );
+  // 不比行数：测试库是共享的，并行的用例在同时建表删表，库级目录两次查的行数会不同
+  assert!(!rows.is_empty(), "{dialect} 的 {} 经应用的 select 返回 0 行", request.name);
+}
+
 #[tokio::test]
 async fn sqlite_catalog_results_are_decodable_by_the_plugin() {
   let pool = SqlitePoolOptions::new()
@@ -1527,6 +1545,7 @@ async fn mysql_catalog_results_are_decodable_by_the_plugin() {
       .await
       .unwrap_or_else(|error| panic!("MySQL 的 {} 跑不通: {error}", request.name));
     assert_plugin_decodes("MySQL", request, &rows, PLUGIN_DECODES_MYSQL);
+    assert_app_select_decodes("MySQL", request, &DbPool::MySql(pool.clone())).await;
   }
 
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
@@ -1616,6 +1635,7 @@ async fn postgres_catalog_results_are_decodable_by_the_plugin() {
       }
     };
     assert_plugin_decodes("PostgreSQL", request, &rows, PLUGIN_DECODES_POSTGRES);
+    assert_app_select_decodes("PostgreSQL", request, &DbPool::Postgres(pool.clone())).await;
   }
 
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();

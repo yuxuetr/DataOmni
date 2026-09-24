@@ -22,6 +22,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+indexmap = { version = "2", features = ["serde"] }
 tauri-plugin-sql = { version = "2", features = ["sqlite", "mysql", "postgres"] }
 sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "mysql", "postgres", "sqlite", "json", "time", "chrono", "bigdecimal", "uuid"] }
 time = "0.3"

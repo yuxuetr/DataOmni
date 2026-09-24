@@ -49,6 +49,8 @@ pub fn run() {
       get_connections,
       test_connection,
       open_database_pool,
+      sqlx_select,
+      close_sqlx_pool,
       diagnose_connection,
       close_ssh_tunnel,
       sql_server_select,

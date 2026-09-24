@@ -46,20 +46,21 @@ pub const SESSION_TARGET_UNSUPPORTED: &str = "DATAOMNI_SESSION_TARGET_UNSUPPORTE
 ///
 /// sqlx 三家的池子在插件的 `DbInstances` 里（前端 `Database.load` 打开的），
 /// SQL Server 的在后端自己的 [`SqlServerRegistry`] 里（`test_connection` 打开的）。
-/// 键都是 `connection_string_via` 算出来的同一个串。
-enum ResolvedPool<'a> {
-  Sqlx(tokio::sync::RwLockReadGuard<'a, HashMap<String, tauri_plugin_sql::DbPool>>, String),
+/// 键都是 `connection_string_via` 算出来的同一个串。sqlx 的池子是复制出来的，
+/// 不持着 `DbInstances` 的锁执行——理由见 `sqlx_pool::shared`。
+enum ResolvedPool {
+  Sqlx(Option<tauri_plugin_sql::DbPool>),
   SqlServer(std::sync::Arc<crate::services::SqlServerPool>),
   Oracle(std::sync::Arc<crate::services::oracle::OraclePool>),
 }
 
-impl ResolvedPool<'_> {
-  async fn resolve<'a>(
+impl ResolvedPool {
+  async fn resolve(
     connection_string: String,
-    database_instances: &'a DbInstances,
+    database_instances: &DbInstances,
     sql_server: &SqlServerRegistry,
     oracle: &OracleRegistry,
-  ) -> Result<ResolvedPool<'a>, QueryError> {
+  ) -> Result<ResolvedPool, QueryError> {
     if connection_string.starts_with(ORACLE_SCHEME) {
       return oracle
         .get(&connection_string)
@@ -72,13 +73,15 @@ impl ResolvedPool<'_> {
         .map(ResolvedPool::SqlServer)
         .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED));
     }
-    Ok(ResolvedPool::Sqlx(database_instances.0.read().await, connection_string))
+    Ok(ResolvedPool::Sqlx(
+      crate::services::sqlx_pool::shared(database_instances, &connection_string).await,
+    ))
   }
 
   fn pool_ref(&self) -> Result<PoolRef<'_>, QueryError> {
     match self {
-      Self::Sqlx(instances, key) => instances
-        .get(key)
+      Self::Sqlx(pool) => pool
+        .as_ref()
         .map(PoolRef::Sqlx)
         .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED)),
       Self::SqlServer(pool) => Ok(PoolRef::SqlServer(pool)),

@@ -7,6 +7,7 @@ pub mod explain;
 pub mod export_writer;
 pub mod object_catalog;
 pub mod oracle;
+pub mod plugin_decode;
 pub mod pool_registry;
 pub mod query_error;
 pub mod query_executor;

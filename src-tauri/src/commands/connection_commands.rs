@@ -166,10 +166,31 @@ pub async fn open_database_pool(
   database_instances: State<'_, tauri_plugin_sql::DbInstances>,
 ) -> Result<(), String> {
   let pool = crate::services::sqlx_pool::open(&connection_string).await?;
-  // 同一个连接串再开一次（测试连接之后真的连上）就换掉旧的；旧池子里被会话借走的
-  // 连接照常用完再关，不在这里等它们
-  database_instances.0.write().await.insert(connection_string, pool);
+  crate::services::sqlx_pool::register(&database_instances, connection_string, pool).await;
   Ok(())
+}
+
+/// MySQL / PostgreSQL 的目录查询。代替插件的 `select`：那一条持着锁等网络
+#[tauri::command]
+pub async fn sqlx_select(
+  connection_string: String,
+  sql: String,
+  params: Vec<serde_json::Value>,
+  database_instances: State<'_, tauri_plugin_sql::DbInstances>,
+) -> Result<Vec<indexmap::IndexMap<String, serde_json::Value>>, String> {
+  let pool = crate::services::sqlx_pool::shared(&database_instances, &connection_string)
+    .await
+    .ok_or_else(|| crate::commands::database_commands::DB_SESSION_NOT_CONNECTED.to_string())?;
+  crate::services::sqlx_pool::select(&pool, &sql, params).await
+}
+
+/// 代替插件的 `close`：那一条持着锁等所有借出去的连接还回来
+#[tauri::command]
+pub async fn close_sqlx_pool(
+  connection_string: String,
+  database_instances: State<'_, tauri_plugin_sql::DbInstances>,
+) -> Result<bool, String> {
+  Ok(crate::services::sqlx_pool::close(&database_instances, &connection_string).await)
 }
 
 /// SQL Server 连接上的目录查询：前端对另外三家走插件的 `select`，对这一家走这里。
