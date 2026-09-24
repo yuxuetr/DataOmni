@@ -1158,6 +1158,7 @@ export default function TableDataViewer({
               <TableStructureEditor
                 connectionId={connection.id}
                 connectionName={connection.name}
+                databaseLabel={serverLabel(connection)}
                 environment={connection.environment}
                 schema={schema ?? null}
                 table={tableName}

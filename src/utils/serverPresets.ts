@@ -99,8 +99,26 @@ export function serverPresetOf(
   return SERVER_PRESETS[recorded].dbType === profile.db_type ? recorded : null;
 }
 
-/** 连接列表上那个类型小字：经快捷入口建的写服务端的名字，其余照旧写协议 */
+/**
+ * 每种数据库给人看的名字。写成全量的 Record：多一种类型，这里编译不过——
+ * 此前退回的是 `db_type` 本身，确认框上印的是「on mysql」「在 postgresql 上」
+ */
+const DATABASE_NAMES: Readonly<Record<DatabaseType, string>> = {
+  [DatabaseType.MySQL]: 'MySQL',
+  [DatabaseType.PostgreSQL]: 'PostgreSQL',
+  [DatabaseType.SQLite]: 'SQLite',
+  [DatabaseType.SqlServer]: 'SQL Server',
+  [DatabaseType.Oracle]: 'Oracle',
+  [DatabaseType.MongoDB]: 'MongoDB',
+  [DatabaseType.Redis]: 'Redis',
+  [DatabaseType.Neo4j]: 'Neo4j',
+  [DatabaseType.DuckDB]: 'DuckDB',
+  [DatabaseType.ClickHouse]: 'ClickHouse',
+  [DatabaseType.Elasticsearch]: 'Elasticsearch'
+};
+
+/** 界面上称呼这个连接的服务端：经快捷入口建的写服务端的名字，其余写协议的名字 */
 export function serverLabel(profile: Pick<ConnectionProfile, 'db_type' | 'options'>): string {
   const preset = serverPresetOf(profile);
-  return preset ? SERVER_PRESETS[preset].name : profile.db_type;
+  return preset ? SERVER_PRESETS[preset].name : DATABASE_NAMES[profile.db_type] ?? profile.db_type;
 }

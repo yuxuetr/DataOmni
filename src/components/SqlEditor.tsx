@@ -1,3 +1,4 @@
+import { serverLabel } from '../utils/serverPresets';
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { clsx } from 'clsx';
 import {
@@ -374,7 +375,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
           statementCount={pendingRun.statements.length}
           connectionName={connection.name}
           environment={environment}
-          databaseLabel={connection.db_type}
+          databaseLabel={serverLabel(connection)}
           reversibility={statementReversibility(
             pendingRun.statements,
             identifierDialectFor(connection.db_type),
@@ -403,7 +404,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
           sql={explaining}
           connectionId={connection.id}
           dbType={connection.db_type}
-          databaseLabel={connection.db_type}
+          databaseLabel={serverLabel(connection)}
           onClose={() => setExplaining(null)}
         />
       )}

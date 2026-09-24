@@ -46,7 +46,10 @@ describe('serverPresetOf', () => {
 describe('serverLabel', () => {
   it('names the server for a preset connection and the protocol otherwise', () => {
     expect(serverLabel(serverPresetConfig('tidb'))).toBe('TiDB');
-    expect(serverLabel(createDefaultConfig(DatabaseType.PostgreSQL))).toBe('postgresql');
+    // 协议写给人看的名字，不是 db_type：确认框上曾印着「on mysql」
+    expect(serverLabel(createDefaultConfig(DatabaseType.PostgreSQL))).toBe('PostgreSQL');
+    expect(serverLabel(createDefaultConfig(DatabaseType.MySQL))).toBe('MySQL');
+    expect(serverLabel(createDefaultConfig(DatabaseType.SqlServer))).toBe('SQL Server');
   });
 });
 

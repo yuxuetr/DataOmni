@@ -26,6 +26,8 @@ import { DestructiveStatementPrompt } from './DestructiveStatementPrompt';
 interface TableStructureEditorProps {
   connectionId: string;
   connectionName: string;
+  /** 确认框上称呼服务端用，见 `serverLabel` */
+  databaseLabel: string;
   environment: ConnectionEnvironment;
   schema: string | null;
   table: string;
@@ -47,6 +49,7 @@ interface TableStructureEditorProps {
 export function TableStructureEditor({
   connectionId,
   connectionName,
+  databaseLabel,
   environment,
   schema,
   table,
@@ -288,7 +291,7 @@ export function TableStructureEditor({
           statementCount={preview.statements.length}
           connectionName={connectionName}
           environment={environment}
-          databaseLabel={dialect}
+          databaseLabel={databaseLabel}
           reversibility={batchReversibility(preview.statements, dialect)}
           impacts={preview.impacts.map((impact) =>
             t('ddl.impact.dropColumn', { column: impact.column }))}
