@@ -49,7 +49,8 @@ import { nextColumnSort, type ColumnSort } from '../utils/resultSorting';
 import { ColumnSortButton } from './ColumnSortButton';
 import { useCellSelection } from '../hooks/useCellSelection';
 import { selectionSubset } from '../utils/cellSelection';
-import { EDIT_CONTROLS_WIDTH, headerBadgeWidth, toPositionalRows } from '../utils/columnWidths';
+import { editColumnWidth, headerBadgeWidth, toPositionalRows } from '../utils/columnWidths';
+import { columnEditorKind } from '../utils/columnEditors';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { ExportResultDialog, type ExportScope } from './ExportResultDialog';
@@ -631,9 +632,14 @@ export default function TableDataViewer({
     () => positionalRows.map((row) => visibleIndexes.map((index) => row[index] ?? null)),
     [positionalRows, visibleIndexes]
   );
-  // 行编辑时每格多一个「写入方式」下拉，列宽跟着让出来，见 EDIT_CONTROLS_WIDTH
-  const editExtra = editState.mode === 'edit' ? EDIT_CONTROLS_WIDTH : 0;
-  const visibleWidths = visibleIndexes.map((index) => (columnWidths[index] ?? 0) + editExtra);
+  // 行编辑时每格多一个「写入方式」下拉，日期时间格还多一个选择器，列宽跟着让出来
+  const visibleWidths = visibleIndexes.map((index) => {
+    const width = columnWidths[index] ?? 0;
+    if (editState.mode !== 'edit') {
+      return width;
+    }
+    return editColumnWidth(width, columnEditorKind(tableSchema?.columns[index]?.data_type ?? '', dialect));
+  });
   // 进入行编辑时光标放在第一个看得见、又不是键列的格子上
   const firstEditableColumn = visibleIndexes
     .map((index) => tableSchema?.columns[index]?.name)

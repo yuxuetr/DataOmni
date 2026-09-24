@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   clampColumnWidth,
   displayWidthInChars,
+  editColumnWidth,
+  EDIT_CONTROLS_WIDTH,
   headerBadgeWidth,
   measureColumnAlignments,
   measureColumnWidths,
@@ -138,6 +140,24 @@ describe('列宽估算', () => {
     // 之前按 7px 估算，9223372036854775807 会被截成 922337203685477…
     const [width] = measureColumnWidths(['id'], [['9223372036854775807']]);
     expect(width).toBeGreaterThanOrEqual(19 * 7.83 + 17);
+  });
+});
+
+describe('行编辑时的列宽', () => {
+  it('普通列只多出写入方式下拉那一段', () => {
+    expect(editColumnWidth(100, 'text')).toBe(100 + EDIT_CONTROLS_WIDTH);
+  });
+
+  // 回归里见过：日期格的选择器只露出 `01/05/20`，时间格秒被截掉
+  it('日期时间列至少放得下原生选择器和「现在」按钮', () => {
+    const narrow = 105;
+    expect(editColumnWidth(narrow, 'date')).toBeGreaterThan(narrow + EDIT_CONTROLS_WIDTH);
+    expect(editColumnWidth(narrow, 'time')).toBeGreaterThan(narrow + EDIT_CONTROLS_WIDTH);
+    expect(editColumnWidth(narrow, 'datetime')).toBeGreaterThan(editColumnWidth(narrow, 'date'));
+  });
+
+  it('值本身更宽时照值来，不被下限压窄', () => {
+    expect(editColumnWidth(340, 'datetime')).toBe(340 + EDIT_CONTROLS_WIDTH);
   });
 });
 

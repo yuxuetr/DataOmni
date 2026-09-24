@@ -1,4 +1,5 @@
 import type { SerializedResultValue } from '../contracts/resultSet';
+import type { ColumnEditorKind } from './columnEditors';
 import { formatResultValueOneLine, isNumericResultValue } from './resultValues';
 
 /**
@@ -60,6 +61,28 @@ export function headerBadgeWidth(column: { isPrimaryKey: boolean; isRequired: bo
  * 就被截掉一截（`secon`、日期只剩前半段）。
  */
 export const EDIT_CONTROLS_WIDTH = 46;
+
+/**
+ * 日期、时间格在行编辑时至少要多宽。
+ *
+ * 这几格的编辑框下面还有一行：原生选择器加「现在」按钮。选择器的宽度是它自己的，
+ * 不随值的长短变，而列宽是按值算的——`2024-01-05` 那一列加上 {@link EDIT_CONTROLS_WIDTH}
+ * 之后，选择器只露出 `01/05/20`。
+ *
+ * 在 WKWebView 里按 12px 量的：date 88、time（带秒）94、datetime-local 175，
+ * 「Now」按钮 38、「现在」36，按钮前间距 4；从列宽到值那一格还要让出 48
+ * （下拉、间距、单元格内边距，量的是回归时那一版的差值）。选择器各多留几像素给
+ * 别的语言环境的日期写法。
+ */
+const TEMPORAL_EDIT_MIN_WIDTH: Partial<Record<ColumnEditorKind, number>> = {
+  date: 96 + 42 + 48,
+  time: 100 + 42 + 48,
+  datetime: 182 + 42 + 48
+};
+
+export function editColumnWidth(width: number, editor: ColumnEditorKind): number {
+  return Math.max(width + EDIT_CONTROLS_WIDTH, TEMPORAL_EDIT_MIN_WIDTH[editor] ?? 0);
+}
 
 /**
  * 导出是为了让密度那道门能拿 `padding` 做对照：密度改了单元格的左右内边距，
