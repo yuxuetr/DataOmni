@@ -2814,8 +2814,10 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
       插件的 `select` / `close` 持着 `DbInstances` 读锁等网络，开池子的写锁排在后面，
       tokio 读写锁公平，新读者也跟着排。目录查询改走后端、复制出池子就放锁；
       门 `sqlx_pool::tests::a_shared_pool_does_not_keep_the_registry_locked`（带反向用例）
+    - 对正连着的连接按「测试连接」会关掉它自己的池子（`9ca2d39`，回归之后查出来的）
+    - PostgreSQL 数组显示成「x,y」、编辑写不回去（`b413686`）：改成服务端 `array_out`
+      的字面量，冒烟逐字比对 `::text` 并绑回去验同值
   - 回归里看到、**没有修**的（都不挡用，留着按需做）：
-    - PostgreSQL 数组显示成「x,y」，分不清 `{x,y}` 与 `{"x,y"}`，编辑写回也不是数组字面量
     - 标签栏溢出后纵向滚轮滚不动、没有切换标签的快捷键、没有「关闭其他标签」
     - CockroachDB 结构页触发器一段直接印驱动原文；服务器停掉后侧栏印
       「expected to read 4 bytes」原文；清空表确认框写「on mysql」
