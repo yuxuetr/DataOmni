@@ -626,6 +626,10 @@ export default function TableDataViewer({
     [positionalRows, visibleIndexes]
   );
   const visibleWidths = visibleIndexes.map((index) => columnWidths[index] ?? 0);
+  // 进入行编辑时光标放在第一个看得见、又不是键列的格子上
+  const firstEditableColumn = visibleIndexes
+    .map((index) => tableSchema?.columns[index]?.name)
+    .find((name): name is string => name !== undefined && !keyColumnSet.has(name)) ?? null;
 
   const hiddenColumnsNote =
     hiddenColumns.size > 0 ? ` ${t('export.scopeHiddenColumns', { count: hiddenColumns.size })}` : '';
@@ -965,11 +969,15 @@ export default function TableDataViewer({
     }
   };
 
-  // 可编辑单元格组件
-  const EditableCell = ({
+  // 可编辑单元格。**是函数调用，不是组件**：在组件体里声明、再写成 <EditableCell />，
+  // 每次渲染都是一个新的组件类型，React 会把整行格子卸掉重挂——编辑时每敲一个字，
+  // 所有格子的 autoFocus 重新触发一遍，焦点跳到这一行最后一个输入框，
+  // 第二个字就打进了别的列
+  const renderEditableCell = ({
     value,
     field,
     isEditing,
+    autoFocus = false,
     isKeyColumn = false,
     dataType = '',
     align = 'left',
@@ -984,6 +992,8 @@ export default function TableDataViewer({
     value: any;
     field: string;
     isEditing: boolean;
+    /** 进入编辑时光标落在哪一格：只给一行里第一个可改的格子 */
+    autoFocus?: boolean;
     /** 这一列参与定位行：改它等于换一行的身份，所以不让改 */
     isKeyColumn?: boolean;
     /** 列的声明类型，决定编辑时用哪种控件 */
@@ -1039,7 +1049,7 @@ export default function TableDataViewer({
           allowDefault={dialect !== 'sqlite'}
           dataType={dataType}
           dialect={dialect}
-          autoFocus
+          autoFocus={autoFocus}
           onCommit={saveEdit}
           onCancel={cancelEdit}
         />
@@ -1593,21 +1603,22 @@ export default function TableDataViewer({
                                   return null;
                                 }
                                 return (
-                                <EditableCell
-                                  key={colIndex}
-                                  value={row[column.name]}
-                                  field={column.name}
-                                  isEditing={editState.mode === 'edit' && editState.rowIndex === rowIndex}
-                                  isKeyColumn={keyColumnSet.has(column.name)}
-                                  dataType={column.data_type}
-                                  align={alignments[colIndex]}
-                                  densityClass={densityClass}
-                                  frozenLeft={frozenOffsets[visiblePosition]}
-                                  lastFrozen={visiblePosition === lastFrozenPosition}
-                                  selected={cells.isSelected(rowIndex, visiblePosition)}
-                                  focused={cells.isFocused(rowIndex, visiblePosition)}
-                                  onSelect={(extend) => cells.selectCell(rowIndex, visiblePosition, extend)}
-                                  onContextMenu={(event) => {
+                                <React.Fragment key={colIndex}>
+                                {renderEditableCell({
+                                  value: row[column.name],
+                                  field: column.name,
+                                  isEditing: editState.mode === 'edit' && editState.rowIndex === rowIndex,
+                                  autoFocus: column.name === firstEditableColumn,
+                                  isKeyColumn: keyColumnSet.has(column.name),
+                                  dataType: column.data_type,
+                                  align: alignments[colIndex],
+                                  densityClass,
+                                  frozenLeft: frozenOffsets[visiblePosition],
+                                  lastFrozen: visiblePosition === lastFrozenPosition,
+                                  selected: cells.isSelected(rowIndex, visiblePosition),
+                                  focused: cells.isFocused(rowIndex, visiblePosition),
+                                  onSelect: (extend) => cells.selectCell(rowIndex, visiblePosition, extend),
+                                  onContextMenu: (event) => {
                                     event.preventDefault();
                                     // 右击一个不在选区里的格子先把它选上：菜单里那几条
                                     // 都作用于选区，否则复制出来的是别处的内容
@@ -1620,8 +1631,9 @@ export default function TableDataViewer({
                                       x: event.clientX,
                                       y: event.clientY
                                     });
-                                  }}
-                                />
+                                  }
+                                })}
+                                </React.Fragment>
                                 );
                               })}
                               {/* 操作列 */}
