@@ -49,7 +49,7 @@ import { nextColumnSort, type ColumnSort } from '../utils/resultSorting';
 import { ColumnSortButton } from './ColumnSortButton';
 import { useCellSelection } from '../hooks/useCellSelection';
 import { selectionSubset } from '../utils/cellSelection';
-import { headerBadgeWidth, toPositionalRows } from '../utils/columnWidths';
+import { EDIT_CONTROLS_WIDTH, headerBadgeWidth, toPositionalRows } from '../utils/columnWidths';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { ExportResultDialog, type ExportScope } from './ExportResultDialog';
@@ -631,7 +631,9 @@ export default function TableDataViewer({
     () => positionalRows.map((row) => visibleIndexes.map((index) => row[index] ?? null)),
     [positionalRows, visibleIndexes]
   );
-  const visibleWidths = visibleIndexes.map((index) => columnWidths[index] ?? 0);
+  // 行编辑时每格多一个「写入方式」下拉，列宽跟着让出来，见 EDIT_CONTROLS_WIDTH
+  const editExtra = editState.mode === 'edit' ? EDIT_CONTROLS_WIDTH : 0;
+  const visibleWidths = visibleIndexes.map((index) => (columnWidths[index] ?? 0) + editExtra);
   // 进入行编辑时光标放在第一个看得见、又不是键列的格子上
   const firstEditableColumn = visibleIndexes
     .map((index) => tableSchema?.columns[index]?.name)

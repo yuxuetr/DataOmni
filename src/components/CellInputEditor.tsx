@@ -67,6 +67,8 @@ export function CellInputEditor({
 }: CellInputEditorProps) {
   const t = useLanguageStore((state) => state.t);
   const [menuOpen, setMenuOpen] = useState(false);
+  /** 从菜单换了一档：换出来的编辑框要拿到焦点，否则人还得再点一下才能打字 */
+  const [focusAfterPick, setFocusAfterPick] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -87,6 +89,7 @@ export function CellInputEditor({
 
   const pick = (kind: CellInputKind) => {
     setMenuOpen(false);
+    setFocusAfterPick(kind === 'value' || kind === 'expression');
     switch (kind) {
       case 'value':
         // 从 NULL / 默认值切回来时给一个空文本，也就是空字符串——
@@ -129,11 +132,15 @@ export function CellInputEditor({
         </button>
       ) : (
         <ValueField
+          // 值与表达式之间切换时编辑框重挂一次，autoFocus 才会再生效。unset 与
+          // value 必须是同一个 key：在 unset 的框里敲第一个字它就变成 value，
+          // 那时重挂会把焦点弄丢
+          key={value.kind === 'expression' ? 'expression' : 'value'}
           value={value}
           onChange={onChange}
           editor={editor}
           dialect={dialect}
-          autoFocus={autoFocus}
+          autoFocus={autoFocus || focusAfterPick}
           onKeyDown={onKeyDown}
         />
       )}

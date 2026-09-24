@@ -53,6 +53,15 @@ export function headerBadgeWidth(column: { isPrimaryKey: boolean; isRequired: bo
 }
 
 /**
+ * 行编辑时每一格比显示时多出来的控件宽度：「写入方式」下拉（箭头 14 + 左右内边距 8
+ * + 边框 2，与编辑框之间 4 的间距）加编辑框自己的内边距与边框（16 + 2）。
+ *
+ * 列宽是按显示时的文字量出来的；编辑时不把这一段加回去，同样的值塞进编辑框
+ * 就被截掉一截（`secon`、日期只剩前半段）。
+ */
+export const EDIT_CONTROLS_WIDTH = 46;
+
+/**
  * 导出是为了让密度那道门能拿 `padding` 做对照：密度改了单元格的左右内边距，
  * 而列宽是照这个数算出来的，两边对不上就是静默截断。见 `gridColumns.test.ts`。
  */
