@@ -1003,7 +1003,6 @@ export const en: Translations = {
 
   'connect.testSucceeded': 'Connection test succeeded — the database is reachable',
   'connect.testFailed': 'Connection test failed: {reason}',
-  'connect.timeout': 'No response from {target} after {seconds}s. The port may be open while the handshake never completes — check the credentials, TLS settings and firewall.',
 
   'sshTunnel.enable': 'Connect through an SSH tunnel',
   'sshTunnel.enableHint':

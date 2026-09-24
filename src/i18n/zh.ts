@@ -1017,7 +1017,6 @@ export const zh = {
   // 连接流程
   'connect.testSucceeded': '连接测试成功！数据库连接正常',
   'connect.testFailed': '连接测试失败: {reason}',
-  'connect.timeout': '连接 {target} 超过 {seconds} 秒没有响应。端口可能通但握手未完成，请检查账号密码、TLS 设置与防火墙。',
 
   'sshTunnel.enable': '通过 SSH 隧道连接',
   'sshTunnel.enableHint': '数据库只在内网监听、需要先登跳板机时用这个。应用会自己开一个本地端口转发过去。',

@@ -18,6 +18,8 @@ import { useLanguageStore } from '../stores/languageStore';
  * （防火墙吞包、TLS 协商挂起、服务端不回应）底层 Promise 会一直挂着，
  * connectingProfileId 永不复位，所有连接行保持 disabled——点哪一行都没反应，
  * 也不给任何提示。
+ *
+ * 只套在建立会话那一步上；测试连接那一步为什么不套，见 connect 里的注释。
  */
 const CONNECT_TIMEOUT_MS = 15_000;
 
@@ -57,15 +59,12 @@ export function useProfileConnector(): ProfileConnector {
     setConnectingProfileId(profile.id);
 
     try {
-      // test_connection 返回带 SSL 参数的连接串，和实际建立会话用的是同一份
-      const connectionString = await withTimeout(
-        invoke<string>('test_connection', { config: profile }),
-        CONNECT_TIMEOUT_MS,
-        t('connect.timeout', {
-          target: profile.host || profile.database || '',
-          seconds: CONNECT_TIMEOUT_MS / 1000
-        })
-      );
+      // test_connection 返回带 SSL 参数的连接串，和实际建立会话用的是同一份。
+      // 这一步**不**加前端超时：它先读钥匙串，换了签名的包第一次读会弹授权框，
+      // 用户输密码的时间也被算进去，15 秒一到就报「主机无响应」——主机根本还没碰。
+      // 它里面碰网络的几段各自有后端超时（SSH 隧道、SQL Server、Oracle）；
+      // MySQL / PostgreSQL / SQLite 在这一步不碰网络，真正的连接在下面。
+      const connectionString = await invoke<string>('test_connection', { config: profile });
       await withTimeout(
         sessionManager.switchConnection(profile, connectionString),
         CONNECT_TIMEOUT_MS,

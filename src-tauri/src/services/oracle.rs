@@ -92,6 +92,11 @@ const CLIENT_DIR_ENV: &str = "DATAOMNI_ORACLE_CLIENT_DIR";
 /// 空闲连接留几条。Oracle 的一次登录要几百毫秒，目录查询是零星的，四条够了
 const MAX_IDLE: usize = 4;
 
+/// 登录的等待上限，与 SQL Server 那一份同值。TCP 通了而握手不回（防火墙吞包、
+/// 监听器挂住）时驱动会一直等；前端对测试连接不再另设超时——那一步还包括读
+/// 钥匙串，而钥匙串授权框该等多久由用户定。超时后那条阻塞线程还会跑完，结果丢掉。
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// 每次往返取多少行
 const FETCH_ARRAY_SIZE: u32 = 256;
 
@@ -231,15 +236,20 @@ const SESSION_FORMATS: &str = "ALTER SESSION SET \
 
 pub async fn connect(target: &OracleTarget) -> Result<Arc<Connection>, QueryError> {
   let target = target.clone();
-  blocking(move || {
+  let attempt = blocking(move || {
     ensure_client()?;
     let connection = Connector::new(&target.username, &target.password, &target.connect_string)
       .connect()
       .map_err(|error| query_error(&error, None))?;
     connection.execute(SESSION_FORMATS, &[]).map_err(|error| query_error(&error, None))?;
     Ok(Arc::new(connection))
-  })
-  .await
+  });
+  tokio::time::timeout(CONNECT_TIMEOUT, attempt).await.map_err(|_| {
+    QueryError::with_code(
+      CONNECTION_LOST_CODE,
+      format!("{CONNECTION_LOST}: timed out after {}s", CONNECT_TIMEOUT.as_secs()),
+    )
+  })?
 }
 
 /// 跑一段阻塞的驱动调用。线程池那一侧 panic 了也要变成一条错误——

@@ -1,7 +1,7 @@
 /**
  * 给一个不可取消的等待加一个上限。
  *
- * `invoke('test_connection')` 和建立会话都没有超时：TCP 连得上但握手卡住时
+ * 建立会话（插件的 `Database.load`）没有超时：TCP 连得上但握手卡住时
  * （防火墙吞包、TLS 协商挂起、服务端不回应），Promise 会一直挂着。此时界面上
  * `connectingProfileId` 永远不复位，所有连接行保持 disabled——点哪一行都没反应，
  * 也没有任何提示。
