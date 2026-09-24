@@ -88,6 +88,10 @@ esac
 for file in $files BASIC_LITE_LICENSE BASIC_LITE_README; do
   cp "$source_dir/$file" "$target/"
 done
+# mac 那份是只读的 dmg，拷出来的文件也不可写；打包时 tauri 把它们原样拷进
+# target/release/instantclient，于是第二次打包覆盖不了上一次的，报一句不带文件名的
+# Permission denied。只改权限位，不改文件内容。
+chmod u+w "$target"/*
 case "$archive" in
   *.dmg) hdiutil detach "$work/mnt" >/dev/null ;;
 esac
