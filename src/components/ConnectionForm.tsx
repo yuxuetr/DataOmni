@@ -356,6 +356,12 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     return { ...config, ssh_tunnel: normalizeSshTunnel(config.ssh_tunnel) };
   };
 
+  /**
+   * 正在做的是测试还是保存。store 的 `isLoading` 两件事共用一个，只拿它挑文案的话，
+   * 按「测试连接」时保存按钮也写着「保存中…」——像是按了一下就存了
+   */
+  const [pendingAction, setPendingAction] = useState<'test' | 'save' | null>(null);
+
   // 测试连接
   const handleTestConnection = async () => {
     if (!validateForm()) return;
@@ -364,10 +370,13 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     setDiagnosis(null);
     setDiagnosisError(null);
 
+    setPendingAction('test');
     try {
       await testConnection(submittableConfig());
     } catch {
       // 错误已在store中处理
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -398,6 +407,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   const handleSave = async () => {
     if (!validateForm()) return;
 
+    setPendingAction('save');
     try {
       if (mode === 'create') {
         await createConnection(
@@ -409,6 +419,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
       onClose();
     } catch {
       // 错误已在store中处理
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -1198,7 +1210,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 )}
               >
                 <TestTube size={14} />
-                <span>{isLoading ? t('form.testing') : t('form.testConnection')}</span>
+                <span>{pendingAction === 'test' ? t('form.testing') : t('form.testConnection')}</span>
               </button>
 
               {/* 只在测试失败之后出现：那才是「断在哪一段」这个问题被问出来的
@@ -1237,7 +1249,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 )}
               >
                 <Save size={14} />
-                <span>{isLoading ? t('form.saving') : t('form.saveConnection')}</span>
+                <span>{pendingAction === 'save' ? t('form.saving') : t('form.saveConnection')}</span>
               </button>
             </div>
           </div>
