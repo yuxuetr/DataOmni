@@ -373,8 +373,10 @@ fn mysql_node(key: &str, value: &JsonValue) -> Option<PlanNode> {
     JsonValue::Object(map) => {
       let mut node = PlanNode::new(key);
       node.target = map.get("table_name").and_then(JsonValue::as_str).map(str::to_string);
+      // MariaDB 的 FORMAT=JSON 只给 `rows`（估计要扫的行数），没有 MySQL 那两个键
       node.estimated_rows = number(map.get("rows_produced_per_join"))
-        .or_else(|| number(map.get("rows_examined_per_scan")));
+        .or_else(|| number(map.get("rows_examined_per_scan")))
+        .or_else(|| number(map.get("rows")));
       node.cost = map.get("cost_info").and_then(JsonValue::as_object).and_then(|cost| {
         number(cost.get("prefix_cost")).or_else(|| number(cost.get("query_cost")))
       });
@@ -972,6 +974,17 @@ mod tests {
     assert_eq!(loop_node.children[0].operation, "table");
     assert_eq!(loop_node.children[0].estimated_rows, Some(66.0));
     assert_eq!(loop_node.children[0].cost, Some(20.25));
+  }
+
+  /// 回归：MariaDB 的计划树上每个节点都是「est. —」
+  #[test]
+  fn mariadb_plans_carry_their_row_estimates_under_rows() {
+    let text = r#"{"query_block":{"select_id":1,"nested_loop":[{"table":{"table_name":"t","access_type":"ALL","rows":3,"filtered":100}},{"table":{"table_name":"p","access_type":"eq_ref","rows":1,"filtered":100}}]}}"#;
+    let plan = parse_plan(&DatabaseType::MySQL, &json_row(text), false).expect("parse");
+    let loop_node = &plan.roots[0].children[0];
+    let estimates: Vec<Option<f64>> =
+      loop_node.children.iter().map(|table| table.estimated_rows).collect();
+    assert_eq!(estimates, vec![Some(3.0), Some(1.0)]);
   }
 
   /// 不认识的容器键也要长出子树来。
