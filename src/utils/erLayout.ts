@@ -417,6 +417,46 @@ export function truncateLabel(text: string, maxWidth: number): string {
   return maxWidth > 1 ? `${cut}…` : cut;
 }
 
+/** 表头标题（12px 中粗）与右侧 schema（10px）每个半角字符大约占的像素，从打包版的截图上量的 */
+const TITLE_CHAR_PX = 6.6;
+const SCHEMA_CHAR_PX = 4.8;
+/** 标题与 schema 之间至少留的空 */
+const HEADER_GAP_PX = 8;
+
+/**
+ * 表头里的表名与 schema 各自截到多长。
+ *
+ * 两段都是 SVG 文本、一左一右对齐，放不下时不会自己让位：长表名会直接压在
+ * schema 上（`dataomni_meta_parent_myparams` 与 `dataomni_test` 叠成一团）。
+ * 表名优先；放不下时 schema 最多占三分之一宽度，各自带省略号截断。
+ */
+export function erHeaderLabels(
+  name: string,
+  schema: string | null,
+  innerWidth: number
+): { name: string; schema: string | null } {
+  const nameBudget = (px: number) => Math.floor(px / TITLE_CHAR_PX);
+  if (!schema) {
+    return { name: truncateLabel(name, nameBudget(innerWidth)), schema: null };
+  }
+  const namePx = displayWidth(name) * TITLE_CHAR_PX;
+  const schemaPx = displayWidth(schema) * SCHEMA_CHAR_PX;
+  if (namePx + HEADER_GAP_PX + schemaPx <= innerWidth) {
+    return { name, schema };
+  }
+  const schemaBudgetPx = Math.min(schemaPx, innerWidth / 3);
+  return {
+    name: truncateLabel(name, nameBudget(innerWidth - HEADER_GAP_PX - schemaBudgetPx)),
+    schema: truncateLabel(schema, Math.floor(schemaBudgetPx / SCHEMA_CHAR_PX))
+  };
+}
+
+/** 按上面两个字号估出来的像素宽，给测试核对「放得下」用 */
+export function erHeaderWidth(labels: { name: string; schema: string | null }): number {
+  const schemaPx = labels.schema ? HEADER_GAP_PX + displayWidth(labels.schema) * SCHEMA_CHAR_PX : 0;
+  return displayWidth(labels.name) * TITLE_CHAR_PX + schemaPx;
+}
+
 function displayWidth(text: string): number {
   let width = 0;
   for (const character of text) {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_ER_METRICS,
+  erHeaderLabels,
+  erHeaderWidth,
   columnAnchor,
   erSchemas,
   filterErDiagram,
@@ -461,5 +463,32 @@ describe('isErFilterActive', () => {
     expect(isErFilterActive({ ...NO_ER_FILTER, schemas: ['public'] })).toBe(true);
     expect(isErFilterActive({ ...NO_ER_FILTER, focus: 'orders' })).toBe(true);
     expect(isErFilterActive({ ...NO_ER_FILTER, hideUnlinked: true })).toBe(true);
+  });
+});
+
+describe('表头的表名与 schema', () => {
+  const inner = DEFAULT_ER_METRICS.nodeWidth - 20;
+
+  it('长表名不再压在 schema 上', () => {
+    // 回归：打包版上两段叠成一团
+    const labels = erHeaderLabels('dataomni_meta_parent_myparams', 'dataomni_test', inner);
+    expect(erHeaderWidth(labels)).toBeLessThanOrEqual(inner);
+    expect(labels.name.endsWith('…')).toBe(true);
+  });
+
+  it('放得下就原样', () => {
+    expect(erHeaderLabels('reg_t', 'dataomni_test', inner)).toEqual({ name: 'reg_t', schema: 'dataomni_test' });
+  });
+
+  it('表名优先：schema 最多占三分之一', () => {
+    const labels = erHeaderLabels('orders', 'a_really_long_schema_name_for_reports', inner);
+    expect(labels.name).toBe('orders');
+    expect(erHeaderWidth(labels)).toBeLessThanOrEqual(inner);
+  });
+
+  it('没有 schema 时表名可以用满整行', () => {
+    const labels = erHeaderLabels('x'.repeat(80), null, inner);
+    expect(labels.schema).toBeNull();
+    expect(erHeaderWidth(labels)).toBeLessThanOrEqual(inner);
   });
 });

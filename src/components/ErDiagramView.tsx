@@ -37,6 +37,7 @@ import {
   tableKey,
   toErLinks,
   toErTables,
+  erHeaderLabels,
   truncateLabel,
   type ErFilter,
   type ErLink,
@@ -586,6 +587,8 @@ function TableBox({
   onDragStart: (event: React.PointerEvent) => void;
 }) {
   const needle = query.trim().toLowerCase();
+  // 左右各留 10px，和下面两段文本的 x 一致
+  const header = erHeaderLabels(node.table.name, node.table.schema ?? null, node.width - 20);
 
   return (
     // 没命中的表压暗而不是隐藏：藏起来会让图的形状跟着变，
@@ -629,16 +632,18 @@ function TableBox({
         y={node.y + METRICS.headerHeight / 2 + 4}
         className="fill-fg text-[12px] font-medium"
       >
-        {node.table.name}
+        {/* 截断了也能悬停看全名 */}
+        <title>{node.table.schema ? `${node.table.schema}.${node.table.name}` : node.table.name}</title>
+        {header.name}
       </text>
-      {node.table.schema && (
+      {header.schema && (
         <text
           x={node.x + node.width - 10}
           y={node.y + METRICS.headerHeight / 2 + 4}
           textAnchor="end"
           className="fill-fg-subtle text-[10px]"
         >
-          {node.table.schema}
+          {header.schema}
         </text>
       )}
 
