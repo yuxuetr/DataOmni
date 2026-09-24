@@ -177,10 +177,14 @@ pub async fn sqlx_select(
   sql: String,
   params: Vec<serde_json::Value>,
   database_instances: State<'_, tauri_plugin_sql::DbInstances>,
-) -> Result<Vec<indexmap::IndexMap<String, serde_json::Value>>, String> {
+) -> Result<Vec<indexmap::IndexMap<String, serde_json::Value>>, crate::services::QueryError> {
   let pool = crate::services::sqlx_pool::shared(&database_instances, &connection_string)
     .await
-    .ok_or_else(|| crate::commands::database_commands::DB_SESSION_NOT_CONNECTED.to_string())?;
+    .ok_or_else(|| {
+      crate::services::QueryError::message(
+        crate::commands::database_commands::DB_SESSION_NOT_CONNECTED,
+      )
+    })?;
   crate::services::sqlx_pool::select(&pool, &sql, params).await
 }
 

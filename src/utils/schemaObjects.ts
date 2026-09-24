@@ -278,3 +278,17 @@ export function toTriggers(rows: readonly MetadataRow[]): TriggerInfo[] {
     definition: text(row.definition)
   }));
 }
+
+/**
+ * 服务端缺一个目录查询要用的函数（SQLSTATE 42883 undefined_function）。
+ *
+ * 实际撞上的是 CockroachDB：没有 `pg_get_triggerdef()`，触发器那段报
+ * 「unknown function: pg_get_triggerdef()」。原话印在结构页上，读的人会以为是
+ * 应用坏了；这其实是「这个服务端列不出触发器」。按码认，不按措辞认
+ */
+export function isUndefinedFunctionError(reason: unknown): boolean {
+  return typeof reason === 'object'
+    && reason !== null
+    && (reason as { code?: unknown }).code === '42883';
+}
+

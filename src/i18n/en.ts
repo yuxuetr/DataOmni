@@ -152,6 +152,7 @@ export const en: Translations = {
   'schema.checks.noCatalog': 'This database type has no check-constraint catalog',
   'schema.triggers': 'Triggers',
   'schema.triggers.empty': 'No triggers',
+  'schema.triggers.unsupported': "This server has no function for reading trigger definitions (pg_get_triggerdef), so its triggers can't be listed.",
   'schema.definition': 'Definition',
   'schema.definition.noCreateTable': '{database} does not provide a CREATE TABLE statement (it does for views). DDL rebuilt from the catalog cannot be guaranteed equivalent to the original table, so none is generated here — the columns, indexes, foreign keys, check constraints and triggers above are authoritative.',
   'schema.definition.loading': 'Reading the definition…',
@@ -977,6 +978,7 @@ export const en: Translations = {
   'error.backend.fileTooLarge': 'The file is larger than the read limit (path · size · limit): {detail}',
   'error.backend.credentialStoreRejected': 'The system keychain refused access: {detail}. The usual cause is that the entry was written by a different build of this app (unsigned development builds change signing identity on every rebuild). Re-enter and save the password in the connection settings to recreate it.',
   'error.backend.connectionLost': 'The connection to the database was lost, so this query did not run. Reconnect and try again. Details: {detail}',
+  'error.backend.poolTimedOut': 'No database connection became available within 30 seconds: the server may be unreachable, or every connection is busy with another query. Details: {detail}',
   'error.backend.dbSessionNotConnected':
     'No database session. Connect to this database before running statements; if the UI still shows it as connected, the session has gone stale — disconnect and connect again.',
   'error.backend.sshAuthRejected':

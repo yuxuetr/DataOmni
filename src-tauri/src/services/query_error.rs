@@ -16,6 +16,8 @@ pub const QUERY_TIMEOUT_CODE: &str = "QUERY_TIMEOUT";
 pub const CONNECTION_LOST_CODE: &str = "CONNECTION_LOST";
 /// 消息侧的码，冒号后面是驱动的原话（"error communicating with database: …"）
 pub const CONNECTION_LOST: &str = "DATAOMNI_CONNECTION_LOST";
+/// 在 acquire 超时内没拿到连接。只换措辞、不带 `code`：理由见下面 `PoolTimedOut` 那段
+pub const POOL_TIMED_OUT: &str = "DATAOMNI_POOL_TIMED_OUT";
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct QueryError {
@@ -105,6 +107,11 @@ impl From<sqlx::Error> for QueryError {
       {
         return Self::with_code(CONNECTION_LOST_CODE, format!("{CONNECTION_LOST}: {error}"));
       }
+      // 驱动原话是「pool timed out while waiting for an open connection」，
+      // 读的人不知道该查网络还是该等
+      if matches!(error, sqlx::Error::PoolTimedOut) {
+        return Self::message(format!("{POOL_TIMED_OUT}: {error}"));
+      }
       // 剩下的没有数据库侧结构可取，只有一句话
       return Self::message(error.to_string());
     };
@@ -188,7 +195,9 @@ mod tests {
   /// 一条长查询占着连接时就是这个错，那时重连只会打断它
   #[test]
   fn a_busy_pool_is_not_a_lost_connection() {
-    assert_eq!(QueryError::from(sqlx::Error::PoolTimedOut).code, None);
+    let timed_out = QueryError::from(sqlx::Error::PoolTimedOut);
+    assert_eq!(timed_out.code, None);
+    assert!(timed_out.message.starts_with(POOL_TIMED_OUT), "{}", timed_out.message);
   }
 
   /// 数据库开口说话了，就说明连接是好的——哪怕说的是「语法错误」

@@ -13,6 +13,7 @@
 //! 那两条命令持着 `DbInstances` 的读锁等网络，理由见 [`shared`]。SQLite 仍走插件：
 //! 文件路径的映射和「不存在就建」对本地文件是合适的，本地查询也不会挂在网络上。
 use crate::services::plugin_decode::{mysql_to_json, postgres_to_json};
+use crate::services::QueryError;
 use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
@@ -99,12 +100,17 @@ pub async fn close(instances: &DbInstances, connection_string: &str) -> bool {
 }
 
 /// 前端目录查询的那条路，照插件 `select` 的规矩绑参数、解码，返回同样的形状：
-/// 一行一个按列序的对象，值不带类型标签。数字一律按 f64 绑，也是插件的规矩
+/// 一行一个按列序的对象，值不带类型标签。数字一律按 f64 绑，也是插件的规矩。
+///
+/// 错误不照抄插件：插件给的是驱动原话（「expected to read 4 bytes, got 0 bytes at
+/// EOF」），这里和执行查询走同一个归类（`QueryError::from`）：断线、取不到连接
+/// 都带上前端认得的码，数据库报的错带着 SQLSTATE / 错误号，和 SQL Server、Oracle
+/// 的目录命令返回同一个形状
 pub async fn select(
   pool: &DbPool,
   sql: &str,
   params: Vec<JsonValue>,
-) -> Result<Vec<IndexMap<String, JsonValue>>, String> {
+) -> Result<Vec<IndexMap<String, JsonValue>>, QueryError> {
   macro_rules! bind_like_plugin {
     ($query:ident) => {
       for value in params {
@@ -124,8 +130,8 @@ pub async fn select(
         .map(|row| {
           let mut values = IndexMap::new();
           for (index, column) in row.columns().iter().enumerate() {
-            let raw = row.try_get_raw(index).map_err(|error| error.to_string())?;
-            values.insert(column.name().to_string(), $to_json(raw)?);
+            let raw = row.try_get_raw(index).map_err(QueryError::from)?;
+            values.insert(column.name().to_string(), $to_json(raw).map_err(QueryError::message)?);
           }
           Ok(values)
         })
@@ -136,16 +142,16 @@ pub async fn select(
     DbPool::MySql(pool) => {
       let mut query = sqlx::query(sql);
       bind_like_plugin!(query);
-      let rows = query.fetch_all(pool).await.map_err(|error| error.to_string())?;
+      let rows = query.fetch_all(pool).await.map_err(QueryError::from)?;
       decode_rows!(rows, mysql_to_json)
     }
     DbPool::Postgres(pool) => {
       let mut query = sqlx::query(sql);
       bind_like_plugin!(query);
-      let rows = query.fetch_all(pool).await.map_err(|error| error.to_string())?;
+      let rows = query.fetch_all(pool).await.map_err(QueryError::from)?;
       decode_rows!(rows, postgres_to_json)
     }
-    DbPool::Sqlite(_) => Err("sqlite catalog queries go through the plugin".to_string()),
+    DbPool::Sqlite(_) => Err(QueryError::message("sqlite catalog queries go through the plugin")),
   }
 }
 

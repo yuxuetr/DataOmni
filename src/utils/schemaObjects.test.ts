@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isUndefinedFunctionError,
   DEFAULT_EXPRESSION_COLUMN_PLACEHOLDER,
   collectSchemaObjects,
   failAllSchemaObjects,
@@ -320,5 +321,18 @@ describe('collectSchemaObjects', () => {
       ['checkConstraints', 'ddl', 'foreignKeys', 'indexes', 'triggers']
     );
     expect(new Set(Object.values(objects.failures))).toEqual(new Set(['boom']));
+  });
+});
+
+describe('服务端缺目录函数', () => {
+  it('按 SQLSTATE 42883 认', () => {
+    expect(isUndefinedFunctionError({ code: '42883', message: 'unknown function: pg_get_triggerdef()' })).toBe(true);
+  });
+
+  // 反向：别的数据库错误、字符串、断线都不算——那些要照原样报
+  it('别的错误不算', () => {
+    expect(isUndefinedFunctionError({ code: '42P01', message: 'relation does not exist' })).toBe(false);
+    expect(isUndefinedFunctionError('unknown function: pg_get_triggerdef()')).toBe(false);
+    expect(isUndefinedFunctionError(null)).toBe(false);
   });
 });

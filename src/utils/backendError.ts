@@ -95,7 +95,8 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_ROW_COUNT_MISMATCH: 'error.backend.rowCountMismatch',
   DATAOMNI_FILE_TOO_LARGE: 'error.backend.fileTooLarge',
   DATAOMNI_CREDENTIAL_STORE_REJECTED: 'error.backend.credentialStoreRejected',
-  DATAOMNI_CONNECTION_LOST: 'error.backend.connectionLost'
+  DATAOMNI_CONNECTION_LOST: 'error.backend.connectionLost',
+  DATAOMNI_POOL_TIMED_OUT: 'error.backend.poolTimedOut'
 };
 
 export interface BackendError {

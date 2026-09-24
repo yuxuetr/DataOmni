@@ -62,6 +62,7 @@ import {
   failAllSchemaObjects,
   groupForeignKeyRows,
   groupIndexRows,
+  isUndefinedFunctionError,
   joinDdlStatements,
   toCheckConstraints,
   toTriggers
@@ -322,7 +323,12 @@ export default function TableDataViewer({
           ? select(queries.check_constraints).then((rows) => toCheckConstraints(asRows(rows)))
           : Promise.resolve(null),
         // SQLite 的 pragma 之外的目录查询同样只认一个表名参数
-        select(queries.triggers).then((rows) => toTriggers(asRows(rows)))
+        select(queries.triggers).then(
+          (rows) => toTriggers(asRows(rows)),
+          (reason: unknown) => {
+            throw isUndefinedFunctionError(reason) ? new Error(t('schema.triggers.unsupported')) : reason;
+          }
+        )
       ]);
 
       const describe = (reason: unknown) => describeError(reason, t('schema.readObjectsFailed'));

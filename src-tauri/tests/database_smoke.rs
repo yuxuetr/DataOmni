@@ -1665,6 +1665,20 @@ async fn postgres_catalog_results_are_decodable_by_the_plugin() {
     let rows = match query.fetch_all(&pool).await {
       Err(error) if cockroach && request.name == "triggers" => {
         assert_cockroach_refuses_the_trigger_catalog(error);
+        // 界面按这个码把它说成「这个服务端列不出触发器」（`isUndefinedFunctionError`）
+        let params = request
+          .params
+          .iter()
+          .map(|param| param.clone().map_or(serde_json::Value::Null, serde_json::Value::String))
+          .collect();
+        let app_error = dataomni_lib::services::sqlx_pool::select(
+          &DbPool::Postgres(pool.clone()),
+          &request.sql,
+          params,
+        )
+        .await
+        .expect_err("CockroachDB has no pg_get_triggerdef");
+        assert_eq!(app_error.code.as_deref(), Some("42883"), "{app_error}");
         continue;
       }
       result => {
