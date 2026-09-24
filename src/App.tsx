@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { CLOSE_TAB_MENU_EVENT, SHORTCUTS, currentPlatform, matchesShortcut } from './utils/shortcuts';
+import {
+  CLOSE_TAB_MENU_EVENT,
+  SHORTCUTS,
+  currentPlatform,
+  matchesShortcut,
+  tabShortcut
+} from './utils/shortcuts';
+import { tabIndexForShortcut } from './utils/tabListNavigation';
+import { planCloseOthers } from './utils/closeOtherTabs';
 import { PanelLeftOpen } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { RenderErrorBoundary } from './components/RenderErrorBoundary';
@@ -36,6 +44,7 @@ import {
   createErDiagramWorkspaceTab,
   createSqlWorkspaceTab,
   createTableWorkspaceTab,
+  orderWorkspaceTabs,
   tabsShowingTable,
   workspaceTabId
 } from './contracts/workspace';
@@ -177,6 +186,18 @@ function App() {
       if (matchesShortcut(event, SHORTCUTS.reopenClosedTab)) {
         event.preventDefault();
         reopenClosedTab();
+        return;
+      }
+
+      const tabTarget = tabShortcut(event);
+      if (tabTarget) {
+        const ordered = orderWorkspaceTabs(tabs);
+        const current = ordered.findIndex((tab) => tab.id === activeTabId);
+        const index = tabIndexForShortcut(tabTarget, current, ordered.length);
+        if (index !== null) {
+          event.preventDefault();
+          activateTab(ordered[index].id);
+        }
         return;
       }
 
@@ -344,6 +365,22 @@ function App() {
     }
 
     finishCloseTab(tabId, false);
+  };
+
+  /** 标签右键菜单的「关闭其他标签」。关哪些、草稿怎么办见 `planCloseOthers` */
+  const closeOtherTabs = (keepId: string) => {
+    const plan = planCloseOthers(
+      tabs,
+      keepId,
+      (tab) => selectSqlDocumentHasUnsavedContent(useQueryStore.getState(), tab.id),
+      (tab) => {
+        const tableKey = tableKeyOfTab(tab);
+        return tableKey !== null && pendingChangeCount(tableKey) > 0;
+      }
+    );
+    for (const { id, retainDraft } of plan.close) {
+      finishCloseTab(id, retainDraft);
+    }
   };
 
   /**
@@ -850,6 +887,12 @@ function App() {
             setTabMenu(null);
             closeWorkspaceTab(menuTab.id);
           }}
+          onCloseOthers={tabs.some((tab) => tab.id !== menuTab.id && !tab.pinned)
+            ? () => {
+                setTabMenu(null);
+                closeOtherTabs(menuTab.id);
+              }
+            : undefined}
           onDismiss={() => setTabMenu(null)}
         />
       )}

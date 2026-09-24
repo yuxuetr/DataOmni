@@ -790,6 +790,7 @@ export const zh = {
   'tab.unpin': '取消固定',
   'tab.duplicateAction': '复制标签',
   'tab.closeAction': '关闭标签',
+  'tab.closeOthers': '关闭其他标签',
   'tab.unsaved': '有未保存的更改',
   'tab.newQueryTab': '新建查询标签',
   'tab.reopenClosed': '重新打开最近关闭的标签',

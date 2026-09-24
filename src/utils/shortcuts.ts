@@ -141,5 +141,48 @@ export const SHORTCUTS = {
   // 这两条只用于画提示：判定处比的是 `event.code === 'Space'`，因为 macOS 上
   // ⌥Space 产生的是不换行空格（U+00A0），按 `key` 比会漏掉它
   copyRow: { key: ' ', shift: true },
-  copyColumn: { key: ' ', alt: true }
+  copyColumn: { key: ' ', alt: true },
+  // 同样只用于画提示：按住 Shift 时 `key` 是 `}` / `{`（还跟键盘布局走），
+  // 判定比的是 `event.code`，见 `tabShortcut`
+  nextTab: { key: ']', mod: true, shift: true },
+  previousTab: { key: '[', mod: true, shift: true }
 } as const satisfies Record<string, Shortcut>;
+
+/** 切标签的快捷键要去哪儿：第几个（从 0 数）、最后一个、或者前后挪一个 */
+export type TabShortcutTarget =
+  | { kind: 'index'; index: number }
+  | { kind: 'last' }
+  | { kind: 'step'; delta: 1 | -1 };
+
+const TAB_STEP_CODES: Record<string, { key: string; delta: 1 | -1 }> = {
+  BracketRight: { key: ']', delta: 1 },
+  BracketLeft: { key: '[', delta: -1 }
+};
+
+/**
+ * ⌘1…⌘8 切到第 N 个标签，⌘9 是最后一个——浏览器和编辑器的通用惯例，
+ * 不是「第 9 个」；⌘⇧] / ⌘⇧[ 下一个 / 上一个（Safari、Chrome、VS Code 都这么按）。
+ * 其余平台把 ⌘ 换成 Ctrl。
+ */
+export function tabShortcut(
+  event: ShortcutEvent & { code?: string },
+  platform: ShortcutPlatform = currentPlatform()
+): TabShortcutTarget | null {
+  const step = event.code ? TAB_STEP_CODES[event.code] : undefined;
+  // 不能写 `{ ...event, key }`：真的 KeyboardEvent 上这几个字段是原型上的 getter，
+  // 展开出来只剩 key，修饰键全丢
+  const physical: ShortcutEvent = {
+    key: step?.key ?? '',
+    metaKey: event.metaKey,
+    ctrlKey: event.ctrlKey,
+    shiftKey: event.shiftKey,
+    altKey: event.altKey
+  };
+  if (step && matchesShortcut(physical, { key: step.key, mod: true, shift: true }, platform)) {
+    return { kind: 'step', delta: step.delta };
+  }
+  if (/^[1-9]$/.test(event.key) && matchesShortcut(event, { key: event.key, mod: true }, platform)) {
+    return event.key === '9' ? { kind: 'last' } : { kind: 'index', index: Number(event.key) - 1 };
+  }
+  return null;
+}

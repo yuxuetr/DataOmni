@@ -1,4 +1,4 @@
-import { Copy, Pin, PinOff, X } from 'lucide-react';
+import { Copy, CopyX, Pin, PinOff, X } from 'lucide-react';
 import type { WorkspaceTab } from '../contracts/workspace';
 import { useLanguageStore } from '../stores/languageStore';
 import { useContextMenu } from '../hooks/useContextMenu';
@@ -10,6 +10,8 @@ interface WorkspaceTabMenuProps {
   /** 只有 SQL 标签可复制，其它类型不传 */
   onDuplicate?: () => void;
   onClose: () => void;
+  /** 没有别的标签可关时不传 */
+  onCloseOthers?: () => void;
   onDismiss: () => void;
 }
 
@@ -19,6 +21,7 @@ export function WorkspaceTabMenu({
   onTogglePinned,
   onDuplicate,
   onClose,
+  onCloseOthers,
   onDismiss
 }: WorkspaceTabMenuProps) {
   const t = useLanguageStore((state) => state.t);
@@ -51,6 +54,13 @@ export function WorkspaceTabMenu({
         <X size={14} />
         <span>{t('tab.closeAction')}</span>
       </button>
+
+      {onCloseOthers && (
+        <button type="button" role="menuitem" className={itemClass} onClick={onCloseOthers}>
+          <CopyX size={14} />
+          <span>{t('tab.closeOthers')}</span>
+        </button>
+      )}
     </div>
   );
 }

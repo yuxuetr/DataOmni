@@ -8,6 +8,7 @@ import {
   formatShortcut,
   hasCommandModifier,
   matchesShortcut,
+  tabShortcut,
   type Shortcut,
   type ShortcutEvent
 } from './shortcuts';
@@ -221,3 +222,42 @@ describe('原生菜单与快捷键注册表是同一份', () => {
     expect(menuSource).not.toMatch(/PredefinedMenuItem::close_window/);
   });
 });
+
+describe('切标签的快捷键', () => {
+  it('⌘1…⌘8 是第几个，⌘9 是最后一个', () => {
+    expect(tabShortcut(press('1', { metaKey: true }), 'mac')).toEqual({ kind: 'index', index: 0 });
+    expect(tabShortcut(press('8', { metaKey: true }), 'mac')).toEqual({ kind: 'index', index: 7 });
+    expect(tabShortcut(press('9', { metaKey: true }), 'mac')).toEqual({ kind: 'last' });
+    expect(tabShortcut(press('3', { ctrlKey: true }), 'other')).toEqual({ kind: 'index', index: 2 });
+  });
+
+  it('⌘⇧] / ⌘⇧[ 按物理键认：按住 Shift 时 key 已经是 } / {', () => {
+    const next = { ...press('}', { metaKey: true, shiftKey: true }), code: 'BracketRight' };
+    const previous = { ...press('{', { metaKey: true, shiftKey: true }), code: 'BracketLeft' };
+    expect(tabShortcut(next, 'mac')).toEqual({ kind: 'step', delta: 1 });
+    expect(tabShortcut(previous, 'mac')).toEqual({ kind: 'step', delta: -1 });
+  });
+
+  // 真的 KeyboardEvent 的字段是原型上的 getter，不是自有属性——打包版里就栽在这上面
+  it('修饰键是 getter 时也认', () => {
+    class NativeLike {
+      get key() { return '}'; }
+      get code() { return 'BracketRight'; }
+      get metaKey() { return true; }
+      get ctrlKey() { return false; }
+      get shiftKey() { return true; }
+      get altKey() { return false; }
+    }
+    expect(tabShortcut(new NativeLike(), 'mac')).toEqual({ kind: 'step', delta: 1 });
+  });
+
+  // 反向：不带命令键的数字是在打字；⌘] 不带 Shift 是 CodeMirror 的「增加缩进」
+  it('别的组合不算', () => {
+    expect(tabShortcut(press('1'), 'mac')).toBeNull();
+    expect(tabShortcut(press('1', { metaKey: true, shiftKey: true }), 'mac')).toBeNull();
+    expect(tabShortcut(press('0', { metaKey: true }), 'mac')).toBeNull();
+    expect(tabShortcut({ ...press(']', { metaKey: true }), code: 'BracketRight' }, 'mac')).toBeNull();
+    expect(tabShortcut(press('1', { ctrlKey: true }), 'mac')).toBeNull();
+  });
+});
+

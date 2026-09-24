@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   activatesFocusedTab,
   nextTabIndex,
+  tabIndexForShortcut,
   workspaceTabDomId,
   WORKSPACE_PANEL_DOM_ID
 } from './tabListNavigation';
@@ -68,5 +69,21 @@ describe('标签与内容区互相指', () => {
     // 标签 id 是 `连接:类型:对象` 这种，直接拿来当 DOM id 容易撞上别处
     expect(workspaceTabDomId('x')).toBe('workspace-tab-x');
     expect(WORKSPACE_PANEL_DOM_ID).toBe('workspace-panel');
+  });
+});
+
+describe('切标签快捷键落到第几个', () => {
+  it('没有那么多标签就什么也不做', () => {
+    expect(tabIndexForShortcut({ kind: 'index', index: 1 }, 0, 3)).toBe(1);
+    expect(tabIndexForShortcut({ kind: 'index', index: 4 }, 0, 3)).toBeNull();
+    expect(tabIndexForShortcut({ kind: 'last' }, 0, 3)).toBe(2);
+    expect(tabIndexForShortcut({ kind: 'last' }, 0, 0)).toBeNull();
+  });
+
+  it('前后挪一个时两头回绕', () => {
+    expect(tabIndexForShortcut({ kind: 'step', delta: 1 }, 2, 3)).toBe(0);
+    expect(tabIndexForShortcut({ kind: 'step', delta: -1 }, 0, 3)).toBe(2);
+    // 没有活动标签（欢迎页）时从第一个开始
+    expect(tabIndexForShortcut({ kind: 'step', delta: -1 }, -1, 3)).toBe(0);
   });
 });

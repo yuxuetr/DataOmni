@@ -63,6 +63,7 @@ export function WorkspaceTabBar({
   const t = useLanguageStore((state) => state.t);
   const ordered = orderWorkspaceTabs(tabs);
   const tabRefs = useRef(new Map<string, HTMLDivElement>());
+  const listRef = useRef<HTMLDivElement>(null);
   /**
    * 键盘焦点落在哪个标签上。和 `activeTabId` 分开：方向键只挪焦点，
    * 按 Enter 才真的切——切到表标签要重新打库，按住方向键滑过去就是一串查询
@@ -73,7 +74,20 @@ export function WorkspaceTabBar({
   // 否则下次 Tab 进标签栏会落在一个早就不相干的位置上
   useEffect(() => {
     setFocusedTabId(activeTabId);
+    // 标签多到溢出时，用快捷键或命令面板切到一个看不见的标签，得把它滚出来
+    if (activeTabId) {
+      tabRefs.current.get(activeTabId)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
   }, [activeTabId]);
+
+  // 标签栏只能横着滚，而多数鼠标只有竖着的滚轮：不转过来的话，溢出的标签
+  // 只有触控板横扫才够得着。有横向分量（触控板）时原样交给浏览器
+  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    const list = listRef.current;
+    if (list && Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+      list.scrollLeft += event.deltaY;
+    }
+  };
 
   // 焦点所在的标签被关掉了：退回当前活动标签，别把 tabIndex=0 留在一个
   // 已经不存在的 id 上——那会让整条标签栏都 Tab 不进去
@@ -107,7 +121,9 @@ export function WorkspaceTabBar({
     <div
       role="tablist"
       aria-label={t('tab.listLabel')}
+      ref={listRef}
       onKeyDown={handleKeyDown}
+      onWheel={handleWheel}
       className="flex items-stretch bg-surface-sunken border-b border-line overflow-x-auto"
     >
       {ordered.map((tab) => {

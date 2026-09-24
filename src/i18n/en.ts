@@ -765,6 +765,7 @@ export const en: Translations = {
   'tab.unpin': 'Unpin tab',
   'tab.duplicateAction': 'Duplicate tab',
   'tab.closeAction': 'Close tab',
+  'tab.closeOthers': 'Close other tabs',
   'tab.unsaved': 'Unsaved changes',
   'tab.newQueryTab': 'New query tab',
   'tab.reopenClosed': 'Reopen the last closed tab',

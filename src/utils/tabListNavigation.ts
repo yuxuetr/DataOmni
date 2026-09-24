@@ -1,3 +1,5 @@
+import type { TabShortcutTarget } from './shortcuts';
+
 /**
  * 标签在 DOM 里的 id，以及内容区那一块的 id。
  *
@@ -42,6 +44,28 @@ export function nextTabIndex(key: string, current: number, count: number): numbe
       return count - 1;
     default:
       return null;
+  }
+}
+
+/**
+ * 切标签的快捷键落到第几个。没有那么多标签就返回 `null`（⌘5 时只开了三个，
+ * 什么也不做，和浏览器一样）；前后挪一个时两头回绕，同方向键
+ */
+export function tabIndexForShortcut(
+  target: TabShortcutTarget,
+  current: number,
+  count: number
+): number | null {
+  if (count <= 0) {
+    return null;
+  }
+  switch (target.kind) {
+    case 'index':
+      return target.index < count ? target.index : null;
+    case 'last':
+      return count - 1;
+    case 'step':
+      return current < 0 ? 0 : (current + target.delta + count) % count;
   }
 }
 
