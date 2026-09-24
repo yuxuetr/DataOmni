@@ -249,6 +249,21 @@ async fn mysql_supports_basic_read_write() {
   }
   assert_tagged_values(precise, &expected);
 
+  // `_bin` 排序规则的文本在线协议上带 BINARY 标志，和真正的二进制分不开——曾经
+  // 被画成 0x616263。MariaDB 的 JSON 列（LONGTEXT + utf8mb4_bin）就是这个样子
+  let collated = execute_query(
+    &DbPool::MySql(pool.clone()),
+    "SELECT CONVERT('多字节 abc' USING utf8mb4) COLLATE utf8mb4_bin AS bin_text, BINARY 'abc' AS text_bytes",
+  )
+  .await
+  .expect("read _bin collated text");
+  let QueryExecutionResult::Rows { rows, .. } = &collated else {
+    panic!("expected a row result");
+  };
+  assert_eq!(rows[0]["bin_text"], "多字节 abc");
+  // 字节本身就是文本：照文本显示，和它的来历无关
+  assert_eq!(rows[0]["text_bytes"], "abc");
+
   assert_transaction_binding(
     &QuerySessionState::default(),
     "mysql-session",

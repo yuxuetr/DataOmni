@@ -1138,9 +1138,12 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, QueryError> {
         },
       )
     }
-    "TINYBLOB" | "MEDIUMBLOB" | "BLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" | "GEOMETRY" => {
-      tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>())
+    "TINYBLOB" | "MEDIUMBLOB" | "BLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => {
+      let bytes = ValueRef::to_owned(&value).try_decode::<Vec<u8>>().map_err(display_error)?;
+      Ok(mysql_bytes_value(bytes))
     }
+    // WKB：内容上可能恰好是合法 UTF-8，但它从来不是文本
+    "GEOMETRY" => tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>()),
     "NULL" => Ok(JsonValue::Null),
     _ => Err(QueryError::message(format!("{UNSUPPORTED_COLUMN_TYPE}: {type_name}"))),
   }
@@ -1317,6 +1320,28 @@ where
   Ok(tagged_value("json", serialized))
 }
 
+/// MySQL 家的「二进制」列里哪些其实是文本。
+///
+/// sqlx 只凭列上的 BINARY 标志给类型名，拿不到字符集；而 `_bin` 排序规则的文本列
+/// 也带这个标志——MariaDB 的 JSON 列（LONGTEXT + utf8mb4_bin）、大小写敏感的
+/// varchar、MySQL 8 的 utf8mb4_0900_bin，于是全被画成 0x7b2261…。
+/// 按内容判：合法 UTF-8 且没有控制字符（制表、换行除外）就当文本。真正的二进制
+/// （哈希、UUID、图片）几乎不可能恰好满足：16 个随机字节全落在可打印范围的概率
+/// 在 1e-7 量级。
+fn mysql_bytes_value(bytes: Vec<u8>) -> JsonValue {
+  match String::from_utf8(bytes) {
+    Ok(text) if !text.chars().any(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r')) => {
+      JsonValue::String(text)
+    }
+    Ok(text) => binary_json(text.as_bytes()),
+    Err(error) => binary_json(error.as_bytes()),
+  }
+}
+
+fn binary_json(bytes: &[u8]) -> JsonValue {
+  tagged_value("binary", bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>())
+}
+
 fn tagged_binary_value<E>(value: Result<Vec<u8>, E>) -> Result<JsonValue, QueryError>
 where
   E: std::fmt::Display,
@@ -1397,6 +1422,20 @@ mod tests {
   fn maps_driver_types_to_logical_types() {
     assert_eq!(sqlite_logical_type("INTEGER"), "integer");
     assert_eq!(sqlite_logical_type("BLOB"), "binary");
+  }
+
+  #[test]
+  fn mysql_bin_collated_text_reads_as_text_but_real_bytes_stay_binary() {
+    // 回归：MariaDB 的 JSON 列显示成 0x7b2261223a317d
+    assert_eq!(mysql_bytes_value(b"{\"a\":1}".to_vec()), JsonValue::String("{\"a\":1}".into()));
+    assert_eq!(
+      mysql_bytes_value("多字节 ✓\n第二行".as_bytes().to_vec()),
+      JsonValue::String("多字节 ✓\n第二行".into())
+    );
+    // 不是合法 UTF-8
+    assert_eq!(mysql_bytes_value(vec![0x00, 0xff, 0x10]), tagged_value("binary", "00ff10".into()));
+    // 合法 UTF-8 但带控制字符：NUL 开头的定长 BINARY
+    assert_eq!(mysql_bytes_value(vec![0x00, 0x41]), tagged_value("binary", "0041".into()));
     assert_eq!(mysql_logical_type("DECIMAL"), "decimal");
     assert_eq!(mysql_logical_type("JSON"), "json");
     assert_eq!(postgres_logical_type("TIMESTAMPTZ"), "datetime");
