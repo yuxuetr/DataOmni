@@ -15,6 +15,14 @@ import { describeError } from '../utils/describeError';
 import { translateNow } from '../stores/languageStore';
 import { SHORTCUTS, hasCommandModifier, matchesShortcut } from '../utils/shortcuts';
 
+/** 按键来自一个能打字的元素（输入框、文本域、下拉框、可编辑区域） */
+export function isTextEntry(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+}
+
 export interface CellSelectionController {
   selection: CellSelection | null;
   isSelected: (row: number, column: number) => boolean;
@@ -94,6 +102,12 @@ export function useCellSelection(
   }, []);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
+    // 格子里正开着编辑框时，按键归编辑框：方向键挪光标、⌘A 全选文字、⌘C 复制
+    // 选中的文字。这个处理器挂在整张表上，编辑框里的按键会冒泡上来——
+    // 不让开的话，方向键被 preventDefault 吃掉，⌘A 选中的是一整张网格
+    if (isTextEntry(event.target)) {
+      return;
+    }
     const commandKey = hasCommandModifier(event);
 
     const withHeaders = matchesShortcut(event, SHORTCUTS.copyWithHeaders);
