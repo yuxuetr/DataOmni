@@ -905,7 +905,7 @@ fn execute_many(
     .build()
     .map_err(|error| query_error(&error, Some(statement)))?
     .bind_count();
-  if width == 0 || params.len() % width != 0 {
+  if width == 0 || !params.len().is_multiple_of(width) {
     return Err(QueryError::message(format!(
       "{} parameters do not fill rows of the statement's {width} binds",
       params.len()

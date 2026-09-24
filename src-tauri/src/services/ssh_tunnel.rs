@@ -452,7 +452,7 @@ mod tests {
   /// 而且一份固定的样本只能覆盖一种算法。
   fn private_key_file(passphrase: &str) -> PathBuf {
     use ssh_key::{getrandom::SysRng, rand_core::UnwrapErr};
-    let mut rng = UnwrapErr(SysRng::default());
+    let mut rng = UnwrapErr(SysRng);
     let key = match ssh_key::PrivateKey::random(&mut rng, ssh_key::Algorithm::Ed25519) {
       Ok(key) => key,
       Err(error) => panic!("测试用的私钥应当造得出: {error}"),
