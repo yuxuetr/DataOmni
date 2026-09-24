@@ -158,6 +158,20 @@ pub async fn test_connection(
   Ok(connection_string)
 }
 
+/// 为 MySQL / PostgreSQL 开池子并登记进插件的 `DbInstances`，前端随后用
+/// `Database.get` 拿句柄。为什么不用插件的 `Database.load`，见 `services::sqlx_pool`
+#[tauri::command]
+pub async fn open_database_pool(
+  connection_string: String,
+  database_instances: State<'_, tauri_plugin_sql::DbInstances>,
+) -> Result<(), String> {
+  let pool = crate::services::sqlx_pool::open(&connection_string).await?;
+  // 同一个连接串再开一次（测试连接之后真的连上）就换掉旧的；旧池子里被会话借走的
+  // 连接照常用完再关，不在这里等它们
+  database_instances.0.write().await.insert(connection_string, pool);
+  Ok(())
+}
+
 /// SQL Server 连接上的目录查询：前端对另外三家走插件的 `select`，对这一家走这里。
 /// 返回的形状与插件一致——一行一个对象，值不带类型标签。
 #[tauri::command]

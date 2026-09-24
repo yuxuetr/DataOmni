@@ -22,6 +22,19 @@ pub const SESSION_BOUND_ELSEWHERE: &str = "DATAOMNI_SESSION_BOUND_ELSEWHERE";
 struct SessionRuntime {
   connection: SessionConnection,
   transaction: TransactionState,
+  last_used: std::time::Instant,
+}
+
+/// 会话连接空闲超过这么久，下一条语句之前先问一句它还在不在。
+/// 比常见的 NAT / VPN 空闲回收（几分钟）短，又长到连着敲语句时不会每条都多一次往返
+const REVALIDATE_AFTER: Duration = Duration::from_secs(60);
+/// 活着的连接 ping 一次是一个往返；三秒还没回，当它死了
+const PING_LIMIT: Duration = Duration::from_secs(3);
+
+/// 要不要先确认连接还活着。事务里不换：连接真断了，事务也已经没了，
+/// 换一条新的接着跑等于假装它还在——让那条语句照常失败、报出来
+fn should_revalidate(idle: Duration, in_transaction: bool) -> bool {
+  !in_transaction && idle >= REVALIDATE_AFTER
 }
 
 struct SessionEntry {
@@ -161,6 +174,17 @@ impl QuerySessionState {
 
     timeout(options.timeout_duration, async {
       let mut runtime = entry.runtime.lock().await;
+      let idle = runtime.last_used.elapsed();
+      if should_revalidate(idle, runtime.current_transaction().in_transaction())
+        && !runtime.connection.responds_within(PING_LIMIT).await
+      {
+        // 旧连接上的会话变量（SET @x、search_path）随它一起没了——连接本来就死了，
+        // 留着它也拿不回来
+        let fresh = SessionConnection::acquire(options.pool).await?;
+        std::mem::replace(&mut runtime.connection, fresh).discard();
+        runtime.transaction = TransactionState::default();
+      }
+      runtime.last_used = std::time::Instant::now();
       runtime.begin_if_needed(options.autocommit, options.sql).await?;
       let result = runtime
         .connection
@@ -203,7 +227,11 @@ impl QuerySessionState {
     let connection = SessionConnection::acquire(pool).await?;
     let entry = Arc::new(SessionEntry {
       pool_key: pool_key.to_string(),
-      runtime: Mutex::new(SessionRuntime { connection, transaction: TransactionState::default() }),
+      runtime: Mutex::new(SessionRuntime {
+        connection,
+        transaction: TransactionState::default(),
+        last_used: std::time::Instant::now(),
+      }),
     });
     let mut sessions = self.sessions.lock().await;
     Ok(sessions.entry(session_id.to_string()).or_insert_with(|| entry.clone()).clone())
@@ -213,6 +241,16 @@ impl QuerySessionState {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn an_idle_session_is_checked_before_use_but_never_inside_a_transaction() {
+    // 连着敲语句时不多一次往返
+    assert!(!should_revalidate(Duration::from_secs(5), false));
+    // 空闲够久了，先问一句
+    assert!(should_revalidate(REVALIDATE_AFTER, false));
+    // 事务里不换连接：断了就让语句照常失败，不假装事务还在
+    assert!(!should_revalidate(Duration::from_secs(600), true));
+  }
   use crate::services::transaction_state::TransactionStatus;
   use sqlx::sqlite::SqlitePoolOptions;
 

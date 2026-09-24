@@ -25,7 +25,18 @@ export async function openDatabase(connectionString: string): Promise<DatabaseHa
   if (connectionString.startsWith(ORACLE_SCHEME)) {
     return backendHandle(connectionString, 'oracle_select', 'close_oracle');
   }
+  if (opensOwnPool(connectionString)) {
+    // 池子由后端按自己的参数开好、登记进插件，这里只拿句柄。插件的 load 会给
+    // 空闲连接留 10 分钟（经 VPN / NAT 会被悄悄丢掉），库不存在时还会替你建一个
+    await invoke('open_database_pool', { connectionString });
+    return Database.get(connectionString);
+  }
   return Database.load(connectionString);
+}
+
+/** 与后端 `sqlx_pool::handles` 一致：MySQL / PostgreSQL 的池子由后端开 */
+export function opensOwnPool(connectionString: string): boolean {
+  return /^(mysql|mariadb|postgres|postgresql):\/\//.test(connectionString);
 }
 
 function backendHandle(connectionString: string, select: string, close: string): DatabaseHandle {

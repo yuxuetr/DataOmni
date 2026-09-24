@@ -14,6 +14,7 @@ pub mod query_session;
 pub mod schema_metadata;
 pub mod session_target;
 pub mod sql_server;
+pub mod sqlx_pool;
 pub mod ssh_tunnel;
 pub mod transaction_state;
 pub mod write_batch;

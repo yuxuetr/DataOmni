@@ -48,6 +48,7 @@ pub fn run() {
       delete_connection,
       get_connections,
       test_connection,
+      open_database_pool,
       diagnose_connection,
       close_ssh_tunnel,
       sql_server_select,

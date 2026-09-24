@@ -361,6 +361,34 @@ impl SessionConnection {
     matches!(self, Self::MySql(_))
   }
 
+  /// 这条连接还答不答话。
+  ///
+  /// 只有 sqlx 那两家网络库要问：VPN、NAT、云负载均衡会把空闲了几分钟的 TCP 流
+  /// 悄悄丢掉，不发 RST——实测经 Shadowrocket 隧道空闲 3 分钟还在、6 分钟就没了。
+  /// 那之后第一条语句会一直等到查询超时。先用一个短超时的 ping 问一句，答不上
+  /// 就换一条新的，而不是让用户等满超时再看一句「连接丢了」。
+  /// SQLite 在本机；SQL Server、Oracle 的会话连接由各自的池管，不在这里判。
+  pub async fn responds_within(&mut self, limit: Duration) -> bool {
+    use sqlx::Connection;
+    let ping = match self {
+      Self::MySql(connection) => timeout(limit, connection.ping()).await,
+      Self::Postgres(connection) => timeout(limit, connection.ping()).await,
+      Self::Sqlite(_) | Self::SqlServer(_) | Self::Oracle(_) => return true,
+    };
+    matches!(ping, Ok(Ok(())))
+  }
+
+  /// 丢掉一条判死了的连接。sqlx 的池连接要先 detach：直接 drop 会把它还回池里，
+  /// 下一个取连接的人会对着它 ping，又一次等满超时
+  pub fn discard(self) {
+    match self {
+      Self::MySql(connection) => drop(connection.detach()),
+      Self::Postgres(connection) => drop(connection.detach()),
+      Self::Sqlite(connection) => drop(connection.detach()),
+      Self::SqlServer(_) | Self::Oracle(_) => {}
+    }
+  }
+
   /// 关掉自动提交时补的那一句。T-SQL 里单独一个 `BEGIN` 是语句块的开头，
   /// 不开事务
   ///
