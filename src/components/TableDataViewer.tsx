@@ -523,7 +523,7 @@ export default function TableDataViewer({
   const appliedFilterCount = appliedFilters.filter(isCompleteFilter).length;
   const filtersPending = filterSignature(filters) !== filterSignature(appliedFilters);
 
-  const applyFilters = (next: ColumnFilter[] = filters) => {
+  const applyFilters = (next: ColumnFilter[]) => {
     setAppliedFilters(next);
     appliedFiltersRef.current = next;
     setCurrentPage(1);

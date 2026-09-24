@@ -17,7 +17,12 @@ interface TableFilterBarProps {
   /** 草稿。改动不会立刻查库——每敲一个字符发一次查询在大表上不可接受 */
   filters: ColumnFilter[];
   onChange: (filters: ColumnFilter[]) => void;
-  onApply: () => void;
+  /**
+   * 带上要应用的那一组条件，而不是让调用方去读自己的草稿：「清空」在同一次点击里
+   * 先 onChange([]) 再应用，那时调用方手里的草稿还是清空之前的。参数也让
+   * `onClick={onApply}` 编译不过——点击事件会被当成条件数组存进去，渲染时整窗白屏。
+   */
+  onApply: (filters: ColumnFilter[]) => void;
   /** 与已应用的条件不一致时提示用户还没生效 */
   pending: boolean;
   activeCount: number;
@@ -79,7 +84,7 @@ export function TableFilterBar({
               type="button"
               onClick={() => {
                 onChange([]);
-                onApply();
+                onApply([]);
               }}
               disabled={disabled}
               className="rounded-control border border-line-strong px-2 py-1 text-xs text-fg-muted hover:bg-surface-hover disabled:opacity-50"
@@ -89,7 +94,7 @@ export function TableFilterBar({
           )}
           <button
             type="button"
-            onClick={onApply}
+            onClick={() => onApply(filters)}
             disabled={disabled}
             className="rounded-control border border-accent-line bg-accent-soft px-2 py-1 text-xs text-accent hover:bg-accent-soft disabled:opacity-50"
           >
@@ -138,7 +143,7 @@ export function TableFilterBar({
                     onKeyDown={(event) => {
                       if (event.key === 'Enter') {
                         event.preventDefault();
-                        onApply();
+                        onApply(filters);
                       }
                     }}
                     disabled={disabled}
