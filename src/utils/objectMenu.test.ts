@@ -24,10 +24,7 @@ describe('每种对象右键能做什么', () => {
   it('每种对象恰好有一条看它是什么的路', () => {
     // 表走结构页（顺带给列、索引、外键），其余走定义弹窗。两条都没有的那一种
     // 就是此前的视图：它的 SELECT 原文在界面上根本读不到
-    //
-    // MongoDB 的集合例外：它没有结构，也没有定义原文；能算「它是什么」的是索引与
-    // 校验规则，那一页还没做（TODOs 4.3）。做了之后把它从这里拿掉
-    for (const kind of KINDS.filter((candidate) => candidate !== 'collection')) {
+    for (const kind of KINDS) {
       const actions = OBJECT_MENU_ACTIONS[kind];
       const paths = Number(actions.includes('open-structure')) + Number(actions.includes('view-definition'));
       expect(paths, `${kind} 有 ${paths} 条看定义的路`).toBe(1);
@@ -37,7 +34,7 @@ describe('每种对象右键能做什么', () => {
   it('「打开结构」只给表', () => {
     // 结构页是可编辑的编辑器，它不知道自己打开的是不是视图
     for (const kind of KINDS) {
-      expect(OBJECT_MENU_ACTIONS[kind].includes('open-structure'), kind).toBe(kind === 'table');
+      expect(OBJECT_MENU_ACTIONS[kind].includes('open-structure'), kind).toBe(kind === 'table' || kind === 'collection');
     }
   });
 
@@ -131,9 +128,10 @@ describe('复制出来的限定名', () => {
 });
 
 describe('不走 SQL 的连接上', () => {
-  it('只留打开与复制：MongoDB 的视图也叫 view，而查看定义、删除是拼 SQL 做的', () => {
-    expect(objectMenuActions('view', false)).toEqual(['open-data', 'copy-name']);
-    expect(objectMenuActions('collection', false)).toEqual(['open-data', 'copy-name']);
+  it('只有打开、结构与复制：MongoDB 的视图也叫 view，而查看定义、删除是拼 SQL 做的', () => {
+    // 视图的定义在它的结构页里，所以视图也有「打开结构」
+    expect(objectMenuActions('view', false)).toEqual(['open-data', 'open-structure', 'copy-name']);
+    expect(objectMenuActions('collection', false)).toEqual(['open-data', 'open-structure', 'copy-name']);
     // 反向：SQL 连接上的视图照旧
     expect(objectMenuActions('view', true)).toEqual(OBJECT_MENU_ACTIONS.view);
   });

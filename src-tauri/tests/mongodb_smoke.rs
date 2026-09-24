@@ -437,3 +437,62 @@ async fn an_inserted_document_reports_an_id_that_finds_it_again() {
       .unwrap_or_default();
   assert!(error.starts_with(MONGO_SERVER_ERROR) || error.contains("E11000"), "{error}");
 }
+
+/// 结构页：索引的每一种选项原样出来，校验规则在集合选项里；视图没有索引，定义在选项里
+#[tokio::test]
+async fn the_structure_shows_indexes_validator_and_view_definition() {
+  let Some(client) = client().await else { return };
+  let database = client.database(DATABASE);
+  let _ = database.collection::<Document>("smoke_structure_view").drop().await;
+  let _ = database.collection::<Document>("smoke_structure").drop().await;
+  database
+    .run_command(doc! {
+      "create": "smoke_structure",
+      "validator": { "$jsonSchema": { "required": ["name"] } },
+      "validationLevel": "moderate",
+    })
+    .await
+    .expect("create with validator");
+  database
+    .run_command(doc! {
+      "createIndexes": "smoke_structure",
+      "indexes": [
+        { "key": { "name": 1 }, "name": "name_unique", "unique": true },
+        { "key": { "status": 1 }, "name": "open_only", "partialFilterExpression": { "status": "open" } },
+        { "key": { "at": 1 }, "name": "ttl", "expireAfterSeconds": 3600 },
+      ],
+    })
+    .await
+    .expect("create indexes");
+  database
+    .run_command(doc! { "create": "smoke_structure_view", "viewOn": "smoke_structure", "pipeline": [{ "$match": { "status": "open" } }] })
+    .await
+    .expect("create view");
+
+  let structure = mongo::collection_structure(&client, DATABASE, "smoke_structure", WRITE_TIMEOUT)
+    .await
+    .expect("structure");
+  let names: Vec<&str> = structure.indexes.iter().map(|index| index.name.as_str()).collect();
+  assert_eq!(names, ["_id_", "name_unique", "open_only", "ttl"]);
+  let by_name = |name: &str| structure.indexes.iter().find(|index| index.name == name).expect(name);
+  assert_eq!(by_name("name_unique").options, "{ unique: true }");
+  assert_eq!(by_name("open_only").options, "{ partialFilterExpression: { status: 'open' } }");
+  assert_eq!(by_name("ttl").options, "{ expireAfterSeconds: 3600 }");
+  assert_eq!(by_name("_id_").keys, "{ _id: 1 }");
+  assert!(structure.options.contains("$jsonSchema"), "{}", structure.options);
+  assert!(structure.options.contains("validationLevel: 'moderate'"), "{}", structure.options);
+
+  let view = mongo::collection_structure(&client, DATABASE, "smoke_structure_view", WRITE_TIMEOUT)
+    .await
+    .expect("view structure");
+  assert!(view.indexes.is_empty());
+  assert!(view.options.contains("viewOn: 'smoke_structure'"), "{}", view.options);
+  assert!(view.options.contains("$match"), "{}", view.options);
+
+  // 一个没有任何选项的集合：选项是空串
+  fresh_collection(&client, "smoke_plain").await.insert_one(doc! { "x": 1 }).await.expect("insert");
+  let plain = mongo::collection_structure(&client, DATABASE, "smoke_plain", WRITE_TIMEOUT)
+    .await
+    .expect("plain");
+  assert_eq!(plain.options, "");
+}

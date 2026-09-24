@@ -311,6 +311,96 @@ pub async fn document_text(
   Ok(found.map(|document| mongo_shell::format_document(&document, Layout::Indented)))
 }
 
+/// 集合的一个索引
+#[derive(Debug, Serialize, PartialEq)]
+pub struct MongoIndex {
+  pub name: String,
+  /// 键的写法，`{ status: 1, createdAt: -1 }`
+  pub keys: String,
+  /// 其余选项（`unique`、`partialFilterExpression`、`expireAfterSeconds`……），一行；没有就是空串
+  pub options: String,
+}
+
+/// 集合的「结构」：索引，加上建集合时的选项（校验规则、上限、时序、视图定义）
+#[derive(Debug, Serialize, PartialEq)]
+pub struct MongoCollectionStructure {
+  pub indexes: Vec<MongoIndex>,
+  /// `listCollections` 给的 `options`，缩进写法；没有任何选项时是空串
+  pub options: String,
+}
+
+/// 取索引与选项。
+///
+/// 直接发 `listIndexes` / `listCollections` 两条命令、按原样显示，不经驱动的类型化结构：
+/// 那些结构只认它知道的字段，部分索引的条件、通配索引的投影这类新一点的选项会被丢掉，
+/// 而这一页正是为了让人看到集合上到底有什么
+pub async fn collection_structure(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  timeout: Duration,
+) -> Result<MongoCollectionStructure, String> {
+  let db = client.database(database);
+  let work = async {
+    let listed = db
+      .run_command(
+        doc! { "listCollections": 1, "filter": { "name": collection }, "nameOnly": false },
+      )
+      .await
+      .map_err(describe_error)?;
+    let specification = first_batch(&listed).into_iter().next().unwrap_or_default();
+    let is_view = specification.get_str("type").is_ok_and(|kind| kind == "view");
+    let options = specification.get_document("options").cloned().unwrap_or_default();
+    // 视图没有索引，`listIndexes` 在它上面会报错
+    let indexes = if is_view {
+      Vec::new()
+    } else {
+      let listed =
+        db.run_command(doc! { "listIndexes": collection }).await.map_err(describe_error)?;
+      first_batch(&listed).iter().map(index_row).collect()
+    };
+    Ok(MongoCollectionStructure {
+      indexes,
+      options: if options.is_empty() {
+        String::new()
+      } else {
+        mongo_shell::format_document(&options, Layout::Indented)
+      },
+    })
+  };
+  with_deadline(timeout, work).await
+}
+
+/// 命令结果里 `cursor.firstBatch` 那一批。索引与单个集合的说明都装得进第一批
+fn first_batch(reply: &Document) -> Vec<Document> {
+  reply
+    .get_document("cursor")
+    .ok()
+    .and_then(|cursor| cursor.get_array("firstBatch").ok())
+    .map(|batch| batch.iter().filter_map(|item| item.as_document().cloned()).collect())
+    .unwrap_or_default()
+}
+
+fn index_row(index: &Document) -> MongoIndex {
+  let mut options = index.clone();
+  // 版本号与命名空间对人没有信息量；名字和键单独成列
+  for key in ["v", "key", "name", "ns"] {
+    options.remove(key);
+  }
+  MongoIndex {
+    name: index.get_str("name").unwrap_or_default().to_string(),
+    keys: index
+      .get_document("key")
+      .map(|keys| mongo_shell::format_document(keys, Layout::OneLine))
+      .unwrap_or_default(),
+    options: if options.is_empty() {
+      String::new()
+    } else {
+      mongo_shell::format_document(&options, Layout::OneLine)
+    },
+  }
+}
+
 /// 整篇替换一个文档。
 ///
 /// 条件除了 `_id` 还要求文档与打开时**完全一样**（`$$ROOT` 与 `original` 相等，
@@ -440,6 +530,25 @@ mod tests {
     let cell = &row.fields["blob"];
     assert!(cell.truncated);
     assert_eq!(cell.text.chars().count(), CELL_TEXT_LIMIT);
+  }
+
+  #[test]
+  fn an_index_row_splits_name_and_keys_from_the_rest() {
+    let row = index_row(&doc! {
+      "v": 2,
+      "key": { "status": 1, "createdAt": -1 },
+      "name": "status_1_createdAt_-1",
+      "unique": true,
+      "partialFilterExpression": { "status": { "$exists": true } },
+    });
+    assert_eq!(row.name, "status_1_createdAt_-1");
+    assert_eq!(row.keys, "{ status: 1, createdAt: -1 }");
+    assert_eq!(
+      row.options,
+      "{ unique: true, partialFilterExpression: { status: { $exists: true } } }"
+    );
+    // 只有名字和键的（`_id_`）：选项是空串，不是 `{}`
+    assert_eq!(index_row(&doc! { "v": 2, "key": { "_id": 1 }, "name": "_id_" }).options, "");
   }
 
   #[test]

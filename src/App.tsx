@@ -17,6 +17,7 @@ import { TaskCenter } from './components/TaskCenter';
 import { SqlWorkbench } from './components/SqlWorkbench';
 import TableDataViewer from './components/TableDataViewer';
 import { MongoCollectionViewer } from './components/MongoCollectionViewer';
+import { MongoCollectionStructureView } from './components/MongoCollectionStructureView';
 import { speaksSql } from './contracts/databaseSupport';
 import { ErDiagramView } from './components/ErDiagramView';
 import { WelcomeScreen } from './components/WelcomeScreen';
@@ -770,17 +771,26 @@ function App() {
     // MongoDB 的集合开在同一种标签里（schema 那一格是库名），换一个浏览页：
     // 标签的身份、去重、持久化与关系库的表完全一样，不必另起一种标签
     if (!activeSpeaksSql) {
-      return (
+      // 种类来自对象树；树还没读出来时按集合处理：写视图会被服务端拒绝并说明
+      const isView = databaseMetadata[activeTab.binding.profileId]?.objects.some((object) => (
+        object.kind === 'view'
+        && object.schema === activeTab.object.schema
+        && object.name === activeTab.object.table
+      )) ?? false;
+      return activeTab.kind === 'table-structure' ? (
+        <MongoCollectionStructureView
+          key={activeTab.id}
+          database={activeTab.object.schema ?? ''}
+          collection={activeTab.object.table}
+          isView={isView}
+        />
+      ) : (
         <MongoCollectionViewer
           key={activeTab.id}
           database={activeTab.object.schema ?? ''}
           collection={activeTab.object.table}
-          // 视图不能写。种类来自对象树；树还没读出来时按可写处理，写视图会被服务端拒绝并说明
-          readOnly={databaseMetadata[activeTab.binding.profileId]?.objects.some((object) => (
-            object.kind === 'view'
-            && object.schema === activeTab.object.schema
-            && object.name === activeTab.object.table
-          )) ?? false}
+          // 视图不能写
+          readOnly={isView}
         />
       );
     }

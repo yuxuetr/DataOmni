@@ -6,7 +6,8 @@
 use crate::commands::database_commands::TIMEOUT_OUT_OF_RANGE;
 use crate::services::mongo_shell;
 use crate::services::mongodb::{
-  self, CollectionEntry, FindRequest, MongoFindPage, MongoRegistry, MONGO_NOT_CONNECTED,
+  self, CollectionEntry, FindRequest, MongoCollectionStructure, MongoFindPage, MongoRegistry,
+  MONGO_NOT_CONNECTED,
 };
 use ::mongodb::Client;
 use std::sync::Arc;
@@ -141,6 +142,20 @@ pub async fn mongodb_delete_document(
   let timeout = timeout(timeout_ms)?;
   let client = client(&registry, &connection_string)?;
   mongodb::delete_document(&client, &database, &collection, id, timeout).await
+}
+
+/// 集合的索引与选项（校验规则、上限、时序、视图定义）
+#[tauri::command]
+pub async fn mongodb_collection_structure(
+  connection_string: String,
+  database: String,
+  collection: String,
+  timeout_ms: u64,
+  registry: State<'_, MongoRegistry>,
+) -> Result<MongoCollectionStructure, String> {
+  let timeout = timeout(timeout_ms)?;
+  let client = client(&registry, &connection_string)?;
+  mongodb::collection_structure(&client, &database, &collection, timeout).await
 }
 
 /// 断开时去掉登记。`Client` 的最后一个引用没了，池子里的连接随之关闭

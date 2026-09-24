@@ -35,7 +35,7 @@ export const DESTRUCTIVE_MENU_ACTIONS: ReadonlySet<ObjectMenuAction> = new Set([
  */
 export const OBJECT_MENU_ACTIONS: Record<DatabaseObjectKind, readonly ObjectMenuAction[]> = {
   table: ['open-data', 'open-structure', 'copy-name', 'truncate', 'drop'],
-  collection: ['open-data', 'copy-name'],
+  collection: ['open-data', 'open-structure', 'copy-name'],
   view: ['open-data', 'view-definition', 'copy-name', 'drop'],
   'materialized-view': ['open-data', 'view-definition', 'copy-name', 'drop'],
   function: ['view-definition', 'copy-name'],
@@ -46,16 +46,21 @@ export const OBJECT_MENU_ACTIONS: Record<DatabaseObjectKind, readonly ObjectMenu
 /**
  * 这个对象在这个连接上右键能做什么。
  *
- * 不走 SQL 的库（MongoDB）上只留打开与复制：它的视图也叫 `view`，而「查看定义」
- * 「删除」是拼 SQL 去做的，放出来点了只会报错
+ * 不走 SQL 的库（MongoDB）上只有打开、结构与复制：它的视图也叫 `view`，而「查看定义」
+ * 「删除」是拼 SQL 去做的，放出来点了只会报错。视图的定义（`viewOn` 与管道）在它的
+ * 结构页里，所以视图在这里也有「打开结构」
  */
 export function objectMenuActions(
   kind: DatabaseObjectKind,
   speaksSql: boolean
 ): readonly ObjectMenuAction[] {
-  const actions = OBJECT_MENU_ACTIONS[kind];
-  return speaksSql ? actions : actions.filter((action) => action === 'open-data' || action === 'copy-name');
+  if (speaksSql) {
+    return OBJECT_MENU_ACTIONS[kind];
+  }
+  return OBJECT_MENU_ACTIONS[kind].includes('open-data') ? NON_SQL_BROWSABLE_ACTIONS : ['copy-name'];
 }
+
+const NON_SQL_BROWSABLE_ACTIONS: readonly ObjectMenuAction[] = ['open-data', 'open-structure', 'copy-name'];
 
 /**
  * 例程的显示名带着参数签名——`calc_total(integer)`——因为同名重载要分得开
