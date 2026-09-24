@@ -606,6 +606,43 @@ async fn postgres_decodes_common_column_types() {
   );
 }
 
+/// 数组按 PostgreSQL 自己的文本输出显示：和服务端 `::text` 逐字相同，
+/// 原样绑回去（界面带 `::text[]` 转换）还是同一个值。
+/// 之前给的是 JSON 数组，网格印成 `a,b,c`，分不清 `{a,b}` 与 `{"a,b"}`。
+#[tokio::test]
+async fn postgres_arrays_read_as_the_servers_own_literal() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let cases = [
+    (r#"ARRAY['a', 'b,c', NULL, '', 'NULL', 'x"y', 'p\q', ' s', '{}']"#, "text[]"),
+    ("ARRAY['plain']", "varchar[]"),
+    ("ARRAY[1, NULL, -3]", "int4[]"),
+    ("ARRAY[]::int8[]", "int8[]"),
+  ];
+  for (expression, array_type) in cases {
+    let sql =
+      format!("SELECT ({expression})::{array_type} AS v, ({expression})::{array_type}::text AS t");
+    let result = execute_query(&DbPool::Postgres(pool.clone()), &sql).await.expect("decode array");
+    let QueryExecutionResult::Rows { rows, .. } = result else {
+      panic!("expected a row result");
+    };
+    let shown = rows[0]["v"].as_str().unwrap_or_else(|| panic!("{expression}: {:?}", rows[0]["v"]));
+    assert_eq!(shown, rows[0]["t"].as_str().expect("server text"), "{expression}");
+
+    let same: bool = sqlx::query_scalar(&format!(
+      "SELECT $1::{array_type} IS NOT DISTINCT FROM ({expression})::{array_type}"
+    ))
+    .bind(shown)
+    .fetch_one(&pool)
+    .await
+    .expect("bind the literal back");
+    assert!(same, "{expression} 写回去不是同一个值: {shown}");
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 结构浏览：索引、外键、检查约束
 //

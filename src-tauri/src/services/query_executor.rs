@@ -1200,11 +1200,11 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
     }
     "BYTEA" => tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>()),
     "TEXT[]" | "VARCHAR[]" | "NAME[]" => {
-      json_value(ValueRef::to_owned(&value).try_decode::<Vec<String>>())
+      pg_array_value(ValueRef::to_owned(&value).try_decode::<Vec<Option<String>>>())
     }
-    "INT2[]" => json_value(ValueRef::to_owned(&value).try_decode::<Vec<i16>>()),
-    "INT4[]" => json_value(ValueRef::to_owned(&value).try_decode::<Vec<i32>>()),
-    "INT8[]" => json_value(ValueRef::to_owned(&value).try_decode::<Vec<i64>>()),
+    "INT2[]" => pg_array_value(ValueRef::to_owned(&value).try_decode::<Vec<Option<i16>>>()),
+    "INT4[]" => pg_array_value(ValueRef::to_owned(&value).try_decode::<Vec<Option<i32>>>()),
+    "INT8[]" => pg_array_value(ValueRef::to_owned(&value).try_decode::<Vec<Option<i64>>>()),
     "INTERVAL" => {
       let interval = ValueRef::to_owned(&value)
         .try_decode::<sqlx::postgres::types::PgInterval>()
@@ -1280,6 +1280,40 @@ fn format_pg_interval(interval: &sqlx::postgres::types::PgInterval) -> String {
     parts.push(format!("{total_seconds} secs"));
   }
   parts.join(" ")
+}
+
+/// PostgreSQL 数组按它自己的文本输出（`array_out`）写成一个字符串：`{a,"b,c",NULL}`。
+///
+/// 交给界面一个 JSON 数组的话，网格按 `String(value)` 印成 `a,b,c`——分不清
+/// `{a,b}` 和 `{"a,b"}`，也看不出 NULL 元素；改完写回去的也不是数组字面量。
+/// 这个字面量原样绑回去（带 `::text[]` 之类的转换）就是同一个值。
+fn pg_array_value<T, E>(value: Result<Vec<Option<T>>, E>) -> Result<JsonValue, QueryError>
+where
+  T: ToString,
+  E: std::fmt::Display,
+{
+  let items = value.map_err(display_error)?;
+  let elements = items
+    .iter()
+    .map(|item| match item {
+      None => "NULL".to_string(),
+      Some(item) => pg_array_element(&item.to_string()),
+    })
+    .collect::<Vec<_>>();
+  Ok(JsonValue::String(format!("{{{}}}", elements.join(","))))
+}
+
+/// `array_out` 的加引号规则：空串、字面的 NULL、含分隔符 / 花括号 / 引号 /
+/// 反斜杠 / 空白的元素要加双引号，引号与反斜杠再各用反斜杠转义
+fn pg_array_element(text: &str) -> String {
+  let needs_quotes = text.is_empty()
+    || text.eq_ignore_ascii_case("NULL")
+    || text.chars().any(|c| matches!(c, ',' | '{' | '}' | '"' | '\\') || c.is_ascii_whitespace());
+  if !needs_quotes {
+    return text.to_string();
+  }
+  let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
+  format!("\"{escaped}\"")
 }
 
 fn json_value<T, E>(value: Result<T, E>) -> Result<JsonValue, QueryError>
@@ -1424,6 +1458,27 @@ mod tests {
   fn maps_driver_types_to_logical_types() {
     assert_eq!(sqlite_logical_type("INTEGER"), "integer");
     assert_eq!(sqlite_logical_type("BLOB"), "binary");
+  }
+
+  #[test]
+  fn postgres_arrays_are_written_as_array_literals() {
+    let items: Result<_, String> = Ok(vec![
+      Some("a".to_string()),
+      Some("b,c".into()),
+      None,
+      Some(String::new()),
+      Some("null".into()),
+    ]);
+    assert_eq!(
+      pg_array_value(items).unwrap(),
+      JsonValue::String(r#"{a,"b,c",NULL,"","null"}"#.into())
+    );
+    let quoted: Result<_, String> = Ok(vec![Some(r#"x"y\z"#.to_string()), Some(" s".into())]);
+    assert_eq!(pg_array_value(quoted).unwrap(), JsonValue::String(r#"{"x\"y\\z"," s"}"#.into()));
+    let numbers: Result<_, String> = Ok(vec![Some(1), None, Some(-3)]);
+    assert_eq!(pg_array_value(numbers).unwrap(), JsonValue::String("{1,NULL,-3}".into()));
+    let empty: Result<Vec<Option<i64>>, String> = Ok(vec![]);
+    assert_eq!(pg_array_value(empty).unwrap(), JsonValue::String("{}".into()));
   }
 
   #[test]
