@@ -24,6 +24,8 @@ interface CreateTableDialogProps {
   schemas: readonly string[];
   /** 登录用户：Oracle 的 schema 就是用户，不写 schema 时建在它名下 */
   username?: string | null;
+  /** 起手选中的 schema：刚建好一个 schema 接着建表时是它 */
+  initialSchema?: string | null;
   onClose: () => void;
   onCreated: (table: string, schema: string | null) => void;
 }
@@ -55,6 +57,7 @@ export function CreateTableDialog({
   dialect,
   schemas,
   username,
+  initialSchema,
   onClose,
   onCreated
 }: CreateTableDialogProps) {
@@ -62,7 +65,9 @@ export function CreateTableDialog({
   const markSchemaChanged = useAppStore((state) => state.markSchemaChanged);
 
   const [table, setTable] = useState('');
-  const [schema, setSchema] = useState(() => defaultCreateSchema(schemas, dialect, username));
+  const [schema, setSchema] = useState(
+    () => initialSchema ?? defaultCreateSchema(schemas, dialect, username)
+  );
   const [drafts, setDrafts] = useState<ColumnDraft[]>([
     {
       ...BLANK,

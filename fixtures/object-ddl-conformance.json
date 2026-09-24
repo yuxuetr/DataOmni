@@ -1,0 +1,583 @@
+{
+  "why": "对象级的结构操作（删表、清空、建 schema、建 / 删索引）同样有两侧：语句由 src/utils/objectDdl.ts 在前端拼，跑它的是各家真库。objectDdl.conformance.test.ts 核对同一个请求生成的语句逐字等于 statement；各家的冒烟用例先跑 fixture，再跑 statement，最后跑 check（只返回一个整数）核对结果等于 expect。",
+  "schemasAreTheTestDatabases": "schema 写的是测试库里的真名：MySQL 系的 schema 就是库名 dataomni_test，SQL Server 是 dbo，Oracle 是登录用户 DATAOMNI。冒烟用例开头核对连上的正是它们，对不上就直接报错，不去替换语句——替换过的语句就不再是前端生成的那一条了。",
+  "cases": [
+    {
+      "name": "postgres-drop-table",
+      "dialect": "postgresql",
+      "request": {
+        "action": "drop",
+        "kind": "table",
+        "schema": "public",
+        "name": "obj_conf_pg_t"
+      },
+      "statement": "DROP TABLE \"public\".\"obj_conf_pg_t\"",
+      "fixture": [
+        "DROP TABLE IF EXISTS obj_conf_pg_t",
+        "CREATE TABLE obj_conf_pg_t (id int)"
+      ],
+      "check": "SELECT COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'obj_conf_pg_t'",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "postgres-drop-view",
+      "dialect": "postgresql",
+      "request": {
+        "action": "drop",
+        "kind": "view",
+        "schema": "public",
+        "name": "obj_conf_pg_v"
+      },
+      "statement": "DROP VIEW \"public\".\"obj_conf_pg_v\"",
+      "fixture": [
+        "DROP VIEW IF EXISTS obj_conf_pg_v",
+        "CREATE VIEW obj_conf_pg_v AS SELECT 1 AS x"
+      ],
+      "check": "SELECT COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'obj_conf_pg_v'",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "postgres-drop-materialized-view",
+      "dialect": "postgresql",
+      "request": {
+        "action": "drop",
+        "kind": "materialized-view",
+        "schema": "public",
+        "name": "obj_conf_pg_mv"
+      },
+      "statement": "DROP MATERIALIZED VIEW \"public\".\"obj_conf_pg_mv\"",
+      "fixture": [
+        "DROP MATERIALIZED VIEW IF EXISTS obj_conf_pg_mv",
+        "CREATE MATERIALIZED VIEW obj_conf_pg_mv AS SELECT 1 AS x"
+      ],
+      "check": "SELECT COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'obj_conf_pg_mv'",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "postgres-truncate",
+      "dialect": "postgresql",
+      "request": {
+        "action": "truncate",
+        "schema": "public",
+        "name": "obj_conf_pg_rows"
+      },
+      "statement": "TRUNCATE TABLE \"public\".\"obj_conf_pg_rows\"",
+      "fixture": [
+        "DROP TABLE IF EXISTS obj_conf_pg_rows",
+        "CREATE TABLE obj_conf_pg_rows (id int)",
+        "INSERT INTO obj_conf_pg_rows VALUES (1), (2)"
+      ],
+      "check": "SELECT COUNT(*) FROM obj_conf_pg_rows",
+      "expect": 0,
+      "cleanup": [
+        "DROP TABLE IF EXISTS obj_conf_pg_rows"
+      ]
+    },
+    {
+      "name": "mysql-drop-table",
+      "dialect": "mysql",
+      "request": {
+        "action": "drop",
+        "kind": "table",
+        "schema": "dataomni_test",
+        "name": "obj_conf_my_t"
+      },
+      "statement": "DROP TABLE `dataomni_test`.`obj_conf_my_t`",
+      "fixture": [
+        "DROP TABLE IF EXISTS obj_conf_my_t",
+        "CREATE TABLE obj_conf_my_t (id int)"
+      ],
+      "check": "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'obj_conf_my_t'",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "mysql-drop-view",
+      "dialect": "mysql",
+      "request": {
+        "action": "drop",
+        "kind": "view",
+        "schema": "dataomni_test",
+        "name": "obj_conf_my_v"
+      },
+      "statement": "DROP VIEW `dataomni_test`.`obj_conf_my_v`",
+      "fixture": [
+        "DROP VIEW IF EXISTS obj_conf_my_v",
+        "CREATE VIEW obj_conf_my_v AS SELECT 1 AS x"
+      ],
+      "check": "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'obj_conf_my_v'",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "mysql-truncate",
+      "dialect": "mysql",
+      "request": {
+        "action": "truncate",
+        "schema": "dataomni_test",
+        "name": "obj_conf_my_rows"
+      },
+      "statement": "TRUNCATE TABLE `dataomni_test`.`obj_conf_my_rows`",
+      "fixture": [
+        "DROP TABLE IF EXISTS obj_conf_my_rows",
+        "CREATE TABLE obj_conf_my_rows (id int)",
+        "INSERT INTO obj_conf_my_rows VALUES (1), (2)"
+      ],
+      "check": "SELECT COUNT(*) FROM obj_conf_my_rows",
+      "expect": 0,
+      "cleanup": [
+        "DROP TABLE IF EXISTS obj_conf_my_rows"
+      ]
+    },
+    {
+      "name": "sqlite-drop-table",
+      "dialect": "sqlite",
+      "request": {
+        "action": "drop",
+        "kind": "table",
+        "schema": null,
+        "name": "obj_conf_lite_t"
+      },
+      "statement": "DROP TABLE \"obj_conf_lite_t\"",
+      "fixture": [
+        "CREATE TABLE obj_conf_lite_t (id integer)"
+      ],
+      "check": "SELECT COUNT(*) FROM sqlite_master WHERE name = 'obj_conf_lite_t'",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "sqlite-drop-view",
+      "dialect": "sqlite",
+      "request": {
+        "action": "drop",
+        "kind": "view",
+        "schema": null,
+        "name": "obj_conf_lite_v"
+      },
+      "statement": "DROP VIEW \"obj_conf_lite_v\"",
+      "fixture": [
+        "CREATE VIEW obj_conf_lite_v AS SELECT 1 AS x"
+      ],
+      "check": "SELECT COUNT(*) FROM sqlite_master WHERE name = 'obj_conf_lite_v'",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "sqlite-empty-with-delete",
+      "dialect": "sqlite",
+      "request": {
+        "action": "truncate",
+        "schema": null,
+        "name": "obj_conf_lite_rows"
+      },
+      "statement": "DELETE FROM \"obj_conf_lite_rows\"",
+      "fixture": [
+        "CREATE TABLE obj_conf_lite_rows (id integer)",
+        "INSERT INTO obj_conf_lite_rows VALUES (1), (2)"
+      ],
+      "check": "SELECT COUNT(*) FROM obj_conf_lite_rows",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "sqlserver-drop-table",
+      "dialect": "sqlserver",
+      "request": {
+        "action": "drop",
+        "kind": "table",
+        "schema": "dbo",
+        "name": "obj_conf_ms_t"
+      },
+      "statement": "DROP TABLE [dbo].[obj_conf_ms_t]",
+      "fixture": [
+        "DROP TABLE IF EXISTS obj_conf_ms_t",
+        "CREATE TABLE obj_conf_ms_t (id int)"
+      ],
+      "check": "SELECT COUNT(*) FROM sys.objects WHERE schema_id = SCHEMA_ID('dbo') AND name = 'obj_conf_ms_t'",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "sqlserver-drop-view",
+      "dialect": "sqlserver",
+      "request": {
+        "action": "drop",
+        "kind": "view",
+        "schema": "dbo",
+        "name": "obj_conf_ms_v"
+      },
+      "statement": "DROP VIEW [dbo].[obj_conf_ms_v]",
+      "fixture": [
+        "DROP VIEW IF EXISTS obj_conf_ms_v",
+        "CREATE VIEW obj_conf_ms_v AS SELECT 1 AS x"
+      ],
+      "check": "SELECT COUNT(*) FROM sys.objects WHERE schema_id = SCHEMA_ID('dbo') AND name = 'obj_conf_ms_v'",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "sqlserver-truncate",
+      "dialect": "sqlserver",
+      "request": {
+        "action": "truncate",
+        "schema": "dbo",
+        "name": "obj_conf_ms_rows"
+      },
+      "statement": "TRUNCATE TABLE [dbo].[obj_conf_ms_rows]",
+      "fixture": [
+        "DROP TABLE IF EXISTS obj_conf_ms_rows",
+        "CREATE TABLE obj_conf_ms_rows (id int)",
+        "INSERT INTO obj_conf_ms_rows VALUES (1), (2)"
+      ],
+      "check": "SELECT COUNT(*) FROM obj_conf_ms_rows",
+      "expect": 0,
+      "cleanup": [
+        "DROP TABLE IF EXISTS obj_conf_ms_rows"
+      ]
+    },
+    {
+      "name": "oracle-drop-table",
+      "dialect": "oracle",
+      "request": {
+        "action": "drop",
+        "kind": "table",
+        "schema": "DATAOMNI",
+        "name": "OBJ_CONF_ORA_T"
+      },
+      "statement": "DROP TABLE \"DATAOMNI\".\"OBJ_CONF_ORA_T\"",
+      "fixture": [
+        "DROP TABLE IF EXISTS OBJ_CONF_ORA_T",
+        "CREATE TABLE OBJ_CONF_ORA_T (id NUMBER)"
+      ],
+      "check": "SELECT COUNT(*) FROM USER_OBJECTS WHERE OBJECT_NAME = 'OBJ_CONF_ORA_T'",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "oracle-drop-view",
+      "dialect": "oracle",
+      "request": {
+        "action": "drop",
+        "kind": "view",
+        "schema": "DATAOMNI",
+        "name": "OBJ_CONF_ORA_V"
+      },
+      "statement": "DROP VIEW \"DATAOMNI\".\"OBJ_CONF_ORA_V\"",
+      "fixture": [
+        "DROP VIEW IF EXISTS OBJ_CONF_ORA_V",
+        "CREATE VIEW OBJ_CONF_ORA_V AS SELECT 1 AS x FROM DUAL"
+      ],
+      "check": "SELECT COUNT(*) FROM USER_OBJECTS WHERE OBJECT_NAME = 'OBJ_CONF_ORA_V'",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "oracle-drop-materialized-view",
+      "dialect": "oracle",
+      "request": {
+        "action": "drop",
+        "kind": "materialized-view",
+        "schema": "DATAOMNI",
+        "name": "OBJ_CONF_ORA_MV"
+      },
+      "statement": "DROP MATERIALIZED VIEW \"DATAOMNI\".\"OBJ_CONF_ORA_MV\"",
+      "fixture": [
+        "DROP MATERIALIZED VIEW IF EXISTS OBJ_CONF_ORA_MV",
+        "CREATE MATERIALIZED VIEW OBJ_CONF_ORA_MV AS SELECT 1 AS x FROM DUAL"
+      ],
+      "check": "SELECT COUNT(*) FROM USER_OBJECTS WHERE OBJECT_NAME = 'OBJ_CONF_ORA_MV'",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "oracle-truncate",
+      "dialect": "oracle",
+      "request": {
+        "action": "truncate",
+        "schema": "DATAOMNI",
+        "name": "OBJ_CONF_ORA_ROWS"
+      },
+      "statement": "TRUNCATE TABLE \"DATAOMNI\".\"OBJ_CONF_ORA_ROWS\"",
+      "fixture": [
+        "DROP TABLE IF EXISTS OBJ_CONF_ORA_ROWS",
+        "CREATE TABLE OBJ_CONF_ORA_ROWS (id NUMBER)",
+        "INSERT INTO OBJ_CONF_ORA_ROWS VALUES (1)",
+        "INSERT INTO OBJ_CONF_ORA_ROWS VALUES (2)",
+        "COMMIT"
+      ],
+      "check": "SELECT COUNT(*) FROM OBJ_CONF_ORA_ROWS",
+      "expect": 0,
+      "cleanup": [
+        "DROP TABLE IF EXISTS OBJ_CONF_ORA_ROWS PURGE"
+      ]
+    },
+    {
+      "name": "postgres-create-schema",
+      "dialect": "postgresql",
+      "request": {
+        "action": "create-schema",
+        "name": "obj_conf_pg_schema"
+      },
+      "statement": "CREATE SCHEMA \"obj_conf_pg_schema\"",
+      "fixture": [
+        "DROP SCHEMA IF EXISTS obj_conf_pg_schema CASCADE"
+      ],
+      "check": "SELECT COUNT(*) FROM pg_namespace WHERE nspname = 'obj_conf_pg_schema'",
+      "expect": 1,
+      "cleanup": [
+        "DROP SCHEMA IF EXISTS obj_conf_pg_schema CASCADE"
+      ]
+    },
+    {
+      "name": "sqlserver-create-schema",
+      "dialect": "sqlserver",
+      "request": {
+        "action": "create-schema",
+        "name": "obj_conf_ms_schema"
+      },
+      "statement": "CREATE SCHEMA [obj_conf_ms_schema]",
+      "fixture": [
+        "DROP SCHEMA IF EXISTS obj_conf_ms_schema"
+      ],
+      "check": "SELECT COUNT(*) FROM sys.schemas WHERE name = 'obj_conf_ms_schema'",
+      "expect": 1,
+      "cleanup": [
+        "DROP SCHEMA IF EXISTS obj_conf_ms_schema"
+      ]
+    },
+    {
+      "name": "postgres-create-unique-index",
+      "dialect": "postgresql",
+      "request": {
+        "action": "create-index",
+        "schema": "public",
+        "table": "obj_conf_pg_ix",
+        "name": "uq_obj_conf_pg_ix_b_a",
+        "columns": [
+          "b",
+          "a"
+        ],
+        "unique": true
+      },
+      "statement": "CREATE UNIQUE INDEX \"uq_obj_conf_pg_ix_b_a\" ON \"public\".\"obj_conf_pg_ix\" (\"b\", \"a\")",
+      "fixture": [
+        "DROP TABLE IF EXISTS obj_conf_pg_ix",
+        "CREATE TABLE obj_conf_pg_ix (a int, b int)"
+      ],
+      "check": "SELECT COUNT(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'uq_obj_conf_pg_ix_b_a' AND i.indisunique",
+      "expect": 1,
+      "cleanup": [
+        "DROP TABLE IF EXISTS obj_conf_pg_ix"
+      ]
+    },
+    {
+      "name": "postgres-drop-index",
+      "dialect": "postgresql",
+      "request": {
+        "action": "drop-index",
+        "schema": "public",
+        "table": "obj_conf_pg_ix",
+        "name": "idx_obj_conf_pg_ix_a"
+      },
+      "statement": "DROP INDEX \"public\".\"idx_obj_conf_pg_ix_a\"",
+      "fixture": [
+        "DROP TABLE IF EXISTS obj_conf_pg_ix",
+        "CREATE TABLE obj_conf_pg_ix (a int, b int)",
+        "CREATE INDEX idx_obj_conf_pg_ix_a ON obj_conf_pg_ix (a)"
+      ],
+      "check": "SELECT COUNT(*) FROM pg_class WHERE relname = 'idx_obj_conf_pg_ix_a'",
+      "expect": 0,
+      "cleanup": [
+        "DROP TABLE IF EXISTS obj_conf_pg_ix"
+      ]
+    },
+    {
+      "name": "mysql-create-unique-index",
+      "dialect": "mysql",
+      "request": {
+        "action": "create-index",
+        "schema": "dataomni_test",
+        "table": "obj_conf_my_ix",
+        "name": "uq_obj_conf_my_ix_b_a",
+        "columns": [
+          "b",
+          "a"
+        ],
+        "unique": true
+      },
+      "statement": "CREATE UNIQUE INDEX `uq_obj_conf_my_ix_b_a` ON `dataomni_test`.`obj_conf_my_ix` (`b`, `a`)",
+      "fixture": [
+        "DROP TABLE IF EXISTS obj_conf_my_ix",
+        "CREATE TABLE obj_conf_my_ix (a int, b int)"
+      ],
+      "check": "SELECT COUNT(DISTINCT INDEX_NAME) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'obj_conf_my_ix' AND INDEX_NAME = 'uq_obj_conf_my_ix_b_a' AND NON_UNIQUE = 0",
+      "expect": 1,
+      "cleanup": [
+        "DROP TABLE IF EXISTS obj_conf_my_ix"
+      ]
+    },
+    {
+      "name": "mysql-drop-index",
+      "dialect": "mysql",
+      "request": {
+        "action": "drop-index",
+        "schema": "dataomni_test",
+        "table": "obj_conf_my_ix",
+        "name": "idx_obj_conf_my_ix_a"
+      },
+      "statement": "DROP INDEX `idx_obj_conf_my_ix_a` ON `dataomni_test`.`obj_conf_my_ix`",
+      "fixture": [
+        "DROP TABLE IF EXISTS obj_conf_my_ix",
+        "CREATE TABLE obj_conf_my_ix (a int, b int)",
+        "CREATE INDEX idx_obj_conf_my_ix_a ON obj_conf_my_ix (a)"
+      ],
+      "check": "SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'obj_conf_my_ix' AND INDEX_NAME = 'idx_obj_conf_my_ix_a'",
+      "expect": 0,
+      "cleanup": [
+        "DROP TABLE IF EXISTS obj_conf_my_ix"
+      ]
+    },
+    {
+      "name": "sqlite-create-unique-index",
+      "dialect": "sqlite",
+      "request": {
+        "action": "create-index",
+        "schema": null,
+        "table": "obj_conf_lite_ix",
+        "name": "uq_obj_conf_lite_ix_b_a",
+        "columns": [
+          "b",
+          "a"
+        ],
+        "unique": true
+      },
+      "statement": "CREATE UNIQUE INDEX \"uq_obj_conf_lite_ix_b_a\" ON \"obj_conf_lite_ix\" (\"b\", \"a\")",
+      "fixture": [
+        "DROP TABLE IF EXISTS obj_conf_lite_ix",
+        "CREATE TABLE obj_conf_lite_ix (a integer, b integer)"
+      ],
+      "check": "SELECT COUNT(*) FROM pragma_index_list('obj_conf_lite_ix') WHERE name = 'uq_obj_conf_lite_ix_b_a' AND \"unique\" = 1",
+      "expect": 1,
+      "cleanup": [
+        "DROP TABLE IF EXISTS obj_conf_lite_ix"
+      ]
+    },
+    {
+      "name": "sqlite-drop-index",
+      "dialect": "sqlite",
+      "request": {
+        "action": "drop-index",
+        "schema": null,
+        "table": "obj_conf_lite_ix",
+        "name": "idx_obj_conf_lite_ix_a"
+      },
+      "statement": "DROP INDEX \"idx_obj_conf_lite_ix_a\"",
+      "fixture": [
+        "DROP TABLE IF EXISTS obj_conf_lite_ix",
+        "CREATE TABLE obj_conf_lite_ix (a integer, b integer)",
+        "CREATE INDEX idx_obj_conf_lite_ix_a ON obj_conf_lite_ix (a)"
+      ],
+      "check": "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_obj_conf_lite_ix_a'",
+      "expect": 0,
+      "cleanup": [
+        "DROP TABLE IF EXISTS obj_conf_lite_ix"
+      ]
+    },
+    {
+      "name": "sqlserver-create-unique-index",
+      "dialect": "sqlserver",
+      "request": {
+        "action": "create-index",
+        "schema": "dbo",
+        "table": "obj_conf_ms_ix",
+        "name": "uq_obj_conf_ms_ix_b_a",
+        "columns": [
+          "b",
+          "a"
+        ],
+        "unique": true
+      },
+      "statement": "CREATE UNIQUE INDEX [uq_obj_conf_ms_ix_b_a] ON [dbo].[obj_conf_ms_ix] ([b], [a])",
+      "fixture": [
+        "DROP TABLE IF EXISTS obj_conf_ms_ix",
+        "CREATE TABLE obj_conf_ms_ix (a int, b int)"
+      ],
+      "check": "SELECT COUNT(*) FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.obj_conf_ms_ix') AND name = 'uq_obj_conf_ms_ix_b_a' AND is_unique = 1",
+      "expect": 1,
+      "cleanup": [
+        "DROP TABLE IF EXISTS obj_conf_ms_ix"
+      ]
+    },
+    {
+      "name": "sqlserver-drop-index",
+      "dialect": "sqlserver",
+      "request": {
+        "action": "drop-index",
+        "schema": "dbo",
+        "table": "obj_conf_ms_ix",
+        "name": "idx_obj_conf_ms_ix_a"
+      },
+      "statement": "DROP INDEX [idx_obj_conf_ms_ix_a] ON [dbo].[obj_conf_ms_ix]",
+      "fixture": [
+        "DROP TABLE IF EXISTS obj_conf_ms_ix",
+        "CREATE TABLE obj_conf_ms_ix (a int, b int)",
+        "CREATE INDEX idx_obj_conf_ms_ix_a ON obj_conf_ms_ix (a)"
+      ],
+      "check": "SELECT COUNT(*) FROM sys.indexes WHERE object_id = OBJECT_ID('dbo.obj_conf_ms_ix') AND name = 'idx_obj_conf_ms_ix_a'",
+      "expect": 0,
+      "cleanup": [
+        "DROP TABLE IF EXISTS obj_conf_ms_ix"
+      ]
+    },
+    {
+      "name": "oracle-create-unique-index",
+      "dialect": "oracle",
+      "request": {
+        "action": "create-index",
+        "schema": "DATAOMNI",
+        "table": "OBJ_CONF_ORA_IX",
+        "name": "UQ_OBJ_CONF_ORA_IX_B_A",
+        "columns": [
+          "B",
+          "A"
+        ],
+        "unique": true
+      },
+      "statement": "CREATE UNIQUE INDEX \"DATAOMNI\".\"UQ_OBJ_CONF_ORA_IX_B_A\" ON \"DATAOMNI\".\"OBJ_CONF_ORA_IX\" (\"B\", \"A\")",
+      "fixture": [
+        "DROP TABLE IF EXISTS OBJ_CONF_ORA_IX PURGE",
+        "CREATE TABLE OBJ_CONF_ORA_IX (a NUMBER, b NUMBER)"
+      ],
+      "check": "SELECT COUNT(*) FROM USER_INDEXES WHERE INDEX_NAME = 'UQ_OBJ_CONF_ORA_IX_B_A' AND UNIQUENESS = 'UNIQUE'",
+      "expect": 1,
+      "cleanup": [
+        "DROP TABLE IF EXISTS OBJ_CONF_ORA_IX PURGE"
+      ]
+    },
+    {
+      "name": "oracle-drop-index",
+      "dialect": "oracle",
+      "request": {
+        "action": "drop-index",
+        "schema": "DATAOMNI",
+        "table": "OBJ_CONF_ORA_IX",
+        "name": "IDX_OBJ_CONF_ORA_IX_A"
+      },
+      "statement": "DROP INDEX \"DATAOMNI\".\"IDX_OBJ_CONF_ORA_IX_A\"",
+      "fixture": [
+        "DROP TABLE IF EXISTS OBJ_CONF_ORA_IX PURGE",
+        "CREATE TABLE OBJ_CONF_ORA_IX (a NUMBER, b NUMBER)",
+        "CREATE INDEX IDX_OBJ_CONF_ORA_IX_A ON OBJ_CONF_ORA_IX (a)"
+      ],
+      "check": "SELECT COUNT(*) FROM USER_INDEXES WHERE INDEX_NAME = 'IDX_OBJ_CONF_ORA_IX_A'",
+      "expect": 0,
+      "cleanup": [
+        "DROP TABLE IF EXISTS OBJ_CONF_ORA_IX PURGE"
+      ]
+    }
+  ]
+}

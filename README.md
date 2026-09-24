@@ -40,20 +40,20 @@
 #### 兼容性矩阵
 
 下表每一格都来自真库上跑完的冒烟用例（`src-tauri/tests/database_smoke.rs`，
-MySQL 一组 21 条、PostgreSQL 一组 21 条），不是按协议兼容推断的。
+MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断的。
 连接表单里 MariaDB、TiDB、CockroachDB 各有一个入口，填好各自的默认端口；存下来
 的就是 MySQL / PostgreSQL 连接。
 
 | 服务端 | 版本 | 连接类型 | 结论 | 用例 |
 | --- | --- | --- | --- | --- |
-| MySQL | 8.4 | MySQL | ✅ 支持 | 21 / 21 |
-| PostgreSQL | 16 | PostgreSQL | ✅ 支持 | 21 / 21 |
+| MySQL | 8.4 | MySQL | ✅ 支持 | 22 / 22 |
+| PostgreSQL | 16 | PostgreSQL | ✅ 支持 | 22 / 22 |
 | SQLite | 随应用内置 | SQLite | ✅ 支持 | 全部 |
-| MariaDB | 11.4 | MySQL | ✅ 支持 | 21 / 21 |
-| TiDB | 8.5 | MySQL | ⚠️ 可用，有缺口 | 21 / 21（缺口由用例钉住） |
-| CockroachDB | 25.2 | PostgreSQL | ⚠️ 可用，有缺口 | 21 / 21（缺口由用例钉住） |
-| SQL Server | 2022 | SQL Server | ✅ 支持 | 16 / 16（独立用例，`sql_server_smoke.rs`，含改结构语料） |
-| Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 13 / 13（独立用例，`oracle_smoke.rs`，含改结构语料） |
+| MariaDB | 11.4 | MySQL | ✅ 支持 | 22 / 22 |
+| TiDB | 8.5 | MySQL | ⚠️ 可用，有缺口 | 22 / 22（缺口由用例钉住） |
+| CockroachDB | 25.2 | PostgreSQL | ⚠️ 可用，有缺口 | 22 / 22（缺口由用例钉住） |
+| SQL Server | 2022 | SQL Server | ✅ 支持 | 17 / 17（独立用例，`sql_server_smoke.rs`，含改结构语料） |
+| Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 14 / 14（独立用例，`oracle_smoke.rs`，含改结构语料） |
 
 - **MariaDB**：JSON 列是 LONGTEXT 的别名，按文本显示与编辑，没有 JSON 专用
   编辑器；没有函数索引。
@@ -152,7 +152,11 @@ MySQL 一组 21 条、PostgreSQL 一组 21 条），不是按协议兼容推断�
   对象树里新建表（填列与主键）。**一律先出预览 SQL 再执行**——预览里分开列出
   会丢什么、会跑什么、哪几项这个方言做不到（带理由）。删列走二次确认，
   并逐条点名受影响的列
-- 主键、索引、约束的增删改还要去 SQL 编辑器；SQLite 改列类型、MySQL 改带
+- 对象管理：右键删除表 / 视图 / 物化视图、清空表（总会先确认，写明语句与会丢什么）；
+  PostgreSQL / CockroachDB / SQL Server 上新建 schema；结构页上新建（按次序选列、
+  可选唯一）与删除索引。每条语句都由一份共用语料钉住，在八种服务端
+  （含 MariaDB / TiDB / CockroachDB）的真库上跑过
+- 主键与约束的增删改还要去 SQL 编辑器；SQLite 改列类型、MySQL 改带
   表达式默认值的列类型都明确不做，界面上写明原因
 
 - 事务控制：自动提交开关、开始 / 提交 / 回滚，工作台头部常驻事务状态与计时。

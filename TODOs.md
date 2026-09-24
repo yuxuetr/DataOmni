@@ -966,23 +966,55 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     冒烟断言的是中文原句「不返回结果集」，而后端早已改成错误码。网络用例
     平时跳过，于是它红了很久没人知道。
 
-- [ ] **对象管理补齐**（2026-09-24 立项，用户确认按这个顺序做）
+- [x] **对象管理补齐**（2026-09-24 立项并完成）
   - 为什么现在做：建表与改结构已经各方言真库验过，但对象树上删表、清空表、
     建 schema、建 / 删索引都没有入口，只能手写 SQL。这些是每天都做的事。
-  - 共同做法：SQL 由 `src/utils/` 的纯函数生成，照改结构那份共用语料的做法
-    再开一份 `fixtures/object-ddl-conformance.json`——前端断言生成的语句，
-    冒烟用例把同一批语句在每家真库上跑一遍并核对结果。执行走
-    `execute_write_batch`，执行前一律先看语句原文。
-  - [ ] 删除表 / 视图 / 物化视图、清空表（右键菜单）。菜单发起的删除**不看
-    确认策略、一律二次确认**：敲出来的 DROP 是意图，右键点错一行不是。
-    SQLite 没有 TRUNCATE，清空写成 `DELETE FROM`，确认框照实说。
-  - [ ] 新建 schema（PostgreSQL / CockroachDB / SQL Server，树上本来就有
-    schema 这一层）。MySQL 系的「新建数据库」**当前版本不做**：连接绑在一个库上，
-    对象树只列这一个库，建出来的库在界面上看不见，是半个功能。
-    重估条件：对象树能在一个连接下列出多个库。Oracle 的 schema 是用户，
-    建它要 `CREATE USER` 权限与密码，不在这一条里。
-  - [ ] 结构页新建 / 删除索引：名字、按顺序选列、是否唯一；主键那条不给删
-    （它是约束，不是索引）。
+  - 做法：SQL 全在 `utils/objectDdl.ts` 的纯函数里，每个动作恰好一条语句；共用语料
+    `fixtures/object-ddl-conformance.json`（29 条）——`objectDdl.conformance.test.ts`
+    核对生成的语句逐字等于语料，五份冒烟用例（`{postgres,mysql,sqlite}_runs_the_object_ddl_corpus`、
+    `sql_server_…`、`oracle_…`）先跑夹具、再跑语句、再用一条只返回整数的查询核对结果。
+    SQL Server 与 Oracle 走界面同一条路（`execute_write_batch`）。八种服务端全绿：
+    MySQL 8.4、MariaDB 11.4、TiDB 8.5、PostgreSQL 16、CockroachDB 25.2、SQLite、
+    SQL Server 2022、Oracle 23ai。反向验证：把 SQLite 清空那条改成 `WHERE 0`，
+    核对查询报出 2 ≠ 0。
+  - [x] 删除表 / 视图 / 物化视图、清空表（右键菜单，排在最后、分隔线下、红字）。
+    菜单发起的**一律确认**，不看确认策略，框底那句「可在设置里调整」换成「总会确认」。
+    不加 `IF EXISTS` / `CASCADE`：被依赖时让服务端拒绝（PostgreSQL 上渲染验过：
+    `cannot drop table obj_gui_parent because other objects depend on it`，表还在）。
+    删掉的表还开着的标签一起关（`tabsShowingTable`，按连接与 schema 精确比）。
+    SQLite 清空发 `DELETE FROM`，确认框写明删除触发器会逐行触发。
+    Oracle 的 `DROP TABLE` 不带 `PURGE`：进回收站，可 `FLASHBACK`。
+  - [x] 新建 schema：PostgreSQL / CockroachDB / SQL Server（`CREATES_SCHEMAS`）。
+    **空 schema 在树上看不见**（树上的 schema 来自对象），所以建完直接进新建表，
+    新 schema 补进下拉并选中——建完就能用，也就看得见了。入口是头部「+」的两项小菜单，
+    不是再加一个图标（见下面渲染抓到的第一处）。
+    MySQL 系的「新建数据库」**当前版本不做**：连接绑在一个库上，对象树只列这一个库，
+    建出来的库在界面上看不见，是半个功能。重估条件：对象树能在一个连接下列出多个库。
+    Oracle 的 schema 是用户，建它要 `CREATE USER` 权限与口令，不在这一条里。
+  - [x] 结构页新建 / 删除索引：「索引」段标题右侧「新建索引」，按勾选次序定键内次序
+    （每列旁标第几个），可选唯一，名字按 `idx_表_列` / `uq_表_列` 起好、按 UTF-8 截到
+    60 字节（PostgreSQL 超 63 字节会悄悄截断）、Oracle 写大写；语句边打边印。
+    PostgreSQL 不加 `CONCURRENTLY`（进不了事务），对话框里说明会挡写。行尾删除按钮
+    只在悬停时出现，主键没有（它是约束）。建 / 删之后重读索引：多一个唯一索引，
+    只读的表可能就能改了。索引名在 PostgreSQL / Oracle 属于 schema：PostgreSQL 建时
+    **不能**限定、删时**要**限定；MySQL / SQL Server 写 `DROP INDEX … ON 表`。
+  - 渲染（Linux 打包版，SQLite + PostgreSQL + CockroachDB）抓到的，都已修：
+    (1) **侧边栏默认宽度下头部的刷新按钮本来就被挤出去了**（改动之前就是，截图对比
+    确认），加一个「新建 schema」图标之后连「+」也没了。按钮组改为不让位，「已缓存」
+    标记去掉、并进刷新按钮的提示（它说的正是「点这里会重新读」），新建 schema 收进「+」。
+    (2) 确认框对**一条**语句说「这批语句会作为一个整体提交：中途出错什么都不会改」——
+    改结构页只发一条 ALTER 时同样如此；一条时改说「执行即提交」。
+    (3) 删视图的影响写「视图本身不存数据」，和标题「会丢掉数据」自相矛盾；改写成
+    定义没了回不来、引用它的对象失效。(4) 结构页那句「主键、索引与约束暂不能在这里改」
+    过时了。
+  - **真库用例抓到的一处**：SQL Server 上 `CREATE SCHEMA` 经写入批次跑不了（156，
+    `Incorrect syntax near the keyword 'SCHEMA'`，位置 1）。写入批次给每条语句后面拼一句
+    `SELECT @@ROWCOUNT`，而 `CREATE SCHEMA` 必须打头、后面只能跟它自己的元素；拼掉
+    那一句还不够——参数化查询经 `sp_executesql` 发，那里同样不认。改为：必须打头的
+    几种（`CREATE / ALTER` 加 `SCHEMA / VIEW / PROCEDURE / FUNCTION / TRIGGER`，
+    `must_lead_its_batch`）不带参数时走普通批次，影响行数记 0。改前这条冒烟用例红，
+    改后 SQL Server 17 / 17。
+  - 顺带：两条 clippy 新版本的警告（`is_multiple_of`、`SysRng` 单元结构体）另一提交。
 
 ### 3.2 事务控制
 

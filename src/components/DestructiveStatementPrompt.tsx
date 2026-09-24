@@ -28,6 +28,11 @@ interface DestructiveStatementPromptProps {
   /** 方言名，用在「这条语句在哪个库上不受事务保护」里 */
   databaseLabel: string;
   onConfirm: () => void;
+  /**
+   * 这个框是否不受确认策略控制、每次都弹。对象树上的删除与清空是这样：
+   * 那时再说「可在设置里调整」就是一句假话
+   */
+  alwaysAsks?: boolean;
   /** 自动提交时多给的一条路：先开事务再执行。包不住的语句上不提供 */
   onRunInTransaction?: () => void;
   onCancel: () => void;
@@ -51,6 +56,7 @@ export function DestructiveStatementPrompt({
   impacts,
   reversibility,
   databaseLabel,
+  alwaysAsks = false,
   onConfirm,
   onRunInTransaction,
   onCancel
@@ -73,7 +79,8 @@ export function DestructiveStatementPrompt({
       case 'autocommit':
         return t('risk.irreversibleAutocommit');
       case 'atomic-batch':
-        return t('risk.atomicBatch');
+        // 只有一条时「作为一个整体」「中途出错」都无从说起
+        return statementCount > 1 ? t('risk.atomicBatch') : t('risk.committedOnRun');
       case 'not-transactional':
         return t('risk.irreversibleDialect', {
           keyword: reversibility.keyword,
@@ -164,7 +171,9 @@ export function DestructiveStatementPrompt({
         {/* 提示和按钮上下排：多出「在事务里执行」之后并排会把提示挤成四行 */}
         <div className="border-t border-line bg-surface-sunken px-5 py-3">
           {/* 被打断的这一刻，正是最想知道「这东西能不能关掉」的时候 */}
-          <p className="text-xs text-fg-subtle">{t('prompt.configurable')}</p>
+          <p className="text-xs text-fg-subtle">
+            {alwaysAsks ? t('prompt.alwaysAsks') : t('prompt.configurable')}
+          </p>
           <div className="mt-2 flex flex-wrap justify-end gap-2">
           <button
             type="button"

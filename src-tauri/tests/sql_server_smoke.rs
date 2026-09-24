@@ -1174,3 +1174,29 @@ async fn sql_server_runs_the_generated_ddl_from_the_shared_corpus() {
     run_all(&pool, &case.cleanup.iter().map(String::as_str).collect::<Vec<_>>()).await;
   }
 }
+
+/// 对象级结构操作语料的 SQL Server 用例：语句走界面上同一条路（`execute_write_batch`）
+#[path = "support/object_ddl_corpus.rs"]
+mod object_ddl_corpus;
+
+#[tokio::test]
+async fn sql_server_runs_the_object_ddl_corpus() {
+  let Some(pool) = pool().await else { return };
+  let schema = pool.select("SELECT SCHEMA_NAME() AS s", &[]).await.expect("default schema")[0]["s"]
+    .as_str()
+    .unwrap_or_default()
+    .to_string();
+  for case in object_ddl_corpus::load("sqlserver") {
+    if let Some(written) = &case.schema {
+      assert_eq!(written, &schema, "{}: 语料写死的 schema", case.name);
+    }
+    run_all(&pool, &case.fixture.iter().map(String::as_str).collect::<Vec<_>>()).await;
+    execute_write_batch(PoolRef::SqlServer(&pool), &[write(&case.statement, Vec::new(), None)])
+      .await
+      .unwrap_or_else(|error| panic!("{}: 生成的语句跑不了\n{:?}", case.name, error.error));
+    let rows = pool.select(&case.check, &[]).await.expect("核对查询");
+    let found = rows[0].values().next().and_then(JsonValue::as_i64);
+    assert_eq!(found, Some(case.expect), "{}: 跑完之后的结果和语料说的不一样", case.name);
+    run_all(&pool, &case.cleanup.iter().map(String::as_str).collect::<Vec<_>>()).await;
+  }
+}

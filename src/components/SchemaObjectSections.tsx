@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { useLanguageStore } from '../stores/languageStore';
-import { AlertCircle, Check, Copy } from 'lucide-react';
+import { AlertCircle, Check, Copy, Plus, Trash2 } from 'lucide-react';
 import { describeError } from '../utils/describeError';
 import clsx from 'clsx';
 import { DatabaseType } from '../contracts/connection';
 import type { ConnectionProfile } from '../contracts';
-import type { SchemaObjects } from '../utils/schemaObjects';
+import type { IndexInfo, SchemaObjects } from '../utils/schemaObjects';
 
 export type { SchemaObjects };
 
@@ -17,10 +17,13 @@ export type { SchemaObjects };
  */
 export function SchemaObjectSections({
   objects,
-  dbType
+  dbType,
+  indexActions
 }: {
   objects: SchemaObjects | null;
   dbType: ConnectionProfile['db_type'];
+  /** 能改结构的方言才给；不给就只读 */
+  indexActions?: { onCreate: () => void; onDrop: (index: IndexInfo) => void };
 }) {
   const t = useLanguageStore((state) => state.t);
   if (!objects) {
@@ -40,9 +43,19 @@ export function SchemaObjectSections({
         count={objects.indexes.length}
         emptyText={t('schema.indexes.empty')}
         failure={failures.indexes}
+        action={indexActions && (
+          <button
+            type="button"
+            onClick={indexActions.onCreate}
+            className="ml-auto flex items-center gap-1 text-xs text-fg-muted hover:text-accent"
+          >
+            <Plus size={12} />
+            {t('indexCreate.title')}
+          </button>
+        )}
       >
         {objects.indexes.map(index => (
-          <li key={index.name} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 py-2">
+          <li key={index.name} className="group flex flex-wrap items-baseline gap-x-2 gap-y-1 px-4 py-2">
             <span className="font-mono text-xs text-fg">{index.name}</span>
             <span className="font-mono text-xs text-fg-muted">
               ({index.columns.join(', ')})
@@ -50,6 +63,18 @@ export function SchemaObjectSections({
             {index.isPrimary && <Pill tone="accent">{t('schema.primaryKey')}</Pill>}
             {index.isUnique && !index.isPrimary && <Pill tone="accent">{t('schema.unique')}</Pill>}
             {index.method && <span className="text-xs text-fg-subtle">{index.method}</span>}
+            {/* 主键是约束不是索引，DROP INDEX 删不掉它，删它是改结构那边的事 */}
+            {indexActions && !index.isPrimary && (
+              <button
+                type="button"
+                onClick={() => indexActions.onDrop(index)}
+                title={t('indexDrop.title')}
+                aria-label={t('indexDrop.title')}
+                className="ml-auto self-center text-fg-subtle opacity-0 transition-opacity hover:text-danger focus:opacity-100 group-hover:opacity-100"
+              >
+                <Trash2 size={13} />
+              </button>
+            )}
           </li>
         ))}
       </SchemaSection>
@@ -234,6 +259,7 @@ function SchemaSection({
   count,
   emptyText,
   failure,
+  action,
   children
 }: {
   title: string;
@@ -241,6 +267,8 @@ function SchemaSection({
   emptyText: string;
   /** 这一段没查成。有它就不画数量，更不画「没有」 */
   failure?: string;
+  /** 标题行右侧的按钮 */
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const isEmpty = count === 0;
@@ -250,6 +278,7 @@ function SchemaSection({
       <h3 className="flex items-baseline gap-2 bg-surface-sunken px-4 py-2 text-xs font-medium text-fg-muted">
         {title}
         {count !== null && !failure && <span className="text-fg-subtle">{count}</span>}
+        {action}
       </h3>
       {failure ? (
         <SectionFailure message={failure} />

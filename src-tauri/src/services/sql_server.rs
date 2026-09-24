@@ -620,6 +620,21 @@ impl SqlServerPool {
   }
 }
 
+/// 这几种语句必须是一批里的第一条（`CREATE SCHEMA` 后面还能跟它自己的元素，
+/// 跟一句 SELECT 就是语法错误；视图、过程、函数、触发器则要独占一批）。
+///
+/// 只看开头的关键字：写入批次里的语句是界面生成的，不带前导注释。
+fn must_lead_its_batch(sql: &str) -> bool {
+  let words: Vec<String> =
+    sql.split_whitespace().take(4).map(|word| word.to_ascii_uppercase()).collect();
+  let object = match words.as_slice() {
+    [first, or, alter, object, ..] if first == "CREATE" && or == "OR" && alter == "ALTER" => object,
+    [verb, object, ..] if verb == "CREATE" || verb == "ALTER" => object,
+    _ => return false,
+  };
+  matches!(object.as_str(), "SCHEMA" | "VIEW" | "PROCEDURE" | "PROC" | "FUNCTION" | "TRIGGER")
+}
+
 /// `index` 记着做到了第几条，出错时由调用方标在那一条上；提交失败标在
 /// `statements.len()`，和 sqlx 那边一样
 async fn write_in_transaction(
@@ -631,24 +646,32 @@ async fn write_in_transaction(
   let mut affected = Vec::with_capacity(statements.len());
   for (position, statement) in statements.iter().enumerate() {
     *index = position;
-    let sql = format!("{};\nSELECT CAST(@@ROWCOUNT AS BIGINT)", statement.sql);
-    let mut query = tiberius::Query::new(sql.as_str());
-    bind_params(&mut query, &statement.params)?;
-    let results = query
-      .query(client)
-      .await
-      .map_err(|error| query_error(error, Some(&statement.sql)))?
-      .into_results()
-      .await
-      .map_err(|error| query_error(error, Some(&statement.sql)))?;
-    // 触发器也可能返回结果集，行数在最后一个里
-    let rows = results
-      .last()
-      .and_then(|set| set.first())
-      .map(|row| int_cell::<i64>(row, 0))
-      .transpose()?
-      .and_then(|count| u64::try_from(count).ok())
-      .unwrap_or(0);
+    // 必须打头的那几种（见 `must_lead_its_batch`）走普通批次：后面不能再跟一句
+    // SELECT，而经 `sp_executesql` 发的参数化查询里 `CREATE SCHEMA` 也不认
+    // （156，位置 1）。它们都是 DDL，没有影响行数可问
+    let rows = if must_lead_its_batch(&statement.sql) && statement.params.is_empty() {
+      run_simple(client, &statement.sql).await?;
+      0
+    } else {
+      let sql = format!("{};\nSELECT CAST(@@ROWCOUNT AS BIGINT)", statement.sql);
+      let mut query = tiberius::Query::new(sql.as_str());
+      bind_params(&mut query, &statement.params)?;
+      let results = query
+        .query(client)
+        .await
+        .map_err(|error| query_error(error, Some(&statement.sql)))?
+        .into_results()
+        .await
+        .map_err(|error| query_error(error, Some(&statement.sql)))?;
+      // 触发器也可能返回结果集，行数在最后一个里
+      results
+        .last()
+        .and_then(|set| set.first())
+        .map(|row| int_cell::<i64>(row, 0))
+        .transpose()?
+        .and_then(|count| u64::try_from(count).ok())
+        .unwrap_or(0)
+    };
     if let Some(expected) = statement.expect_rows {
       if rows != expected {
         return Err(QueryError::with_code(
@@ -1057,5 +1080,27 @@ mod tests {
     assert_eq!(tls_settings(TlsMode::Preferred), (EncryptionLevel::On, false));
     assert_eq!(tls_settings(TlsMode::Required), (EncryptionLevel::Required, false));
     assert_eq!(tls_settings(TlsMode::VerifyFull), (EncryptionLevel::Required, true));
+  }
+
+  #[test]
+  fn only_statements_that_must_lead_a_batch_run_without_the_row_count_query() {
+    for sql in [
+      "CREATE SCHEMA [reports]",
+      "create view v as select 1 as x",
+      "CREATE OR ALTER PROCEDURE p AS SELECT 1",
+      "ALTER FUNCTION f() RETURNS int AS BEGIN RETURN 1 END",
+      "CREATE TRIGGER t ON x AFTER INSERT AS SELECT 1",
+    ] {
+      assert!(must_lead_its_batch(sql), "{sql}");
+    }
+    for sql in [
+      "CREATE TABLE [dbo].[t] ([id] int)",
+      "CREATE UNIQUE INDEX [ix] ON [dbo].[t] ([id])",
+      "UPDATE [dbo].[t] SET [id] = 1",
+      "ALTER TABLE [dbo].[t] ADD [note] nvarchar(10)",
+      "DROP VIEW [dbo].[v]",
+    ] {
+      assert!(!must_lead_its_batch(sql), "{sql}");
+    }
   }
 }

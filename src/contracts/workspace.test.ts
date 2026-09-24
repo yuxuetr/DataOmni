@@ -4,6 +4,7 @@ import {
   createTableWorkspaceTab,
   markWorkspaceTabProfileDeleted,
   orderWorkspaceTabs,
+  tabsShowingTable,
   updateSqlWorkspaceTabDraft,
   workspaceTabId
 } from './workspace';
@@ -127,5 +128,25 @@ describe('orderWorkspaceTabs', () => {
   it('新建的标签默认不固定', () => {
     expect(createSqlWorkspaceTab('p', { id: 'a' }).pinned).toBe(false);
     expect(createTableWorkspaceTab('p', 'users', { id: 't' }).pinned).toBe(false);
+  });
+});
+
+describe('tabsShowingTable', () => {
+  it('finds both pages of the table, and only on that connection and schema', () => {
+    const data = createTableWorkspaceTab('p1', 'orders', { id: 'a', schema: 'public', now });
+    const structure = createTableWorkspaceTab('p1', 'orders', {
+      id: 'b', schema: 'public', kind: 'table-structure', now
+    });
+    const otherSchema = createTableWorkspaceTab('p1', 'orders', { id: 'c', schema: 'audit', now });
+    const otherConnection = createTableWorkspaceTab('p2', 'orders', { id: 'd', schema: 'public', now });
+    const sql = createSqlWorkspaceTab('p1', { id: 'e', now });
+
+    const found = tabsShowingTable(
+      [data, structure, otherSchema, otherConnection, sql],
+      'p1',
+      { schema: 'public', table: 'orders' }
+    );
+
+    expect(found.map((tab) => tab.id)).toEqual(['a', 'b']);
   });
 });

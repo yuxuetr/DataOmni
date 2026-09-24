@@ -10,6 +10,8 @@ import {
   GitBranch,
   Hash,
   Plus,
+  FolderPlus,
+  Table2,
   RefreshCw,
   Loader,
   AlertCircle,
@@ -34,9 +36,22 @@ import {
 } from '../utils/databaseObjects';
 import { ObjectDefinitionDialog } from './ObjectDefinitionDialog';
 import { CreateTableDialog } from './CreateTableDialog';
+import { CreateSchemaDialog } from './CreateSchemaDialog';
 import { identifierDialectFor } from '../utils/sqlIdentifiers';
 import { ObjectContextMenu } from './ObjectContextMenu';
 import { qualifiedObjectName, type ObjectMenuAction } from '../utils/objectMenu';
+import {
+  CREATES_SCHEMAS,
+  dropObjectSql,
+  isDroppableKind,
+  truncateTableSql,
+  type DroppableKind
+} from '../utils/objectDdl';
+import { batchReversibility } from '../utils/statementReversibility';
+import { serverLabel } from '../utils/serverPresets';
+import { tabsShowingTable } from '../contracts/workspace';
+import { useWorkspaceStore } from '../stores/workspaceStore';
+import { DestructiveStatementPrompt } from './DestructiveStatementPrompt';
 import { describeError } from '../utils/describeError';
 import {
   flattenVisibleTree,
@@ -45,12 +60,27 @@ import {
   type FlatTreeNode
 } from '../utils/treeNavigation';
 import { useConnectionStore } from '../stores/connectionStore';
+import { useContextMenu } from '../hooks/useContextMenu';
 import { useQueryStore } from '../stores/queryStore';
 import { METADATA_TTL_MS, useAppStore } from '../stores/appStore';
 import { validateDatabaseConnection } from '../utils/stateSync';
 import { clsx } from 'clsx';
 import type { TranslationKey } from '../i18n/translate';
 import { connectionHealth, type ConnectionHealth } from '../utils/connectionHealth';
+
+/** 确认框里「会丢什么」那一行。视图不存数据，只说删了它 */
+const DROP_IMPACT_KEYS: Record<DroppableKind, TranslationKey> = {
+  table: 'object.impact.dropTable',
+  view: 'object.impact.dropView',
+  'materialized-view': 'object.impact.dropMaterializedView'
+};
+
+/** 等着确认的那一条改库动作。语句在弹框之前就定下来，确认框里给人看的就是要跑的 */
+interface PendingObjectChange {
+  object: DatabaseObject;
+  action: 'drop' | 'truncate';
+  sql: string;
+}
 
 interface DatabaseExplorerProps {
   connectionId: string;
@@ -117,10 +147,20 @@ export default function DatabaseExplorer({
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [inspecting, setInspecting] = useState<DatabaseObject | null>(null);
   const [creatingTable, setCreatingTable] = useState(false);
+  const [creatingSchema, setCreatingSchema] = useState(false);
+  const [createMenu, setCreateMenu] = useState<{ x: number; y: number } | null>(null);
+  /**
+   * 刚建好的 schema。树上的 schema 来自对象，空的那个不会出现，建表框的
+   * 下拉里也就没有它——所以建完直接进建表，把它补进下拉并选中
+   */
+  const [newSchema, setNewSchema] = useState<string | null>(null);
   const [objectMenu, setObjectMenu] = useState<
     { object: DatabaseObject; position: { x: number; y: number } } | null
   >(null);
-  const [copyError, setCopyError] = useState<string | null>(null);
+  // 复制失败与删表 / 清空失败共用这一条：都是「右键菜单那一下没成」
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [pendingChange, setPendingChange] = useState<PendingObjectChange | null>(null);
+  const markSchemaChanged = useAppStore((state) => state.markSchemaChanged);
   /**
    * 键盘焦点落在哪个节点上。整棵树只有一个 Tab 停靠点（roving tabindex），
    * 进来之后用方向键走——此前每个对象都是独立的停靠点，单组上限 200，
@@ -253,6 +293,10 @@ export default function DatabaseExplorer({
     );
   }
 
+  const createLabel = CREATES_SCHEMAS.has(identifierDialectFor(connection.db_type))
+    ? t('explorer.createMenu')
+    : t('ddl.createTable');
+
   // 过期只决定「该重新拉了」，不决定「不给看」。此前两件事是同一个条件：
   // 连上五分钟之后随便点一下，整棵树就变成「没有数据库对象」，而且没有
   // 任何东西去重新加载，只能自己想到去点刷新
@@ -346,33 +390,76 @@ export default function DatabaseExplorer({
     }
 
     const dialect = connection ? identifierDialectFor(connection.db_type) : 'sqlite';
+    if (action === 'drop' || action === 'truncate') {
+      const { kind } = object;
+      if (action === 'drop' && !isDroppableKind(kind)) {
+        return;
+      }
+      setActionError(null);
+      setPendingChange({
+        object,
+        action,
+        sql: action === 'drop' && isDroppableKind(kind)
+          ? dropObjectSql({ ...object, kind }, dialect)
+          : truncateTableSql(object, dialect)
+      });
+      return;
+    }
+
     navigator.clipboard
       .writeText(qualifiedObjectName(object, dialect))
-      .then(() => setCopyError(null))
+      .then(() => setActionError(null))
       // 剪贴板会被权限或非安全上下文拒绝。静默失败的后果是以为复制成功了，
       // 粘出来却是上一次的东西
-      .catch((cause) => setCopyError(describeError(cause, t('common.copyFailed'))));
+      .catch((cause) => setActionError(describeError(cause, t('common.copyFailed'))));
+  };
+
+  const runObjectChange = async ({ object, action, sql }: PendingObjectChange) => {
+    try {
+      await invoke<number[]>('execute_write_batch', {
+        connectionId,
+        statements: [{ sql, params: [], expectRows: null }]
+      });
+    } catch (cause) {
+      setActionError(describeError(cause));
+      return;
+    }
+    if (action === 'drop') {
+      // 删掉的表还开着的标签留着只会显示旧数据，下次刷新再报「表不存在」
+      const { tabs, closeTab } = useWorkspaceStore.getState();
+      tabsShowingTable(tabs, connectionId, { schema: object.schema, table: object.name })
+        .forEach((tab) => closeTab(tab.id));
+    }
+    markSchemaChanged();
+  };
+
+  const changeImpact = ({ object, action }: PendingObjectChange): string => {
+    const name = object.schema ? `${object.schema}.${object.name}` : object.name;
+    if (action === 'truncate') {
+      return connection && identifierDialectFor(connection.db_type) === 'sqlite'
+        ? t('object.impact.truncateSqlite', { name })
+        : t('object.impact.truncate', { name });
+    }
+    return isDroppableKind(object.kind)
+      ? t(DROP_IMPACT_KEYS[object.kind], { name })
+      : name;
   };
 
   return (
     <div className="h-full flex flex-col bg-surface">
       {/* 头部 */}
       <div className="flex items-center justify-between p-3 border-b bg-surface-sunken">
-        <div className="flex items-center space-x-2">
-          <Database className="text-accent" size={16} />
+        <div className="flex min-w-0 items-center space-x-2 overflow-hidden">
+          <Database className="shrink-0 text-accent" size={16} />
           <h2 className="text-sm font-semibold text-fg">{t('explorer.title')}</h2>
           {/* 和工作台头部同一个纯函数：两处各判各的时候它们真的会说不一样的话 */}
           <span className={clsx('text-xs px-2 py-0.5 rounded-control', HEALTH_BADGE[health].className)}>
             {t(HEALTH_BADGE[health].labelKey)}
           </span>
-          {cachedMetadata && !isMetadataStale && (
-            <span className="text-xs text-accent bg-accent-soft px-2 py-0.5 rounded-control">
-              {t('explorer.cached')}
-            </span>
-          )}
         </div>
         
-        <div className="flex items-center gap-1">
+        {/* 按钮不让位：窄的时候宁可截掉左边的状态标记，也不能让「+」与刷新消失 */}
+        <div className="flex shrink-0 items-center gap-1">
           {onOpenErDiagram && (
             <button
               onClick={onOpenErDiagram}
@@ -385,11 +472,20 @@ export default function DatabaseExplorer({
           )}
           {supportsFeature(connection.db_type, 'structureEditing') && (
           <button
-            onClick={() => setCreatingTable(true)}
+            onClick={(event) => {
+              // 能建 schema 的方言上「+」是一个两项的小菜单，而不是再加一个图标：
+              // 侧边栏默认宽度下多一个图标，「+」与刷新就被挤出头部了
+              if (CREATES_SCHEMAS.has(identifierDialectFor(connection.db_type))) {
+                const box = event.currentTarget.getBoundingClientRect();
+                setCreateMenu({ x: box.left, y: box.bottom + 4 });
+                return;
+              }
+              setCreatingTable(true);
+            }}
             disabled={!connectionReady}
             className="p-1 text-fg-muted transition-colors hover:text-accent disabled:opacity-40"
-            title={t('ddl.createTable')}
-            aria-label={t('ddl.createTable')}
+            title={createLabel}
+            aria-label={createLabel}
           >
             <Plus size={14} />
           </button>
@@ -398,7 +494,10 @@ export default function DatabaseExplorer({
             onClick={() => loadDatabaseMetadata(true)}
             disabled={loading}
             className="p-1 text-fg-muted hover:text-accent transition-colors"
-            title={t('explorer.refresh')}
+            // 「已缓存」此前是头部的一个标记，和按钮挤在侧边栏默认宽度里，刷新按钮
+            // 被挤出了头部。它说的正是「点这里会重新读」，放进这里的提示
+            title={cachedMetadata && !isMetadataStale ? t('explorer.refreshCached') : t('explorer.refresh')}
+            aria-label={t('explorer.refresh')}
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </button>
@@ -504,10 +603,42 @@ export default function DatabaseExplorer({
         )}
       </div>
 
-      {copyError && (
-        <div className="border-t border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
-          {copyError}
+      {actionError && (
+        <div className="flex items-start gap-2 border-t border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
+          <span className="min-w-0 flex-1 select-text break-words">{actionError}</span>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            aria-label={t('common.close')}
+            className="shrink-0 text-danger hover:opacity-70"
+          >
+            <X size={12} />
+          </button>
         </div>
+      )}
+
+      {/* 不看确认策略，一律确认：敲出来的 DROP 是意图，右键点错一行不是 */}
+      {pendingChange && (
+        <DestructiveStatementPrompt
+          sql={pendingChange.sql}
+          risk="destructive"
+          statementCount={1}
+          connectionName={connection.name}
+          environment={connection.environment}
+          databaseLabel={serverLabel(connection)}
+          alwaysAsks
+          reversibility={batchReversibility(
+            [pendingChange.sql],
+            identifierDialectFor(connection.db_type)
+          )}
+          impacts={[changeImpact(pendingChange)]}
+          onCancel={() => setPendingChange(null)}
+          onConfirm={() => {
+            const change = pendingChange;
+            setPendingChange(null);
+            void runObjectChange(change);
+          }}
+        />
       )}
 
       {objectMenu && (
@@ -527,23 +658,94 @@ export default function DatabaseExplorer({
         />
       )}
 
+      {createMenu && (
+        <CreateMenu
+          position={createMenu}
+          onDismiss={() => setCreateMenu(null)}
+          onCreateTable={() => setCreatingTable(true)}
+          onCreateSchema={() => setCreatingSchema(true)}
+        />
+      )}
+
+      {creatingSchema && (
+        <CreateSchemaDialog
+          connectionId={connectionId}
+          dialect={identifierDialectFor(connection.db_type)}
+          onClose={() => setCreatingSchema(false)}
+          onCreated={(schema) => {
+            setCreatingSchema(false);
+            setNewSchema(schema);
+            setCreatingTable(true);
+          }}
+        />
+      )}
+
       {creatingTable && (
         <CreateTableDialog
           connectionId={connectionId}
           dialect={identifierDialectFor(connection.db_type)}
           // schema 取自已经读到的对象，不另发一次目录查询：能建表的 schema
           // 就是树里那几个，而凭空让用户手打一个名字只会打错
-          schemas={[...new Set(
-            objects.map((object) => object.schema).filter((name): name is string => !!name)
-          )].sort()}
+          schemas={[...new Set([
+            ...objects.map((object) => object.schema).filter((name): name is string => !!name),
+            ...(newSchema ? [newSchema] : [])
+          ])].sort()}
+          initialSchema={newSchema}
           username={connection.username}
-          onClose={() => setCreatingTable(false)}
+          onClose={() => {
+            setCreatingTable(false);
+            setNewSchema(null);
+          }}
           onCreated={(table, schema) => {
             void loadDatabaseMetadata(true);
             onTableSelect?.(table, schema ?? undefined);
           }}
         />
       )}
+    </div>
+  );
+}
+
+/** 头部「+」在能建 schema 的方言上展开的两项 */
+function CreateMenu({
+  position,
+  onDismiss,
+  onCreateTable,
+  onCreateSchema
+}: {
+  position: { x: number; y: number };
+  onDismiss: () => void;
+  onCreateTable: () => void;
+  onCreateSchema: () => void;
+}) {
+  const t = useLanguageStore((state) => state.t);
+  const { ref, style } = useContextMenu<HTMLDivElement>(position, onDismiss);
+  const items = [
+    { key: 'table', label: t('ddl.createTable'), Icon: Table2, run: onCreateTable },
+    { key: 'schema', label: t('schemaCreate.title'), Icon: FolderPlus, run: onCreateSchema }
+  ];
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      style={style}
+      className="fixed z-50 min-w-40 rounded-control border border-line-strong bg-surface py-1 shadow-lg"
+    >
+      {items.map(({ key, label, Icon, run }) => (
+        <button
+          key={key}
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            run();
+            onDismiss();
+          }}
+          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-hover"
+        >
+          <Icon size={14} className="shrink-0 text-fg-muted" />
+          <span>{label}</span>
+        </button>
+      ))}
     </div>
   );
 }

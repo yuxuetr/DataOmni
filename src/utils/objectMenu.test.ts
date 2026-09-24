@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { DatabaseObjectKind } from '../contracts/databaseMetadata';
 import { isBrowsableKind } from './databaseObjects';
-import { OBJECT_MENU_ACTIONS, qualifiedObjectName } from './objectMenu';
+import { DESTRUCTIVE_MENU_ACTIONS, OBJECT_MENU_ACTIONS, qualifiedObjectName } from './objectMenu';
+import { isDroppableKind } from './objectDdl';
 
 const KINDS = Object.keys(OBJECT_MENU_ACTIONS) as DatabaseObjectKind[];
 
@@ -40,6 +41,32 @@ describe('每种对象右键能做什么', () => {
   it('每一种都能复制名字', () => {
     for (const kind of KINDS) {
       expect(OBJECT_MENU_ACTIONS[kind].includes('copy-name'), kind).toBe(true);
+    }
+  });
+
+  it('「删除」当且仅当生成得出那条 DROP', () => {
+    // 两处写法：菜单给了而 dropObjectSql 不认，点下去就是一条类型对不上的语句
+    for (const kind of KINDS) {
+      expect(OBJECT_MENU_ACTIONS[kind].includes('drop'), kind).toBe(isDroppableKind(kind));
+    }
+  });
+
+  it('「清空」只给表', () => {
+    for (const kind of KINDS) {
+      expect(OBJECT_MENU_ACTIONS[kind].includes('truncate'), kind).toBe(kind === 'table');
+    }
+  });
+
+  it('改库的几项排在最后', () => {
+    // 菜单在它们前面画一道分隔线；夹在中间的话，分隔线下面会混进一条只读的动作
+    for (const kind of KINDS) {
+      const actions = OBJECT_MENU_ACTIONS[kind];
+      const first = actions.findIndex((action) => DESTRUCTIVE_MENU_ACTIONS.has(action));
+      if (first === -1) {
+        continue;
+      }
+      expect(actions.slice(first).every((action) => DESTRUCTIVE_MENU_ACTIONS.has(action)), kind)
+        .toBe(true);
     }
   });
 });

@@ -68,6 +68,9 @@ import {
 } from '../utils/schemaObjects';
 import { SchemaObjectSections, type SchemaObjects } from './SchemaObjectSections';
 import { TableStructureEditor } from './TableStructureEditor';
+import { CreateIndexDialog } from './CreateIndexDialog';
+import { DdlPreviewDialog } from './DdlPreviewDialog';
+import { dropIndexSql } from '../utils/objectDdl';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { requireDatabase } from '../utils/requireDatabase';
 import { toColumnInfo } from '../utils/tableMetadata';
@@ -182,6 +185,11 @@ export default function TableDataViewer({
   const [showImport, setShowImport] = useState(false);
   const [importTaskId, setImportTaskId] = useState<string | null>(null);
   const [schemaObjects, setSchemaObjects] = useState<SchemaObjects | null>(null);
+  const [creatingIndex, setCreatingIndex] = useState(false);
+  /** 等着确认的 DROP INDEX。不丢数据，所以走预览框而不是危险确认框 */
+  const [droppingIndex, setDroppingIndex] = useState<string | null>(null);
+  const [indexRunning, setIndexRunning] = useState(false);
+  const [indexError, setIndexError] = useState<string | null>(null);
   const sortRef = useRef<ColumnSort | null>(null);
   sortRef.current = sort;
   const [totalRows, setTotalRows] = useState(0);
@@ -1121,7 +1129,57 @@ export default function TableDataViewer({
                   void loadTableSchema();
                 }}
               />
-              <SchemaObjectSections objects={schemaObjects} dbType={connection.db_type} />
+              <SchemaObjectSections
+                objects={schemaObjects}
+                dbType={connection.db_type}
+                indexActions={supportsFeature(connection.db_type, 'structureEditing') ? {
+                  onCreate: () => setCreatingIndex(true),
+                  onDrop: (index) => {
+                    setIndexError(null);
+                    setDroppingIndex(
+                      dropIndexSql({ schema: schema ?? null, table: tableName, name: index.name }, dialect)
+                    );
+                  }
+                } : undefined}
+              />
+              {creatingIndex && (
+                <CreateIndexDialog
+                  connectionId={connection.id}
+                  dialect={dialect}
+                  schema={schema ?? null}
+                  table={tableName}
+                  columns={tableSchema.columns.map((column) => column.name)}
+                  onClose={() => setCreatingIndex(false)}
+                  onCreated={() => {
+                    setCreatingIndex(false);
+                    // 索引决定行标识：多一个唯一索引，一张只读的表可能就能改了
+                    void loadSchemaObjects();
+                  }}
+                />
+              )}
+              {droppingIndex && (
+                <DdlPreviewDialog
+                  plan={{ statements: [droppingIndex], impacts: [], refusals: [] }}
+                  dialect={dialect}
+                  running={indexRunning}
+                  error={indexError}
+                  onClose={() => setDroppingIndex(null)}
+                  onApply={() => {
+                    setIndexRunning(true);
+                    setIndexError(null);
+                    invoke<number[]>('execute_write_batch', {
+                      connectionId: connection.id,
+                      statements: [{ sql: droppingIndex, params: [], expectRows: null }]
+                    })
+                      .then(() => {
+                        setDroppingIndex(null);
+                        void loadSchemaObjects();
+                      })
+                      .catch((caught) => setIndexError(describeError(caught)))
+                      .finally(() => setIndexRunning(false));
+                  }}
+                />
+              )}
             </div>
           </div>
         )}

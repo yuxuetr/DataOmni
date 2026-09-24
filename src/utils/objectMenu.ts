@@ -5,7 +5,12 @@ export type ObjectMenuAction =
   | 'open-data'
   | 'open-structure'
   | 'view-definition'
-  | 'copy-name';
+  | 'copy-name'
+  | 'truncate'
+  | 'drop';
+
+/** 会改库的那几项。菜单里排在最后、和前面隔开、画成危险色 */
+export const DESTRUCTIVE_MENU_ACTIONS: ReadonlySet<ObjectMenuAction> = new Set(['truncate', 'drop']);
 
 /**
  * 每种对象右键能做什么。
@@ -24,11 +29,14 @@ export type ObjectMenuAction =
  * 其余走定义弹窗。视图此前两条都没有：不给结构页，也不给查看定义，
  * 于是一个视图的 SELECT 原文在界面上根本读不到（`pg_get_viewdef` 明明已经
  * 在 `schema_metadata.rs` 里了，只是没有入口）。
+ *
+ * 删除只给表与视图：函数的删除要带参数签名、序列可能被列默认值引用，
+ * 两者都没有被要过，也都还没有真库用例。
  */
 export const OBJECT_MENU_ACTIONS: Record<DatabaseObjectKind, readonly ObjectMenuAction[]> = {
-  table: ['open-data', 'open-structure', 'copy-name'],
-  view: ['open-data', 'view-definition', 'copy-name'],
-  'materialized-view': ['open-data', 'view-definition', 'copy-name'],
+  table: ['open-data', 'open-structure', 'copy-name', 'truncate', 'drop'],
+  view: ['open-data', 'view-definition', 'copy-name', 'drop'],
+  'materialized-view': ['open-data', 'view-definition', 'copy-name', 'drop'],
   function: ['view-definition', 'copy-name'],
   procedure: ['view-definition', 'copy-name'],
   sequence: ['view-definition', 'copy-name']

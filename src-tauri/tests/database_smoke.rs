@@ -4231,3 +4231,79 @@ async fn mysql_import_commits_batch_by_batch_and_names_the_bad_line() {
 
   sqlx::query("DROP TABLE IF EXISTS import_smoke_batch").execute(&pool).await.expect("cleanup");
 }
+
+/// 对象级结构操作的共用语料：`fixtures/object-ddl-conformance.json`。
+///
+/// 前端的 `objectDdl.conformance.test.ts` 核对生成的语句；这里把同一条语句拿真库
+/// 跑一遍，再用 `check` 核对跑完的结果（对象没了、行没了、索引在了）。
+#[path = "support/object_ddl_corpus.rs"]
+mod object_ddl_corpus;
+
+async fn run_object_corpus<DB>(pool: &sqlx::Pool<DB>, cases: Vec<object_ddl_corpus::Case>)
+where
+  DB: sqlx::Database,
+  for<'c> &'c mut DB::Connection: sqlx::Executor<'c, Database = DB>,
+  for<'q> DB::Arguments<'q>: sqlx::IntoArguments<'q, DB>,
+  i64: sqlx::Type<DB> + for<'r> sqlx::Decode<'r, DB>,
+  (i64,): for<'r> sqlx::FromRow<'r, DB::Row>,
+{
+  for case in cases {
+    for statement in &case.fixture {
+      sqlx::query(statement)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|error| panic!("{}: 夹具跑不了\n{statement}\n{error}", case.name));
+    }
+    sqlx::query(&case.statement).execute(pool).await.unwrap_or_else(|error| {
+      panic!("{}: 生成的语句跑不了\n{}\n{error}", case.name, case.statement)
+    });
+    let (found,): (i64,) = sqlx::query_as(&case.check)
+      .fetch_one(pool)
+      .await
+      .unwrap_or_else(|error| panic!("{}: 核对查询跑不了\n{}\n{error}", case.name, case.check));
+    assert_eq!(found, case.expect, "{}: 跑完之后的结果和语料说的不一样", case.name);
+    for statement in &case.cleanup {
+      sqlx::query(statement).execute(pool).await.ok();
+    }
+  }
+}
+
+#[tokio::test]
+async fn postgres_runs_the_object_ddl_corpus() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  run_object_corpus(&pool, object_ddl_corpus::load("postgresql")).await;
+}
+
+#[tokio::test]
+async fn mysql_runs_the_object_ddl_corpus() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  let cases = object_ddl_corpus::load("mysql");
+  let database: String = sqlx::query_scalar("SELECT CAST(DATABASE() AS CHAR)")
+    .fetch_one(&pool)
+    .await
+    .expect("DATABASE()");
+  for case in &cases {
+    if let Some(schema) = &case.schema {
+      assert_eq!(schema, &database, "{}: 语料写死的库名", case.name);
+    }
+  }
+  run_object_corpus(&pool, cases).await;
+}
+
+#[tokio::test]
+async fn sqlite_runs_the_object_ddl_corpus() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("connect to in-memory SQLite");
+  run_object_corpus(&pool, object_ddl_corpus::load("sqlite")).await;
+}

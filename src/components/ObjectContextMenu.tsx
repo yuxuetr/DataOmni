@@ -1,8 +1,14 @@
-import { Copy, FileText, Table2, Code2 } from 'lucide-react';
+import { Fragment } from 'react';
+import { Copy, FileText, Table2, Code2, Eraser, Trash2 } from 'lucide-react';
+import { clsx } from 'clsx';
 import type { LucideIcon } from 'lucide-react';
 import { useLanguageStore } from '../stores/languageStore';
 import { useContextMenu } from '../hooks/useContextMenu';
-import { OBJECT_MENU_ACTIONS, type ObjectMenuAction } from '../utils/objectMenu';
+import {
+  DESTRUCTIVE_MENU_ACTIONS,
+  OBJECT_MENU_ACTIONS,
+  type ObjectMenuAction
+} from '../utils/objectMenu';
 import type { DatabaseObject } from '../utils/databaseObjects';
 import type { TranslationKey } from '../i18n/translate';
 
@@ -10,14 +16,18 @@ const ACTION_LABEL_KEYS: Record<ObjectMenuAction, TranslationKey> = {
   'open-data': 'explorer.menu.openData',
   'open-structure': 'explorer.menu.openStructure',
   'view-definition': 'explorer.menu.viewDefinition',
-  'copy-name': 'explorer.menu.copyName'
+  'copy-name': 'explorer.menu.copyName',
+  truncate: 'explorer.menu.truncate',
+  drop: 'explorer.menu.drop'
 };
 
 const ACTION_ICONS: Record<ObjectMenuAction, LucideIcon> = {
   'open-data': Table2,
   'open-structure': FileText,
   'view-definition': Code2,
-  'copy-name': Copy
+  'copy-name': Copy,
+  truncate: Eraser,
+  drop: Trash2
 };
 
 interface ObjectContextMenuProps {
@@ -56,22 +66,33 @@ export function ObjectContextMenu({
       </div>
       <div className="my-1 border-t border-line" />
 
-      {OBJECT_MENU_ACTIONS[object.kind].map((action) => {
+      {OBJECT_MENU_ACTIONS[object.kind].map((action, index, actions) => {
         const Icon = ACTION_ICONS[action];
+        const destructive = DESTRUCTIVE_MENU_ACTIONS.has(action);
+        // 改库的几项排在最后（objectMenu.test.ts 钉着），第一项前面画一道线
+        const startsDestructive = destructive && !DESTRUCTIVE_MENU_ACTIONS.has(actions[index - 1]);
         return (
-          <button
-            key={action}
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              onRun(action);
-              onDismiss();
-            }}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-fg hover:bg-surface-hover"
-          >
-            <Icon size={14} className="shrink-0 text-fg-muted" />
-            <span>{t(ACTION_LABEL_KEYS[action])}</span>
-          </button>
+          <Fragment key={action}>
+            {startsDestructive && <div className="my-1 border-t border-line" />}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onRun(action);
+                onDismiss();
+              }}
+              className={clsx(
+                'flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-surface-hover',
+                destructive ? 'text-danger' : 'text-fg'
+              )}
+            >
+              <Icon
+                size={14}
+                className={clsx('shrink-0', destructive ? 'text-danger' : 'text-fg-muted')}
+              />
+              <span>{t(ACTION_LABEL_KEYS[action])}</span>
+            </button>
+          </Fragment>
         );
       })}
     </div>

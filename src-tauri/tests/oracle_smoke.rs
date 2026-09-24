@@ -986,3 +986,32 @@ async fn oracle_runs_the_generated_ddl_from_the_shared_corpus() {
     run_all(&pool, &case.cleanup.iter().map(String::as_str).collect::<Vec<_>>()).await;
   }
 }
+
+/// 对象级结构操作语料的 Oracle 用例：语句走界面上同一条路（`execute_write_batch`）
+#[path = "support/object_ddl_corpus.rs"]
+mod object_ddl_corpus;
+
+#[tokio::test]
+async fn oracle_runs_the_object_ddl_corpus() {
+  use dataomni_lib::services::execute_write_batch;
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool).await;
+  let user = rows_of(connection.execute("SELECT USER FROM DUAL", 1).await.expect("USER"));
+  let user = user[0].values().next().map(text).unwrap_or_default();
+  drop(connection);
+  for case in object_ddl_corpus::load("oracle") {
+    if let Some(written) = &case.schema {
+      assert_eq!(written, &user, "{}: 语料写死的 schema", case.name);
+    }
+    run_all(&pool, &case.fixture.iter().map(String::as_str).collect::<Vec<_>>()).await;
+    execute_write_batch(PoolRef::Oracle(&pool), &[write(&case.statement, Vec::new(), None)])
+      .await
+      .unwrap_or_else(|error| panic!("{}: 生成的语句跑不了\n{:?}", case.name, error.error));
+    let mut connection = session(&pool).await;
+    let rows = rows_of(connection.execute(&case.check, 1).await.expect("核对查询"));
+    let found = rows[0].values().next().map(text).and_then(|value| value.parse::<i64>().ok());
+    assert_eq!(found, Some(case.expect), "{}: 跑完之后的结果和语料说的不一样", case.name);
+    drop(connection);
+    run_all(&pool, &case.cleanup.iter().map(String::as_str).collect::<Vec<_>>()).await;
+  }
+}

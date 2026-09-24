@@ -210,3 +210,21 @@ export function createErDiagramWorkspaceTab(
     kind: 'er-diagram'
   };
 }
+
+/**
+ * 正在显示某张表的标签（数据页与结构页）。
+ *
+ * 表被删掉之后它们留着只会显示旧数据，下一次刷新再报「表不存在」——
+ * 看上去像我们没删成。按 schema 精确比对：两个 schema 里可以各有一张同名表。
+ */
+export function tabsShowingTable(
+  tabs: readonly WorkspaceTab[],
+  profileId: string,
+  object: { schema: string | null; table: string }
+): WorkspaceTab[] {
+  return tabs.filter((tab) =>
+    (tab.kind === 'table-data' || tab.kind === 'table-structure')
+    && tab.binding.profileId === profileId
+    && tab.object.table === object.table
+    && tab.object.schema === object.schema);
+}
