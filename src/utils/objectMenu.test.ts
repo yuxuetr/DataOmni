@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DatabaseObjectKind } from '../contracts/databaseMetadata';
 import { isBrowsableKind } from './databaseObjects';
-import { DESTRUCTIVE_MENU_ACTIONS, OBJECT_MENU_ACTIONS, qualifiedObjectName } from './objectMenu';
+import { DESTRUCTIVE_MENU_ACTIONS, OBJECT_MENU_ACTIONS, objectMenuActions, qualifiedObjectName } from './objectMenu';
 import { isDroppableKind } from './objectDdl';
 
 const KINDS = Object.keys(OBJECT_MENU_ACTIONS) as DatabaseObjectKind[];
@@ -24,7 +24,10 @@ describe('每种对象右键能做什么', () => {
   it('每种对象恰好有一条看它是什么的路', () => {
     // 表走结构页（顺带给列、索引、外键），其余走定义弹窗。两条都没有的那一种
     // 就是此前的视图：它的 SELECT 原文在界面上根本读不到
-    for (const kind of KINDS) {
+    //
+    // MongoDB 的集合例外：它没有结构，也没有定义原文；能算「它是什么」的是索引与
+    // 校验规则，那一页还没做（TODOs 4.3）。做了之后把它从这里拿掉
+    for (const kind of KINDS.filter((candidate) => candidate !== 'collection')) {
       const actions = OBJECT_MENU_ACTIONS[kind];
       const paths = Number(actions.includes('open-structure')) + Number(actions.includes('view-definition'));
       expect(paths, `${kind} 有 ${paths} 条看定义的路`).toBe(1);
@@ -124,5 +127,14 @@ describe('复制出来的限定名', () => {
 
   it('名字里自带引号时转义，不会把语句截断', () => {
     expect(qualifiedObjectName({ name: 'we"ird', schema: null, kind: 'table' }, 'postgresql')).toBe('"we""ird"');
+  });
+});
+
+describe('不走 SQL 的连接上', () => {
+  it('只留打开与复制：MongoDB 的视图也叫 view，而查看定义、删除是拼 SQL 做的', () => {
+    expect(objectMenuActions('view', false)).toEqual(['open-data', 'copy-name']);
+    expect(objectMenuActions('collection', false)).toEqual(['open-data', 'copy-name']);
+    // 反向：SQL 连接上的视图照旧
+    expect(objectMenuActions('view', true)).toEqual(OBJECT_MENU_ACTIONS.view);
   });
 });

@@ -80,6 +80,8 @@ export interface TableSchema {
  */
 export type DatabaseObjectKind =
   | 'table'
+  /** MongoDB 的集合。和表分开：它没有结构页、没有 DDL，右键能做的事也不一样 */
+  | 'collection'
   | 'view'
   | 'materialized-view'
   | 'function'

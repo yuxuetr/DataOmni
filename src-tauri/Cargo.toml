@@ -56,6 +56,9 @@ oracle = "0.6.3"
 # SSH 隧道（`services/ssh_tunnel.rs`）。默认 features 里的 `rsa` 是必需的——
 # 现实中大量跳板机用的还是 `~/.ssh/id_rsa`。见 `rfcs/ssh-tunnel.md`
 russh = "0.63.3"
+# MongoDB（`services/mongodb.rs`）。官方驱动，纯 Rust、TLS 走 rustls；默认 features 里的
+# DNS 解析是 `mongodb+srv://`（Atlas）要的。bson 用它自带的 2.x（`mongodb::bson`）
+mongodb = "3.9.1"
 
 [dev-dependencies]
 # 只为在测试里**造**一把带口令的私钥：russh 依赖的 ssh-key 默认不开

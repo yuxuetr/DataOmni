@@ -96,7 +96,17 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_FILE_TOO_LARGE: 'error.backend.fileTooLarge',
   DATAOMNI_CREDENTIAL_STORE_REJECTED: 'error.backend.credentialStoreRejected',
   DATAOMNI_CONNECTION_LOST: 'error.backend.connectionLost',
-  DATAOMNI_POOL_TIMED_OUT: 'error.backend.poolTimedOut'
+  DATAOMNI_POOL_TIMED_OUT: 'error.backend.poolTimedOut',
+  DATAOMNI_MONGO_SYNTAX: 'error.backend.mongoSyntax',
+  DATAOMNI_MONGO_UNKNOWN_FUNCTION: 'error.backend.mongoUnknownFunction',
+  DATAOMNI_MONGO_BAD_ARGUMENT: 'error.backend.mongoBadArgument',
+  DATAOMNI_MONGO_NOT_DOCUMENT: 'error.backend.mongoNotDocument',
+  DATAOMNI_MONGO_AUTH_FAILED: 'error.backend.mongoAuthFailed',
+  DATAOMNI_MONGO_AUTH_REQUIRED: 'error.backend.mongoAuthRequired',
+  DATAOMNI_MONGO_UNREACHABLE: 'error.backend.mongoUnreachable',
+  DATAOMNI_MONGO_SERVER_ERROR: 'error.backend.mongoServerError',
+  DATAOMNI_MONGO_TIMEOUT: 'error.backend.mongoTimeout',
+  DATAOMNI_MONGO_NO_SQL: 'error.backend.mongoNoSql'
 };
 
 export interface BackendError {

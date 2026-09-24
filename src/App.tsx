@@ -16,6 +16,8 @@ import { Sidebar } from './components/Sidebar';
 import { TaskCenter } from './components/TaskCenter';
 import { SqlWorkbench } from './components/SqlWorkbench';
 import TableDataViewer from './components/TableDataViewer';
+import { MongoCollectionViewer } from './components/MongoCollectionViewer';
+import { speaksSql } from './contracts/databaseSupport';
 import { ErDiagramView } from './components/ErDiagramView';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { CloseTabPrompt, type CloseTabChoice } from './components/CloseTabPrompt';
@@ -62,6 +64,13 @@ import { describeError } from './utils/describeError';
 import { useProfileConnector } from './hooks/useProfileConnector';
 import { useThemeStore } from './stores/themeStore';
 import { environmentBadge } from './contracts/environment';
+
+/** 只在走 SQL 的连接上有意义的命令面板条目 */
+const SQL_ONLY_PALETTE_ACTIONS: ReadonlySet<string> = new Set([
+  'action:new-sql',
+  'action:open-sql-file',
+  'action:er-diagram'
+]);
 
 function App() {
   const { activeConnection, selectedTable, openConnectionForm } = useAppStore();
@@ -119,6 +128,8 @@ function App() {
     axis: 'x'
   });
   const activeProfileId = activeConnection?.config.id ?? null;
+  // 当前连接能不能跑 SQL。不能的（MongoDB）上，一切「开一个 SQL 标签」的入口都不给
+  const activeSpeaksSql = activeConnection ? speaksSql(activeConnection.config.db_type) : false;
   const environmentByProfileId = useMemo(
     () => Object.fromEntries(
       connections.map((connection) => [connection.id, connection.environment])
@@ -161,7 +172,8 @@ function App() {
 
   // 每个连接有一个 SQL 标签，连接就绪后按需创建；id 由连接决定，重复注册会被去重
   useEffect(() => {
-    if (!activeConnection) {
+    // MongoDB 没有 SQL 编辑器可开；连上之后从对象树点集合
+    if (!activeConnection || !speaksSql(activeConnection.config.db_type)) {
       return;
     }
 
@@ -456,7 +468,7 @@ function App() {
    * 正在写的草稿覆盖掉，而那份草稿没有第二个地方存着。
    */
   const openSqlTab = (initialSql?: string, title?: string) => {
-    if (!activeConnection) {
+    if (!activeConnection || !activeSpeaksSql) {
       return;
     }
 
@@ -491,7 +503,7 @@ function App() {
    * 手里这份」。标签名取文件名，这样标签栏上看得出开的是哪个脚本。
    */
   const openSqlFile = async () => {
-    if (!activeConnection) {
+    if (!activeConnection || !activeSpeaksSql) {
       return;
     }
 
@@ -512,7 +524,7 @@ function App() {
 
   /** ER 图是库级的，一个连接一个标签；重复打开只是激活已有的那个 */
   const openErDiagramTab = () => {
-    if (!activeConnection) {
+    if (!activeConnection || !activeSpeaksSql) {
       return;
     }
     const profileId = activeConnection.config.id;
@@ -699,7 +711,10 @@ function App() {
       }
     );
 
-    return items;
+    // 连着 MongoDB 时，要开 SQL 标签的那几条放出来也只是点了没反应
+    return activeConnection && !activeSpeaksSql
+      ? items.filter((item) => !SQL_ONLY_PALETTE_ACTIONS.has(item.id))
+      : items;
   };
 
   const renderActiveTab = () => {
@@ -750,6 +765,18 @@ function App() {
 
     if (activeTab.kind === 'er-diagram') {
       return <ErDiagramView key={activeTab.id} connection={activeConnection.config} />;
+    }
+
+    // MongoDB 的集合开在同一种标签里（schema 那一格是库名），换一个浏览页：
+    // 标签的身份、去重、持久化与关系库的表完全一样，不必另起一种标签
+    if (!activeSpeaksSql) {
+      return (
+        <MongoCollectionViewer
+          key={activeTab.id}
+          database={activeTab.object.schema ?? ''}
+          collection={activeTab.object.table}
+        />
+      );
     }
 
     return (
@@ -830,8 +857,8 @@ function App() {
             environmentByProfileId={environmentByProfileId}
             onClose={closeWorkspaceTab}
             onContextMenu={(tabId, position) => setTabMenu({ tabId, position })}
-            onNewSqlTab={activeConnection ? () => openSqlTab() : undefined}
-            onOpenSqlFile={activeConnection ? () => void openSqlFile() : undefined}
+            onNewSqlTab={activeSpeaksSql ? () => openSqlTab() : undefined}
+            onOpenSqlFile={activeSpeaksSql ? () => void openSqlFile() : undefined}
             onReopenClosedTab={closedTabs.length > 0 ? reopenClosedTab : undefined}
             closedTabCount={closedTabs.length}
           />
@@ -907,7 +934,7 @@ function App() {
       {showHistory && (
         <QueryHistoryDialog
           onClose={() => setShowHistory(false)}
-          onOpenInNewTab={activeConnection ? (sql) => openSqlTab(sql) : undefined}
+          onOpenInNewTab={activeSpeaksSql ? (sql) => openSqlTab(sql) : undefined}
         />
       )}
 

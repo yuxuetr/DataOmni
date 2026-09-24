@@ -6,7 +6,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import { useContextMenu } from '../hooks/useContextMenu';
 import {
   DESTRUCTIVE_MENU_ACTIONS,
-  OBJECT_MENU_ACTIONS,
+  objectMenuActions,
   type ObjectMenuAction
 } from '../utils/objectMenu';
 import type { DatabaseObject } from '../utils/databaseObjects';
@@ -33,6 +33,8 @@ const ACTION_ICONS: Record<ObjectMenuAction, LucideIcon> = {
 interface ObjectContextMenuProps {
   object: DatabaseObject;
   position: { x: number; y: number };
+  /** 这个连接走不走 SQL。不走的库上只留打开与复制 */
+  speaksSql: boolean;
   onRun: (action: ObjectMenuAction) => void;
   onDismiss: () => void;
 }
@@ -47,6 +49,7 @@ interface ObjectContextMenuProps {
 export function ObjectContextMenu({
   object,
   position,
+  speaksSql,
   onRun,
   onDismiss
 }: ObjectContextMenuProps) {
@@ -66,7 +69,7 @@ export function ObjectContextMenu({
       </div>
       <div className="my-1 border-t border-line" />
 
-      {OBJECT_MENU_ACTIONS[object.kind].map((action, index, actions) => {
+      {objectMenuActions(object.kind, speaksSql).map((action, index, actions) => {
         const Icon = ACTION_ICONS[action];
         const destructive = DESTRUCTIVE_MENU_ACTIONS.has(action);
         // 改库的几项排在最后（objectMenu.test.ts 钉着），第一项前面画一道线

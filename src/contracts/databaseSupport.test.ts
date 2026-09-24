@@ -8,7 +8,8 @@ import {
   STANDALONE_DRIVER_CRATES,
   supportsFeature,
   SUPPORTED_DATABASE_TYPES,
-  isDatabaseTypeSupported
+  isDatabaseTypeSupported,
+  speaksSql
 } from './databaseSupport';
 
 /**
@@ -65,7 +66,6 @@ describe('数据库类型支持范围', () => {
 
   it('没有驱动的类型一律不可用', () => {
     for (const type of [
-      DatabaseType.MongoDB,
       DatabaseType.Redis,
       DatabaseType.Neo4j,
       DatabaseType.DuckDB,
@@ -110,5 +110,15 @@ describe('分阶段接入的类型', () => {
       expect(supportsFeature(type, 'explain')).toBe(true);
       expect(supportsFeature(type, 'dataEditing')).toBe(true);
     }
+  });
+});
+
+describe('走不走 SQL', () => {
+  it('MongoDB 能连，但不走 SQL；其余能连的都走', () => {
+    for (const type of SUPPORTED_DATABASE_TYPES) {
+      expect(speaksSql(type), type).toBe(type !== DatabaseType.MongoDB);
+    }
+    // 连不上的类型谈不上走不走
+    expect(speaksSql(DatabaseType.Redis)).toBe(false);
   });
 });

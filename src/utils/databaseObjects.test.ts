@@ -12,6 +12,7 @@ import {
   normalizeObjectRows,
   renderedTreeObjects,
   showsSchemaLevel,
+  trailingSchemas,
   type DatabaseObject
 } from './databaseObjects';
 
@@ -77,6 +78,7 @@ describe('showsSchemaLevel', () => {
 /** 分组标签由调用方翻译；这里用固定中文，测的是分组与排序本身 */
 const LABELS: Record<string, string> = {
   table: '表',
+  collection: '集合',
   view: '视图',
   'materialized-view': '物化视图',
   function: '函数',
@@ -250,5 +252,21 @@ describe('filterObjects', () => {
     // 排好了，筛一下就跳位置会让人每次都要重新找一遍刚刚看到的那一行
     expect(filterObjects(objects, 'm').map(object => object.name))
       .toEqual(['order_items', 'customers']);
+  });
+});
+
+describe('MongoDB 的库排序', () => {
+  it('服务端自己的 admin / config / local 排在业务库后面', () => {
+    const objects = ['admin', 'config', 'shop', 'local', 'analytics'].map((schema) => ({
+      schema,
+      name: 'c',
+      kind: 'collection' as const,
+      id: `${schema}.c`
+    }));
+    const tree = buildObjectTree(objects, true, stubLabel, trailingSchemas(DatabaseType.MongoDB));
+    expect(tree.map((node) => node.label)).toEqual(['analytics', 'shop', 'admin', 'config', 'local']);
+    // 反向：别的库上没有这条规则，一个叫 admin 的 schema 照字母排
+    const plain = buildObjectTree(objects, true, stubLabel, trailingSchemas(DatabaseType.PostgreSQL));
+    expect(plain.map((node) => node.label)[0]).toBe('admin');
   });
 });

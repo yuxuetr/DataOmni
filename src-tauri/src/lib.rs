@@ -30,6 +30,7 @@ pub fn run() {
     .manage(services::TunnelRegistry::default())
     .manage(services::SqlServerRegistry::default())
     .manage(services::oracle::OracleRegistry::default())
+    .manage(services::mongodb::MongoRegistry::default())
     .setup(|app| {
       // 启动日志留着：窗口起不来时，这一行是唯一能说明进程到底跑没跑的证据
       println!("🎯 DataOmni 启动");
@@ -57,6 +58,11 @@ pub fn run() {
       close_sql_server,
       oracle_select,
       close_oracle,
+      mongodb_list_collections,
+      mongodb_find,
+      mongodb_count,
+      mongodb_document,
+      close_mongodb,
       // 数据库操作命令
       execute_query,
       execute_write_batch,

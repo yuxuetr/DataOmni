@@ -35,12 +35,27 @@ export const DESTRUCTIVE_MENU_ACTIONS: ReadonlySet<ObjectMenuAction> = new Set([
  */
 export const OBJECT_MENU_ACTIONS: Record<DatabaseObjectKind, readonly ObjectMenuAction[]> = {
   table: ['open-data', 'open-structure', 'copy-name', 'truncate', 'drop'],
+  collection: ['open-data', 'copy-name'],
   view: ['open-data', 'view-definition', 'copy-name', 'drop'],
   'materialized-view': ['open-data', 'view-definition', 'copy-name', 'drop'],
   function: ['view-definition', 'copy-name'],
   procedure: ['view-definition', 'copy-name'],
   sequence: ['view-definition', 'copy-name']
 };
+
+/**
+ * 这个对象在这个连接上右键能做什么。
+ *
+ * 不走 SQL 的库（MongoDB）上只留打开与复制：它的视图也叫 `view`，而「查看定义」
+ * 「删除」是拼 SQL 去做的，放出来点了只会报错
+ */
+export function objectMenuActions(
+  kind: DatabaseObjectKind,
+  speaksSql: boolean
+): readonly ObjectMenuAction[] {
+  const actions = OBJECT_MENU_ACTIONS[kind];
+  return speaksSql ? actions : actions.filter((action) => action === 'open-data' || action === 'copy-name');
+}
 
 /**
  * 例程的显示名带着参数签名——`calc_total(integer)`——因为同名重载要分得开

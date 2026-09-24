@@ -10,6 +10,7 @@ export type { DatabaseObject, DatabaseObjectKind };
  */
 export const KIND_LABEL_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
   table: 'objectKind.table',
+  collection: 'objectKind.collection',
   view: 'objectKind.view',
   'materialized-view': 'objectKind.materialized-view',
   function: 'objectKind.function',
@@ -26,6 +27,7 @@ export const KIND_LABEL_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
  */
 export const KIND_BADGE_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
   table: 'objectKindOne.table',
+  collection: 'objectKindOne.collection',
   view: 'objectKindOne.view',
   'materialized-view': 'objectKindOne.materialized-view',
   function: 'objectKindOne.function',
@@ -36,6 +38,7 @@ export const KIND_BADGE_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
 /** 分组次序。按「最常点开的在最上面」排，不按字母。 */
 const KIND_ORDER: DatabaseObjectKind[] = [
   'table',
+  'collection',
   'view',
   'materialized-view',
   'function',
@@ -61,14 +64,16 @@ export interface ObjectTreeNode {
 export function showsSchemaLevel(dbType: DatabaseType): boolean {
   // SQL Server 与 PostgreSQL 一样：一个库里有 dbo 和业务 schema，schema 是真实维度
   // Oracle 的 schema 就是用户：一个连接能看到别的用户授给它的表
+  // MongoDB 的一个连接横跨所有库，库就是这一层
   return dbType === DatabaseType.PostgreSQL
     || dbType === DatabaseType.SqlServer
-    || dbType === DatabaseType.Oracle;
+    || dbType === DatabaseType.Oracle
+    || dbType === DatabaseType.MongoDB;
 }
 
-/** 表、视图、物化视图有行，能用表视图打开；函数与序列没有。 */
+/** 表、集合、视图、物化视图有行（文档），能打开；函数与序列没有。 */
 export function isBrowsableKind(kind: DatabaseObjectKind): boolean {
-  return kind === 'table' || kind === 'view' || kind === 'materialized-view';
+  return kind === 'table' || kind === 'collection' || kind === 'view' || kind === 'materialized-view';
 }
 
 export function normalizeObjectRows(
@@ -166,10 +171,22 @@ export function filterObjects(
  * `kindLabel` 由调用方传入而不是在这里查表：这个函数是纯的、可单测的，
  * 把翻译塞进来会让它依赖当前语言，测试也要跟着起一个 store。
  */
+/**
+ * 排在最后的 schema（库）：服务端自己的那几个。几乎没人是来看它们的，但也不藏——
+ * 排在最前面的话，默认展开的就是它们，而业务库要往下找
+ */
+export function trailingSchemas(dbType: DatabaseType): ReadonlySet<string> {
+  return dbType === DatabaseType.MongoDB ? MONGODB_SYSTEM_DATABASES : NO_TRAILING_SCHEMAS;
+}
+
+const MONGODB_SYSTEM_DATABASES: ReadonlySet<string> = new Set(['admin', 'config', 'local']);
+const NO_TRAILING_SCHEMAS: ReadonlySet<string> = new Set();
+
 export function buildObjectTree(
   objects: readonly DatabaseObject[],
   withSchemaLevel: boolean,
-  kindLabel: (kind: DatabaseObjectKind) => string
+  kindLabel: (kind: DatabaseObjectKind) => string,
+  trailing: ReadonlySet<string> = NO_TRAILING_SCHEMAS
 ): ObjectTreeNode[] {
   if (!withSchemaLevel) {
     return groupByKind(objects, '', kindLabel);
@@ -184,7 +201,9 @@ export function buildObjectTree(
   }
 
   return [...bySchema.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => (
+      Number(trailing.has(left)) - Number(trailing.has(right)) || left.localeCompare(right)
+    ))
     .map(([schema, schemaObjects]) => ({
       key: `schema:${schema}`,
       label: schema,

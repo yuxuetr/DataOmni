@@ -239,7 +239,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
       if (!formData.host?.trim()) {
         errors.host = t('form.error.host');
       }
-      if (!formData.username?.trim()) {
+      // MongoDB 可以不开认证：本机和内网的库大多如此，空着就是不带凭据连
+      if (!formData.username?.trim() && formData.db_type !== DatabaseType.MongoDB) {
         errors.username = t('form.error.username');
       }
       if (!formData.port || formData.port <= 0) {
@@ -704,8 +705,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   formData.db_type === DatabaseType.ClickHouse) && (
                   <div>
                     <label className="block text-sm font-medium text-fg mb-1">
-                      {/* Oracle 按 Easy Connect 连，这一格填的是服务名，不是库名 */}
-                      {formData.db_type === DatabaseType.Oracle ? t('form.oracleService') : t('form.database')}
+                      {/* Oracle 按 Easy Connect 连，这一格填的是服务名，不是库名；
+                          MongoDB 的连接不绑库，这一格是用户所在的认证库 */}
+                      {formData.db_type === DatabaseType.Oracle
+                        ? t('form.oracleService')
+                        : formData.db_type === DatabaseType.MongoDB ? t('form.mongoAuthSource') : t('form.database')}
                     </label>
                     <input
                       type="text"
@@ -726,6 +730,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                     />
                     {formData.db_type === DatabaseType.Oracle && (
                       <p className="text-xs text-fg-muted mt-1">{t('form.oracleServiceHint')}</p>
+                    )}
+                    {formData.db_type === DatabaseType.MongoDB && (
+                      <p className="text-xs text-fg-muted mt-1">{t('form.mongoAuthSourceHint')}</p>
                     )}
                   </div>
                 )}
@@ -761,7 +768,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-fg mb-1">
-                        {t('form.username')} {formData.db_type === DatabaseType.Elasticsearch ? '' : '*'}
+                        {t('form.username')} {formData.db_type === DatabaseType.Elasticsearch || formData.db_type === DatabaseType.MongoDB ? '' : '*'}
                       </label>
                       <input
                         type="text"
@@ -1026,6 +1033,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 {(formData.db_type === DatabaseType.MySQL || 
                   formData.db_type === DatabaseType.PostgreSQL ||
                   formData.db_type === DatabaseType.SqlServer ||
+                  formData.db_type === DatabaseType.MongoDB ||
                   formData.db_type === DatabaseType.Elasticsearch) && (
                   <div className="space-y-4">
                     <div>
@@ -1055,7 +1063,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
                     {(formData.db_type === DatabaseType.MySQL
                       || formData.db_type === DatabaseType.PostgreSQL
-                      || formData.db_type === DatabaseType.SqlServer)
+                      || formData.db_type === DatabaseType.SqlServer
+                      || formData.db_type === DatabaseType.MongoDB)
                       && (formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')) !== 'disabled' && (
                       <div className="space-y-3 rounded-control border border-line bg-surface-sunken p-3">
                         {/* 这一组要有自己的标题：里面的「客户端私钥路径」和
@@ -1079,8 +1088,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             {...PLAIN_TEXT_INPUT}
                           />
                         </div>
-                        {/* tiberius 只能校验服务端证书，不带客户端证书登录 */}
-                        {formData.db_type !== DatabaseType.SqlServer && (
+                        {/* tiberius 只能校验服务端证书，不带客户端证书登录；MongoDB 的驱动
+                            要证书与私钥合在一个文件里，这一版不替用户拼 */}
+                        {formData.db_type !== DatabaseType.SqlServer && formData.db_type !== DatabaseType.MongoDB && (
                         <>
                         <div>
                           <label htmlFor="client-certificate" className="block text-sm font-medium text-fg mb-1">

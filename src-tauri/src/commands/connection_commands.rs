@@ -1,4 +1,5 @@
 use crate::models::{ConnectionProfile, DatabaseType};
+use crate::services::mongodb::{MongoRegistry, MongoTarget};
 use crate::services::oracle::{self, OraclePool, OracleRegistry, OracleTarget};
 use crate::services::{
   sql_server, ssh_tunnel, ConnectionService, SqlServerPool, SqlServerRegistry, SqlServerTarget,
@@ -107,6 +108,7 @@ pub async fn test_connection(
   tunnels: State<'_, TunnelRegistry>,
   sql_server_registry: State<'_, SqlServerRegistry>,
   oracle_registry: State<'_, OracleRegistry>,
+  mongo_registry: State<'_, MongoRegistry>,
 ) -> Result<String, String> {
   println!("🧪 测试数据库连接: {}", config.name);
 
@@ -154,6 +156,13 @@ pub async fn test_connection(
     let target = OracleTarget::from_profile(&reachable);
     let connection = oracle::connect(&target).await.map_err(|error| error.message)?;
     oracle_registry.insert(connection_string.clone(), OraclePool::new(target, connection));
+  } else if resolved.db_type == DatabaseType::MongoDB {
+    let reachable = match local_port {
+      Some(port) => resolved.redirected_to("127.0.0.1", port),
+      None => resolved,
+    };
+    let client = crate::services::mongodb::connect(&MongoTarget::from_profile(&reachable)).await?;
+    mongo_registry.insert(connection_string.clone(), std::sync::Arc::new(client));
   }
   Ok(connection_string)
 }

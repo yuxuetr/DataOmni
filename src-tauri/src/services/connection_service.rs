@@ -352,13 +352,15 @@ impl ConnectionService {
       if config.host.is_empty() {
         return Err(HOST_REQUIRED.to_string());
       }
-      if config.username.is_empty() {
+      // MongoDB 可以不开认证，而「库」那一格是认证库，空着就是 `admin`
+      let is_mongodb = config.db_type == DatabaseType::MongoDB;
+      if config.username.is_empty() && !is_mongodb {
         return Err(USERNAME_REQUIRED.to_string());
       }
       if config.port == 0 {
         return Err(PORT_INVALID.to_string());
       }
-      if database_is_blank {
+      if database_is_blank && !is_mongodb {
         return Err(DATABASE_REQUIRED.to_string());
       }
     }
@@ -512,14 +514,20 @@ fn validate_tls_configuration(config: &ConnectionProfile) -> Result<(), String> 
   if has_certificate_paths
     && !matches!(
       config.db_type,
-      DatabaseType::MySQL | DatabaseType::PostgreSQL | DatabaseType::SqlServer
+      DatabaseType::MySQL
+        | DatabaseType::PostgreSQL
+        | DatabaseType::SqlServer
+        | DatabaseType::MongoDB
     )
   {
     return Err(TLS_CERTIFICATES_UNSUPPORTED.to_string());
   }
   // tiberius 能按 CA 校验服务端，但不带客户端证书登录——填了也不会生效，
-  // 而用户会以为双向认证已经开着
-  if has_client_certificate && config.db_type == DatabaseType::SqlServer {
+  // 而用户会以为双向认证已经开着。MongoDB 的驱动要证书与私钥合在一个文件里，
+  // 表单上是分开的两格，这一版不替用户拼
+  if has_client_certificate
+    && matches!(config.db_type, DatabaseType::SqlServer | DatabaseType::MongoDB)
+  {
     return Err(TLS_CERTIFICATES_UNSUPPORTED.to_string());
   }
   if config.db_type == DatabaseType::Oracle
@@ -987,6 +995,28 @@ mod tests {
     assert_eq!(validate_tls_configuration(&config), Err(TLS_CLIENT_PAIR_REQUIRED.to_string()));
   }
 
+  /// MongoDB 可以不开认证，「库」那一格是认证库、空着就是 admin；两条都不该被
+  /// 关系库那套「必须有用户名、必须有库名」拦下。反向：关系库照旧要
+  #[test]
+  fn mongodb_needs_neither_a_username_nor_a_database() {
+    let config_path = temporary_config_path();
+    let service =
+      ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()).unwrap();
+    let mut config = profile("profile-1", "");
+    config.db_type = DatabaseType::MongoDB;
+    config.username = String::new();
+    config.database = None;
+    let resolved = service.resolve_for_connection(&config).unwrap();
+    assert_eq!(resolved.connection_string_via(None), "mongodb://@localhost:5432/admin");
+
+    let mut relational = profile("profile-2", "secret");
+    relational.username = String::new();
+    assert_eq!(
+      service.resolve_for_connection(&relational).err(),
+      Some(USERNAME_REQUIRED.to_string())
+    );
+  }
+
   /// 界面已经把这些类型的按钮置灰了，但存档里可能留着更早版本存下的配置，
   /// 而配置文件是纯文本、用户改得动。这条断言的是「界面不是唯一的门」
   #[test]
@@ -996,7 +1026,6 @@ mod tests {
       ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()).unwrap();
 
     for db_type in [
-      DatabaseType::MongoDB,
       DatabaseType::Redis,
       DatabaseType::Neo4j,
       DatabaseType::DuckDB,

@@ -20,7 +20,7 @@ import {
   X
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
-import { supportsFeature } from '../contracts/databaseSupport';
+import { speaksSql, supportsFeature } from '../contracts/databaseSupport';
 import { useLanguageStore } from '../stores/languageStore';
 import {
   buildObjectTree,
@@ -30,6 +30,7 @@ import {
   normalizeObjectRows,
   renderedTreeObjects,
   showsSchemaLevel,
+  trailingSchemas,
   type DatabaseObject,
   type DatabaseObjectKind,
   type ObjectTreeNode
@@ -121,6 +122,7 @@ export default function DatabaseExplorer({
   const { connections } = useConnectionStore();
   const {
     database,
+    connectionString,
     isConnecting,
     connectionLost,
     // 局部的 error 是「对象列表没读出来」，和连接死没死是两回事
@@ -198,7 +200,8 @@ export default function DatabaseExplorer({
       const cachedTree = buildObjectTree(
         cachedMetadata.objects,
         showsSchemaLevel(connection.db_type),
-        kindLabel
+        kindLabel,
+        trailingSchemas(connection.db_type)
       );
       if (cachedTree.length > 0) {
         setExpandedNodes(new Set(defaultExpandedKeys(cachedTree)));
@@ -210,6 +213,19 @@ export default function DatabaseExplorer({
     setError(null);
     
     try {
+      // MongoDB 没有目录 SQL：后端直接给出同一形状的行（库名在 object_schema）
+      if (!speaksSql(connection.db_type)) {
+        const rows = await invoke<Record<string, unknown>[]>('mongodb_list_collections', {
+          connectionString
+        });
+        const objects = normalizeObjectRows(rows);
+        setDatabaseMetadata(connectionId, { objects, lastUpdated: Date.now() });
+        setExpandedNodes(new Set(defaultExpandedKeys(
+          buildObjectTree(objects, showsSchemaLevel(connection.db_type), kindLabel, trailingSchemas(connection.db_type))
+        )));
+        return;
+      }
+
       const queries = await invoke<ObjectCatalogQueries>('get_object_catalog_queries', {
         dbType: connection.db_type
       });
@@ -230,7 +246,7 @@ export default function DatabaseExplorer({
 
       setDatabaseMetadata(connectionId, { objects, lastUpdated: Date.now() });
 
-      const tree = buildObjectTree(objects, showsSchemaLevel(connection.db_type), kindLabel);
+      const tree = buildObjectTree(objects, showsSchemaLevel(connection.db_type), kindLabel, trailingSchemas(connection.db_type));
       setExpandedNodes(new Set(defaultExpandedKeys(tree)));
     } catch (err) {
       console.error('加载数据库元数据失败:', err);
@@ -305,7 +321,7 @@ export default function DatabaseExplorer({
   // 而一个都没命中的类型根本不会出现——不用再画一行「函数 0」
   const matching = filterObjects(objects, filter);
   const filtering = filter.trim().length > 0;
-  const tree = buildObjectTree(matching, showsSchemaLevel(connection.db_type), kindLabel);
+  const tree = buildObjectTree(matching, showsSchemaLevel(connection.db_type), kindLabel, trailingSchemas(connection.db_type));
 
   const toggleNode = (key: string) => {
     setExpandedNodes(current => {
@@ -389,6 +405,15 @@ export default function DatabaseExplorer({
       return;
     }
 
+    // MongoDB 复制的是命名空间 `库.集合`：mongosh 的 `use` 与各家工具认的都是它
+    if (connection && !speaksSql(connection.db_type)) {
+      navigator.clipboard
+        .writeText(object.schema ? `${object.schema}.${object.name}` : object.name)
+        .then(() => setActionError(null))
+        .catch((cause) => setActionError(describeError(cause, t('common.copyFailed'))));
+      return;
+    }
+
     const dialect = connection ? identifierDialectFor(connection.db_type) : 'sqlite';
     if (action === 'drop' || action === 'truncate') {
       const { kind } = object;
@@ -460,7 +485,7 @@ export default function DatabaseExplorer({
         
         {/* 按钮不让位：窄的时候宁可截掉左边的状态标记，也不能让「+」与刷新消失 */}
         <div className="flex shrink-0 items-center gap-1">
-          {onOpenErDiagram && (
+          {onOpenErDiagram && speaksSql(connection.db_type) && (
             <button
               onClick={onOpenErDiagram}
               className="p-1 text-fg-muted hover:text-accent transition-colors"
@@ -470,7 +495,7 @@ export default function DatabaseExplorer({
               <GitBranch size={14} />
             </button>
           )}
-          {supportsFeature(connection.db_type, 'structureEditing') && (
+          {speaksSql(connection.db_type) && supportsFeature(connection.db_type, 'structureEditing') && (
           <button
             onClick={(event) => {
               // 能建 schema 的方言上「+」是一个两项的小菜单，而不是再加一个图标：
@@ -645,6 +670,7 @@ export default function DatabaseExplorer({
         <ObjectContextMenu
           object={objectMenu.object}
           position={objectMenu.position}
+          speaksSql={speaksSql(connection.db_type)}
           onRun={(action) => runObjectAction(action, objectMenu.object)}
           onDismiss={() => setObjectMenu(null)}
         />

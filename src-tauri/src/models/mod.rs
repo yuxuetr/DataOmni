@@ -112,6 +112,15 @@ impl DatabaseType {
   /// 都由测试钉在 `Cargo.toml` 的 features 上。界面那份是提前告知，这份是
   /// 最终裁决——任何绕过界面的路径（老配置、手改存档）都过不去。
   pub fn has_driver(&self) -> bool {
+    self.speaks_sql() || *self == DatabaseType::MongoDB
+  }
+
+  /// 走 SQL 的那一族：编辑器、五张目录查询表、执行计划、表格写入都是为它们写的。
+  ///
+  /// MongoDB 之前这和 [`Self::has_driver`] 是同一个集合，TODOs 4.1 说过「有驱动但某张
+  /// 查询表没有」的类型一出现，就是第一个真实的能力维度——它就是 MongoDB。
+  /// 界面上对应的是 `databaseSupport.ts` 的 `speaksSql`
+  pub fn speaks_sql(&self) -> bool {
     matches!(
       self,
       DatabaseType::MySQL
@@ -238,25 +247,17 @@ impl DatabaseType {
         config.port,
         encode(config.database.as_deref().unwrap_or(""))
       ),
-      DatabaseType::MongoDB => {
-        if !config.username.is_empty() && !config.password.is_empty() {
-          format!(
-            "mongodb://{}:{}@{}:{}/{}",
-            encode(&config.username),
-            encode(&config.password),
-            config.host,
-            config.port,
-            config.database.as_ref().unwrap_or(&"admin".to_string())
-          )
-        } else {
-          format!(
-            "mongodb://{}:{}/{}",
-            config.host,
-            config.port,
-            config.database.as_ref().unwrap_or(&"admin".to_string())
-          )
-        }
-      }
+      // 和 SQL Server 同一个理由：是 `MongoRegistry` 里的键，不带口令。最后一段是认证库
+      DatabaseType::MongoDB => format!(
+        "{}{}@{}:{}/{}",
+        crate::services::mongodb::MONGODB_SCHEME,
+        encode(&config.username),
+        config.host,
+        config.port,
+        encode(
+          config.database.as_deref().filter(|database| !database.is_empty()).unwrap_or("admin")
+        )
+      ),
       DatabaseType::Redis => {
         if !config.username.is_empty() && !config.password.is_empty() {
           format!(
@@ -537,7 +538,8 @@ mod tests {
     assert!(url.contains("connectTimeout=30000"), "{url}");
   }
 
-  /// 「有驱动」和「有元数据查询」必须是同一批类型。
+  /// 「走 SQL」和「有元数据查询」必须是同一批类型。MongoDB 有驱动而不走 SQL，
+  /// 它的对象树来自 `services::mongodb`，不在这五张表里。
   ///
   /// 两边分开维护会出两种局面，都很难从界面上看出来：说支持但一进去就没有
   /// 对象树（查询表缺了它），或者写好了整套 SQL 却连不上（驱动没编进去）。
@@ -545,7 +547,7 @@ mod tests {
   #[test]
   fn driver_support_and_metadata_queries_cover_the_same_types() {
     for db_type in ALL_DATABASE_TYPES {
-      let has_driver = db_type.has_driver();
+      let has_driver = db_type.speaks_sql();
 
       for (table, present) in [
         ("schema_metadata", crate::services::schema_metadata_queries(&db_type).is_some()),
@@ -556,7 +558,7 @@ mod tests {
       ] {
         assert_eq!(
           has_driver, present,
-          "{db_type:?}：has_driver={has_driver} 而 {table} 查询表 present={present}，两者必须一致"
+          "{db_type:?}：speaks_sql={has_driver} 而 {table} 查询表 present={present}，两者必须一致"
         );
       }
     }
@@ -568,7 +570,7 @@ mod tests {
   fn every_supported_type_can_produce_a_plan_even_if_it_cannot_analyze() {
     for db_type in ALL_DATABASE_TYPES {
       assert_eq!(
-        db_type.has_driver(),
+        db_type.speaks_sql(),
         crate::services::explain_statement(&db_type, "SELECT 1", false).is_ok(),
         "{db_type:?} 的执行计划支持要跟驱动一致"
       );
