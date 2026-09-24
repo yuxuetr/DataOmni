@@ -92,6 +92,57 @@ pub async fn mongodb_document(
   mongodb::document_text(&client, &database, &collection, id, timeout).await
 }
 
+/// 整篇替换一个文档。`original` 是打开时拿到的那份文字（缩进写法），用来确认这期间
+/// 没有别人改过它；`replacement` 是编辑框里的
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn mongodb_replace_document(
+  connection_string: String,
+  database: String,
+  collection: String,
+  original: String,
+  replacement: String,
+  timeout_ms: u64,
+  registry: State<'_, MongoRegistry>,
+) -> Result<(), String> {
+  let original = mongo_shell::parse_document(&original).map_err(|error| error.to_string())?;
+  let replacement = mongo_shell::parse_document(&replacement).map_err(|error| error.to_string())?;
+  let timeout = timeout(timeout_ms)?;
+  let client = client(&registry, &connection_string)?;
+  mongodb::replace_document(&client, &database, &collection, original, replacement, timeout).await
+}
+
+/// 插入一个文档，返回它的 `_id` 写法
+#[tauri::command]
+pub async fn mongodb_insert_document(
+  connection_string: String,
+  database: String,
+  collection: String,
+  document: String,
+  timeout_ms: u64,
+  registry: State<'_, MongoRegistry>,
+) -> Result<String, String> {
+  let document = mongo_shell::parse_document(&document).map_err(|error| error.to_string())?;
+  let timeout = timeout(timeout_ms)?;
+  let client = client(&registry, &connection_string)?;
+  mongodb::insert_document(&client, &database, &collection, document, timeout).await
+}
+
+#[tauri::command]
+pub async fn mongodb_delete_document(
+  connection_string: String,
+  database: String,
+  collection: String,
+  id: String,
+  timeout_ms: u64,
+  registry: State<'_, MongoRegistry>,
+) -> Result<(), String> {
+  let id = mongo_shell::parse_value(&id).map_err(|error| error.to_string())?;
+  let timeout = timeout(timeout_ms)?;
+  let client = client(&registry, &connection_string)?;
+  mongodb::delete_document(&client, &database, &collection, id, timeout).await
+}
+
 /// 断开时去掉登记。`Client` 的最后一个引用没了，池子里的连接随之关闭
 #[tauri::command]
 pub fn close_mongodb(connection_string: String, registry: State<'_, MongoRegistry>) -> bool {

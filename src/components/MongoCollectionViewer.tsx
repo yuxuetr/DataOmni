@@ -7,10 +7,9 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
-  Copy,
+  Plus,
   RefreshCw,
-  Search,
-  X
+  Search
 } from 'lucide-react';
 import { useQueryStore } from '../stores/queryStore';
 import { useLanguageStore } from '../stores/languageStore';
@@ -25,11 +24,21 @@ import {
   type MongoValueKind
 } from '../utils/mongoDocuments';
 import { PLAIN_TEXT_INPUT } from './FormControls';
+import { MongoDocumentPanel } from './MongoDocumentPanel';
+import { useConfirmPrompt } from './ConfirmPrompt';
 
 interface MongoCollectionViewerProps {
   database: string;
   collection: string;
+  /** 视图不能写：新建、编辑、删除都不出现 */
+  readOnly: boolean;
 }
+
+/** 右边的面板：没开、看一个文档、新建一个 */
+type DocumentPanelState =
+  | { kind: 'closed' }
+  | { kind: 'document'; id: string }
+  | { kind: 'insert' };
 
 interface AppliedQuery {
   filter: string;
@@ -60,7 +69,7 @@ const KIND_CLASS: Record<MongoValueKind, string> = {
  * 是现算出来的并集、缺字段和 `null` 是两回事、值是 mongosh 写法的文字。硬塞进去
  * 就得在那张 1800 行的组件里到处加「如果是 MongoDB」。
  */
-export function MongoCollectionViewer({ database, collection }: MongoCollectionViewerProps) {
+export function MongoCollectionViewer({ database, collection, readOnly }: MongoCollectionViewerProps) {
   const t = useLanguageStore((state) => state.t);
   const connectionString = useQueryStore((state) => state.connectionString);
   const [filterDraft, setFilterDraft] = useState('');
@@ -74,7 +83,10 @@ export function MongoCollectionViewer({ database, collection }: MongoCollectionV
   const [total, setTotal] = useState<number | null>(null);
   const [counting, setCounting] = useState(false);
   const [countError, setCountError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [panel, setPanel] = useState<DocumentPanelState>({ kind: 'closed' });
+  const [panelDirty, setPanelDirty] = useState(false);
+  const { ask, prompt: confirmPrompt } = useConfirmPrompt();
+  const selectedId = panel.kind === 'document' ? panel.id : null;
   const [documentText, setDocumentText] = useState<string | null>(null);
   const [documentLoading, setDocumentLoading] = useState(false);
   const [documentError, setDocumentError] = useState<string | null>(null);
@@ -162,7 +174,7 @@ export function MongoCollectionViewer({ database, collection }: MongoCollectionV
   const applyQuery = () => {
     const query = { filter: filterDraft, sort: sortDraft };
     setApplied(query);
-    setSelectedId(null);
+    setPanel({ kind: 'closed' });
     void load(1, query, pageSize);
     // 排序不改变总数；只动了排序时不重新数
     if (query.filter !== applied.filter || total === null) {
@@ -175,7 +187,7 @@ export function MongoCollectionViewer({ database, collection }: MongoCollectionV
     setSortDraft('');
     const query = { filter: '', sort: '' };
     setApplied(query);
-    setSelectedId(null);
+    setPanel({ kind: 'closed' });
     void load(1, query, pageSize);
     void recount(query);
   };
@@ -183,9 +195,117 @@ export function MongoCollectionViewer({ database, collection }: MongoCollectionV
   const refresh = () => {
     void load(page, applied, pageSize);
     void recount(applied);
-    if (selectedId) {
+    if (selectedId && !panelDirty) {
       void openDocument(selectedId);
     }
+  };
+
+  /** 面板里有没存的改动时，换一行、关面板、新建之前问一句 */
+  const mayLeavePanel = async (): Promise<boolean> => {
+    if (!panelDirty) {
+      return true;
+    }
+    return ask({
+      title: t('mongo.discardConfirmTitle'),
+      message: t('mongo.discardConfirm'),
+      confirmLabel: t('tab.discard'),
+      destructive: true
+    });
+  };
+
+  const closePanel = async () => {
+    if (!(await mayLeavePanel())) {
+      return;
+    }
+    documentRequest.current += 1;
+    setPanel({ kind: 'closed' });
+    setPanelDirty(false);
+    setDocumentText(null);
+    setDocumentError(null);
+  };
+
+  const selectRow = async (id: string) => {
+    if (id === selectedId || !(await mayLeavePanel())) {
+      return;
+    }
+    setPanelDirty(false);
+    void openDocument(id);
+  };
+
+  const startInsert = async () => {
+    if (!(await mayLeavePanel())) {
+      return;
+    }
+    documentRequest.current += 1;
+    setPanelDirty(false);
+    setDocumentText(null);
+    setDocumentError(null);
+    setDocumentLoading(false);
+    setPanel({ kind: 'insert' });
+  };
+
+  /** 写完之后这一页与总数都重新读：改过的文档可能已经不符合条件、排到别处去了 */
+  const reloadAfterWrite = (nextPage: number) => {
+    void load(nextPage, applied, pageSize);
+    void recount(applied);
+  };
+
+  const saveReplacement = async (draft: string) => {
+    if (!connectionString || documentText === null || !selectedId) {
+      return;
+    }
+    await invoke('mongodb_replace_document', {
+      connectionString,
+      database,
+      collection,
+      original: documentText,
+      replacement: draft,
+      timeoutMs
+    });
+    setPanelDirty(false);
+    reloadAfterWrite(page);
+    await openDocument(selectedId);
+  };
+
+  const saveInsert = async (draft: string) => {
+    if (!connectionString) {
+      return;
+    }
+    const id = await invoke<string>('mongodb_insert_document', {
+      connectionString,
+      database,
+      collection,
+      document: draft,
+      timeoutMs
+    });
+    setPanelDirty(false);
+    reloadAfterWrite(page);
+    await openDocument(id);
+  };
+
+  const deleteDocument = async () => {
+    if (!connectionString || !selectedId) {
+      return;
+    }
+    const confirmed = await ask({
+      title: t('mongo.deleteConfirmTitle'),
+      message: t('mongo.deleteConfirm', { id: selectedId, collection: `${database}.${collection}` }),
+      confirmLabel: t('mongo.deleteDocument'),
+      destructive: true
+    });
+    if (!confirmed) {
+      return;
+    }
+    try {
+      await invoke('mongodb_delete_document', { connectionString, database, collection, id: selectedId, timeoutMs });
+    } catch (cause) {
+      setDocumentError(describeError(cause));
+      return;
+    }
+    setPanel({ kind: 'closed' });
+    setDocumentText(null);
+    // 删掉的是这一页最后一个文档时退回上一页，不留一个空页
+    reloadAfterWrite(documents.length === 1 && page > 1 ? page - 1 : page);
   };
 
   const openDocument = async (id: string) => {
@@ -193,7 +313,7 @@ export function MongoCollectionViewer({ database, collection }: MongoCollectionV
       return;
     }
     const request = ++documentRequest.current;
-    setSelectedId(id);
+    setPanel({ kind: 'document', id });
     setDocumentLoading(true);
     setDocumentError(null);
     try {
@@ -264,6 +384,16 @@ export function MongoCollectionViewer({ database, collection }: MongoCollectionV
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {!readOnly && (
+            <button
+              onClick={() => void startInsert()}
+              disabled={!connectionString}
+              className="flex items-center gap-1 rounded-control border border-success-line px-3 py-1.5 text-sm text-success transition-colors hover:bg-success-soft disabled:opacity-50"
+            >
+              <Plus size={14} />
+              <span>{t('mongo.newDocument')}</span>
+            </button>
+          )}
           <button
             onClick={refresh}
             disabled={loading}
@@ -369,7 +499,9 @@ export function MongoCollectionViewer({ database, collection }: MongoCollectionV
                 </div>
               )}
               <div className="flex-1 overflow-auto">
-                <table className="table-fixed border-collapse" style={{ width: `${gridWidth}px`, minWidth: '100%' }}>
+                {/* 表格按量出来的宽度铺，不用 minWidth 100%：那会把富余宽度按比例摊给各列，
+                    一列 `_id` 被拉到 400px，量出来的列宽就没有意义了（与 TableDataViewer 同一条） */}
+                <table className="table-fixed border-collapse" style={{ width: `${gridWidth}px` }}>
                   <colgroup>
                     {widths.map((width, index) => (
                       <col key={columns[index]} style={{ width: `${width}px` }} />
@@ -393,7 +525,7 @@ export function MongoCollectionViewer({ database, collection }: MongoCollectionV
                         key={document.id ?? `row-${rowIndex}`}
                         onClick={() => {
                           if (document.id) {
-                            void openDocument(document.id);
+                            void selectRow(document.id);
                           }
                         }}
                         title={document.id ? undefined : t('mongo.noId')}
@@ -484,60 +616,29 @@ export function MongoCollectionViewer({ database, collection }: MongoCollectionV
           )}
         </div>
 
-        {selectedId && (
-          <aside className="flex w-[40%] min-w-72 max-w-[640px] flex-col border-l border-line bg-surface">
-            <div className="flex items-center justify-between border-b border-line bg-surface-sunken px-3 py-2">
-              <span className="truncate text-xs font-medium text-fg-muted" title={selectedId}>
-                {t('mongo.document')} · {selectedId}
-              </span>
-              <div className="flex shrink-0 items-center gap-1">
-                <button
-                  onClick={() => {
-                    if (documentText) {
-                      void navigator.clipboard.writeText(documentText).catch((cause) => {
-                        setDocumentError(describeError(cause, t('common.copyFailed')));
-                      });
-                    }
-                  }}
-                  disabled={!documentText}
-                  className="rounded-control p-1 text-fg-muted hover:bg-surface-hover hover:text-fg disabled:opacity-40"
-                  title={t('mongo.copyDocument')}
-                  aria-label={t('mongo.copyDocument')}
-                >
-                  <Copy size={14} />
-                </button>
-                <button
-                  onClick={() => {
-                    documentRequest.current += 1;
-                    setSelectedId(null);
-                    setDocumentText(null);
-                    setDocumentError(null);
-                  }}
-                  className="rounded-control p-1 text-fg-muted hover:bg-surface-hover hover:text-fg"
-                  title={t('mongo.closeDocument')}
-                  aria-label={t('mongo.closeDocument')}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto p-3">
-              {documentLoading ? (
-                <div className="flex items-center gap-2 text-sm text-fg-muted">
-                  <RefreshCw className="animate-spin text-fg-subtle" size={14} />
-                  {t('mongo.loading')}
-                </div>
-              ) : documentError ? (
-                <p className="text-sm text-danger">{documentError}</p>
-              ) : documentText === null ? (
-                <p className="text-sm text-fg-muted">{t('mongo.documentGone')}</p>
-              ) : (
-                <pre className="whitespace-pre font-mono text-[13px] text-fg select-text">{documentText}</pre>
-              )}
-            </div>
-          </aside>
+        {panel.kind !== 'closed' && (
+          <MongoDocumentPanel
+            key={panel.kind === 'document' ? `document:${panel.id}` : 'insert'}
+            mode={panel.kind}
+            idText={panel.kind === 'document' ? panel.id : null}
+            text={documentText}
+            loading={documentLoading}
+            error={documentError}
+            readOnly={readOnly}
+            onSave={panel.kind === 'document' ? saveReplacement : saveInsert}
+            onDelete={() => void deleteDocument()}
+            onCancelEdit={() => {
+              // 取消可能发生在一次冲突之后：面板上那份已经不是服务端现在的样子了
+              if (selectedId) {
+                void openDocument(selectedId);
+              }
+            }}
+            onClose={() => void closePanel()}
+            onDirtyChange={setPanelDirty}
+          />
         )}
       </div>
+      {confirmPrompt}
     </div>
   );
 }

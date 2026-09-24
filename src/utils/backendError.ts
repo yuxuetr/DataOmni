@@ -106,6 +106,9 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_MONGO_UNREACHABLE: 'error.backend.mongoUnreachable',
   DATAOMNI_MONGO_SERVER_ERROR: 'error.backend.mongoServerError',
   DATAOMNI_MONGO_TIMEOUT: 'error.backend.mongoTimeout',
+  DATAOMNI_MONGO_DOCUMENT_GONE: 'error.backend.mongoDocumentGone',
+  DATAOMNI_MONGO_DOCUMENT_CHANGED: 'error.backend.mongoDocumentChanged',
+  DATAOMNI_MONGO_ID_CHANGED: 'error.backend.mongoIdChanged',
   DATAOMNI_MONGO_NO_SQL: 'error.backend.mongoNoSql'
 };
 

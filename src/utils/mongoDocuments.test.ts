@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  indentOnTab,
   mongoColumnAlignment,
   mongoColumns,
   mongoPageRange,
@@ -66,5 +67,15 @@ describe('MongoDB 分页区间', () => {
 
   it('空结果是 0–0，不是 1–0', () => {
     expect(mongoPageRange(1, 25, 0, false, 0)).toMatchObject({ from: 0, to: 0, lastPage: 1 });
+  });
+});
+
+describe('编辑框里的 Tab', () => {
+  it('在光标处插两格，光标跟到后面', () => {
+    expect(indentOnTab('{\n}', 2, 2)).toEqual({ text: '{\n  }', caret: 4 });
+  });
+
+  it('有选区时替换掉选区', () => {
+    expect(indentOnTab('{ abc }', 2, 5)).toEqual({ text: '{    }', caret: 4 });
   });
 });

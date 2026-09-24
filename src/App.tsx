@@ -775,6 +775,12 @@ function App() {
           key={activeTab.id}
           database={activeTab.object.schema ?? ''}
           collection={activeTab.object.table}
+          // 视图不能写。种类来自对象树；树还没读出来时按可写处理，写视图会被服务端拒绝并说明
+          readOnly={databaseMetadata[activeTab.binding.profileId]?.objects.some((object) => (
+            object.kind === 'view'
+            && object.schema === activeTab.object.schema
+            && object.name === activeTab.object.table
+          )) ?? false}
         />
       );
     }

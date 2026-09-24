@@ -38,6 +38,12 @@ pub const MONGO_UNREACHABLE: &str = "DATAOMNI_MONGO_UNREACHABLE";
 pub const MONGO_SERVER_ERROR: &str = "DATAOMNI_MONGO_SERVER_ERROR";
 /// 超过了查询时限（服务端 `maxTimeMS` 或本机等待）
 pub const MONGO_TIMEOUT: &str = "DATAOMNI_MONGO_TIMEOUT";
+/// 要改、要删的那个文档已经不在了
+pub const MONGO_DOCUMENT_GONE: &str = "DATAOMNI_MONGO_DOCUMENT_GONE";
+/// 要改的文档在打开之后被别处改过；不覆盖别人的改动
+pub const MONGO_DOCUMENT_CHANGED: &str = "DATAOMNI_MONGO_DOCUMENT_CHANGED";
+/// 编辑时改了 `_id`。服务端不许改它，这里先拦下、说人话
+pub const MONGO_ID_CHANGED: &str = "DATAOMNI_MONGO_ID_CHANGED";
 /// 连接串对应的连接不在（断开之后还有请求过来）
 pub const MONGO_NOT_CONNECTED: &str = "DATAOMNI_DB_SESSION_NOT_CONNECTED";
 
@@ -303,6 +309,82 @@ pub async fn document_text(
   };
   let found = with_deadline(timeout, query).await?;
   Ok(found.map(|document| mongo_shell::format_document(&document, Layout::Indented)))
+}
+
+/// 整篇替换一个文档。
+///
+/// 条件除了 `_id` 还要求文档与打开时**完全一样**（`$$ROOT` 与 `original` 相等，
+/// 字段顺序也算）。否则别人在这期间改过的字段会被这次的整篇替换悄悄盖掉——而编辑框
+/// 里那份是打开时的样子，用户根本看不到别人改了什么。`original` 是打开时拿到的文字
+/// 读回来的，写法往返无损（`mongo_shell`），所以它就是当时存着的那一份。
+///
+/// 没匹配上时再看一眼文档还在不在，把「被删了」和「被改了」分开说
+pub async fn replace_document(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  original: Document,
+  replacement: Document,
+  timeout: Duration,
+) -> Result<(), String> {
+  let id = original.get("_id").cloned().ok_or_else(|| MONGO_DOCUMENT_GONE.to_string())?;
+  if replacement.get("_id").is_some_and(|replacement_id| *replacement_id != id) {
+    return Err(format!("{MONGO_ID_CHANGED}: {}", mongo_shell::format_value(&id, Layout::OneLine)));
+  }
+  let collection = client.database(database).collection::<Document>(collection);
+  let filter = doc! { "_id": id.clone(), "$expr": { "$eq": ["$$ROOT", { "$literal": original }] } };
+  let write = async {
+    let result = collection.replace_one(filter, replacement).await.map_err(describe_error)?;
+    if result.matched_count == 1 {
+      return Ok(());
+    }
+    let still_there =
+      collection.count_documents(doc! { "_id": id.clone() }).await.map_err(describe_error)?;
+    let id_text = mongo_shell::format_value(&id, Layout::OneLine);
+    Err(if still_there > 0 {
+      format!("{MONGO_DOCUMENT_CHANGED}: {id_text}")
+    } else {
+      format!("{MONGO_DOCUMENT_GONE}: {id_text}")
+    })
+  };
+  with_deadline(timeout, write).await
+}
+
+/// 插入一个文档，返回它的 `_id` 写法（没写 `_id` 时是服务端生成的那个）
+pub async fn insert_document(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  document: Document,
+  timeout: Duration,
+) -> Result<String, String> {
+  let collection = client.database(database).collection::<Document>(collection);
+  let write = async {
+    let result = collection.insert_one(document).await.map_err(describe_error)?;
+    Ok(mongo_shell::format_value(&result.inserted_id, Layout::OneLine))
+  };
+  with_deadline(timeout, write).await
+}
+
+/// 按 `_id` 删一个文档。一个都没删到就说「已经不在了」，而不是报成功
+pub async fn delete_document(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  id: Bson,
+  timeout: Duration,
+) -> Result<(), String> {
+  let collection = client.database(database).collection::<Document>(collection);
+  let id_text = mongo_shell::format_value(&id, Layout::OneLine);
+  let write = async {
+    let result = collection.delete_one(doc! { "_id": id }).await.map_err(describe_error)?;
+    if result.deleted_count == 1 {
+      Ok(())
+    } else {
+      Err(format!("{MONGO_DOCUMENT_GONE}: {id_text}"))
+    }
+  };
+  with_deadline(timeout, write).await
 }
 
 /// 服务端的 `maxTimeMS` 管不到网络：一条被丢掉的连接上请求能一直挂着。本机再

@@ -126,3 +126,19 @@ export function mongoPageRange(
     lastPage: total === null ? null : Math.max(1, Math.ceil(total / pageSize))
   };
 }
+
+/**
+ * 编辑框里按 Tab：在光标处插两个空格（有选区就替换掉选区），返回新文字与光标位置。
+ * 缩进写法是两格一层，Tab 把焦点移出编辑框只会打断在写的文档
+ */
+export function indentOnTab(
+  text: string,
+  selectionStart: number,
+  selectionEnd: number
+): { text: string; caret: number } {
+  const indent = '  ';
+  return {
+    text: text.slice(0, selectionStart) + indent + text.slice(selectionEnd),
+    caret: selectionStart + indent.length
+  };
+}

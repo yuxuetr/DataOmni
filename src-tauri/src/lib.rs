@@ -62,6 +62,9 @@ pub fn run() {
       mongodb_find,
       mongodb_count,
       mongodb_document,
+      mongodb_replace_document,
+      mongodb_insert_document,
+      mongodb_delete_document,
       close_mongodb,
       // 数据库操作命令
       execute_query,

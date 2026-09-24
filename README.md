@@ -30,7 +30,7 @@
 ### 🔗 数据库支持
 
 - **可连接并执行查询**: MySQL, PostgreSQL, SQLite, SQL Server, Oracle（见兼容性矩阵）
-- **可连接、只读浏览**: MongoDB（库、集合、文档，条件与排序用 mongosh 写法；还不能改）
+- **可连接、浏览与改文档**: MongoDB（库、集合、文档；条件、排序与编辑都用 mongosh 写法）
 - **计划中，当前版本连不上**: Redis, Neo4j, DuckDB, ClickHouse, Elasticsearch
 
   不是「能连上但不能查」——这些库的驱动都没有编进来，建连这一步就认不出来。
@@ -54,7 +54,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 | CockroachDB | 25.2 | PostgreSQL | ⚠️ 可用，有缺口 | 22 / 22（缺口由用例钉住） |
 | SQL Server | 2022 | SQL Server | ✅ 支持 | 17 / 17（独立用例，`sql_server_smoke.rs`，含改结构语料） |
 | Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 14 / 14（独立用例，`oracle_smoke.rs`，含改结构语料） |
-| MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 只读 | 7 / 7（独立用例，`mongodb_smoke.rs`） |
+| MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 12 / 12（独立用例，`mongodb_smoke.rs`） |
 
 - **MariaDB**：JSON 列是 LONGTEXT 的别名，按文本显示与编辑，没有 JSON 专用
   编辑器；没有函数索引。
@@ -93,10 +93,11 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
     其余（改列名、删列、改表名）各自一条，预览里会说明；中途有一条失败时前面的已经
     生效。
   - Oracle 把空字符串存成 NULL，在表格里填一个空值得到的是 NULL。
-- **MongoDB**：第一阶段，只读。连接（认证库、TLS 与 CA、SSH 隧道）、对象树按库列出
-  集合与视图、集合页（条件、排序、分页、总数、看整个文档）。值的写法用 mongosh 的，
-  显示出来的原样粘回条件框就能用，类型不变。还没有的：改文档、`mongodb+srv://`、
-  客户端证书、mongosh 命令。详见 [用户手册](docs/user-manual.md#mongodb)。
+- **MongoDB**：连接（认证库、TLS 与 CA、SSH 隧道）、对象树按库列出集合与视图、集合页
+  （条件、排序、分页、总数）、按 `_id` 改、增、删单个文档。值的写法用 mongosh 的，
+  显示出来的原样粘回条件框就能用，改一个字段不会换掉别的字段的类型；改文档时别处
+  改过它就不覆盖。还没有的：批量改、索引与校验规则、`mongodb+srv://`、客户端证书、
+  mongosh 命令。详见 [用户手册](docs/user-manual.md#mongodb)。
 - 在编辑器里用 `USE` 切库在 MySQL 类服务端上一律拒绝：它会让侧边栏的对象树
   悄悄换成另一个库。MySQL 本来就拒，MariaDB 与 TiDB 不拒，所以由应用来挡。
 

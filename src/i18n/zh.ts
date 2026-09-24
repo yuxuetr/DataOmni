@@ -1150,6 +1150,15 @@ export const zh = {
   'mongo.document': '文档',
   'mongo.documentGone': '这个文档已经不在了，可能刚被删掉。',
   'mongo.copyDocument': '复制文档',
+  'mongo.newDocument': '新建文档',
+  'mongo.editDocument': '编辑文档',
+  'mongo.deleteDocument': '删除文档',
+  'mongo.insertDocument': '插入',
+  'mongo.editHint': '写法同 mongosh；存回去是整篇替换，{shortcut} 保存',
+  'mongo.deleteConfirm': '删除 {collection} 里的文档 {id}？这一步不能撤销。',
+  'mongo.deleteConfirmTitle': '删除文档',
+  'mongo.discardConfirm': '编辑框里的改动还没存，放弃吗？',
+  'mongo.discardConfirmTitle': '放弃改动',
   'mongo.closeDocument': '关闭',
   'error.backend.mongoSyntax': '写法有误，位置在第 {detail}（行:列）附近',
   'error.backend.mongoUnknownFunction': '认不出 {detail}。能用的有 ObjectId、ISODate、Long、Int32、Double、Decimal128、UUID、BinData、Timestamp、MinKey、MaxKey',
@@ -1160,6 +1169,9 @@ export const zh = {
   'error.backend.mongoUnreachable': '10 秒内没连上 MongoDB 服务器：检查地址、端口和 TLS 设置。详情：{detail}',
   'error.backend.mongoServerError': 'MongoDB 服务端报错：{detail}',
   'error.backend.mongoTimeout': '查询超过了时限，服务端已经停下。可以在设置里调大查询超时。详情：{detail}',
+  'error.backend.mongoDocumentGone': '这个文档已经不在了（{detail}），可能刚被别处删掉。刷新看看。',
+  'error.backend.mongoDocumentChanged': '文档 {detail} 在你打开之后被别处改过，没有覆盖。先复制你的改动，刷新后再改。',
+  'error.backend.mongoIdChanged': '不能改 _id（原来是 {detail}）。要换 _id 就新建一个文档，再删掉这个。',
   'error.backend.mongoNoSql': 'MongoDB 连接上不能执行 SQL'
 } as const;
 

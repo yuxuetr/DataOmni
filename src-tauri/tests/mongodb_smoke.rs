@@ -10,7 +10,8 @@
 use dataomni_lib::models::ConnectionProfile;
 use dataomni_lib::services::mongo_shell::{self, Layout};
 use dataomni_lib::services::mongodb::{
-  self as mongo, FindRequest, MongoTarget, MONGO_AUTH_FAILED, MONGO_AUTH_REQUIRED, MONGO_TIMEOUT,
+  self as mongo, FindRequest, MongoTarget, MONGO_AUTH_FAILED, MONGO_AUTH_REQUIRED,
+  MONGO_DOCUMENT_CHANGED, MONGO_DOCUMENT_GONE, MONGO_ID_CHANGED, MONGO_SERVER_ERROR, MONGO_TIMEOUT,
   MONGO_UNREACHABLE,
 };
 use mongodb::bson::{doc, Document};
@@ -226,4 +227,213 @@ async fn a_slow_query_stops_at_the_timeout() {
   assert!(error.starts_with(MONGO_TIMEOUT), "{error}");
   // 本机那层兜底要多等两秒；两秒内报出来，说明是服务端的 maxTimeMS 停下的
   assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+}
+
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 打开一个文档、在编辑框里改一个字段、存回去：没动的字段类型一个不变。
+/// 这是「整篇替换」能成立的前提——编辑框里是文字，存回去的是读回来的文档
+#[tokio::test]
+async fn editing_one_field_leaves_the_types_of_the_others_alone() {
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_edit").await;
+  let stored = mongo_shell::parse_document(
+    "{ _id: 1, name: 'alice', long: Long('41'), whole: 3.0, money: Decimal128('9.90'), at: ISODate('2024-01-05T00:00:00Z'), tags: ['a'] }",
+  )
+  .expect("literal");
+  collection.insert_one(stored.clone()).await.expect("insert");
+
+  let opened = mongo::document_text(
+    &client,
+    DATABASE,
+    "smoke_edit",
+    mongodb::bson::Bson::Int32(1),
+    WRITE_TIMEOUT,
+  )
+  .await
+  .expect("open")
+  .expect("there");
+  let edited = opened.replace("'alice'", "'alice cooper'");
+  assert_ne!(edited, opened, "编辑框里得真的改到了东西");
+  mongo::replace_document(
+    &client,
+    DATABASE,
+    "smoke_edit",
+    mongo_shell::parse_document(&opened).expect("original"),
+    mongo_shell::parse_document(&edited).expect("replacement"),
+    WRITE_TIMEOUT,
+  )
+  .await
+  .expect("replace");
+
+  let now = collection.find_one(doc! { "_id": 1 }).await.expect("read").expect("there");
+  let mut expected = stored;
+  expected.insert("name", "alice cooper");
+  assert_eq!(now, expected);
+}
+
+/// 打开之后别人改了它：不覆盖，报「被改过」；别人的改动留着
+#[tokio::test]
+async fn a_document_changed_elsewhere_is_not_overwritten() {
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_conflict").await;
+  collection.insert_one(doc! { "_id": 1, "stock": 10, "note": "x" }).await.expect("insert");
+  let opened = mongo::document_text(
+    &client,
+    DATABASE,
+    "smoke_conflict",
+    mongodb::bson::Bson::Int32(1),
+    WRITE_TIMEOUT,
+  )
+  .await
+  .expect("open")
+  .expect("there");
+
+  // 别处把库存改成了 9
+  collection
+    .update_one(doc! { "_id": 1 }, doc! { "$set": { "stock": 9 } })
+    .await
+    .expect("elsewhere");
+
+  let error = mongo::replace_document(
+    &client,
+    DATABASE,
+    "smoke_conflict",
+    mongo_shell::parse_document(&opened).expect("original"),
+    mongo_shell::parse_document(&opened.replace("'x'", "'y'")).expect("replacement"),
+    WRITE_TIMEOUT,
+  )
+  .await
+  .err()
+  .unwrap_or_default();
+  assert!(error.starts_with(MONGO_DOCUMENT_CHANGED), "{error}");
+  let now = collection.find_one(doc! { "_id": 1 }).await.expect("read").expect("there");
+  assert_eq!(now, doc! { "_id": 1, "stock": 9, "note": "x" });
+}
+
+/// 值里有 `$` 开头的字符串（`'$price'`）时，拿原文档去比不能被当成字段路径
+#[tokio::test]
+async fn a_dollar_string_in_the_original_is_compared_literally() {
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_literal").await;
+  let stored = doc! { "_id": 1, "expr": "$price", "nested": { "op": "$sum" } };
+  collection.insert_one(stored.clone()).await.expect("insert");
+  let mut replacement = stored.clone();
+  replacement.insert("expr", "$cost");
+  mongo::replace_document(
+    &client,
+    DATABASE,
+    "smoke_literal",
+    stored,
+    replacement.clone(),
+    WRITE_TIMEOUT,
+  )
+  .await
+  .expect("replace");
+  let now = collection.find_one(doc! { "_id": 1 }).await.expect("read").expect("there");
+  assert_eq!(now, replacement);
+}
+
+#[tokio::test]
+async fn gone_documents_and_changed_ids_are_named_as_such() {
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_gone").await;
+  let stored = doc! { "_id": 1, "x": 1 };
+  collection.insert_one(stored.clone()).await.expect("insert");
+
+  let error = mongo::replace_document(
+    &client,
+    DATABASE,
+    "smoke_gone",
+    stored.clone(),
+    doc! { "_id": 2, "x": 1 },
+    WRITE_TIMEOUT,
+  )
+  .await
+  .err()
+  .unwrap_or_default();
+  assert!(error.starts_with(MONGO_ID_CHANGED), "{error}");
+
+  // 编辑框里删掉 `_id` 那一行是可以的：替换保留原来的 _id
+  mongo::replace_document(
+    &client,
+    DATABASE,
+    "smoke_gone",
+    stored.clone(),
+    doc! { "x": 2 },
+    WRITE_TIMEOUT,
+  )
+  .await
+  .expect("replace without _id");
+  assert_eq!(
+    collection.find_one(doc! { "_id": 1 }).await.expect("read"),
+    Some(doc! { "_id": 1, "x": 2 })
+  );
+
+  mongo::delete_document(
+    &client,
+    DATABASE,
+    "smoke_gone",
+    mongodb::bson::Bson::Int32(1),
+    WRITE_TIMEOUT,
+  )
+  .await
+  .expect("delete");
+  let again = mongo::delete_document(
+    &client,
+    DATABASE,
+    "smoke_gone",
+    mongodb::bson::Bson::Int32(1),
+    WRITE_TIMEOUT,
+  )
+  .await
+  .err()
+  .unwrap_or_default();
+  assert!(again.starts_with(MONGO_DOCUMENT_GONE), "{again}");
+  let replace_gone = mongo::replace_document(
+    &client,
+    DATABASE,
+    "smoke_gone",
+    doc! { "_id": 1, "x": 2 },
+    doc! { "x": 3 },
+    WRITE_TIMEOUT,
+  )
+  .await
+  .err()
+  .unwrap_or_default();
+  assert!(replace_gone.starts_with(MONGO_DOCUMENT_GONE), "{replace_gone}");
+}
+
+#[tokio::test]
+async fn an_inserted_document_reports_an_id_that_finds_it_again() {
+  let Some(client) = client().await else { return };
+  fresh_collection(&client, "smoke_insert").await;
+  let id_text = mongo::insert_document(
+    &client,
+    DATABASE,
+    "smoke_insert",
+    mongo_shell::parse_document("{ name: 'new', n: Long('7') }").expect("literal"),
+    WRITE_TIMEOUT,
+  )
+  .await
+  .expect("insert");
+  assert!(id_text.starts_with("ObjectId('"), "{id_text}");
+  let id = mongo_shell::parse_value(&id_text).expect("id parses");
+  let text = mongo::document_text(&client, DATABASE, "smoke_insert", id, WRITE_TIMEOUT)
+    .await
+    .expect("read")
+    .expect("there");
+  assert!(text.contains("n: Long('7')"), "{text}");
+
+  // 重复的 _id：服务端的原话带着码名
+  let duplicate =
+    mongo::insert_document(&client, DATABASE, "smoke_insert", doc! { "_id": 5 }, WRITE_TIMEOUT)
+      .await;
+  assert!(duplicate.is_ok());
+  let error =
+    mongo::insert_document(&client, DATABASE, "smoke_insert", doc! { "_id": 5 }, WRITE_TIMEOUT)
+      .await
+      .err()
+      .unwrap_or_default();
+  assert!(error.starts_with(MONGO_SERVER_ERROR) || error.contains("E11000"), "{error}");
 }
