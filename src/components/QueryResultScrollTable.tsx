@@ -381,7 +381,11 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
       {/* 头部信息栏 */}
       <div className="px-4 py-3 bg-surface-sunken border-b flex items-center justify-between">
         <div className="flex items-center space-x-4 text-sm text-fg-muted">
-          <span>{t('result.rowCount', { count: totalRows })}</span>
+          {/* 返回行的语句说行数，不返回的说影响了几行——此前两句一起印，SELECT 上
+              「影响行数」就是行数本身（前端拿 rows.length 填的），DML 上「0 行」是噪音 */}
+          {result.columns.length > 0
+            ? <span>{t('result.rowCount', { count: totalRows })}</span>
+            : <span>{t('result.affectedRows', { count: result.affected_rows })}</span>}
           {result.truncated && (
             <span className="text-warning">
               {result.truncation_reason === 'byte_limit'
@@ -393,7 +397,6 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                   })}
             </span>
           )}
-          <span>{t('result.affectedRows', { count: result.affected_rows })}</span>
           <span>{t('result.executionTime', { time: formatExecutionTime(result.execution_time) })}</span>
           {canEdit && <span className="text-fg-subtle">{t('result.doubleClickToEdit')}</span>}
           {/* 不能改就说清为什么。只把编辑入口收起来，用户会以为这个版本没有这个功能 */}
