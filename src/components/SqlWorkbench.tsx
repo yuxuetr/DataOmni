@@ -1,4 +1,5 @@
 import { identifierDialectFor } from '../utils/sqlIdentifiers';
+import { DatabaseType } from '../contracts';
 import { firstRowsQuery } from '../utils/tablePagination';
 import React, { useEffect, useState } from 'react';
 import { 
@@ -188,9 +189,12 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
             </span>
           )}
           <span className="truncate text-fg-muted">
-            {serverLabel(connection)} · {connection.host}:{connection.port}
-            {/* 库名优先用服务端报的，问不出来才退回配置里那个 */}
-            {targetDatabase ? ` / ${targetDatabase}` : t('workbench.noDatabase')}
+            {/* SQLite 没有主机和端口，照印会是「sqlite · :0 / 路径」 */}
+            {connection.db_type === DatabaseType.SQLite
+              ? `${serverLabel(connection)} · ${targetDatabase || connection.database}`
+              : `${serverLabel(connection)} · ${connection.host}:${connection.port}`
+                // 库名优先用服务端报的，问不出来才退回配置里那个
+                + (targetDatabase ? ` / ${targetDatabase}` : t('workbench.noDatabase'))}
             {/* Schema 只有 PostgreSQL 有。它回答的是「不带前缀的 CREATE TABLE
                 会落到哪」，在一个连接横跨多个 schema 时是必要信息 */}
             {target.schema ? ` · ${target.schema}` : ''}
