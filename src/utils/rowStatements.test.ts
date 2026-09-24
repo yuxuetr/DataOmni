@@ -47,7 +47,7 @@ describe('buildUpdateStatement', () => {
     // SET 在 WHERE 前面，编号错位后的语句仍然语法正确，只是改错了行
     const statement = buildUpdateStatement(target('postgresql', 'shop'), COMPOSITE, { qty: value(2), note: value('hi') });
     expect(statement.sql).toBe(
-      'UPDATE "shop"."orders" SET "qty" = $1, "note" = $2 WHERE "tenant" = $3 AND "sku" = $4'
+      'UPDATE "shop"."orders" SET "qty" = $1::int, "note" = $2 WHERE "tenant" = $3 AND "sku" = $4'
     );
     expect(statement.params).toEqual([2, 'hi', 'acme', 'A-1']);
   });
@@ -199,7 +199,7 @@ describe('更新时的几种写入方式', () => {
       qty: value(1)
     });
     expect(statement.sql).toBe(
-      'UPDATE "orders" SET "note" = DEFAULT, "qty" = $1 WHERE "tenant" = $2 AND "sku" = $3'
+      'UPDATE "orders" SET "note" = DEFAULT, "qty" = $1::int WHERE "tenant" = $2 AND "sku" = $3'
     );
   });
 
@@ -335,5 +335,46 @@ describe('Oracle', () => {
     const statement = buildUpdateStatement(oracle, idKey, { NAME: value("O'x") });
     expect(renderStatementForDisplay(statement, 'oracle'))
       .toBe(`UPDATE "APP"."T" SET "NAME" = 'O''x' WHERE "ID" = 7`);
+  });
+});
+
+describe('PostgreSQL 的参数按列的声明类型转换', () => {
+  // 回归：表格里改 jsonb 格子报「column "doc" is of type jsonb but expression is of type text」
+  const pgTarget: TableTarget = {
+    schema: 'reg',
+    table: 't',
+    dialect: 'postgresql',
+    columns: [
+      column('id', 'integer'),
+      column('doc', 'jsonb'),
+      column('seen_at', 'timestamp with time zone'),
+      column('tags', 'text[]'),
+      column('title', 'character varying(100)')
+    ]
+  };
+  const key: RowKey = { columns: ['id'], values: { id: 1 } };
+
+  it('jsonb、时间戳、数组的赋值带上 ::类型', () => {
+    const statement = buildUpdateStatement(pgTarget, key, {
+      doc: value('{"a":2}'),
+      seen_at: value('2026-09-24 08:00:00+00'),
+      tags: value('{x,y}')
+    });
+    expect(statement.sql).toBe(
+      'UPDATE "reg"."t" SET "doc" = $1::jsonb, "seen_at" = $2::timestamp with time zone, "tags" = $3::text[] WHERE "id" = 1'
+    );
+  });
+
+  it('插入和置空也带；文本列不带，免得预览里满是 ::varchar', () => {
+    const statement = buildInsertStatement(pgTarget, {
+      doc: { kind: 'null' },
+      title: value('x')
+    });
+    expect(statement.sql).toBe('INSERT INTO "reg"."t" ("doc", "title") VALUES ($1::jsonb, $2)');
+  });
+
+  it('别的方言不转', () => {
+    const statement = buildUpdateStatement({ ...pgTarget, dialect: 'mysql' }, key, { doc: value('{}') });
+    expect(statement.sql).toBe('UPDATE `reg`.`t` SET `doc` = ? WHERE `id` = 1');
   });
 });

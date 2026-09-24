@@ -60,6 +60,26 @@ function createPlaceholderAllocator(dialect: SqlIdentifierDialect): () => string
   };
 }
 
+/**
+ * PostgreSQL 上占位符后面带的类型转换。
+ *
+ * 字符串参数绑成 text，而 PostgreSQL 不会在赋值和比较里把 text 隐式转成
+ * jsonb、timestamptz、uuid、数组、枚举……——表格里改一个 jsonb 格子会报
+ * 「column "doc" is of type jsonb but expression is of type text」。
+ * 按列的声明类型显式转过去；`data_type` 来自 `format_type()`，本身就是
+ * 可以直接写在 `::` 后面的类型名（带长度、精度、数组、需要时带引号和 schema）。
+ * 另外几家的参数不带这层类型，不需要。
+ */
+function parameterCast(column: ColumnInfo | undefined, dialect: SqlIdentifierDialect): string {
+  if (dialect !== 'postgresql' || !column?.data_type || TEXT_FAMILY.test(column.data_type)) {
+    return '';
+  }
+  return `::${column.data_type}`;
+}
+
+/** 这几种收 text 参数不用转；带上 `::varchar(32)` 只会让预览里的语句更难读 */
+const TEXT_FAMILY = /^(text|citext|name|character varying(\(\d+\))?|varchar(\(\d+\))?|character(\(\d+\))?|char(\(\d+\))?|bpchar)$/i;
+
 function tableReference(target: TableTarget): string {
   return quoteQualifiedSqlIdentifier(
     target.schema ? [target.schema, target.table] : [target.table],
@@ -113,7 +133,7 @@ function keyCondition(
         return `${quoted} = ${literal}`;
       }
       params.push(value);
-      return `${quoted} = ${placeholder()}`;
+      return `${quoted} = ${placeholder()}${parameterCast(byName.get(name), target.dialect)}`;
     })
     .join(' AND ');
 }
@@ -129,7 +149,8 @@ function assignmentTerm(
   input: CellInput,
   dialect: SqlIdentifierDialect,
   placeholder: () => string,
-  params: BoundValue[]
+  params: BoundValue[],
+  cast: string
 ): string {
   switch (input.kind) {
     case 'default':
@@ -147,10 +168,10 @@ function assignmentTerm(
         return 'NULL';
       }
       params.push(null);
-      return placeholder();
+      return `${placeholder()}${cast}`;
     case 'value':
       params.push(input.value);
-      return placeholder();
+      return `${placeholder()}${cast}`;
     default:
       // 调用方已经把 unset 滤掉了；走到这里说明过滤和这里的分支漂开了
       throw new Error(translateNow('write.noAssignments'));
@@ -207,7 +228,7 @@ function guardConditions(
       return [`${quoted} = ${literal}`];
     }
     params.push(value);
-    return [`${quoted} = ${placeholder()}`];
+    return [`${quoted} = ${placeholder()}${parameterCast(column, target.dialect)}`];
   });
 }
 
@@ -227,9 +248,16 @@ export function buildUpdateStatement(
 
   // SET 先拼：PostgreSQL 的 $n 按语句里出现的次序编号，先拼 WHERE 会让
   // 编号和 params 的次序对不上，而错位后的语句仍然语法正确
+  const byName = new Map(target.columns.map((column) => [column.name, column]));
   const setClause = columns
     .map((name) => {
-      const right = assignmentTerm(assignments[name], target.dialect, placeholder, params);
+      const right = assignmentTerm(
+        assignments[name],
+        target.dialect,
+        placeholder,
+        params,
+        parameterCast(byName.get(name), target.dialect)
+      );
       return `${quoteSqlIdentifier(name, target.dialect)} = ${right}`;
     })
     .join(', ');
@@ -266,8 +294,9 @@ export function buildInsertStatement(
 
   const placeholder = createPlaceholderAllocator(target.dialect);
   const params: BoundValue[] = [];
+  const byName = new Map(target.columns.map((column) => [column.name, column]));
   const terms = columns.map((name) =>
-    assignmentTerm(values[name], target.dialect, placeholder, params)
+    assignmentTerm(values[name], target.dialect, placeholder, params, parameterCast(byName.get(name), target.dialect))
   );
 
   return {
