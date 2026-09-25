@@ -253,8 +253,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
       }
       // MongoDB 可以不开认证：本机和内网的库大多如此，空着就是不带凭据连
       // Redis 大多只有口令，用户名是 6.0 起 ACL 的
-      // Neo4j 可以关着认证（`dbms.security.auth_enabled=false`）
-      if (!formData.username?.trim() && formData.db_type !== DatabaseType.MongoDB && formData.db_type !== DatabaseType.Redis && formData.db_type !== DatabaseType.Neo4j) {
+      // Neo4j 可以关着认证（`dbms.security.auth_enabled=false`），Elasticsearch 同样（8.0 之前默认就是关着的）
+      if (!formData.username?.trim() && formData.db_type !== DatabaseType.MongoDB && formData.db_type !== DatabaseType.Redis
+        && formData.db_type !== DatabaseType.Neo4j && formData.db_type !== DatabaseType.Elasticsearch) {
         errors.username = t('form.error.username');
       }
       // SRV 的端口在 DNS 里，这一格藏起来了
@@ -1148,7 +1149,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       || formData.db_type === DatabaseType.SqlServer
                       || formData.db_type === DatabaseType.MongoDB
                       || formData.db_type === DatabaseType.Redis
-                      || formData.db_type === DatabaseType.Neo4j)
+                      || formData.db_type === DatabaseType.Neo4j
+                      || formData.db_type === DatabaseType.Elasticsearch)
                       && (formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')) !== 'disabled' && (
                       <div className="space-y-3 rounded-control border border-line bg-surface-sunken p-3">
                         {/* 这一组要有自己的标题：里面的「客户端私钥路径」和
@@ -1194,9 +1196,10 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             <p className="text-xs text-fg-muted mt-1">{t('form.mongoClientCertHint')}</p>
                           </div>
                         )}
-                        {/* tiberius 只能校验服务端证书，不带客户端证书登录；Redis、Neo4j 这一版同样只收 CA */}
+                        {/* tiberius 只能校验服务端证书，不带客户端证书登录；Redis、Neo4j、Elasticsearch 这一版同样只收 CA */}
                         {formData.db_type !== DatabaseType.SqlServer && formData.db_type !== DatabaseType.MongoDB
-                          && formData.db_type !== DatabaseType.Redis && formData.db_type !== DatabaseType.Neo4j && (
+                          && formData.db_type !== DatabaseType.Redis && formData.db_type !== DatabaseType.Neo4j
+                          && formData.db_type !== DatabaseType.Elasticsearch && (
                         <>
                         <div>
                           <label htmlFor="client-certificate" className="block text-sm font-medium text-fg mb-1">

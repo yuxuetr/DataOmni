@@ -23,6 +23,7 @@ import { MongoCollectionStructureView } from './components/MongoCollectionStruct
 import { DatabaseType } from './contracts/connection';
 import { hasQueryEditor, speaksSql } from './contracts/databaseSupport';
 import { CypherWorkbench } from './components/CypherWorkbench';
+import { EsConsole } from './components/EsConsole';
 import { requestCypherAutorun } from './stores/cypherAutorun';
 import { ErDiagramView } from './components/ErDiagramView';
 import { WelcomeScreen } from './components/WelcomeScreen';
@@ -136,7 +137,7 @@ function App() {
   const activeProfileId = activeConnection?.config.id ?? null;
   // 当前连接能不能跑 SQL。不能的（MongoDB）上，一切「开一个 SQL 标签」的入口都不给
   const activeSpeaksSql = activeConnection ? speaksSql(activeConnection.config.db_type) : false;
-  // 能不能开查询标签：走 SQL 的，加上写 Cypher 的 Neo4j
+  // 能不能开查询标签：走 SQL 的，加上写 Cypher 的 Neo4j、写请求的 Elasticsearch
   const activeHasQueryEditor = activeConnection ? hasQueryEditor(activeConnection.config.db_type) : false;
   const environmentByProfileId = useMemo(
     () => Object.fromEntries(
@@ -724,7 +725,7 @@ function App() {
     if (!activeConnection || activeSpeaksSql) {
       return items;
     }
-    // Neo4j 能开查询标签、打开脚本文件，ER 图没有
+    // Neo4j 与 Elasticsearch 能开查询标签、打开脚本文件，ER 图没有
     return items.filter((item) => (
       !SQL_ONLY_PALETTE_ACTIONS.has(item.id) || (activeHasQueryEditor && item.id !== 'action:er-diagram')
     ));
@@ -761,6 +762,9 @@ function App() {
       // 同一种标签，画的是 Cypher 编辑器：草稿、去重、持久化与 SQL 标签完全一样
       if (activeConnection.config.db_type === DatabaseType.Neo4j) {
         return <CypherWorkbench key={activeTab.id} connection={activeConnection.config} />;
+      }
+      if (activeConnection.config.db_type === DatabaseType.Elasticsearch) {
+        return <EsConsole key={activeTab.id} connection={activeConnection.config} />;
       }
 
       return (

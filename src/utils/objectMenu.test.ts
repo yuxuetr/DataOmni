@@ -25,8 +25,9 @@ describe('每种对象右键能做什么', () => {
     // 表走结构页（顺带给列、索引、外键），其余走定义弹窗。两条都没有的那一种
     // 就是此前的视图：它的 SELECT 原文在界面上根本读不到
     // Redis 的逻辑库例外：它没有定义可看，它是什么就是它里面的键——打开它就是看它。
-    // Neo4j 的标签与关系类型同理：没有 schema 定义，打开它就是看带它的节点与关系
-    const openIsTheDefinition = new Set(['keyspace', 'label', 'relationship-type']);
+    // Neo4j 的标签与关系类型同理：没有 schema 定义，打开它就是看带它的节点与关系。
+    // Elasticsearch 的索引有 Mapping，结构页是第二阶段（TODOs 4.3）；那之前打开它就是搜它
+    const openIsTheDefinition = new Set(['keyspace', 'label', 'relationship-type', 'index', 'alias', 'data-stream']);
     for (const kind of KINDS.filter((candidate) => !openIsTheDefinition.has(candidate))) {
       const actions = OBJECT_MENU_ACTIONS[kind];
       const paths = Number(actions.includes('open-structure')) + Number(actions.includes('view-definition'));

@@ -120,7 +120,13 @@ impl DatabaseType {
   /// 最终裁决——任何绕过界面的路径（老配置、手改存档）都过不去。
   pub fn has_driver(&self) -> bool {
     self.speaks_sql()
-      || matches!(self, DatabaseType::MongoDB | DatabaseType::Redis | DatabaseType::Neo4j)
+      || matches!(
+        self,
+        DatabaseType::MongoDB
+          | DatabaseType::Redis
+          | DatabaseType::Neo4j
+          | DatabaseType::Elasticsearch
+      )
   }
 
   /// 走 SQL 的那一族：编辑器、五张目录查询表、执行计划、表格写入都是为它们写的。
@@ -311,23 +317,14 @@ impl DatabaseType {
           config.database.as_ref().unwrap_or(&"default".to_string())
         )
       }
-      DatabaseType::Elasticsearch => {
-        let scheme =
-          if config.effective_tls_mode() == TlsMode::Disabled { "http" } else { "https" };
-
-        if !config.username.is_empty() && !config.password.is_empty() {
-          format!(
-            "{}://{}:{}@{}:{}",
-            scheme,
-            encode(&config.username),
-            encode(&config.password),
-            config.host,
-            config.port
-          )
-        } else {
-          format!("{}://{}:{}", scheme, config.host, config.port)
-        }
-      }
+      // 同样是 `EsRegistry` 里的键，不带口令
+      DatabaseType::Elasticsearch => format!(
+        "{}{}@{}:{}",
+        crate::services::elasticsearch::ELASTICSEARCH_SCHEME,
+        encode(&config.username),
+        config.host,
+        config.port
+      ),
     }
   }
 }

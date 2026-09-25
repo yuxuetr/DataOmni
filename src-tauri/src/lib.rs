@@ -33,6 +33,7 @@ pub fn run() {
     .manage(services::mongodb::MongoRegistry::default())
     .manage(services::redis::RedisRegistry::default())
     .manage(services::neo4j::Neo4jRegistry::default())
+    .manage(services::elasticsearch::EsRegistry::default())
     .setup(|app| {
       // 启动日志留着：窗口起不来时，这一行是唯一能说明进程到底跑没跑的证据
       println!("🎯 DataOmni 启动");
@@ -89,6 +90,9 @@ pub fn run() {
       neo4j_run,
       neo4j_query_type,
       close_neo4j,
+      elasticsearch_list_objects,
+      elasticsearch_run,
+      close_elasticsearch,
       mongodb_drop_collection,
       close_mongodb,
       // 数据库操作命令

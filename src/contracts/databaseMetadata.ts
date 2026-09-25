@@ -88,6 +88,10 @@ export type DatabaseObjectKind =
   | 'label'
   /** Neo4j 的关系类型。点开同样是一个查询标签，看带这种关系的路径 */
   | 'relationship-type'
+  /** Elasticsearch 的索引、别名、数据流。点开都是一个控制台标签：`GET 名字/_search` */
+  | 'index'
+  | 'alias'
+  | 'data-stream'
   | 'view'
   | 'materialized-view'
   | 'function'

@@ -66,6 +66,9 @@ redis = { version = "1.7.0", default-features = false, features = ["acl", "strea
 # Neo4j（`services/neo4j.rs`）。Bolt 4.4 与 5.0–5.8，TLS 走 rustls。同步 API，放进
 # `spawn_blocking`。为什么不用 neo4rs：它只到 Bolt 4，节点没有 element_id，见 TODOs 4.3
 neo4j = "0.2.0"
+# Elasticsearch（`services/elasticsearch.rs`）没有驱动，就是 HTTP。只开 rustls：不要 system-proxy
+# （数据库连接一律直连），也不要 HTTP/2（ES 的 REST 是 HTTP/1.1）
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
 # 只为在测试里**造**一把带口令的私钥：russh 依赖的 ssh-key 默认不开

@@ -112,6 +112,7 @@ pub async fn test_connection(
   mongo_registry: State<'_, MongoRegistry>,
   redis_registry: State<'_, crate::services::redis::RedisRegistry>,
   neo4j_registry: State<'_, crate::services::neo4j::Neo4jRegistry>,
+  es_registry: State<'_, crate::services::elasticsearch::EsRegistry>,
 ) -> Result<String, String> {
   println!("🧪 测试数据库连接: {}", config.name);
 
@@ -182,6 +183,11 @@ pub async fn test_connection(
     let target = crate::services::neo4j::Neo4jTarget::from_profile(&reachable);
     let pool = crate::services::neo4j::connect(target).await?;
     neo4j_registry.insert(connection_string.clone(), std::sync::Arc::new(pool));
+  } else if resolved.db_type == DatabaseType::Elasticsearch {
+    // 不换主机：经隧道的 HTTPS 仍按原来的主机名校验证书（见 `EsTarget::from_profile`）
+    let target = crate::services::elasticsearch::EsTarget::from_profile(&resolved, local_port);
+    let pool = crate::services::elasticsearch::connect(target).await?;
+    es_registry.insert(connection_string.clone(), std::sync::Arc::new(pool));
   }
   Ok(connection_string)
 }

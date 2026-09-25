@@ -41,6 +41,10 @@ export const OBJECT_MENU_ACTIONS: Record<DatabaseObjectKind, readonly ObjectMenu
   // 标签与关系类型没有结构页，也不给删：删的是节点与关系，要写 Cypher 说清楚删哪些
   label: ['open-data', 'copy-name'],
   'relationship-type': ['open-data', 'copy-name'],
+  // 索引的删除这一阶段不在右键里：`DELETE 索引` 连数据一起没，要在控制台里写出来（TODOs 4.3 第四阶段）
+  index: ['open-data', 'copy-name'],
+  alias: ['open-data', 'copy-name'],
+  'data-stream': ['open-data', 'copy-name'],
   view: ['open-data', 'view-definition', 'copy-name', 'drop'],
   'materialized-view': ['open-data', 'view-definition', 'copy-name', 'drop'],
   function: ['view-definition', 'copy-name'],
@@ -68,7 +72,9 @@ export function objectMenuActions(
 const NON_SQL_BROWSABLE_ACTIONS: readonly ObjectMenuAction[] = ['open-data', 'open-structure', 'copy-name', 'drop'];
 
 /** 只在一种库上出现的对象，菜单就是上面那张表里写的，不分走不走 SQL */
-const OWN_MENU_KINDS: ReadonlySet<DatabaseObjectKind> = new Set(['keyspace', 'label', 'relationship-type']);
+const OWN_MENU_KINDS: ReadonlySet<DatabaseObjectKind> = new Set([
+  'keyspace', 'label', 'relationship-type', 'index', 'alias', 'data-stream'
+]);
 
 /**
  * 例程的显示名带着参数签名——`calc_total(integer)`——因为同名重载要分得开

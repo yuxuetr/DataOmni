@@ -24,6 +24,8 @@ export const MONGODB_SCHEME = 'mongodb://';
 export const REDIS_SCHEME = 'redis://';
 /** 与后端 `NEO4J_SCHEME` 一致 */
 export const NEO4J_SCHEME = 'bolt://';
+/** 与后端 `ELASTICSEARCH_SCHEME` 一致 */
+export const ELASTICSEARCH_SCHEME = 'elasticsearch://';
 /** 与后端 `MONGODB_SRV_SCHEME` 一致：按 SRV 记录连的那种 */
 export const MONGODB_SRV_SCHEME = 'mongodb+srv://';
 
@@ -57,6 +59,12 @@ export async function openDatabase(connectionString: string): Promise<DatabaseHa
     return {
       select: () => Promise.reject(new Error(MONGO_HANDLE_HAS_NO_SQL)),
       close: () => invoke<boolean>('close_neo4j', { connectionString })
+    };
+  }
+  if (connectionString.startsWith(ELASTICSEARCH_SCHEME)) {
+    return {
+      select: () => Promise.reject(new Error(MONGO_HANDLE_HAS_NO_SQL)),
+      close: () => invoke<boolean>('close_elasticsearch', { connectionString })
     };
   }
   if (opensOwnPool(connectionString)) {

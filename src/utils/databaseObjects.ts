@@ -14,6 +14,9 @@ export const KIND_LABEL_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
   keyspace: 'objectKind.keyspace',
   label: 'objectKind.label',
   'relationship-type': 'objectKind.relationship-type',
+  index: 'objectKind.index',
+  alias: 'objectKind.alias',
+  'data-stream': 'objectKind.data-stream',
   view: 'objectKind.view',
   'materialized-view': 'objectKind.materialized-view',
   function: 'objectKind.function',
@@ -34,6 +37,9 @@ export const KIND_BADGE_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
   keyspace: 'objectKindOne.keyspace',
   label: 'objectKindOne.label',
   'relationship-type': 'objectKindOne.relationship-type',
+  index: 'objectKindOne.index',
+  alias: 'objectKindOne.alias',
+  'data-stream': 'objectKindOne.data-stream',
   view: 'objectKindOne.view',
   'materialized-view': 'objectKindOne.materialized-view',
   function: 'objectKindOne.function',
@@ -48,6 +54,9 @@ const KIND_ORDER: DatabaseObjectKind[] = [
   'keyspace',
   'label',
   'relationship-type',
+  'index',
+  'data-stream',
+  'alias',
   'view',
   'materialized-view',
   'function',
@@ -84,7 +93,8 @@ export function showsSchemaLevel(dbType: DatabaseType): boolean {
 /** 表、集合、视图、物化视图有行（文档），能打开；Neo4j 的标签与关系类型点开是一条查询；函数与序列没有。 */
 export function isBrowsableKind(kind: DatabaseObjectKind): boolean {
   return kind === 'table' || kind === 'collection' || kind === 'keyspace' || kind === 'label'
-    || kind === 'relationship-type' || kind === 'view' || kind === 'materialized-view';
+    || kind === 'relationship-type' || kind === 'index' || kind === 'alias' || kind === 'data-stream'
+    || kind === 'view' || kind === 'materialized-view';
 }
 
 export function normalizeObjectRows(

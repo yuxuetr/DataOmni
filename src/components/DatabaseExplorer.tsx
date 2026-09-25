@@ -41,6 +41,7 @@ import {
   type ObjectTreeNode
 } from '../utils/databaseObjects';
 import { browseQuery, cypherName } from '../utils/cypherValue';
+import { browseRequest } from '../utils/esConsole';
 import { ObjectDefinitionDialog } from './ObjectDefinitionDialog';
 import { CreateTableDialog } from './CreateTableDialog';
 import { CreateSchemaDialog } from './CreateSchemaDialog';
@@ -235,7 +236,8 @@ export default function DatabaseExplorer({
         const rows = await invoke<Record<string, unknown>[]>(
           connection.db_type === DatabaseType.Redis
             ? 'redis_list_keyspaces'
-            : connection.db_type === DatabaseType.Neo4j ? 'neo4j_list_objects' : 'mongodb_list_collections',
+            : connection.db_type === DatabaseType.Neo4j ? 'neo4j_list_objects'
+              : connection.db_type === DatabaseType.Elasticsearch ? 'elasticsearch_list_objects' : 'mongodb_list_collections',
           { connectionString, timeoutMs: queryTimeoutMs }
         );
         const objects = normalizeObjectRows(rows);
@@ -368,6 +370,11 @@ export default function DatabaseExplorer({
     }
     if (object.kind === 'label' || object.kind === 'relationship-type') {
       openGraphQuery(object.kind, object);
+      return;
+    }
+    // Elasticsearch 的索引、别名、数据流：开一个控制台标签，搜前 20 份
+    if (object.kind === 'index' || object.kind === 'alias' || object.kind === 'data-stream') {
+      onOpenQuery?.(browseRequest(object.name), object.name);
       return;
     }
     onTableSelect?.(object.name, object.schema ?? undefined);
@@ -562,8 +569,10 @@ export default function DatabaseExplorer({
               <GitBranch size={14} />
             </button>
           )}
-          {/* Redis 的键在键浏览页里建；Neo4j 没有要先建的容器——节点、标签、关系都由 Cypher 建 */}
+          {/* Redis 的键在键浏览页里建；Neo4j 没有要先建的容器——节点、标签、关系都由 Cypher 建；
+              Elasticsearch 建索引这一阶段在控制台里写（TODOs 4.3 第四阶段） */}
           {connection.db_type !== DatabaseType.Redis && connection.db_type !== DatabaseType.Neo4j
+            && connection.db_type !== DatabaseType.Elasticsearch
             && (!speaksSql(connection.db_type) || supportsFeature(connection.db_type, 'structureEditing')) && (
           <button
             onClick={(event) => {
