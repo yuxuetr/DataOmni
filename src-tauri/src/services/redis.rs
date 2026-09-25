@@ -724,6 +724,239 @@ pub async fn change_key(
   with_deadline(timeout, work).await
 }
 
+/// 要加的元素已经在了（hash 字段、set 成员、zset 成员）：不覆盖
+pub const REDIS_ELEMENT_EXISTS: &str = "DATAOMNI_REDIS_ELEMENT_EXISTS";
+/// 要改或删的元素已经不在了
+pub const REDIS_ELEMENT_GONE: &str = "DATAOMNI_REDIS_ELEMENT_GONE";
+
+/// 改一个值里面的一个元素。`expected` 是打开时看到的那份：服务端那份变了就不写。
+/// 字节串都是原样的（hash 字段、成员可以是二进制）
+pub enum ElementChange {
+  /// `expected` 为 `None` 是新加一个字段（已经有了就不覆盖）
+  HashSet {
+    field: Vec<u8>,
+    expected: Option<Vec<u8>>,
+    value: Vec<u8>,
+  },
+  HashDelete {
+    field: Vec<u8>,
+  },
+  ListSet {
+    index: i64,
+    expected: Vec<u8>,
+    value: Vec<u8>,
+  },
+  ListDelete {
+    index: i64,
+    expected: Vec<u8>,
+  },
+  ListPush {
+    value: Vec<u8>,
+    head: bool,
+  },
+  SetAdd {
+    member: Vec<u8>,
+  },
+  SetDelete {
+    member: Vec<u8>,
+  },
+  /// `expected` 为 `None` 是新加一个成员；否则是改分数，服务端的分数得还是 `expected`
+  ZsetSet {
+    member: Vec<u8>,
+    expected: Option<String>,
+    score: String,
+  },
+  ZsetDelete {
+    member: Vec<u8>,
+  },
+}
+
+/// 每段脚本的回答：1 写了；-1 值变了；-2 键没了；-3 元素已经在；-4 元素没了。
+/// 都先看键在不在：`HSET`、`SADD`、`ZADD` 对一个不在的键会建出一个新的——而人以为
+/// 自己在改的那个键已经过期或被删了
+const HASH_SET: &str = r"
+if redis.call('EXISTS', KEYS[1]) == 0 then return -2 end
+local current = redis.call('HGET', KEYS[1], ARGV[1])
+if ARGV[3] == 'new' then
+  if current then return -3 end
+else
+  if current == false then return -4 end
+  if current ~= ARGV[4] then return -1 end
+end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+return 1
+";
+
+/// `HDEL` / `SREM` / `ZREM` 共用：命令名在 ARGV[1]
+const MEMBER_DELETE: &str = r"
+if redis.call('EXISTS', KEYS[1]) == 0 then return -2 end
+if redis.call(ARGV[1], KEYS[1], ARGV[2]) == 0 then return -4 end
+return 1
+";
+
+const LIST_SET: &str = r"
+if redis.call('EXISTS', KEYS[1]) == 0 then return -2 end
+local current = redis.call('LINDEX', KEYS[1], ARGV[1])
+if current == false then return -4 end
+if current ~= ARGV[2] then return -1 end
+redis.call('LSET', KEYS[1], ARGV[1], ARGV[3])
+return 1
+";
+
+/// 按下标删：Redis 没有这条命令。先比对，再把那一格换成一个一次性的记号，删掉这个记号——
+/// 记号每次现造（ARGV[3]），不会和列表里真有的值撞上
+const LIST_DELETE: &str = r"
+if redis.call('EXISTS', KEYS[1]) == 0 then return -2 end
+local current = redis.call('LINDEX', KEYS[1], ARGV[1])
+if current == false then return -4 end
+if current ~= ARGV[2] then return -1 end
+redis.call('LSET', KEYS[1], ARGV[1], ARGV[3])
+redis.call('LREM', KEYS[1], 1, ARGV[3])
+return 1
+";
+
+const SET_ADD: &str = r"
+if redis.call('EXISTS', KEYS[1]) == 0 then return -2 end
+if redis.call('SADD', KEYS[1], ARGV[1]) == 0 then return -3 end
+return 1
+";
+
+const ZSET_SET: &str = r"
+if redis.call('EXISTS', KEYS[1]) == 0 then return -2 end
+local current = redis.call('ZSCORE', KEYS[1], ARGV[1])
+if ARGV[3] == 'new' then
+  if current then return -3 end
+else
+  if current == false then return -4 end
+  if current ~= ARGV[4] then return -1 end
+end
+redis.call('ZADD', KEYS[1], ARGV[2], ARGV[1])
+return 1
+";
+
+pub async fn change_element(
+  pool: &RedisPool,
+  database: i64,
+  key: Vec<u8>,
+  change: ElementChange,
+  timeout: Duration,
+) -> Result<(), String> {
+  let mut connection = pool.connection(database).await?;
+  let (script, arguments): (&str, Vec<Vec<u8>>) = match change {
+    ElementChange::HashSet { field, expected: None, value } => {
+      (HASH_SET, vec![field, value, b"new".to_vec()])
+    }
+    ElementChange::HashSet { field, expected: Some(expected), value } => {
+      (HASH_SET, vec![field, value, b"edit".to_vec(), expected])
+    }
+    ElementChange::HashDelete { field } => (MEMBER_DELETE, vec![b"HDEL".to_vec(), field]),
+    ElementChange::ListSet { index, expected, value } => {
+      (LIST_SET, vec![index.to_string().into_bytes(), expected, value])
+    }
+    ElementChange::ListDelete { index, expected } => {
+      let marker = format!("__dataomni_removed_{}__", uuid::Uuid::new_v4()).into_bytes();
+      (LIST_DELETE, vec![index.to_string().into_bytes(), expected, marker])
+    }
+    ElementChange::ListPush { value, head } => {
+      // `*PUSHX` 只往已经在的列表里推，列表没了回 0
+      let command = if head { "LPUSHX" } else { "RPUSHX" };
+      let work = async {
+        let length: i64 = redis::cmd(command)
+          .arg(&key)
+          .arg(value)
+          .query_async(&mut connection)
+          .await
+          .map_err(describe_error)?;
+        if length == 0 {
+          return Err(REDIS_KEY_GONE.to_string());
+        }
+        Ok(())
+      };
+      return with_deadline(timeout, work).await;
+    }
+    ElementChange::SetAdd { member } => (SET_ADD, vec![member]),
+    ElementChange::SetDelete { member } => (MEMBER_DELETE, vec![b"SREM".to_vec(), member]),
+    ElementChange::ZsetSet { member, expected: None, score } => {
+      (ZSET_SET, vec![member, score.into_bytes(), b"new".to_vec()])
+    }
+    ElementChange::ZsetSet { member, expected: Some(expected), score } => {
+      (ZSET_SET, vec![member, score.into_bytes(), b"edit".to_vec(), expected.into_bytes()])
+    }
+    ElementChange::ZsetDelete { member } => (MEMBER_DELETE, vec![b"ZREM".to_vec(), member]),
+  };
+  let work = async {
+    let script = redis::Script::new(script);
+    let mut invocation = script.prepare_invoke();
+    invocation.key(&key);
+    for argument in arguments {
+      invocation.arg(argument);
+    }
+    let outcome: i64 = invocation.invoke_async(&mut connection).await.map_err(describe_error)?;
+    script_outcome(outcome)
+  };
+  with_deadline(timeout, work).await
+}
+
+fn script_outcome(outcome: i64) -> Result<(), String> {
+  match outcome {
+    -1 => Err(REDIS_VALUE_CHANGED.to_string()),
+    -2 => Err(REDIS_KEY_GONE.to_string()),
+    -3 => Err(REDIS_ELEMENT_EXISTS.to_string()),
+    -4 => Err(REDIS_ELEMENT_GONE.to_string()),
+    _ => Ok(()),
+  }
+}
+
+/// 新建一个键：给类型与第一个元素（Redis 没有空的 hash / list / set）。键名已经有了就不建
+pub struct NewKey {
+  pub kind: String,
+  /// string 的值；hash 的字段；list / set 的元素；zset 的成员；stream 的字段
+  pub first: Vec<u8>,
+  /// hash 与 stream 的值；zset 的分数；其余不用
+  pub second: Vec<u8>,
+  pub ttl_ms: Option<u64>,
+}
+
+const CREATE_KEY: &str = r"
+if redis.call('EXISTS', KEYS[1]) == 1 then return -3 end
+local kind = ARGV[1]
+if kind == 'string' then redis.call('SET', KEYS[1], ARGV[2])
+elseif kind == 'hash' then redis.call('HSET', KEYS[1], ARGV[2], ARGV[3])
+elseif kind == 'list' then redis.call('RPUSH', KEYS[1], ARGV[2])
+elseif kind == 'set' then redis.call('SADD', KEYS[1], ARGV[2])
+elseif kind == 'zset' then redis.call('ZADD', KEYS[1], ARGV[3], ARGV[2])
+elseif kind == 'stream' then redis.call('XADD', KEYS[1], '*', ARGV[2], ARGV[3])
+else return redis.error_reply('ERR unknown type ' .. kind) end
+if ARGV[4] ~= '' then redis.call('PEXPIRE', KEYS[1], ARGV[4]) end
+return 1
+";
+
+pub async fn create_key(
+  pool: &RedisPool,
+  database: i64,
+  key: Vec<u8>,
+  new_key: NewKey,
+  timeout: Duration,
+) -> Result<(), String> {
+  let mut connection = pool.connection(database).await?;
+  let work = async {
+    let outcome: i64 = redis::Script::new(CREATE_KEY)
+      .key(&key)
+      .arg(new_key.kind)
+      .arg(new_key.first)
+      .arg(new_key.second)
+      .arg(new_key.ttl_ms.map(|ttl| ttl.to_string()).unwrap_or_default())
+      .invoke_async(&mut connection)
+      .await
+      .map_err(describe_error)?;
+    if outcome == -3 {
+      return Err(format!("{REDIS_KEY_EXISTS}: {}", RedisBytes::new(key.clone()).text));
+    }
+    Ok(())
+  };
+  with_deadline(timeout, work).await
+}
+
 /// 命令行里不许跑：这条会阻塞，共用的连接上别的请求都得排在它后面。冒号后面是命令名
 pub const REDIS_COMMAND_BLOCKING: &str = "DATAOMNI_REDIS_COMMAND_BLOCKING";
 /// 命令行里不许跑：这条会改共用连接的状态（切库、事务、换身份）。冒号后面是命令名

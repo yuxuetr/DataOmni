@@ -56,7 +56,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 | SQL Server | 2022 | SQL Server | ✅ 支持 | 17 / 17（独立用例，`sql_server_smoke.rs`，含改结构语料） |
 | Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 14 / 14（独立用例，`oracle_smoke.rs`，含改结构语料） |
 | MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 31 / 31（独立用例，`mongodb_smoke.rs`） |
-| Redis | 7.4 | Redis（redis-rs） | ⚠️ 浏览、命令行与键级改动 | 9 / 9（独立用例，`redis_smoke.rs`） |
+| Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机，不含集群 | 10 / 10（独立用例，`redis_smoke.rs`） |
 
 - **MariaDB**：JSON 列是 LONGTEXT 的别名，按文本显示与编辑，没有 JSON 专用
   编辑器；没有函数索引。
@@ -107,7 +107,8 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
   zset、stream 各一种表，大的值分页读，字符串只带前 512 KiB；不是 UTF-8 的键和值按 redis-cli
   的写法转义并标出）、命令行（写法与回答都同 redis-cli；会阻塞或改连接状态的命令拒跑，
   清库、`KEYS`、改服务端的先确认）；界面上删键、改名（不覆盖已有的）、设或去过期、改字符串
-  （别处改过就不覆盖，剩余时间不变）。还没有的：界面上改 hash / list / set / zset 的元素（命令行里能做）。
+  （别处改过就不覆盖，剩余时间不变）、改 hash / list / set / zset 的元素（同样先比对再写）、
+  新建键。还没有的：stream 的写入（命令行里能做）、集群与 Sentinel。
   详见 [用户手册](docs/user-manual.md#redis)。
 - 在编辑器里用 `USE` 切库在 MySQL 类服务端上一律拒绝：它会让侧边栏的对象树
   悄悄换成另一个库。MySQL 本来就拒，MariaDB 与 TiDB 不拒，所以由应用来挡。

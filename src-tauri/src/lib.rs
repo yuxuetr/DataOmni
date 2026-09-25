@@ -81,6 +81,8 @@ pub fn run() {
       redis_read_value,
       redis_execute,
       redis_change_key,
+      redis_change_element,
+      redis_create_key,
       close_redis,
       mongodb_drop_collection,
       close_mongodb,

@@ -9,13 +9,14 @@
 //! TLS 那一条另设 `DATAOMNI_REDIS_TLS_TEST_URL`（一台只开 TLS 端口的服务端）与
 //! `DATAOMNI_REDIS_TLS_TEST_CA`（签它证书的 CA 文件路径；证书上写着 127.0.0.1）。
 //!
-//! 用例各占一个库号（8–15，并行跑时互不干扰），开头 `FLUSHDB` 清掉残留——那几个库号只给这里用。
+//! 用例各占一个库号（7–15，并行跑时互不干扰），开头 `FLUSHDB` 清掉残留——那几个库号只给这里用。
 
 use dataomni_lib::models::ConnectionProfile;
 use dataomni_lib::models::TlsMode;
 use dataomni_lib::services::redis::{
-  self as store, KeyChange, RedisReply, RedisTarget, RedisValue, ScanRequest, ValueRequest,
-  REDIS_AUTH_FAILED, REDIS_AUTH_REQUIRED, REDIS_COMMAND_CONNECTION_STATE, REDIS_KEY_EXISTS,
+  self as store, ElementChange, KeyChange, NewKey, RedisReply, RedisTarget, RedisValue,
+  ScanRequest, ValueRequest, REDIS_AUTH_FAILED, REDIS_AUTH_REQUIRED,
+  REDIS_COMMAND_CONNECTION_STATE, REDIS_ELEMENT_EXISTS, REDIS_ELEMENT_GONE, REDIS_KEY_EXISTS,
   REDIS_KEY_GONE, REDIS_TLS_FILE_INVALID, REDIS_UNREACHABLE, REDIS_VALUE_CHANGED,
 };
 use serde_json::json;
@@ -530,4 +531,159 @@ async fn key_changes_never_overwrite_what_changed_elsewhere() {
     assert_eq!(change(b"moved", gone).await, Err(REDIS_KEY_GONE.to_string()));
   }
   assert_eq!(get("moved").await, None, "改一个没了的键不该把它建出来");
+}
+
+/// 值里的元素：先比对再写；加已经有的不覆盖；删没了的说没了；键没了时哪一种都不把它建出来。
+/// 列表按下标删删的是那一格，不是第一个同值的（`[p, q, p, r]` 删第 2 格得 `[p, q, r]`）
+#[tokio::test]
+async fn element_changes_compare_first_and_never_create_a_vanished_key() {
+  let Some(profile) = profile(7) else { return };
+  let mut seed = seed_connection(&profile).await;
+  redis::pipe()
+    .cmd("HSET")
+    .arg("h")
+    .arg("f")
+    .arg("1")
+    .ignore()
+    .cmd("RPUSH")
+    .arg("l")
+    .arg("p")
+    .arg("q")
+    .arg("p")
+    .arg("r")
+    .ignore()
+    .cmd("SADD")
+    .arg("s")
+    .arg("a")
+    .ignore()
+    .cmd("ZADD")
+    .arg("z")
+    .arg("1.5")
+    .arg("m")
+    .ignore()
+    .query_async::<()>(&mut seed)
+    .await
+    .expect("seed");
+  let pool = pool(&profile).await;
+  let change =
+    |key: &str, change| store::change_element(&pool, 7, key.as_bytes().to_vec(), change, TIMEOUT);
+  let b = |text: &str| text.as_bytes().to_vec();
+
+  // hash
+  change("h", ElementChange::HashSet { field: b("g"), expected: None, value: b("2") })
+    .await
+    .expect("new field");
+  assert_eq!(
+    change("h", ElementChange::HashSet { field: b("g"), expected: None, value: b("3") }).await,
+    Err(REDIS_ELEMENT_EXISTS.to_string())
+  );
+  assert_eq!(
+    change(
+      "h",
+      ElementChange::HashSet { field: b("f"), expected: Some(b("stale")), value: b("9") }
+    )
+    .await,
+    Err(REDIS_VALUE_CHANGED.to_string())
+  );
+  change("h", ElementChange::HashSet { field: b("f"), expected: Some(b("1")), value: b("9") })
+    .await
+    .expect("edit");
+  change("h", ElementChange::HashDelete { field: b("g") }).await.expect("hdel");
+  assert_eq!(
+    change("h", ElementChange::HashDelete { field: b("g") }).await,
+    Err(REDIS_ELEMENT_GONE.to_string())
+  );
+  let hash: Vec<String> =
+    redis::cmd("HGETALL").arg("h").query_async(&mut seed).await.expect("HGETALL");
+  assert_eq!(hash, ["f", "9"]);
+
+  // list
+  change("l", ElementChange::ListDelete { index: 2, expected: b("p") }).await.expect("ldel");
+  assert_eq!(
+    change("l", ElementChange::ListSet { index: 1, expected: b("stale"), value: b("x") }).await,
+    Err(REDIS_VALUE_CHANGED.to_string())
+  );
+  change("l", ElementChange::ListSet { index: 1, expected: b("q"), value: b("x") })
+    .await
+    .expect("lset");
+  change("l", ElementChange::ListPush { value: b("head"), head: true }).await.expect("lpush");
+  change("l", ElementChange::ListPush { value: b("tail"), head: false }).await.expect("rpush");
+  let list: Vec<String> =
+    redis::cmd("LRANGE").arg("l").arg(0).arg(-1).query_async(&mut seed).await.expect("LRANGE");
+  assert_eq!(list, ["head", "p", "x", "r", "tail"]);
+  assert_eq!(
+    change("l", ElementChange::ListDelete { index: 9, expected: b("p") }).await,
+    Err(REDIS_ELEMENT_GONE.to_string())
+  );
+
+  // set 与 zset
+  change("s", ElementChange::SetAdd { member: b("b") }).await.expect("sadd");
+  assert_eq!(
+    change("s", ElementChange::SetAdd { member: b("b") }).await,
+    Err(REDIS_ELEMENT_EXISTS.to_string())
+  );
+  change("s", ElementChange::SetDelete { member: b("a") }).await.expect("srem");
+  assert_eq!(
+    change("s", ElementChange::SetDelete { member: b("a") }).await,
+    Err(REDIS_ELEMENT_GONE.to_string())
+  );
+  assert_eq!(
+    change(
+      "z",
+      ElementChange::ZsetSet { member: b("m"), expected: Some("7".into()), score: "2".into() }
+    )
+    .await,
+    Err(REDIS_VALUE_CHANGED.to_string())
+  );
+  change(
+    "z",
+    ElementChange::ZsetSet { member: b("m"), expected: Some("1.5".into()), score: "2".into() },
+  )
+  .await
+  .expect("zscore edit");
+  assert_eq!(
+    change("z", ElementChange::ZsetSet { member: b("m"), expected: None, score: "3".into() }).await,
+    Err(REDIS_ELEMENT_EXISTS.to_string())
+  );
+  let score: String =
+    redis::cmd("ZSCORE").arg("z").arg("m").query_async(&mut seed).await.expect("ZSCORE");
+  assert_eq!(score, "2");
+  change("z", ElementChange::ZsetDelete { member: b("m") }).await.expect("zrem");
+
+  // 键没了：一样都不建
+  for gone in [
+    ElementChange::HashSet { field: b("f"), expected: None, value: b("1") },
+    ElementChange::ListPush { value: b("v"), head: false },
+    ElementChange::SetAdd { member: b("v") },
+    ElementChange::ZsetSet { member: b("v"), expected: None, score: "1".into() },
+  ] {
+    assert_eq!(change("vanished", gone).await, Err(REDIS_KEY_GONE.to_string()));
+  }
+  let exists: i64 =
+    redis::cmd("EXISTS").arg("vanished").query_async(&mut seed).await.expect("EXISTS");
+  assert_eq!(exists, 0);
+
+  // 新建键：六种各一个，已有的不覆盖，过期带上
+  for (kind, first, second) in [
+    ("string", "v", ""),
+    ("hash", "f", "v"),
+    ("list", "v", ""),
+    ("set", "v", ""),
+    ("zset", "m", "4"),
+    ("stream", "f", "v"),
+  ] {
+    let new_key =
+      NewKey { kind: kind.into(), first: b(first), second: b(second), ttl_ms: Some(60_000) };
+    store::create_key(&pool, 7, b(&format!("new:{kind}")), new_key, TIMEOUT).await.expect(kind);
+    let actual: String =
+      redis::cmd("TYPE").arg(format!("new:{kind}")).query_async(&mut seed).await.expect("TYPE");
+    assert_eq!(actual, kind);
+  }
+  let ttl: i64 = redis::cmd("PTTL").arg("new:zset").query_async(&mut seed).await.expect("PTTL");
+  assert!(ttl > 50_000, "{ttl}");
+  let again = NewKey { kind: "string".into(), first: b("other"), second: Vec::new(), ttl_ms: None };
+  assert_eq!(
+    store::create_key(&pool, 7, b("new:hash"), again, TIMEOUT).await,
+    Err(format!("{REDIS_KEY_EXISTS}: new:hash"))
+  );
 }

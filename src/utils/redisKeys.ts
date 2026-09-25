@@ -108,3 +108,11 @@ export function parseTtlSeconds(text: string): number | null | undefined {
   const seconds = Number(trimmed);
   return seconds > 0 && Number.isSafeInteger(seconds * 1000) ? seconds * 1000 : undefined;
 }
+
+/**
+ * zset 的分数：Redis 认的浮点写法，含 `inf` / `+inf` / `-inf`。`ZADD` 自己也会拒，
+ * 这里先挡一下，让那一格当场标红，而不是提交之后才说「not a valid float」
+ */
+export function isRedisScore(text: string): boolean {
+  return /^[+-]?(inf|(\d+\.?\d*|\.\d+)(e[+-]?\d+)?)$/i.test(text.trim());
+}

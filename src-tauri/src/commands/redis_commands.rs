@@ -4,8 +4,8 @@
 
 use crate::commands::database_commands::TIMEOUT_OUT_OF_RANGE;
 use crate::services::redis::{
-  self, KeyChange, KeyspaceEntry, RedisPool, RedisRegistry, RedisReply, RedisValue, ScanPage,
-  ScanRequest, ValueRequest, REDIS_NOT_CONNECTED,
+  self, ElementChange, KeyChange, KeyspaceEntry, NewKey, RedisPool, RedisRegistry, RedisReply,
+  RedisValue, ScanPage, ScanRequest, ValueRequest, REDIS_NOT_CONNECTED,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -138,6 +138,94 @@ pub async fn redis_change_key(
   let timeout = timeout(timeout_ms)?;
   let pool = pool(&registry, &connection_string)?;
   redis::change_key(&pool, database, key, change, timeout).await
+}
+
+/// 改一个值里的元素，字节串都是 base64
+#[derive(serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ElementChangeRequest {
+  HashSet { field: String, expected: Option<String>, value: String },
+  HashDelete { field: String },
+  ListSet { index: i64, expected: String, value: String },
+  ListDelete { index: i64, expected: String },
+  ListPush { value: String, head: bool },
+  SetAdd { member: String },
+  SetDelete { member: String },
+  ZsetSet { member: String, expected: Option<String>, score: String },
+  ZsetDelete { member: String },
+}
+
+impl ElementChangeRequest {
+  fn decode(self) -> Result<ElementChange, String> {
+    use redis::decode_key as bytes;
+    Ok(match self {
+      Self::HashSet { field, expected, value } => ElementChange::HashSet {
+        field: bytes(&field)?,
+        expected: expected.map(|expected| bytes(&expected)).transpose()?,
+        value: bytes(&value)?,
+      },
+      Self::HashDelete { field } => ElementChange::HashDelete { field: bytes(&field)? },
+      Self::ListSet { index, expected, value } => {
+        ElementChange::ListSet { index, expected: bytes(&expected)?, value: bytes(&value)? }
+      }
+      Self::ListDelete { index, expected } => {
+        ElementChange::ListDelete { index, expected: bytes(&expected)? }
+      }
+      Self::ListPush { value, head } => ElementChange::ListPush { value: bytes(&value)?, head },
+      Self::SetAdd { member } => ElementChange::SetAdd { member: bytes(&member)? },
+      Self::SetDelete { member } => ElementChange::SetDelete { member: bytes(&member)? },
+      Self::ZsetSet { member, expected, score } => {
+        ElementChange::ZsetSet { member: bytes(&member)?, expected, score }
+      }
+      Self::ZsetDelete { member } => ElementChange::ZsetDelete { member: bytes(&member)? },
+    })
+  }
+}
+
+#[tauri::command]
+pub async fn redis_change_element(
+  connection_string: String,
+  database: i64,
+  key: String,
+  change: ElementChangeRequest,
+  timeout_ms: u64,
+  registry: State<'_, RedisRegistry>,
+) -> Result<(), String> {
+  let change = change.decode()?;
+  let key = redis::decode_key(&key)?;
+  let timeout = timeout(timeout_ms)?;
+  let pool = pool(&registry, &connection_string)?;
+  redis::change_element(&pool, database, key, change, timeout).await
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewKeyRequest {
+  key: String,
+  kind: String,
+  first: String,
+  second: String,
+  ttl_ms: Option<u64>,
+}
+
+#[tauri::command]
+pub async fn redis_create_key(
+  connection_string: String,
+  database: i64,
+  request: NewKeyRequest,
+  timeout_ms: u64,
+  registry: State<'_, RedisRegistry>,
+) -> Result<(), String> {
+  let new_key = NewKey {
+    kind: request.kind,
+    first: redis::decode_key(&request.first)?,
+    second: redis::decode_key(&request.second)?,
+    ttl_ms: request.ttl_ms,
+  };
+  let key = redis::decode_key(&request.key)?;
+  let timeout = timeout(timeout_ms)?;
+  let pool = pool(&registry, &connection_string)?;
+  redis::create_key(&pool, database, key, new_key, timeout).await
 }
 
 /// 断开时去掉登记。最后一个引用没了，各库号上的连接随之关闭

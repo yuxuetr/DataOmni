@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Clock, Loader2, Pencil, RefreshCw, Search, TextCursorInput, Trash2 } from 'lucide-react';
+import { Clock, Loader2, Pencil, Plus, RefreshCw, Search, TextCursorInput, Trash2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { PLAIN_TEXT_INPUT, SegmentedControl } from './FormControls';
 import { RedisConsole } from './RedisConsole';
 import { RedisInputDialog } from './RedisInputDialog';
+import { RedisValueTable, type ElementChange } from './RedisValueTable';
+import { RedisNewKeyDialog } from './RedisNewKeyDialog';
 import { useConfirmPrompt } from './ConfirmPrompt';
 import { bytesToBase64 } from '../utils/redisCommandLine';
 import { useLanguageStore } from '../stores/languageStore';
@@ -66,7 +68,7 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
   // 快速点两个键时，先发的那次晚回来不能盖掉后点的
   const valueRequest = useRef(0);
   const { ask, prompt: confirmPrompt } = useConfirmPrompt();
-  const [dialog, setDialog] = useState<'rename' | 'ttl' | null>(null);
+  const [dialog, setDialog] = useState<'rename' | 'ttl' | 'new' | null>(null);
   // 正在改的字符串；null 是没在改
   const [stringDraft, setStringDraft] = useState<string | null>(null);
   const [savingString, setSavingString] = useState(false);
@@ -155,6 +157,27 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
     } catch (caught) {
       setActionError(describeError(caught));
     }
+  };
+
+  /** 改一个元素。删的先问；成功后从第一页重读（元素的次序、个数都可能变了） */
+  const changeElement = async (row: RedisKeyRow, change: ElementChange, destructive?: string) => {
+    if (destructive) {
+      const confirmed = await ask({
+        title: t('redis.element.deleteTitle'),
+        message: destructive,
+        confirmLabel: t('redis.action.delete'),
+        destructive: true
+      });
+      if (!confirmed) throw new Error('cancelled');
+    }
+    setActionError(null);
+    try {
+      await invoke('redis_change_element', { connectionString, database, key: row.key.raw, change, timeoutMs });
+    } catch (caught) {
+      setActionError(describeError(caught));
+      throw caught;
+    }
+    void loadValue(row, null);
   };
 
   const saveString = async (row: RedisKeyRow, original: RedisBytes, draft: string) => {
@@ -272,6 +295,15 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
                 title={t('redis.search')}
               >
                 <Search size={14} />
+              </button>
+              <button
+                onClick={() => setDialog('new')}
+                disabled={!connectionString}
+                className="flex items-center gap-1 rounded-control border border-line-strong px-2 py-1 text-sm text-fg transition-colors hover:bg-surface-hover disabled:opacity-50"
+                aria-label={t('redis.newKey.open')}
+                title={t('redis.newKey.open')}
+              >
+                <Plus size={14} />
               </button>
             </div>
             <p className="text-xs text-fg-subtle">{t('redis.patternHint')}</p>
@@ -423,7 +455,15 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
                         {t('redis.action.edit')}
                       </button>
                     )}
-                    {value && <ValueView value={value} t={t} />}
+                    {value && (value.kind === 'hash' || value.kind === 'list' || value.kind === 'set' || value.kind === 'zset') ? (
+                      <RedisValueTable
+                        value={value}
+                        encode={encodeText}
+                        onChange={(change, destructive) => changeElement(selected, change, destructive)}
+                      />
+                    ) : (
+                      value && <ValueView value={value} t={t} />
+                    )}
                   </>
                 )}
                 {more !== null && (
@@ -442,6 +482,18 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
         </div>
       </div>
       {confirmPrompt}
+      {dialog === 'new' && connectionString && (
+        <RedisNewKeyDialog
+          connectionString={connectionString}
+          database={database}
+          timeoutMs={timeoutMs}
+          onClose={() => setDialog(null)}
+          onCreated={() => {
+            setDialog(null);
+            void scan(applied, null);
+          }}
+        />
+      )}
       {dialog === 'rename' && selected && (
         <RedisInputDialog
           title={t('redis.action.renameTitle')}

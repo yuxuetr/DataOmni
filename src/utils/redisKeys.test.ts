@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendValuePage, nextPosition, parseTtlSeconds, redisDatabaseIndex, ttlView, type RedisBytes } from './redisKeys';
+import { appendValuePage, isRedisScore, nextPosition, parseTtlSeconds, redisDatabaseIndex, ttlView, type RedisBytes } from './redisKeys';
 
 const bytes = (text: string): RedisBytes => ({ raw: btoa(text), text, binary: false });
 
@@ -53,5 +53,14 @@ describe('redisKeys', () => {
     expect(parseTtlSeconds('1.5')).toBeUndefined();
     expect(parseTtlSeconds('-5')).toBeUndefined();
     expect(parseTtlSeconds('1h')).toBeUndefined();
+  });
+
+  it('分数认 Redis 的浮点写法', () => {
+    for (const ok of ['1', '-2.5', '.5', '3.', '1e3', '-1.5E-2', 'inf', '-inf', '+INF']) {
+      expect(isRedisScore(ok), ok).toBe(true);
+    }
+    for (const bad of ['', 'abc', '1,5', '1.2.3', 'nan', '--1']) {
+      expect(isRedisScore(bad), bad).toBe(false);
+    }
   });
 });
