@@ -6,6 +6,7 @@ import { useConnectionStore } from '../stores/connectionStore';
 import { useProfileConnector } from '../hooks/useProfileConnector';
 import { orderProfilesByRecency } from '../utils/connectionRecency';
 import { serverLabel } from '../utils/serverPresets';
+import { serverAddress } from '../utils/mongoSrv';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
 
@@ -19,12 +20,13 @@ function describeTarget(profile: {
   host: string;
   port: number;
   database?: string;
+  options: Record<string, string>;
 }): string {
   if (profile.db_type === DatabaseType.SQLite) {
     return profile.database || ':memory:';
   }
 
-  const target = `${profile.host}:${profile.port}`;
+  const target = serverAddress(profile);
   return profile.database ? `${target}/${profile.database}` : target;
 }
 

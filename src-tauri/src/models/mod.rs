@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use urlencoding::encode;
 
+/// `options` 里的键：值为 `"true"` 时 MongoDB 按 SRV 记录连，见 [`ConnectionProfile::mongo_srv`]
+pub const MONGO_SRV_OPTION: &str = "srv";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionProfile {
   /// 保存后由后端生成。新建连接表单在保存之前要先「测试连接」，那时还没有 id，
@@ -247,7 +250,15 @@ impl DatabaseType {
         config.port,
         encode(config.database.as_deref().unwrap_or(""))
       ),
-      // 和 SQL Server 同一个理由：是 `MongoRegistry` 里的键，不带口令。最后一段是认证库
+      // 和 SQL Server 同一个理由：是 `MongoRegistry` 里的键，不带口令。最后一段是认证库。
+      // SRV 没有端口：服务端地址在 DNS 里
+      DatabaseType::MongoDB if config.mongo_srv() => format!(
+        "{}{}@{}/{}",
+        crate::services::mongodb::MONGODB_SRV_SCHEME,
+        encode(&config.username),
+        config.host,
+        encode(config.database.as_deref().unwrap_or(""))
+      ),
       DatabaseType::MongoDB => format!(
         "{}{}@{}:{}/{}",
         crate::services::mongodb::MONGODB_SCHEME,
@@ -324,6 +335,13 @@ impl DatabaseType {
 impl ConnectionProfile {
   pub fn effective_tls_mode(&self) -> TlsMode {
     self.tls_mode.unwrap_or(if self.ssl { TlsMode::Required } else { TlsMode::Disabled })
+  }
+
+  /// MongoDB 按 SRV 记录找服务端（`mongodb+srv://`，Atlas 给的就是这种）。
+  /// 放在 `options` 里而不是另起字段：只有这一种库认它，别的库的配置不该多一格
+  pub fn mongo_srv(&self) -> bool {
+    self.db_type == DatabaseType::MongoDB
+      && self.options.get(MONGO_SRV_OPTION).is_some_and(|value| value == "true")
   }
 
   /// 这个配置的连接串。`tunnel_port` 有值就指向本地转发端口。

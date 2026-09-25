@@ -41,6 +41,7 @@ import {
   sshTunnelProblems,
   supportsSshTunnel
 } from '../utils/sshTunnel';
+import { isMongoSrv, withMongoSrv } from '../utils/mongoSrv';
 import { clsx } from 'clsx';
 import { PLAIN_TEXT_INPUT } from './FormControls';
 import { 
@@ -243,7 +244,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
       if (!formData.username?.trim() && formData.db_type !== DatabaseType.MongoDB) {
         errors.username = t('form.error.username');
       }
-      if (!formData.port || formData.port <= 0) {
+      // SRV 的端口在 DNS 里，这一格藏起来了
+      if (!isMongoSrv(formData) && (!formData.port || formData.port <= 0)) {
         errors.port = t('form.error.port');
       }
     } else {
@@ -308,6 +310,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   };
 
   const tunnel = formData.ssh_tunnel ?? null;
+  const srv = isMongoSrv(formData);
   // 一格都没填时不提示：刚勾开就红着一片，读起来像是用户做错了什么
   const tunnelGaps = tunnel && !isSshTunnelBlank(tunnel) ? sshTunnelProblems(tunnel) : [];
 
@@ -654,7 +657,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
               /* 其他数据库配置 */
               <>
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
+                  <div className={clsx(srv && 'col-span-2')}>
                     <label className="block text-sm font-medium text-fg mb-1">
                       {t('form.host')}
                     </label>
@@ -667,7 +670,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         "w-full px-3 py-2 border rounded-control focus:outline-none focus:ring-2 focus:ring-accent",
                         validationErrors.host ? "border-danger-line" : "border-line-strong"
                       )}
-                      placeholder="localhost"
+                      placeholder={srv ? 'cluster0.abcde.mongodb.net' : 'localhost'}
                       {...PLAIN_TEXT_INPUT}
                     />
                     {validationErrors.host && (
@@ -675,6 +678,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                     )}
                   </div>
                   
+                  {!srv && (
                   <div>
                     <label className="block text-sm font-medium text-fg mb-1">
                       {t('form.port')}
@@ -693,7 +697,29 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       <p className="text-danger text-sm mt-1">{validationErrors.port}</p>
                     )}
                   </div>
+                  )}
                 </div>
+
+                {formData.db_type === DatabaseType.MongoDB && (
+                  <div>
+                    <div className="flex items-start">
+                      <input
+                        id="mongo-srv"
+                        type="checkbox"
+                        checked={srv}
+                        onChange={(event) => {
+                          const enabled = event.target.checked;
+                          setFormData((previous) => ({ ...previous, ...withMongoSrv(previous, enabled) }));
+                        }}
+                        className="mt-0.5 h-4 w-4 rounded-control border-line-strong text-accent focus:ring-accent"
+                      />
+                      <label htmlFor="mongo-srv" className="ml-2 text-sm text-fg">
+                        {t('form.mongoSrv')}
+                      </label>
+                    </div>
+                    {srv && <p className="text-xs text-fg-muted mt-1 ml-6">{t('form.mongoSrvHint')}</p>}
+                  </div>
+                )}
 
                 {/* 数据库名称 - 某些数据库类型不需要 */}
                 {(formData.db_type === DatabaseType.MySQL || 
@@ -722,7 +748,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         formData.db_type === DatabaseType.PostgreSQL ? "postgres" :
                         formData.db_type === DatabaseType.SqlServer ? "master" :
                         formData.db_type === DatabaseType.Oracle ? "FREEPDB1" :
-                        formData.db_type === DatabaseType.MongoDB ? "admin" :
+                        formData.db_type === DatabaseType.MongoDB ? (srv ? "" : "admin") :
                         formData.db_type === DatabaseType.Neo4j ? "neo4j" :
                         formData.db_type === DatabaseType.ClickHouse ? "default" : ""
                       }
@@ -732,7 +758,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       <p className="text-xs text-fg-muted mt-1">{t('form.oracleServiceHint')}</p>
                     )}
                     {formData.db_type === DatabaseType.MongoDB && (
-                      <p className="text-xs text-fg-muted mt-1">{t('form.mongoAuthSourceHint')}</p>
+                      <p className="text-xs text-fg-muted mt-1">
+                        {t(srv ? 'form.mongoAuthSourceSrvHint' : 'form.mongoAuthSourceHint')}
+                      </p>
                     )}
                   </div>
                 )}
@@ -837,7 +865,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                     实际发生过：SSH 私钥被填进了「客户端私钥路径」，
                     报出来的是一句「客户端证书和私钥必须同时配置」。
                     默认仍然收起：绝大多数连接不需要它，而它有五个格子 */}
-                {formData.db_type && supportsSshTunnel(formData.db_type) && (
+                {formData.db_type && supportsSshTunnel(formData.db_type) && !srv && (
                   <div className="space-y-3">
                     <div className="flex items-start">
                       <input
@@ -1225,7 +1253,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
               {/* 只在测试失败之后出现：那才是「断在哪一段」这个问题被问出来的
                   时刻。成功时摆一个诊断按钮只会让人怀疑是不是没真的成功 */}
-              {testResult && !testSucceeded && (
+              {/* SRV 没有「主机 + 端口」可探，查 SRV 的那一步驱动已经报得很具体 */}
+              {testResult && !testSucceeded && !srv && (
                 <button
                   type="button"
                   onClick={handleDiagnose}

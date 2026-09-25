@@ -27,6 +27,8 @@ pub const TLS_CERTIFICATES_UNSUPPORTED: &str = "DATAOMNI_TLS_CERTIFICATES_UNSUPP
 /// 连上，而表单上写着加密
 pub const ORACLE_TLS_UNSUPPORTED: &str = "DATAOMNI_ORACLE_TLS_UNSUPPORTED";
 pub const SQLITE_PATH_REQUIRED: &str = "DATAOMNI_SQLITE_PATH_REQUIRED";
+/// MongoDB 按 SRV 记录连时不能再走 SSH 隧道
+pub const MONGO_SRV_WITH_TUNNEL: &str = "DATAOMNI_MONGO_SRV_WITH_TUNNEL";
 pub const HOST_REQUIRED: &str = "DATAOMNI_HOST_REQUIRED";
 pub const USERNAME_REQUIRED: &str = "DATAOMNI_USERNAME_REQUIRED";
 pub const PORT_INVALID: &str = "DATAOMNI_PORT_INVALID";
@@ -321,6 +323,11 @@ impl ConnectionService {
     }
 
     validate_tls_configuration(config)?;
+    // SRV 的服务端地址在 DNS 里、可能是一组成员，一条隧道只转发一个地址。
+    // 放在建隧道之前拒，不白建一条
+    if config.mongo_srv() && config.ssh_tunnel.is_some() {
+      return Err(MONGO_SRV_WITH_TUNNEL.to_string());
+    }
 
     let mut resolved_config = config.clone();
     if resolved_config.password.is_empty() && resolved_config.credential_ref.is_some() {
@@ -1014,6 +1021,31 @@ mod tests {
     assert_eq!(
       service.resolve_for_connection(&relational).err(),
       Some(USERNAME_REQUIRED.to_string())
+    );
+  }
+
+  /// SRV 的连接串没有端口（地址在 DNS 里），和同一台主机的直连是两个键；
+  /// 再挂一条隧道就拒——隧道只转发一个地址，而 SRV 给的是一组
+  #[test]
+  fn a_mongodb_srv_profile_has_no_port_and_no_tunnel() {
+    let config_path = temporary_config_path();
+    let service =
+      ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()).unwrap();
+    let mut config = profile("profile-1", "");
+    config.db_type = DatabaseType::MongoDB;
+    config.host = "cluster0.example.net".to_string();
+    config.database = None;
+    config.options.insert(crate::models::MONGO_SRV_OPTION.to_string(), "true".to_string());
+    let resolved = service.resolve_for_connection(&config).unwrap();
+    assert_eq!(
+      resolved.connection_string_via(None),
+      "mongodb+srv://postgres@cluster0.example.net/"
+    );
+
+    let tunnelled = ConnectionProfile { ssh_tunnel: tunnelled("profile-1").ssh_tunnel, ..config };
+    assert_eq!(
+      service.resolve_for_connection(&tunnelled).err(),
+      Some(MONGO_SRV_WITH_TUNNEL.to_string())
     );
   }
 

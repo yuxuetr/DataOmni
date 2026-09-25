@@ -1117,6 +1117,9 @@ export const en: Translations = {
   'objectKind.collection': 'Collections',
   'objectKindOne.collection': 'Collection',
   'form.mongoAuthSource': 'Authentication database',
+  'form.mongoSrv': 'Connect using an SRV record (mongodb+srv://)',
+  'form.mongoSrvHint': 'Enter the DNS name as the host: the part after @ in an Atlas connection string, such as cluster0.abcde.mongodb.net. Server addresses and ports come from DNS, and an SSH tunnel cannot be used.',
+  'form.mongoAuthSourceSrvHint': 'The database the user is defined in. Leave it empty to use the one in the DNS TXT record (Atlas puts admin there), or admin if there is none.',
   'form.mongoAuthSourceHint': 'The database the user is defined in, usually admin. Leave the username empty if the server has no authentication. The connection is not bound to one database: every database you have access to is listed.',
   'mongo.filter': 'Filter',
   'mongo.filterPlaceholder': "{ status: 'paid', amount: { $gt: 100 } }",
@@ -1227,5 +1230,7 @@ export const en: Translations = {
   'error.backend.mongoBulkStopped': 'The server stopped partway: {detail}. Documents processed before that point have already taken effect and the server does not say how many; refresh to see.',
   'error.backend.mongoPipelineWrites': 'The pipeline has a stage that writes ({detail}); aggregation here is read-only. Use Update matching or Import to write',
   'error.backend.mongoPipelineInvalid': 'A pipeline is an array whose items are stages like { $match: … } (item {detail} is not)',
+  'error.backend.mongoSrvLookupFailed': 'No SRV record was found for this name, or the record points to another domain (which must be refused): check the host name. Details: {detail}',
+  'error.backend.mongoSrvWithTunnel': 'An SRV connection cannot go through an SSH tunnel: SRV gives a set of servers and a tunnel forwards one address',
   'error.backend.mongoUpdateNotOperators': 'The update must use operators such as $set, or a pipeline. A whole document is a replacement, which an update of matching documents cannot do'
 };

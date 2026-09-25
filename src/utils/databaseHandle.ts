@@ -20,6 +20,8 @@ export const SQL_SERVER_SCHEME = 'sqlserver://';
 export const ORACLE_SCHEME = 'oracle://';
 /** 与后端 `MONGODB_SCHEME` 一致 */
 export const MONGODB_SCHEME = 'mongodb://';
+/** 与后端 `MONGODB_SRV_SCHEME` 一致：按 SRV 记录连的那种 */
+export const MONGODB_SRV_SCHEME = 'mongodb+srv://';
 
 /**
  * MongoDB 连接上没有 SQL 可跑。句柄照样要有——会话、断开、健康标记都认它——
@@ -35,7 +37,7 @@ export async function openDatabase(connectionString: string): Promise<DatabaseHa
   if (connectionString.startsWith(ORACLE_SCHEME)) {
     return backendHandle(connectionString, 'oracle_select', 'close_oracle');
   }
-  if (connectionString.startsWith(MONGODB_SCHEME)) {
+  if (connectionString.startsWith(MONGODB_SCHEME) || connectionString.startsWith(MONGODB_SRV_SCHEME)) {
     return {
       select: () => Promise.reject(new Error(MONGO_HANDLE_HAS_NO_SQL)),
       close: () => invoke<boolean>('close_mongodb', { connectionString })

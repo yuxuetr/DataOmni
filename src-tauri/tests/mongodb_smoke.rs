@@ -6,13 +6,20 @@
 //! 让缺了连接串的时候报错而不是跳过。
 //!
 //! 用例在 `dataomni_test` 库里建自己的集合，开头先删同名的残留。
+//!
+//! SRV 的几条另设 `DATAOMNI_MONGODB_SRV_TEST_URL`（同样的写法），指向一个**副本集**
+//! `repl0`，唯一成员名为 `localhost.test.build.10gen.cc:27017`，并把它转发到本机 27017。
+//! 借的是 MongoDB 驱动规范测试用的公网记录：`test1`/`test3`/`test5.test.build.10gen.cc`
+//! 的 SRV 都指向 `localhost.test.build.10gen.cc`（即 127.0.0.1）的 27017，`test1` 另有
+//! 一个没人听的 27018，`test5` 的 TXT 写着 `replicaSet=repl0&authSource=thisDB`。
+//! 地址里的主机与端口不用，只取账号与认证库。
 
 use dataomni_lib::models::ConnectionProfile;
 use dataomni_lib::services::mongo_shell::{self, Layout};
 use dataomni_lib::services::mongodb::{
   self as mongo, FindRequest, MongoTarget, MONGO_AUTH_FAILED, MONGO_AUTH_REQUIRED,
-  MONGO_DOCUMENT_CHANGED, MONGO_DOCUMENT_GONE, MONGO_ID_CHANGED, MONGO_SERVER_ERROR, MONGO_TIMEOUT,
-  MONGO_UNREACHABLE,
+  MONGO_DOCUMENT_CHANGED, MONGO_DOCUMENT_GONE, MONGO_ID_CHANGED, MONGO_SERVER_ERROR,
+  MONGO_SRV_LOOKUP_FAILED, MONGO_TIMEOUT, MONGO_UNREACHABLE,
 };
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::Client;
@@ -31,6 +38,10 @@ fn profile_from_env() -> Option<ConnectionProfile> {
     }
     _ => return None,
   };
+  Some(profile_from_url(&url))
+}
+
+fn profile_from_url(url: &str) -> ConnectionProfile {
   let rest = url.strip_prefix("mongodb://").expect("mongodb:// URL");
   let (credentials, address) = rest.rsplit_once('@').expect("user:password@host");
   let (username, password) = credentials.split_once(':').expect("user:password");
@@ -49,7 +60,16 @@ fn profile_from_env() -> Option<ConnectionProfile> {
     "options": {},
     "tags": []
   });
-  Some(serde_json::from_value(profile).expect("profile"))
+  serde_json::from_value(profile).expect("profile")
+}
+
+/// SRV 那几条：没设就跳过（要本机 27017 上正好是那个副本集）
+fn srv_profile(host: &str) -> Option<ConnectionProfile> {
+  let url = std::env::var("DATAOMNI_MONGODB_SRV_TEST_URL").ok().filter(|url| !url.is_empty())?;
+  let mut profile = profile_from_url(&url);
+  profile.host = host.to_string();
+  profile.options.insert(dataomni_lib::models::MONGO_SRV_OPTION.to_string(), "true".to_string());
+  Some(profile)
 }
 
 async fn client() -> Option<Client> {
@@ -201,6 +221,44 @@ async fn no_username_against_an_auth_server_fails_at_connect_time() {
   profile.password.clear();
   let error = mongo::connect(&MongoTarget::from_profile(&profile)).await.err().unwrap_or_default();
   assert!(error.starts_with(MONGO_AUTH_REQUIRED), "{error}");
+}
+
+/// 按 SRV 记录找到副本集并登录。`test1` 有两条记录、其中一台没人听：这正是
+/// Atlas 的形状（一组成员），直连只许一台，驱动会拒——所以 SRV 不能照搬直连那套
+#[tokio::test]
+async fn an_srv_name_is_resolved_to_the_replica_set_behind_it() {
+  for host in ["test1.test.build.10gen.cc", "test3.test.build.10gen.cc"] {
+    let Some(profile) = srv_profile(host) else { return };
+    let client = mongo::connect(&MongoTarget::from_profile(&profile))
+      .await
+      .unwrap_or_else(|error| panic!("{host}: {error}"));
+    let entries = mongo::list_collections(&client).await.expect("list collections");
+    assert!(entries.iter().any(|entry| entry.object_schema == DATABASE), "{host}: {entries:?}");
+  }
+}
+
+/// TXT 记录里的 `authSource` 在认证库那一格空着时生效，填了就以填的为准。
+/// `test5` 的 TXT 写的是 `thisDB`，账号却在 `admin`：空着 → 登录被拒，填 `admin` → 连上
+#[tokio::test]
+async fn the_txt_record_supplies_the_auth_database_unless_one_is_given() {
+  let Some(mut profile) = srv_profile("test5.test.build.10gen.cc") else { return };
+  let given = mongo::connect(&MongoTarget::from_profile(&profile)).await;
+  assert!(given.is_ok(), "{:?}", given.err());
+  profile.database = None;
+  let error = mongo::connect(&MongoTarget::from_profile(&profile)).await.err().unwrap_or_default();
+  assert!(error.starts_with(MONGO_AUTH_FAILED), "{error}");
+}
+
+/// 查不到记录，和记录指向别的域（规范要求拒绝：否则谁控制了这条 DNS 记录，
+/// 就能把口令引到任意一台机器上）都报成 SRV 的问题，不报成「连不上」
+#[tokio::test]
+async fn an_srv_name_without_records_or_pointing_elsewhere_is_refused() {
+  for host in ["test4.test.build.10gen.cc", "test14.test.build.10gen.cc"] {
+    let Some(profile) = srv_profile(host) else { return };
+    let error =
+      mongo::connect(&MongoTarget::from_profile(&profile)).await.err().unwrap_or_default();
+    assert!(error.starts_with(MONGO_SRV_LOOKUP_FAILED), "{host}: {error}");
+  }
 }
 
 #[tokio::test]

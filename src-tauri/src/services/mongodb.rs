@@ -38,6 +38,8 @@ use std::time::Duration;
 
 /// 与前端 `MONGODB_SCHEME` 一致：连接串以它开头就归这里管
 pub const MONGODB_SCHEME: &str = "mongodb://";
+/// 按 SRV 记录连的那种，同样归这里管
+pub const MONGODB_SRV_SCHEME: &str = "mongodb+srv://";
 
 /// 登录被拒：用户名、口令或认证库不对
 pub const MONGO_AUTH_FAILED: &str = "DATAOMNI_MONGO_AUTH_FAILED";
@@ -56,6 +58,8 @@ pub const MONGO_DOCUMENT_GONE: &str = "DATAOMNI_MONGO_DOCUMENT_GONE";
 pub const MONGO_DOCUMENT_CHANGED: &str = "DATAOMNI_MONGO_DOCUMENT_CHANGED";
 /// 编辑时改了 `_id`。服务端不许改它，这里先拦下、说人话
 pub const MONGO_ID_CHANGED: &str = "DATAOMNI_MONGO_ID_CHANGED";
+/// SRV 记录查不到或不合规矩（名字不对、记录指向别的域）。冒号后面是驱动的原话
+pub const MONGO_SRV_LOOKUP_FAILED: &str = "DATAOMNI_MONGO_SRV_LOOKUP_FAILED";
 /// 连接串对应的连接不在（断开之后还有请求过来）
 pub const MONGO_NOT_CONNECTED: &str = "DATAOMNI_DB_SESSION_NOT_CONNECTED";
 
@@ -70,10 +74,13 @@ pub type MongoRegistry = PoolRegistry<Client>;
 pub struct MongoTarget {
   host: String,
   port: u16,
+  /// 按 SRV 记录找服务端：`host` 是 DNS 名字，`port` 不用
+  srv: bool,
   username: String,
   password: String,
-  /// 认证库。表单上「数据库」那一格填的就是它，默认 `admin`
-  auth_source: String,
+  /// 认证库，表单上「数据库」那一格。空着时直连用 `admin`，SRV 先看 TXT 记录
+  /// 里的 `authSource`（Atlas 在那里写了），没有再用 `admin`
+  auth_source: Option<String>,
   tls: TlsMode,
   ca_certificate_path: Option<String>,
 }
@@ -83,36 +90,53 @@ impl MongoTarget {
     Self {
       host: profile.host.clone(),
       port: profile.port,
+      srv: profile.mongo_srv(),
       username: profile.username.clone(),
       password: profile.password.clone(),
-      auth_source: profile
-        .database
-        .clone()
-        .filter(|database| !database.is_empty())
-        .unwrap_or_else(|| "admin".to_string()),
+      auth_source: profile.database.clone().filter(|database| !database.is_empty()),
       tls: profile.effective_tls_mode(),
       ca_certificate_path: profile.ca_certificate_path.clone().filter(|path| !path.is_empty()),
     }
   }
 
-  fn options(&self) -> ClientOptions {
-    let mut options = ClientOptions::default();
-    options.hosts = vec![ServerAddress::Tcp { host: self.host.clone(), port: Some(self.port) }];
-    options.direct_connection = Some(true);
+  /// SRV 要查 DNS，所以是异步的；直连不碰网络
+  async fn options(&self) -> mongodb::error::Result<ClientOptions> {
+    let mut options = if self.srv {
+      // 交给驱动按规范解析：查 SRV 与 TXT、校验记录与名字同域、TXT 里的
+      // `replicaSet` / `authSource` / `loadBalanced` 生效。不直连——SRV 给的是
+      // 一组成员，直连只许一台，驱动会拒
+      let mut uri = format!("{MONGODB_SRV_SCHEME}{}/", self.host);
+      if !self.username.is_empty() {
+        uri = format!("{MONGODB_SRV_SCHEME}{}@{}/", urlencoding::encode(&self.username), self.host);
+      }
+      if let Some(auth_source) = &self.auth_source {
+        uri.push_str(&format!("?authSource={}", urlencoding::encode(auth_source)));
+      }
+      ClientOptions::parse(uri).await?
+    } else {
+      let mut options = ClientOptions::default();
+      options.hosts = vec![ServerAddress::Tcp { host: self.host.clone(), port: Some(self.port) }];
+      options.direct_connection = Some(true);
+      if !self.username.is_empty() {
+        let mut credential = Credential::default();
+        credential.username = Some(self.username.clone());
+        credential.source = Some(self.auth_source.clone().unwrap_or_else(|| "admin".to_string()));
+        options.credential = Some(credential);
+      }
+      options
+    };
+    if let Some(credential) = options.credential.as_mut() {
+      credential.password = Some(self.password.clone());
+    }
     options.app_name = Some("DataOmni".to_string());
     options.connect_timeout = Some(CONNECT_TIMEOUT);
     options.server_selection_timeout = Some(CONNECT_TIMEOUT);
     // 与另外几家池子同一个回收时限：经 VPN / NAT 空闲几分钟的连接会被悄悄丢掉
     options.max_idle_time = Some(crate::services::sqlx_pool::IDLE_TIMEOUT);
-    if !self.username.is_empty() {
-      let mut credential = Credential::default();
-      credential.username = Some(self.username.clone());
-      credential.password = Some(self.password.clone());
-      credential.source = Some(self.auth_source.clone());
-      options.credential = Some(credential);
-    }
+    // SRV 默认开 TLS，但表单上的档位是用户明确选的，照它来（选了「不加密」就是
+    // 规范里的 `tls=false`）
     options.tls = tls_options(self.tls, self.ca_certificate_path.as_deref());
-    options
+    Ok(options)
   }
 }
 
@@ -141,7 +165,8 @@ fn tls_options(mode: TlsMode, ca_certificate_path: Option<&str>) -> Option<Tls> 
 /// `Client::with_options` 不碰网络，第一次操作才连；所以这里发一次 `ping`。
 /// 带了凭据时握手就会认证，口令错在这一步报出来——不发的话要等到展开对象树
 pub async fn connect(target: &MongoTarget) -> Result<Client, String> {
-  let client = Client::with_options(target.options()).map_err(describe_error)?;
+  let client = Client::with_options(target.options().await.map_err(describe_error)?)
+    .map_err(describe_error)?;
   client.database("admin").run_command(doc! { "ping": 1 }).await.map_err(describe_error)?;
   if target.username.is_empty() {
     // 13 是 Unauthorized：服务端开着认证，不带凭据什么都读不了
@@ -163,6 +188,7 @@ pub fn describe_error(error: mongodb::error::Error) -> String {
   match *error.kind {
     ErrorKind::Authentication { message, .. } => format!("{MONGO_AUTH_FAILED}: {message}"),
     ErrorKind::ServerSelection { message, .. } => format!("{MONGO_UNREACHABLE}: {message}"),
+    ErrorKind::DnsResolve { message, .. } => format!("{MONGO_SRV_LOOKUP_FAILED}: {message}"),
     // 50 是 MaxTimeMSExpired
     ErrorKind::Command(command) if command.code == 50 => {
       format!("{MONGO_TIMEOUT}: {}", command.message)
@@ -1207,11 +1233,20 @@ mod tests {
     assert_eq!(full.allow_invalid_certificates, None);
   }
 
-  #[test]
-  fn the_auth_database_defaults_to_admin() {
-    let profile = ConnectionProfile { database: Some(String::new()), ..Default::default() };
-    assert_eq!(MongoTarget::from_profile(&profile).auth_source, "admin");
-    let profile = ConnectionProfile { database: Some("app".to_string()), ..Default::default() };
-    assert_eq!(MongoTarget::from_profile(&profile).auth_source, "app");
+  #[tokio::test]
+  async fn the_auth_database_defaults_to_admin() {
+    let source = |database: &str| {
+      let profile = ConnectionProfile {
+        username: "reader".to_string(),
+        database: Some(database.to_string()),
+        ..Default::default()
+      };
+      async move {
+        let options = MongoTarget::from_profile(&profile).options().await.expect("直连不查 DNS");
+        options.credential.and_then(|credential| credential.source)
+      }
+    };
+    assert_eq!(source("").await.as_deref(), Some("admin"));
+    assert_eq!(source("app").await.as_deref(), Some("app"));
   }
 }

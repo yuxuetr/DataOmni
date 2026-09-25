@@ -1128,6 +1128,9 @@ export const zh = {
   'objectKind.collection': '集合',
   'objectKindOne.collection': '集合',
   'form.mongoAuthSource': '认证库',
+  'form.mongoSrv': '按 SRV 记录连接（mongodb+srv://）',
+  'form.mongoSrvHint': '主机填 DNS 名字，即 Atlas 连接串里 @ 后面那段，如 cluster0.abcde.mongodb.net。服务端地址与端口从 DNS 里查，不能再走 SSH 隧道。',
+  'form.mongoAuthSourceSrvHint': '用户所在的库。空着就用 DNS 的 TXT 记录里写的（Atlas 写的是 admin），没写再用 admin。',
   'form.mongoAuthSourceHint': '用户所在的库，通常是 admin；不开认证时可以不填用户名。连接不绑定某个库，连上后能看到有权限的所有库。',
   'mongo.filter': '条件',
   'mongo.filterPlaceholder': "{ status: 'paid', amount: { $gt: 100 } }",
@@ -1238,6 +1241,8 @@ export const zh = {
   'error.backend.mongoBulkStopped': '服务端中途停下了：{detail}。在它之前处理过的文档已经生效，服务端不报个数，刷新看看。',
   'error.backend.mongoPipelineWrites': '管道里有写库的阶段 {detail}：这里的聚合只读。要写库请用按条件修改或导入',
   'error.backend.mongoPipelineInvalid': '管道要是一个数组，每一项是一个阶段 { $match: … }（第 {detail} 项不是）',
+  'error.backend.mongoSrvLookupFailed': '查不到这个名字的 SRV 记录，或者记录指向了别的域（按规矩要拒）：检查主机名。详情：{detail}',
+  'error.backend.mongoSrvWithTunnel': '按 SRV 记录连接时不能走 SSH 隧道：SRV 给的是一组服务端，隧道只转发一个地址',
   'error.backend.mongoUpdateNotOperators': '「怎么改」要用 $set 这类操作符或者一条管道；写成一整个文档是替换，按条件修改不能这样用'
 } as const;
 

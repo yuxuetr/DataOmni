@@ -1946,8 +1946,19 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     （库里确实没有生成集合）、切回查询恢复计数，中英文都看过。
     **不做**：导出聚合结果（没有消费者；要的话复用 `export_to_file` 换成 aggregate 游标即可）；
     管道编辑器的高亮与补全（和文档编辑框同一个理由：裁判只有后端解析器一个）。
-  - 还没做：mongosh 命令、
-    `mongodb+srv://`（没有能验证它的 Atlas 环境，做了也验不了，先不做）。
+  - **`mongodb+srv://` 已落地**（2026-09-25）：表单上「按 SRV 记录连接」，存在 `options.srv`
+    （只有 MongoDB 认它，不给别的库的配置多一格）。解析交给驱动按规范做（SRV + TXT、记录必须
+    与名字同域、TXT 的 `replicaSet` / `authSource` / `loadBalanced`）；不直连——SRV 给的是一组
+    成员。认证库空着让 TXT 定，填了以填的为准。TLS 照表单档位；勾上时「不加密」升到完整校验。
+    隧道与 SRV 互斥，后端在建隧道之前就拒（`MONGO_SRV_WITH_TUNNEL`）；网络诊断对 SRV 不出现。
+    **「没有 Atlas 验不了」这个判断是错的**：驱动规范测试用的公网记录 `test*.test.build.10gen.cc`
+    指向 `localhost.test.build.10gen.cc`（127.0.0.1）。在 cu 上起一个单成员副本集 `repl0`、成员名
+    就叫 `localhost.test.build.10gen.cc:27017`（`dataomni-mongo-rs`，127.0.0.1:37018），转发到
+    本机 27017，就是 Atlas 的形状。真库用例 3 条（共 26 条）：`test1`（两条记录、一台没人听）与
+    `test3` 连上；`test5` 的 TXT 写 `authSource=thisDB`——空着被拒、填 `admin` 连上；`test4`（无
+    记录）与 `test14`（指向别的域）报 `MONGO_SRV_LOOKUP_FAILED`。反向验过：SRV 也直连 → `test1`
+    红（第一版只用 `test3` 单条记录时这个变异是绿的，单台直连也连得上）；不带填的认证库 → 红。
+  - 还没做：mongosh 命令、客户端证书。
 - [ ] Redis 使用键空间、类型和值浏览模型
 - [ ] Neo4j 使用 Cypher 和图结果模型
 - [ ] Elasticsearch 使用索引、Mapping 和 Query DSL 模型
