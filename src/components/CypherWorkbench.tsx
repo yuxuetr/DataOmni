@@ -7,7 +7,7 @@ import { cypher } from '@codemirror/legacy-modes/mode/cypher';
 import { oneDark } from '@codemirror/theme-one-dark';
 import type { EditorView } from '@codemirror/view';
 import { clsx } from 'clsx';
-import { AlertCircle, Loader2, Play, X } from 'lucide-react';
+import { AlertCircle, Loader2, Play, Plus, X } from 'lucide-react';
 import type { ConnectionProfile } from '../contracts/connection';
 import { selectActiveSqlDocument, useQueryStore } from '../stores/queryStore';
 import { useLanguageStore } from '../stores/languageStore';
@@ -33,7 +33,15 @@ import {
 import { formatCypherValue, type CypherValue } from '../utils/cypherValue';
 import { hasGraphValues } from '../utils/cypherGraph';
 import { CypherGraphView } from './CypherGraphView';
-import type { StatementRisk } from '../utils/statementRisk';
+import { CypherEntityEditor } from './CypherEntityEditor';
+import {
+  degreeStatement,
+  deleteStatement,
+  removeEntity,
+  replaceEntity,
+  type EditableEntity
+} from '../utils/cypherEdit';
+import { requiresConfirmation, type StatementRisk } from '../utils/statementRisk';
 import type { TranslationKey } from '../i18n/translate';
 
 /** 与后端 `CypherResult` 一致 */
@@ -53,6 +61,20 @@ type CypherRun =
   | { id: number; statement: string; state: 'running' | 'skipped' }
   | { id: number; statement: string; state: 'done'; result: CypherResult; elapsedMs: number }
   | { id: number; statement: string; state: 'failed'; error: string };
+
+/** 看着的值，连同它是从哪个库查出来的：改它、删它要回到那个库上去 */
+interface Inspected {
+  value: CypherValue;
+  database: string | null;
+}
+
+/** 要写的一条：改的是哪个实体（`null` 是建节点）、在哪个库上 */
+interface EntityEdit {
+  statement: string;
+  labelsChanged: boolean;
+  target: EditableEntity | null;
+  database: string | null;
+}
 
 const COUNTER_KEYS: Record<string, TranslationKey> = {
   nodesCreated: 'cypher.counter.nodesCreated',
@@ -94,11 +116,21 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
   const markSchemaChanged = useAppStore((state) => state.markSchemaChanged);
   const resolvedTheme = useThemeStore((state) => state.resolved);
   const editorViewRef = useRef<EditorView | null>(null);
+  const resultsRef = useRef<HTMLDivElement | null>(null);
+  // 建出来的那一段接在最后，多半在看不到的地方：渲染出来之后滚到它
+  const scrollToRun = useRef<number | null>(null);
   const nextRunId = useRef(0);
   const [runs, setRuns] = useState<CypherRun[]>([]);
   const [running, setRunning] = useState(false);
   const [pending, setPending] = useState<{ statements: string[]; text: string; risk: StatementRisk } | null>(null);
-  const [inspecting, setInspecting] = useState<CypherValue | null>(null);
+  const [inspecting, setInspecting] = useState<Inspected | null>(null);
+  const [creating, setCreating] = useState(false);
+  // 每写成一次加一：编辑框换 `key`，草稿按改完的样子从头来
+  const [editRevision, setEditRevision] = useState(0);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [pendingEdit, setPendingEdit] = useState<{ edit: EntityEdit; risk: StatementRisk } | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<{ entity: EditableEntity; database: string | null; relationships: number } | null>(null);
   const editorPanel = useResizablePanel({
     storageKey: 'cypher-editor-height',
     defaultSize: 200,
@@ -124,7 +156,7 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
     const first = nextRunId.current;
     nextRunId.current += statements.length;
     setRuns(statements.map((statement, index) => ({ id: first + index, statement, state: 'running' })));
-    setInspecting(null);
+    closeInspector();
     setRunning(true);
     let wrote = false;
     for (const [index, statement] of statements.entries()) {
@@ -183,6 +215,134 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
     await execute(statements);
   };
 
+  const inspect = (value: CypherValue, database: string | null) => {
+    setInspecting({ value, database });
+    setCreating(false);
+    setEditError(null);
+  };
+
+  const closeInspector = () => {
+    setInspecting(null);
+    setCreating(false);
+    setEditError(null);
+  };
+
+  const inspectedEntity = inspecting?.value.kind === 'node' || inspecting?.value.kind === 'relationship' ? inspecting.value : null;
+
+  const patchRows = (patch: (rows: CypherValue[][]) => CypherValue[][]) => setRuns((previous) => previous.map((run) => (
+    run.state === 'done' ? { ...run, result: { ...run.result, rows: patch(run.result.rows) } } : run
+  )));
+
+  /** 编辑框里点了保存：改的是一个实体，建的是一个节点，按这两个等级过「危险语句确认」 */
+  const saveEntity = (statement: string, labelsChanged: boolean) => {
+    const edit: EntityEdit = creating
+      ? { statement, labelsChanged, target: null, database: null }
+      : { statement, labelsChanged, target: inspectedEntity, database: inspecting?.database ?? null };
+    if (!creating && !edit.target) return;
+    const risk: StatementRisk = edit.target ? 'scoped-write' : 'append';
+    if (requiresConfirmation(risk, connection.environment, confirmationPolicy)) {
+      setPendingEdit({ edit, risk });
+      return;
+    }
+    void writeEntity(edit);
+  };
+
+  /** 跑改或建的那一条，拿回来的样子换进结果里（建的另起一段） */
+  const writeEntity = async ({ statement, labelsChanged, target, database }: EntityEdit) => {
+    if (!connectionString) return;
+    setEditBusy(true);
+    setEditError(null);
+    const started = performance.now();
+    try {
+      const result = await invoke<CypherResult>('neo4j_run', {
+        connectionString,
+        database,
+        query: statement,
+        limit: 1,
+        timeoutMs: queryTimeoutMs
+      });
+      const written = result.rows[0]?.[0];
+      if (written?.kind !== 'node' && written?.kind !== 'relationship') {
+        setEditError(t('cypher.edit.gone'));
+        return;
+      }
+      if (target) {
+        patchRows((rows) => replaceEntity(rows, written));
+      } else {
+        const id = nextRunId.current++;
+        const elapsedMs = Math.round(performance.now() - started);
+        setRuns((previous) => [...previous, { id, statement, state: 'done', result, elapsedMs }]);
+        setCreating(false);
+        scrollToRun.current = id;
+      }
+      setInspecting({ value: written, database: result.summary.database ?? database });
+      setEditRevision((revision) => revision + 1);
+      if (labelsChanged) markSchemaChanged();
+    } catch (caught) {
+      setEditError(describeError(caught));
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
+  /** 删之前先数连着几条关系，确认框里说清楚要一起删掉多少 */
+  const askDelete = async () => {
+    const entity = inspectedEntity;
+    const database = inspecting?.database ?? null;
+    if (!entity || !connectionString) return;
+    if (entity.kind === 'relationship') {
+      setPendingDelete({ entity, database, relationships: 0 });
+      return;
+    }
+    setEditBusy(true);
+    setEditError(null);
+    try {
+      const result = await invoke<CypherResult>('neo4j_run', {
+        connectionString,
+        database,
+        query: degreeStatement(entity),
+        limit: 1,
+        timeoutMs: queryTimeoutMs
+      });
+      const count = result.rows[0]?.[0];
+      if (count?.kind !== 'integer') {
+        setEditError(t('cypher.edit.gone'));
+        return;
+      }
+      setPendingDelete({ entity, database, relationships: Number(count.value) });
+    } catch (caught) {
+      setEditError(describeError(caught));
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
+  const deleteEntity = async ({ entity, database, relationships }: { entity: EditableEntity; database: string | null; relationships: number }) => {
+    if (!connectionString) return;
+    setEditBusy(true);
+    setEditError(null);
+    try {
+      const result = await invoke<CypherResult>('neo4j_run', {
+        connectionString,
+        database,
+        query: deleteStatement(entity, relationships > 0),
+        limit: 1,
+        timeoutMs: queryTimeoutMs
+      });
+      if (result.summary.counters.length === 0) {
+        setEditError(t('cypher.edit.gone'));
+        return;
+      }
+      patchRows((rows) => removeEntity(rows, entity));
+      closeInspector();
+      markSchemaChanged();
+    } catch (caught) {
+      setEditError(describeError(caught));
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
   const runAll = () => void run(splitCypherStatements(sqlInput).map((statement) => statement.text));
 
   /** 有选区跑选区（里面可以有多条），没有就跑光标所在的那条 */
@@ -205,6 +365,14 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
     // 只在换了标签、内容到位时看一次
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId, sqlInput === '']);
+
+  useEffect(() => {
+    const section = resultsRef.current?.querySelector<HTMLElement>(`[data-run-id="${scrollToRun.current}"]`);
+    if (!section) return;
+    scrollToRun.current = null;
+    // 不用 scrollIntoView：它会连外层能滚的祖先一起滚
+    resultsRef.current?.scrollTo({ top: section.offsetTop });
+  }, [runs]);
 
   shortcuts.current = { runCurrent, runAll };
 
@@ -250,6 +418,19 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
               <option value={300000}>{t('editor.minutes', { count: 5 })}</option>
             </select>
           </label>
+          <button
+            type="button"
+            onClick={() => {
+              setInspecting(null);
+              setCreating(true);
+              setEditError(null);
+            }}
+            disabled={!connectionString}
+            className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover disabled:opacity-50"
+          >
+            <Plus size={14} />
+            <span>{t('cypher.newNode')}</span>
+          </button>
           <button
             type="button"
             onClick={runCurrent}
@@ -312,7 +493,7 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
         />
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
+      <div ref={resultsRef} className="relative min-h-0 flex-1 overflow-y-auto px-3 py-2">
         {runs.length === 0 && (
           <p className="text-sm text-fg-muted">
             {t('cypher.empty', { current: formatShortcut(SHORTCUTS.runCurrent), all: formatShortcut(SHORTCUTS.runAll) })}
@@ -323,27 +504,81 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
             key={run.id}
             run={run}
             showStatement={runs.length > 1}
-            selectedId={inspecting?.kind === 'node' || inspecting?.kind === 'relationship' ? inspecting.elementId : null}
-            onInspect={setInspecting}
+            selectedId={inspectedEntity?.elementId ?? null}
+            onInspect={inspect}
           />
         ))}
       </div>
 
-      {inspecting && (
+      {(creating || inspectedEntity) && (
+        // 高度固定：语句预览、提示随着输入出现消失时，输入框不在光标底下挪位置
+        <div className="h-80 max-h-[50%] shrink-0 overflow-y-auto border-t border-line bg-surface-sunken px-3 py-2">
+          <CypherEntityEditor
+            key={creating ? `new:${editRevision}` : `${inspectedEntity?.elementId}:${editRevision}`}
+            entity={creating ? null : inspectedEntity}
+            busy={editBusy}
+            error={editError}
+            onSave={saveEntity}
+            onDelete={() => void askDelete()}
+            onClose={closeInspector}
+          />
+        </div>
+      )}
+      {!creating && inspecting && !inspectedEntity && (
         <div className="max-h-[40%] shrink-0 overflow-y-auto border-t border-line bg-surface-sunken px-3 py-2">
           <div className="mb-1 flex items-center justify-between">
             <span className="text-xs font-medium text-fg-muted">{t('cypher.value')}</span>
-            <button type="button" onClick={() => setInspecting(null)} aria-label={t('common.close')} className="text-fg-muted hover:text-fg">
+            <button type="button" onClick={closeInspector} aria-label={t('common.close')} className="text-fg-muted hover:text-fg">
               <X size={14} />
             </button>
           </div>
-          {(inspecting.kind === 'node' || inspecting.kind === 'relationship') && (
-            <p className="mb-1 select-text font-mono text-xs text-fg-muted">{`elementId: ${inspecting.elementId}`}</p>
-          )}
           <pre className="select-text whitespace-pre-wrap break-all font-mono text-[13px] text-fg">
-            {formatCypherValue(inspecting)}
+            {formatCypherValue(inspecting.value)}
           </pre>
         </div>
+      )}
+
+      {pendingEdit && (
+        <DestructiveStatementPrompt
+          sql={pendingEdit.edit.statement}
+          risk={pendingEdit.risk}
+          statementCount={1}
+          connectionName={connection.name}
+          environment={connection.environment}
+          databaseLabel="Neo4j"
+          reversibility={{ kind: 'autocommit' }}
+          onConfirm={() => {
+            const { edit } = pendingEdit;
+            setPendingEdit(null);
+            void writeEntity(edit);
+          }}
+          onCancel={() => setPendingEdit(null)}
+        />
+      )}
+
+      {pendingDelete && (
+        <DestructiveStatementPrompt
+          sql={deleteStatement(pendingDelete.entity, pendingDelete.relationships > 0)}
+          risk="scoped-write"
+          statementCount={1}
+          connectionName={connection.name}
+          environment={connection.environment}
+          databaseLabel="Neo4j"
+          reversibility={{ kind: 'autocommit' }}
+          alwaysAsks
+          impacts={pendingDelete.entity.kind === 'node'
+            ? [
+              t('cypher.edit.impact.node', { node: formatCypherValue(pendingDelete.entity) }),
+              ...(pendingDelete.relationships > 0 ? [t('cypher.edit.impact.relationships', { count: pendingDelete.relationships })] : [])
+            ]
+            : [t('cypher.edit.impact.relationship', { relationship: formatCypherValue(pendingDelete.entity) })]}
+          onConfirm={() => {
+            const target = pendingDelete;
+            setPendingDelete(null);
+            void deleteEntity(target);
+          }}
+          onCancel={() => setPendingDelete(null)}
+        />
       )}
 
       {pending && (
@@ -377,11 +612,11 @@ function RunSection({
   run: CypherRun;
   showStatement: boolean;
   selectedId: string | null;
-  onInspect: (value: CypherValue) => void;
+  onInspect: (value: CypherValue, database: string | null) => void;
 }) {
   const t = useLanguageStore((state) => state.t);
   return (
-    <section className="mb-4">
+    <section className="mb-4" data-run-id={run.id}>
       {showStatement && (
         <p className="mb-1 truncate font-mono text-xs text-fg-muted" title={run.statement}>{run.statement}</p>
       )}
@@ -414,9 +649,10 @@ function ResultView({
   result: CypherResult;
   elapsedMs: number;
   selectedId: string | null;
-  onInspect: (value: CypherValue) => void;
+  onInspect: (value: CypherValue, database: string | null) => void;
 }) {
   const t = useLanguageStore((state) => state.t);
+  const inspect = (value: CypherValue) => onInspect(value, result.summary.database);
   const graphable = useMemo(() => hasGraphValues(result.rows), [result.rows]);
   // 有节点、关系的结果先看图
   const [view, setView] = useState<'graph' | 'table'>('graph');
@@ -458,7 +694,7 @@ function ResultView({
           {`${notification.title}：${notification.description}`}
         </p>
       ))}
-      {showGraph && <CypherGraphView rows={result.rows} selectedId={selectedId} onInspect={onInspect} />}
+      {showGraph && <CypherGraphView rows={result.rows} selectedId={selectedId} onInspect={inspect} />}
       {!showGraph && result.columns.length > 0 && (
         <div className="overflow-x-auto rounded-control border border-line">
           <table className="min-w-full border-collapse font-mono text-[13px]">
@@ -477,7 +713,7 @@ function ResultView({
                   {row.map((value, columnIndex) => (
                     <td
                       key={columnIndex}
-                      onClick={() => onInspect(value)}
+                      onClick={() => inspect(value)}
                       className={clsx(
                         'max-w-[32rem] cursor-pointer truncate border-b border-line px-2 py-1',
                         value.kind === 'null' ? 'italic text-fg-subtle' : 'text-fg'
