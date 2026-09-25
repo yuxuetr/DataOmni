@@ -139,6 +139,7 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_ES_RESPONSE_TOO_LARGE: 'error.backend.esResponseTooLarge',
   DATAOMNI_ES_REQUEST_INVALID: 'error.backend.esRequestInvalid',
   DATAOMNI_ES_SERVER_ERROR: 'error.backend.esServerError',
+  DATAOMNI_ES_NO_PERMISSION: 'error.backend.esNoPermission',
   DATAOMNI_REDIS_AUTH_FAILED: 'error.backend.redisAuthFailed',
   DATAOMNI_REDIS_AUTH_REQUIRED: 'error.backend.redisAuthRequired',
   DATAOMNI_REDIS_NO_PERMISSION: 'error.backend.redisNoPermission',

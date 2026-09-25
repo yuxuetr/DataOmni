@@ -37,6 +37,9 @@ pub const ES_TLS_FILE_INVALID: &str = "DATAOMNI_ES_TLS_FILE_INVALID";
 pub const ES_RESPONSE_TOO_LARGE: &str = "DATAOMNI_ES_RESPONSE_TOO_LARGE";
 /// 方法不认识，或路径不是以一个 `/` 开头的本服务端路径。冒号后面是原文
 pub const ES_REQUEST_INVALID: &str = "DATAOMNI_ES_REQUEST_INVALID";
+/// 这个账号没有列索引的权限（`_resolve/index` 回 403）。ES 的 `read` 就够，OpenSearch 的 `read`
+/// 不含 `indices:admin/resolve/index`。冒号后面是服务端那句原话
+pub const ES_NO_PERMISSION: &str = "DATAOMNI_ES_NO_PERMISSION";
 /// 服务端的回答读不懂（对象树那种自己要解析的地方）。冒号后面是原因
 pub const ES_SERVER_ERROR: &str = "DATAOMNI_ES_SERVER_ERROR";
 /// 连接串对应的连接不在（断开之后还有请求过来）
@@ -278,6 +281,9 @@ struct Named {
 /// 默认不含隐藏的——数据流的后备索引 `.ds-…` 与系统索引都是隐藏的
 pub async fn list_objects(pool: Arc<EsPool>, timeout: Duration) -> Result<Vec<EsObject>, String> {
   let (status, body) = pool.send(Method::GET, "/_resolve/index/*", None, timeout).await?;
+  if status == StatusCode::FORBIDDEN {
+    return Err(format!("{ES_NO_PERMISSION}: {}", error_reason(&body)));
+  }
   if !status.is_success() {
     return Err(format!("{ES_SERVER_ERROR}: HTTP {}: {}", status.as_u16(), error_reason(&body)));
   }
@@ -286,16 +292,21 @@ pub async fn list_objects(pool: Arc<EsPool>, timeout: Duration) -> Result<Vec<Es
   Ok(objects_of(resolved))
 }
 
+/// 点号开头的不进树：ES 把它们标成隐藏、本来就不在回答里；OpenSearch 的系统索引
+/// （`.opendistro_security`、`.plugins-ml-config`）没有这个标，会混在用户的索引里。
+/// ES 8 起用户也建不出不隐藏的点号索引，所以这一条在 ES 上不丢东西
 fn objects_of(resolved: Resolved) -> Vec<EsObject> {
   [("index", resolved.indices), ("alias", resolved.aliases), ("data-stream", resolved.data_streams)]
     .into_iter()
     .flat_map(|(kind, named)| {
-      named.into_iter().map(move |Named { name }| EsObject {
-        object_id: format!("{kind}:{name}"),
-        object_schema: String::new(),
-        object_name: name,
-        object_kind: kind,
-      })
+      named.into_iter().filter(|Named { name }| !name.starts_with('.')).map(
+        move |Named { name }| EsObject {
+          object_id: format!("{kind}:{name}"),
+          object_schema: String::new(),
+          object_name: name,
+          object_kind: kind,
+        },
+      )
     })
     .collect()
 }
@@ -445,6 +456,15 @@ mod tests {
       objects.iter().map(|object| (object.object_kind, object.object_name.as_str())).collect();
     assert_eq!(kinds, [("index", "books"), ("alias", "library"), ("data-stream", "logs-app-web")]);
     assert_eq!(objects[2].object_id, "data-stream:logs-app-web");
+
+    // OpenSearch 的系统索引不带 hidden 标，按名字挡掉
+    let opensearch: Resolved = serde_json::from_str(
+      r#"{"indices":[{"name":".opendistro_security","attributes":["open"]},{"name":"books","attributes":["open"]}]}"#,
+    )
+    .unwrap();
+    let names: Vec<_> =
+      objects_of(opensearch).into_iter().map(|object| object.object_name).collect();
+    assert_eq!(names, ["books"]);
   }
 
   #[test]

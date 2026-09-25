@@ -1400,6 +1400,8 @@ export const zh = {
   'es.timedOut': '服务端的搜索超时了，结果不全',
   'es.view.table': '表格',
   'es.view.json': 'JSON',
+  'es.view.aggs': '聚合',
+  'es.aggs.metrics': '指标',
   'es.tableCapped': '表格只画前 {shown} 行（共 {total} 行），全部在 JSON 里',
   'es.jsonCapped': '太长，只显示前 {shown} 个字符；复制拿到的是完整的',
   'es.copyJson': '复制 JSON',
@@ -1532,6 +1534,7 @@ export const zh = {
   'error.backend.esResponseTooLarge': '回答超过了 32 MB 的上限，没有读完：把 size 调小，或用 _source 只取要的字段',
   'error.backend.esRequestInvalid': '这条请求发不了（{detail}）：方法只能是 GET、POST、PUT、DELETE、HEAD，路径要以 / 开头、不能写主机',
   'error.backend.esServerError': 'Elasticsearch 的回答读不懂：{detail}',
+  'error.backend.esNoPermission': '这个账号没有列索引的权限，对象树列不出来（{detail}）。OpenSearch 的 read 不含 indices:admin/resolve/index，要再授予它；控制台里照样能查有权限的索引',
   'error.backend.mongoUpdateNotOperators': '「怎么改」要用 $set 这类操作符或者一条管道；写成一整个文档是替换，按条件修改不能这样用'
 } as const;
 

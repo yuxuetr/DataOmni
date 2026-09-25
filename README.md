@@ -61,6 +61,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 | Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机，不含集群 | 10 / 10（独立用例，`redis_smoke.rs`） |
 | Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例，不含集群路由 | 8 / 8（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |
 | Elasticsearch | 8.19、9.5 | HTTP（reqwest） | ⚠️ 单节点直连，不含 API Key 认证 | 6 / 6（独立用例，`elasticsearch_smoke.rs`，两个版本各跑一遍） |
+| OpenSearch | 3.8 | Elasticsearch（同一个连接类型） | ⚠️ 同上；只读账号列不出对象树 | 6 / 6（同一份用例，按服务端分支） |
 
 - **MariaDB**：JSON 列是 LONGTEXT 的别名，按文本显示与编辑，没有 JSON 专用
   编辑器；没有函数索引。
@@ -133,6 +134,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
   索引有结构页：Mapping 按路径摊平（对象、nested、多字段、运行时字段），参数原样列出，外加分片、副本与别名。
   搜索结果里点 `_id` 改或删这一份文档，带着读到的版本（`if_seq_no`），别处改过就不覆盖。
   对象树上右键删索引、删数据流（确认框写明现在有几份文档）。建索引、改别名在控制台里写。
+  聚合（`terms`、`date_histogram`……）另有表格：嵌套的桶展开成行，指标并成一张。OpenSearch 用同一个连接类型。
   详见 [用户手册](docs/user-manual.md#elasticsearch)。
   `EXPLAIN` 什么也不执行，不走确认。
   还没有的：在界面上建关系、集群路由（`neo4j://`）。

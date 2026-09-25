@@ -1389,6 +1389,8 @@ export const en: Translations = {
   'es.timedOut': 'The search timed out on the server; results are partial',
   'es.view.table': 'Table',
   'es.view.json': 'JSON',
+  'es.view.aggs': 'Aggregations',
+  'es.aggs.metrics': 'metrics',
   'es.tableCapped': 'The table shows the first {shown} of {total} rows; all of them are in the JSON',
   'es.jsonCapped': 'Too long: showing the first {shown} characters. Copying gets all of it',
   'es.copyJson': 'Copy JSON',
@@ -1521,5 +1523,6 @@ export const en: Translations = {
   'error.backend.esResponseTooLarge': 'The response is over the 32 MB limit and was not read: lower size, or use _source to fetch only the fields you need',
   'error.backend.esRequestInvalid': 'This request cannot be sent ({detail}): the method must be GET, POST, PUT, DELETE or HEAD, and the path must start with / and name no host',
   'error.backend.esServerError': 'Could not read the Elasticsearch response: {detail}',
+  'error.backend.esNoPermission': 'This account may not list indices, so the object tree is empty ({detail}). On OpenSearch, read does not include indices:admin/resolve/index — grant it as well; the console still works for the indices it can read',
   'error.backend.mongoUpdateNotOperators': 'The update must use operators such as $set, or a pipeline. A whole document is a replacement, which an update of matching documents cannot do'
 };

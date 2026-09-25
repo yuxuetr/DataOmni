@@ -45,6 +45,8 @@ import {
   type JsonValue
 } from '../utils/esJson';
 import type { StatementRisk } from '../utils/statementRisk';
+import type { TranslationKey } from '../i18n/translate';
+import { toAggTables, type AggTable } from '../utils/esAggregations';
 
 /** 与后端 `EsResponse` 一致 */
 interface EsResponse {
@@ -410,6 +412,55 @@ function RunSection({
   );
 }
 
+const VIEW_OPTIONS = ['table', 'aggs', 'json'] as const;
+type ResponseViewOption = (typeof VIEW_OPTIONS)[number];
+const VIEW_LABEL_KEYS: Record<ResponseViewOption, TranslationKey> = {
+  table: 'es.view.table',
+  aggs: 'es.view.aggs',
+  json: 'es.view.json'
+};
+
+/** 一个桶聚合一张表，指标聚合并成一张「名字 | 值」 */
+function AggTableView({ table, onInspect }: { table: AggTable; onInspect: (value: JsonValue) => void }) {
+  const t = useLanguageStore((state) => state.t);
+  const rows = table.rows.slice(0, MAX_UNVIRTUALIZED_ROWS);
+  return (
+    <div className="mb-3">
+      <p className="mb-1 font-mono text-xs text-fg-muted">{table.name ?? t('es.aggs.metrics')}</p>
+      <div className="overflow-x-auto rounded-control border border-line">
+        <table className="min-w-full border-collapse font-mono text-[13px]">
+          <thead className="bg-surface-sunken">
+            <tr>
+              {table.columns.map((column, index) => (
+                <th key={`${column}:${index}`} className="whitespace-nowrap border-b border-line px-2 py-1 text-left font-medium text-fg">{column}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, rowIndex) => (
+              <tr key={rowIndex} className="hover:bg-surface-hover">
+                {row.map((cell, columnIndex) => (
+                  <td
+                    key={columnIndex}
+                    onClick={() => cell !== MISSING && onInspect(cell)}
+                    className={clsx('max-w-[32rem] truncate border-b border-line px-2 py-1', cell === MISSING ? '' : 'cursor-pointer text-fg')}
+                    title={cell === MISSING ? undefined : formatJsonCell(cell)}
+                  >
+                    {cell === MISSING ? '' : formatJsonCell(cell)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {table.rows.length > rows.length && (
+        <p className="mt-1 text-xs text-fg-muted">{t('es.tableCapped', { shown: rows.length, total: table.rows.length })}</p>
+      )}
+    </div>
+  );
+}
+
 function StatusBadge({ status }: { status: number }) {
   return (
     <span
@@ -436,9 +487,14 @@ function ResponseView({
   const parsed = useMemo(() => parseJson(response.body), [response.body]);
   const table = useMemo(() => toEsTable(parsed), [parsed]);
   const pretty = useMemo(() => (parsed === null ? response.body : stringifyJson(parsed, 2)), [parsed, response.body]);
-  const [chosen, setView] = useState<'table' | 'json' | null>(null);
+  const aggTables = useMemo(() => toAggTables(parsed), [parsed]);
+  const [chosen, setView] = useState<ResponseViewOption | null>(null);
   const [copied, setCopied] = useState(false);
-  const view = chosen ?? (table && table.rows.length > 0 ? 'table' : 'json');
+  const views = VIEW_OPTIONS.filter((option) => (
+    option === 'json' || (option === 'table' ? table !== null : aggTables.length > 0)
+  ));
+  // 有命中先看命中；`size: 0` 只要聚合的，先看聚合
+  const view = chosen ?? (table && table.rows.length > 0 ? 'table' : aggTables.length > 0 ? 'aggs' : 'json');
   const search = searchFacts(parsed);
   const facts = [
     search?.total ? t(search.atLeast ? 'es.hitsAtLeast' : 'es.hits', { total: search.total }) : null,
@@ -468,9 +524,9 @@ function ResponseView({
               <span>{copied ? t('common.copied') : t('es.copyJson')}</span>
             </button>
           )}
-          {table && (
+          {views.length > 1 && (
             <div className="flex overflow-hidden rounded-control border border-line text-xs" role="group">
-              {(['table', 'json'] as const).map((option) => (
+              {views.map((option) => (
                 <button
                   key={option}
                   type="button"
@@ -478,7 +534,7 @@ function ResponseView({
                   aria-pressed={view === option}
                   className={clsx('px-2 py-0.5', view === option ? 'bg-accent-soft text-accent' : 'text-fg-muted hover:bg-surface-hover')}
                 >
-                  {t(option === 'table' ? 'es.view.table' : 'es.view.json')}
+                  {t(VIEW_LABEL_KEYS[option])}
                 </button>
               ))}
             </div>
@@ -495,6 +551,9 @@ function ResponseView({
           )}
         </>
       )}
+      {view === 'aggs' && aggTables.map((aggTable, index) => (
+        <AggTableView key={`${aggTable.name ?? ''}:${index}`} table={aggTable} onInspect={onInspect} />
+      ))}
       {view === 'table' && table && (
         <>
           <div className="overflow-x-auto rounded-control border border-line">

@@ -447,7 +447,8 @@ Neo4j 连接用 Cypher 查询，结果按 Cypher 的写法显示。
 
 ## Elasticsearch
 
-Elasticsearch 连接用的是控制台：写法和 Kibana 的 Dev Tools 一样。
+Elasticsearch 连接用的是控制台：写法和 Kibana 的 Dev Tools 一样。OpenSearch 也用这个连接类型（3.8 上验过）；
+它的只读账号（只有 `read`）列不出对象树，要再授予 `indices:admin/resolve/index`，控制台照样能用。
 
 - **新建连接**：端口默认 9200。服务端关着认证的，用户名、口令都留空。8.0 起默认开着 HTTPS、
   证书是自签的：TLS 选「要求 TLS」只加密不校验；要校验就给 CA 证书（服务端自动生成的
@@ -484,6 +485,9 @@ Elasticsearch 连接用的是控制台：写法和 Kibana 的 Dev Tools 一样�
   搜索命中、ES|QL（`POST _query`）与 SQL（`POST _sql`）的列与值、`_cat/…?format=json` 另有表格：
   命中这张是 `_id`（跨索引时加 `_index`）、有分数时加 `_score`，再是 `_source` 的顶层字段，嵌套的写成一行 JSON。
   点一格在底下看完整的值。超过 2^53 的整数（雪花 id 之类）原样显示，不会被改掉。
+  带聚合的搜索另有「聚合」视图（没有命中、只要聚合的 `size: 0` 默认就是它）：每个桶聚合一张表，
+  一列键（日期直方图写成日期而不是毫秒）、一列 `doc_count`、子聚合的指标各一列；桶里又套着桶的按层展开，
+  `by_city` 下的 `by_day` 就是「城市 × 日期」一行一格。`sum`、`avg`、`stats` 这类指标并成一张「名字 | 值」。
   表格最多画 200 行、JSON 最多画 20 万个字符，多出来的在复制里。一次回答超过 32 MB 不读，
   请把 `size` 调小，或用 `_source` 只取要的字段。
 - **改文档**：搜索结果的表格里，`_id` 那一格是链接，点开是这份文档的编辑框。打开时重新读一次

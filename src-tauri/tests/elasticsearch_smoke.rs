@@ -12,8 +12,8 @@
 
 use dataomni_lib::models::ConnectionProfile;
 use dataomni_lib::services::elasticsearch::{
-  self as es, EsPool, EsRequest, EsResponse, EsTarget, ES_AUTH_FAILED, ES_REQUEST_INVALID,
-  ES_TIMEOUT, ES_UNREACHABLE,
+  self as es, EsPool, EsRequest, EsResponse, EsTarget, ES_AUTH_FAILED, ES_NO_PERMISSION,
+  ES_REQUEST_INVALID, ES_TIMEOUT, ES_UNREACHABLE,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -94,6 +94,11 @@ async fn ok(pool: &Arc<EsPool>, method: &str, path: &str, body: Option<&str>) ->
   serde_json::from_str(&response.body).unwrap_or(Value::Null)
 }
 
+/// `GET /` 的 `version.distribution`：OpenSearch 写着 `opensearch`，ES 没有这一项
+async fn is_opensearch(pool: &Arc<EsPool>) -> bool {
+  ok(pool, "GET", "/", None).await["version"]["distribution"] == json!("opensearch")
+}
+
 /// 删掉上次留下的同名索引（不存在时是 404，不算错）
 async fn fresh_index(pool: &Arc<EsPool>, index: &str) {
   send(pool, "DELETE", &format!("/{index}"), None, TIMEOUT).await.expect("delete leftover");
@@ -156,21 +161,23 @@ async fn a_reader_without_monitor_still_connects_and_sees_its_objects() {
   let admin = pool(&profile).await;
   fresh_index(&admin, "smoke_reader").await;
   ok(&admin, "PUT", "/smoke_reader", None).await;
-  ok(
-    &admin,
-    "PUT",
-    "/_security/role/smoke_reader",
-    Some(r#"{"indices":[{"names":["smoke_reader"],"privileges":["read"]}]}"#),
-  )
-  .await;
-  let password = format!("pw-{}", std::process::id());
-  ok(
-    &admin,
-    "PUT",
-    "/_security/user/smoke_reader",
-    Some(&json!({ "password": password, "roles": ["smoke_reader"] }).to_string()),
-  )
-  .await;
+  // 造一个只有这个索引读权限的用户：ES 与 OpenSearch 的权限 API 不是同一套
+  let password = format!("Pw-{}-reader!", std::process::id());
+  let opensearch = is_opensearch(&admin).await;
+  if opensearch {
+    let role =
+      r#"{"index_permissions":[{"index_patterns":["smoke_reader"],"allowed_actions":["read"]}]}"#;
+    ok(&admin, "PUT", "/_plugins/_security/api/roles/smoke_reader", Some(role)).await;
+    let user = json!({ "password": password }).to_string();
+    ok(&admin, "PUT", "/_plugins/_security/api/internalusers/smoke_reader", Some(&user)).await;
+    let mapping = r#"{"users":["smoke_reader"]}"#;
+    ok(&admin, "PUT", "/_plugins/_security/api/rolesmapping/smoke_reader", Some(mapping)).await;
+  } else {
+    let role = r#"{"indices":[{"names":["smoke_reader"],"privileges":["read"]}]}"#;
+    ok(&admin, "PUT", "/_security/role/smoke_reader", Some(role)).await;
+    let user = json!({ "password": password, "roles": ["smoke_reader"] }).to_string();
+    ok(&admin, "PUT", "/_security/user/smoke_reader", Some(&user)).await;
+  }
 
   let mut reader = profile.clone();
   reader.username = "smoke_reader".to_string();
@@ -179,16 +186,31 @@ async fn a_reader_without_monitor_still_connects_and_sees_its_objects() {
   let reader = pool(&reader).await;
   let root = send(&reader, "GET", "/", None, TIMEOUT).await.expect("root");
   assert_eq!(root.status, 403, "{}", root.body);
-  let names: Vec<String> = es::list_objects(Arc::clone(&reader), TIMEOUT)
-    .await
-    .expect("list")
-    .into_iter()
-    .map(|object| format!("{}:{}", object.object_kind, object.object_name))
-    .collect();
-  assert_eq!(names, ["index:smoke_reader"]);
+  let listed = es::list_objects(Arc::clone(&reader), TIMEOUT).await;
+  if opensearch {
+    // OpenSearch 的 read 不含 indices:admin/resolve/index：树列不出来，要说清楚是权限，不是回答读不懂
+    let error = listed.err().unwrap_or_default();
+    assert!(error.starts_with(ES_NO_PERMISSION), "{error}");
+  } else {
+    let names: Vec<String> = listed
+      .expect("list")
+      .into_iter()
+      .map(|object| format!("{}:{}", object.object_kind, object.object_name))
+      .collect();
+    assert_eq!(names, ["index:smoke_reader"]);
+  }
+  // 控制台照样能查它有权限的索引
+  let search = send(&reader, "GET", "/smoke_reader/_search", None, TIMEOUT).await.expect("search");
+  assert_eq!(search.status, 200, "{}", search.body);
 
-  ok(&admin, "DELETE", "/_security/user/smoke_reader", None).await;
-  ok(&admin, "DELETE", "/_security/role/smoke_reader", None).await;
+  if opensearch {
+    for kind in ["rolesmapping", "internalusers", "roles"] {
+      ok(&admin, "DELETE", &format!("/_plugins/_security/api/{kind}/smoke_reader"), None).await;
+    }
+  } else {
+    ok(&admin, "DELETE", "/_security/user/smoke_reader", None).await;
+    ok(&admin, "DELETE", "/_security/role/smoke_reader", None).await;
+  }
   fresh_index(&admin, "smoke_reader").await;
 }
 
