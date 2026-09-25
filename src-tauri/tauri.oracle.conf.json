@@ -7,6 +7,9 @@
     "linux": {
       "deb": {
         "depends": ["libaio1 | libaio1t64"]
+      },
+      "rpm": {
+        "depends": ["libaio"]
       }
     }
   }
