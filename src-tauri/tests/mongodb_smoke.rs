@@ -618,3 +618,173 @@ async fn a_cancelled_export_leaves_no_file_behind() {
   assert!(!path.exists());
   assert!(!mongodb_part_path(&path).exists());
 }
+
+fn import_file(name: &str, text: &str) -> std::path::PathBuf {
+  let path = export_path(name);
+  std::fs::write(&path, text).expect("write import file");
+  path
+}
+
+async fn import(
+  client: &Client,
+  collection: &str,
+  mode: mongo::ImportMode,
+  path: &std::path::Path,
+) -> Result<dataomni_lib::services::csv_import::ImportSummary, String> {
+  mongo::import_from_file(
+    client,
+    DATABASE,
+    collection,
+    mode,
+    path,
+    &mut |_| {},
+    &mut || false,
+    &mut || false,
+  )
+  .await
+  .map_err(|error| error.message)
+}
+
+/// 导出的文件原样导回另一个集合，一模一样，类型也算；坏行和重复的 `_id` 按文件里的
+/// 行号记下，同一批的其余照常进去
+#[tokio::test]
+async fn an_exported_file_imports_back_and_bad_lines_are_named_by_line() {
+  let Some(client) = client().await else { return };
+  let source = fresh_collection(&client, "smoke_import_source").await;
+  let stored: Vec<Document> = (0..30)
+    .map(|n| {
+      mongo_shell::parse_document(&format!(
+        "{{ n: {n}, long: Long('{n}'), decimal: Decimal128('1.50'), \
+         at: ISODate('2024-01-05T12:30:45.123Z'), tags: ['a', {{ deep: null }}] }}"
+      ))
+      .expect("document")
+    })
+    .collect();
+  source.insert_many(stored).await.expect("insert");
+  let exported = export_path("import-roundtrip");
+  mongo::export_to_file(
+    &client,
+    DATABASE,
+    "smoke_import_source",
+    Document::new(),
+    doc! { "n": 1 },
+    mongo::ExtendedJson::Canonical,
+    &exported,
+    &mut |_| {},
+    &mut || false,
+  )
+  .await
+  .expect("export");
+
+  let target = fresh_collection(&client, "smoke_import_target").await;
+  let summary = import(&client, "smoke_import_target", mongo::ImportMode::Insert, &exported)
+    .await
+    .expect("import");
+  assert_eq!((summary.rows_read, summary.rows_inserted, summary.rows_failed), (30, 30, 0));
+  let expected: Vec<Document> = futures_util::TryStreamExt::try_collect(
+    source.find(doc! {}).sort(doc! { "n": 1 }).await.expect("find"),
+  )
+  .await
+  .expect("collect");
+  let imported: Vec<Document> = futures_util::TryStreamExt::try_collect(
+    target.find(doc! {}).sort(doc! { "n": 1 }).await.expect("find"),
+  )
+  .await
+  .expect("collect");
+  assert_eq!(imported, expected);
+
+  // 第 2 行重复了已有的 `_id`，第 3 行是空行，第 4 行不是 JSON，第 5 行是个数组
+  let first_line = std::fs::read_to_string(&exported).expect("file");
+  let first_line = first_line.lines().next().expect("a line");
+  let messy = import_file(
+    "import-messy",
+    &format!("{{\"n\": 100}}\n{first_line}\n\n{{n: 1}}\n[1, 2]\n{{\"n\": 101}}\n"),
+  );
+  let summary = import(&client, "smoke_import_target", mongo::ImportMode::Insert, &messy)
+    .await
+    .expect("import");
+  assert_eq!((summary.rows_read, summary.rows_inserted, summary.rows_failed), (5, 2, 3));
+  let lines: Vec<u64> = summary.errors.iter().map(|error| error.line).collect();
+  assert_eq!(lines, [4, 5, 2], "parse errors are found while reading, the duplicate on write");
+  assert!(summary.errors[2].message.contains("E11000"), "{}", summary.errors[2].message);
+  assert!(summary.errors[0].message.starts_with(mongo::MONGO_IMPORT_LINE_INVALID));
+  assert_eq!(summary.errors[1].values, ["[1, 2]"]);
+  assert_eq!(target.count_documents(doc! {}).await.expect("count"), 32);
+  for path in [&exported, &messy] {
+    std::fs::remove_file(path).ok();
+  }
+}
+
+/// upsert 按 `_id` 整份替换，没有的新增；没带 `_id` 的照样新增
+#[tokio::test]
+async fn upsert_replaces_by_id_and_inserts_the_rest() {
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_import_upsert").await;
+  collection
+    .insert_many([
+      doc! { "_id": 1, "name": "old", "extra": true },
+      doc! { "_id": 2, "name": "kept" },
+    ])
+    .await
+    .expect("insert");
+  let path = import_file(
+    "import-upsert",
+    "{\"_id\": 1, \"name\": \"new\"}\n{\"_id\": 3, \"name\": \"added\"}\n{\"name\": \"no id\"}\n",
+  );
+  let summary =
+    import(&client, "smoke_import_upsert", mongo::ImportMode::Upsert, &path).await.expect("import");
+  assert_eq!((summary.rows_read, summary.rows_inserted, summary.rows_failed), (3, 3, 0));
+  let one = collection.find_one(doc! { "_id": 1 }).await.expect("find").expect("exists");
+  assert_eq!(one, doc! { "_id": 1, "name": "new" }, "replaced whole, not merged");
+  assert_eq!(collection.count_documents(doc! {}).await.expect("count"), 4);
+  let no_id = collection.find_one(doc! { "name": "no id" }).await.expect("find").expect("exists");
+  assert!(
+    matches!(no_id.get("_id"), Some(mongodb::bson::Bson::ObjectId(_))),
+    "a document without _id gets a fresh ObjectId, not null: {no_id:?}"
+  );
+
+  // 同一个文件用 insert 再来一遍：带 `_id` 的两行都撞上
+  let summary =
+    import(&client, "smoke_import_upsert", mongo::ImportMode::Insert, &path).await.expect("import");
+  assert_eq!((summary.rows_inserted, summary.rows_failed), (1, 2));
+  std::fs::remove_file(&path).ok();
+}
+
+/// `--jsonArray` 的文件明确拒绝，而不是把整个数组当成一行坏数据
+#[tokio::test]
+async fn a_json_array_file_is_refused_up_front() {
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_import_array").await;
+  let path = import_file("import-array", "[\n{\"n\": 1},\n{\"n\": 2}\n]\n");
+  let error = import(&client, "smoke_import_array", mongo::ImportMode::Insert, &path)
+    .await
+    .expect_err("refused");
+  assert_eq!(error, mongo::MONGO_IMPORT_JSON_ARRAY);
+  assert_eq!(collection.count_documents(doc! {}).await.expect("count"), 0);
+  std::fs::remove_file(&path).ok();
+}
+
+/// 取消在批与批之间生效：已经写进去的那一批留着，后面的不再写
+#[tokio::test]
+async fn a_cancelled_import_stops_after_the_batch_in_flight() {
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_import_cancel").await;
+  let text: String = (0..2500).map(|n| format!("{{\"n\": {n}}}\n")).collect();
+  let path = import_file("import-cancel", &text);
+  let summary = mongo::import_from_file(
+    &client,
+    DATABASE,
+    "smoke_import_cancel",
+    mongo::ImportMode::Insert,
+    &path,
+    &mut |_| {},
+    &mut || true,
+    &mut || false,
+  )
+  .await
+  .expect("import");
+  assert!(summary.cancelled);
+  assert_eq!(summary.rows_inserted, 1000);
+  assert_eq!(collection.count_documents(doc! {}).await.expect("count"), 1000);
+  std::fs::remove_file(&path).ok();
+}

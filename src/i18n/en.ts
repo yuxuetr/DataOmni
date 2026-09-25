@@ -1167,6 +1167,18 @@ export const en: Translations = {
   'mongo.export.canonicalHint': 'Every value carries its type (e.g. {"$numberLong": "5"}), so mongoimport reads back exactly what was stored. Harder to read.',
   'mongo.export.fileHint': 'One document per line; mongoimport can import it directly. Not just this page: every matching document is read again from the server.',
   'mongo.export.choosePath': 'Choose location and export…',
+  'mongo.import': 'Import',
+  'mongo.import.file': 'File',
+  'mongo.import.chooseFile': 'Choose file…',
+  'mongo.import.noFile': 'None chosen yet',
+  'mongo.import.fileHint': 'JSON with one document per line — mongoexport\'s default output, in either the readable or the all-types form. JSON arrays (--jsonArray) are not supported.',
+  'mongo.import.mode': 'When the _id exists',
+  'mongo.import.insert': 'Insert only',
+  'mongo.import.upsert': 'Replace by _id',
+  'mongo.import.insertHint': 'A line whose _id is already in the collection is recorded as failed and the stored document is left alone; the rest are written. Same as mongoimport\'s default.',
+  'mongo.import.upsertHint': 'A document whose _id already exists is replaced whole by the one in the file (fields are not merged); the rest are inserted.',
+  'mongo.import.noTransaction': 'Not in a transaction: if you cancel or it fails midway, the documents already written stay in the collection.',
+  'mongo.import.start': 'Start import',
   'mongo.closeDocument': 'Close',
   'error.backend.mongoSyntax': 'Syntax error near {detail} (line:column)',
   'error.backend.mongoUnknownFunction': 'Unknown function {detail}. Available: ObjectId, ISODate, Long, Int32, Double, Decimal128, UUID, BinData, Timestamp, MinKey, MaxKey',
@@ -1180,5 +1192,7 @@ export const en: Translations = {
   'error.backend.mongoDocumentGone': 'This document no longer exists ({detail}); it may have just been deleted elsewhere. Refresh to check.',
   'error.backend.mongoDocumentChanged': 'Document {detail} was changed elsewhere after you opened it, so it was not overwritten. Copy your edits, refresh, and edit again.',
   'error.backend.mongoIdChanged': 'The _id cannot be changed (it was {detail}). To use a different _id, insert a new document and delete this one.',
-  'error.backend.mongoNoSql': 'SQL cannot be run on a MongoDB connection'
+  'error.backend.mongoNoSql': 'SQL cannot be run on a MongoDB connection',
+  'error.backend.mongoImportJsonArray': 'This file is a JSON array (the output of mongoexport --jsonArray). Only files with one document per line can be read here: export again without --jsonArray.',
+  'error.backend.mongoImportLineInvalid': 'This line is not a document: {detail}'
 };

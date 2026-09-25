@@ -67,6 +67,7 @@ pub fn run() {
       mongodb_delete_document,
       mongodb_collection_structure,
       mongodb_export_to_file,
+      mongodb_import_file,
       close_mongodb,
       // 数据库操作命令
       execute_query,

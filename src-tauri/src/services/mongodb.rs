@@ -13,6 +13,10 @@
 //!   改文档时编辑的，都是这一种，而且往返不丢类型。
 
 use crate::models::{ConnectionProfile, TlsMode};
+use crate::services::csv_import::{
+  ImportProgress, ImportRowError, ImportSummary, FILE_OPEN_FAILED, FILE_READ_FAILED,
+  MAX_RECORDED_ERRORS, PAUSE_POLL,
+};
 use crate::services::export_writer::{
   part_path_for, ExportProgress, ExportSummary, PartFile, DIRECTORY_MISSING, EXPORT_CANCELLED,
   EXPORT_CANCELLED_CODE, EXPORT_WRITE_FAILED, FILE_CREATE_FAILED, FILE_RENAME_FAILED,
@@ -28,7 +32,7 @@ use mongodb::options::{ClientOptions, Credential, ServerAddress, Tls, TlsOptions
 use mongodb::results::CollectionType;
 use mongodb::Client;
 use serde::{Deserialize, Serialize};
-use std::io::{BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 use std::time::Duration;
 
@@ -568,6 +572,250 @@ pub async fn export_to_file(
   Ok(ExportSummary { rows_written, bytes_written, path: path.to_string_lossy().to_string() })
 }
 
+/// 文件以 `[` 开头：那是 `mongoexport --jsonArray` 的输出，这里只读每行一个文档的那种
+pub const MONGO_IMPORT_JSON_ARRAY: &str = "DATAOMNI_MONGO_IMPORT_JSON_ARRAY";
+/// 这一行读不成一个文档。数据是解析器的原话
+pub const MONGO_IMPORT_LINE_INVALID: &str = "DATAOMNI_MONGO_IMPORT_LINE_INVALID";
+
+/// 一次写命令最多带多少个文档、多少字节的 JSON。服务端一条命令的上限是 16 MB，
+/// 字节数按文件里的文字算，与 BSON 的大小差不多，留一半的余量
+const IMPORT_BATCH_DOCUMENTS: usize = 1000;
+const IMPORT_BATCH_BYTES: usize = 8 * 1024 * 1024;
+/// 出错的行带回去多少个字符给人看。一行可以是一个 16 MB 的文档
+const IMPORT_ERROR_PREVIEW_CHARS: usize = 200;
+
+/// `_id` 已经在库里的文档怎么办，即 mongoimport 的 `--mode`
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ImportMode {
+  /// 只新增：`_id` 已存在的那一行记成失败，库里那份不动。mongoimport 的默认
+  Insert,
+  /// 按 `_id` 整份替换，没有的新增。没带 `_id` 的文档照常新增
+  Upsert,
+}
+
+/// 读出来还没写的一行
+struct PendingDocument {
+  line: u64,
+  document: Document,
+  /// 出错时带回去的那一段原文
+  preview: String,
+}
+
+#[derive(Default)]
+struct ImportTally {
+  rows_read: u64,
+  rows_written: u64,
+  rows_failed: u64,
+  errors: Vec<ImportRowError>,
+  errors_truncated: bool,
+}
+
+impl ImportTally {
+  fn fail(&mut self, line: u64, message: String, preview: String) {
+    self.rows_failed += 1;
+    if self.errors.len() < MAX_RECORDED_ERRORS {
+      self.errors.push(ImportRowError { line, message, values: vec![preview] });
+    } else {
+      self.errors_truncated = true;
+    }
+  }
+
+  fn progress(&self) -> ImportProgress {
+    ImportProgress {
+      rows_read: self.rows_read,
+      rows_inserted: self.rows_written,
+      rows_failed: self.rows_failed,
+    }
+  }
+}
+
+/// 读一行 Extended JSON。relaxed 与 canonical 都认，和 mongoimport 一样
+fn parse_import_line(text: &str) -> Result<Document, String> {
+  let value: serde_json::Value =
+    serde_json::from_str(text).map_err(|error| format!("{MONGO_IMPORT_LINE_INVALID}: {error}"))?;
+  match Bson::try_from(value) {
+    Ok(Bson::Document(document)) => Ok(document),
+    Ok(other) => Err(format!("{MONGO_IMPORT_LINE_INVALID}: {}", mongo_shell::value_kind(&other))),
+    Err(error) => Err(format!("{MONGO_IMPORT_LINE_INVALID}: {error}")),
+  }
+}
+
+/// 把一个 mongoexport 格式的文件（每行一个文档）写进集合。
+///
+/// 分批发写命令，`ordered: false`：一个文档坏了（`_id` 重复、过不了校验规则）只记下
+/// 它自己，同一批的其余照常写进去，与 mongoimport 的做法一样。没有事务——取消或出错时
+/// 已经写进去的留在库里，`rows_inserted` 是真正写进去的数。
+///
+/// 发的是 `insert` / `update` 命令本身而不是驱动的 `insert_many`：两种模式的回答
+/// 都带 `writeErrors[].index`，才能对回文件里的行号
+#[allow(clippy::too_many_arguments)]
+pub async fn import_from_file(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  mode: ImportMode,
+  path: &Path,
+  progress: &mut (dyn FnMut(ImportProgress) + Send),
+  cancelled: &mut (dyn FnMut() -> bool + Send),
+  paused: &mut (dyn FnMut() -> bool + Send),
+) -> Result<ImportSummary, QueryError> {
+  let file = std::fs::File::open(path).map_err(|error| {
+    QueryError::message(format!("{FILE_OPEN_FAILED}: {} · {error}", path.display()))
+  })?;
+  let mut reader = BufReader::new(file);
+  let database = client.database(database);
+
+  let mut tally = ImportTally::default();
+  let mut batch: Vec<PendingDocument> = Vec::new();
+  let mut batch_bytes = 0usize;
+  let mut buffer = String::new();
+  let mut line = 0u64;
+  let mut was_cancelled = false;
+  let mut last_report = std::time::Instant::now();
+  loop {
+    buffer.clear();
+    let read = reader
+      .read_line(&mut buffer)
+      .map_err(|error| QueryError::message(format!("{FILE_READ_FAILED}: {error}")))?;
+    if read == 0 {
+      break;
+    }
+    line += 1;
+    let text = buffer.trim();
+    if text.is_empty() {
+      continue;
+    }
+    if tally.rows_read == 0 && text.starts_with('[') {
+      return Err(QueryError::message(MONGO_IMPORT_JSON_ARRAY));
+    }
+    tally.rows_read += 1;
+    let preview: String = text.chars().take(IMPORT_ERROR_PREVIEW_CHARS).collect();
+    match parse_import_line(text) {
+      Ok(document) => {
+        batch_bytes += text.len();
+        batch.push(PendingDocument { line, document, preview });
+      }
+      Err(message) => tally.fail(line, message, preview),
+    }
+    if batch.len() < IMPORT_BATCH_DOCUMENTS && batch_bytes < IMPORT_BATCH_BYTES {
+      continue;
+    }
+
+    write_import_batch(&database, collection, mode, std::mem::take(&mut batch), &mut tally).await?;
+    batch_bytes = 0;
+    if cancelled() {
+      was_cancelled = true;
+      break;
+    }
+    while paused() {
+      if cancelled() {
+        was_cancelled = true;
+        break;
+      }
+      tokio::time::sleep(PAUSE_POLL).await;
+    }
+    if was_cancelled {
+      break;
+    }
+    if last_report.elapsed() >= PROGRESS_INTERVAL {
+      last_report = std::time::Instant::now();
+      progress(tally.progress());
+    }
+  }
+  if !was_cancelled && !batch.is_empty() {
+    write_import_batch(&database, collection, mode, batch, &mut tally).await?;
+  }
+
+  progress(tally.progress());
+  Ok(ImportSummary {
+    rows_read: tally.rows_read,
+    rows_inserted: tally.rows_written,
+    rows_failed: tally.rows_failed,
+    errors: tally.errors,
+    errors_truncated: tally.errors_truncated,
+    rolled_back: false,
+    cancelled: was_cancelled,
+  })
+}
+
+/// 发一批。命令本身失败（没有权限、连接断了）就停下整个导入：下一批只会以同样的
+/// 原因失败；单个文档的失败在回答的 `writeErrors` 里，按下标记到行上
+async fn write_import_batch(
+  database: &mongodb::Database,
+  collection: &str,
+  mode: ImportMode,
+  batch: Vec<PendingDocument>,
+  tally: &mut ImportTally,
+) -> Result<(), QueryError> {
+  let mut lines = Vec::with_capacity(batch.len());
+  let mut documents = Vec::with_capacity(batch.len());
+  for pending in batch {
+    lines.push((pending.line, pending.preview));
+    documents.push(pending.document);
+  }
+  let command = match mode {
+    ImportMode::Insert => doc! { "insert": collection, "documents": documents, "ordered": false },
+    ImportMode::Upsert => {
+      let updates: Vec<Document> = documents
+        .into_iter()
+        .map(|document| {
+          // 没有 `_id` 就按不出「同一个」，先给它一个，结果就是新增
+          let document = if document.contains_key("_id") {
+            document
+          } else {
+            let mut with_id = doc! { "_id": mongodb::bson::oid::ObjectId::new() };
+            with_id.extend(document);
+            with_id
+          };
+          let id = document.get("_id").cloned().unwrap_or(Bson::Null);
+          doc! { "q": { "_id": id }, "u": document, "upsert": true }
+        })
+        .collect();
+      doc! { "update": collection, "updates": updates, "ordered": false }
+    }
+  };
+  let reply = database
+    .run_command(command)
+    .await
+    .map_err(|error| QueryError::message(describe_error(error)))?;
+  if let Ok(concern) = reply.get_document("writeConcernError") {
+    return Err(QueryError::message(format!(
+      "{MONGO_SERVER_ERROR}: {}",
+      concern.get_str("errmsg").unwrap_or_default()
+    )));
+  }
+
+  if let Ok(write_errors) = reply.get_array("writeErrors") {
+    for error in write_errors.iter().filter_map(Bson::as_document) {
+      let index = reply_integer(error, "index");
+      let Some((line, preview)) = usize::try_from(index).ok().and_then(|index| lines.get(index))
+      else {
+        continue;
+      };
+      let message = format!(
+        "{MONGO_SERVER_ERROR}: {} (code {})",
+        error.get_str("errmsg").unwrap_or_default(),
+        reply_integer(error, "code")
+      );
+      tally.fail(*line, message, preview.clone());
+    }
+  }
+  // `n` 在 update 里是「匹配到的加新增的」，正好是写进去的文档数
+  tally.rows_written += u64::try_from(reply_integer(&reply, "n")).unwrap_or(0);
+  Ok(())
+}
+
+/// 服务端回答里的整数可能是 Int32 也可能是 Int64
+fn reply_integer(document: &Document, key: &str) -> i64 {
+  match document.get(key) {
+    Some(Bson::Int32(value)) => i64::from(*value),
+    Some(Bson::Int64(value)) => *value,
+    Some(Bson::Double(value)) => *value as i64,
+    _ => 0,
+  }
+}
+
 /// 服务端的 `maxTimeMS` 管不到网络：一条被丢掉的连接上请求能一直挂着。本机再
 /// 套一层，多给两秒，让服务端的超时先报出来（它的消息更具体）
 async fn with_deadline<T>(
@@ -640,6 +888,21 @@ mod tests {
     );
     // 只有名字和键的（`_id_`）：选项是空串，不是 `{}`
     assert_eq!(index_row(&doc! { "v": 2, "key": { "_id": 1 }, "name": "_id_" }).options, "");
+  }
+
+  #[test]
+  fn an_import_line_reads_both_extended_json_forms_and_nothing_but_documents() {
+    let canonical = parse_import_line(r#"{"n":{"$numberLong":"5"},"d":{"$numberDouble":"3.0"}}"#);
+    assert_eq!(canonical, Ok(doc! { "n": 5_i64, "d": 3.0 }));
+    let relaxed = parse_import_line(r#"{"n":5,"at":{"$date":"2024-01-05T12:30:45.123Z"}}"#);
+    assert!(matches!(
+      relaxed.as_ref().map(|document| document.get("at")),
+      Ok(Some(Bson::DateTime(_)))
+    ));
+    for bad in ["[1, 2]", "42", "{n: 1}"] {
+      let error = parse_import_line(bad).expect_err(bad);
+      assert!(error.starts_with(MONGO_IMPORT_LINE_INVALID), "{bad}: {error}");
+    }
   }
 
   #[test]

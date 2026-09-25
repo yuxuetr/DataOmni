@@ -13,7 +13,7 @@ import { describeError } from '../utils/describeError';
 import { formatBytes } from '../utils/formatBytes';
 import { translateNow } from './languageStore';
 
-export interface ImportTaskPayload {
+export interface CsvImportTaskPayload {
   connectionId: string;
   schema: string | null;
   table: string;
@@ -24,6 +24,19 @@ export interface ImportTaskPayload {
   strategy: 'single-transaction' | 'per-batch';
   onError: 'abort' | 'skip';
 }
+
+/** 把 mongoexport 格式的文件（每行一个文档）导入集合 */
+export interface MongoImportTaskPayload {
+  mongo: {
+    connectionString: string;
+    database: string;
+    collection: string;
+    mode: 'insert' | 'upsert';
+  };
+  path: string;
+}
+
+export type ImportTaskPayload = CsvImportTaskPayload | MongoImportTaskPayload;
 
 export interface SqlExportTaskPayload {
   connectionId: string;
@@ -91,6 +104,14 @@ interface TaskState {
   clearFinished: () => void;
 }
 
+/**
+ * 中途停下时前面写进去的还在不在。CSV 单事务一退到底；分批提交与 MongoDB（没有
+ * 事务）都留着前面的批次，那一侧不给「重试」——再跑一遍就是重复写入
+ */
+function keepsEarlierBatches(payload: ImportTaskPayload): boolean {
+  return 'mongo' in payload || payload.strategy === 'per-batch';
+}
+
 function entry(level: TaskLogEntry['level'], text: string): TaskLogEntry {
   return { at: Date.now(), level, text };
 }
@@ -137,10 +158,16 @@ export const useTaskStore = create<TaskState>((set, get) => {
     });
 
     try {
-      const summary = await invoke<ImportSummary>('import_csv_file', {
-        onProgress,
-        request: { ...payload, importId: id }
-      });
+      // 与导出一样，两条命令共用取消、暂停与进度的形状
+      const summary = 'mongo' in payload
+        ? await invoke<ImportSummary>('mongodb_import_file', {
+          onProgress,
+          request: { ...payload.mongo, importId: id, path: payload.path }
+        })
+        : await invoke<ImportSummary>('import_csv_file', {
+          onProgress,
+          request: { ...payload, importId: id }
+        });
 
       // 行错误也可能是我们自己的码（字段数不够、值转不过去），和命令级的错误
       // 一样要翻译；数据库报的原话认不出码，原样留着
@@ -157,7 +184,8 @@ export const useTaskStore = create<TaskState>((set, get) => {
       }
       if (summary.rolledBack) {
         entries.push(entry('warn', translateNow('import.rolledBack')));
-      } else if (payload.strategy === 'per-batch' && summary.rowsFailed > 0) {
+      } else if (!('mongo' in payload) && payload.strategy === 'per-batch' && summary.rowsFailed > 0) {
+        // MongoDB 没有「批次」可言：坏的那几行跳过，其余本来就都写进去了
         entries.push(entry('info', translateNow('import.partiallyKept')));
       }
       entries.push(
@@ -186,7 +214,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       log(id, [entry('error', describeError(error, translateNow('import.failed')))]);
       // 单事务下报错意味着那个事务从没提交过，库里什么都没留下；分批提交
       // 则可能有批次已经进去了，而我们证明不了没有——那一侧不给「重试」
-      finish(id, 'failed', null, payload.strategy === 'per-batch');
+      finish(id, 'failed', null, keepsEarlierBatches(payload));
     }
   };
 

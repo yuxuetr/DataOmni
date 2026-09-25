@@ -1178,6 +1178,18 @@ export const zh = {
   'mongo.export.canonicalHint': '每个值都带类型（如 {"$numberLong": "5"}），mongoimport 读回来与原来一模一样，只是不太好读。',
   'mongo.export.fileHint': '每行一个文档，mongoimport 可以直接导入。不是当前这一页：会从服务端重新读出所有符合条件的文档。',
   'mongo.export.choosePath': '选择位置并导出…',
+  'mongo.import': '导入',
+  'mongo.import.file': '文件',
+  'mongo.import.chooseFile': '选择文件…',
+  'mongo.import.noFile': '还没有选',
+  'mongo.import.fileHint': '每行一个文档的 JSON，即 mongoexport 的默认输出，易读与保留全部类型两种写法都认。JSON 数组（--jsonArray）不支持。',
+  'mongo.import.mode': '_id 已存在时',
+  'mongo.import.insert': '只新增',
+  'mongo.import.upsert': '按 _id 覆盖',
+  'mongo.import.insertHint': '_id 已经在库里的那一行记成失败，库里那份不动；其余照常写进去。与 mongoimport 的默认一致。',
+  'mongo.import.upsertHint': '_id 已经在库里的，用文件里的整份替换（不是合并字段）；没有的新增。',
+  'mongo.import.noTransaction': '不在事务里：中途取消或出错时，已经写进去的文档会留在集合里。',
+  'mongo.import.start': '开始导入',
   'mongo.closeDocument': '关闭',
   'error.backend.mongoSyntax': '写法有误，位置在第 {detail}（行:列）附近',
   'error.backend.mongoUnknownFunction': '认不出 {detail}。能用的有 ObjectId、ISODate、Long、Int32、Double、Decimal128、UUID、BinData、Timestamp、MinKey、MaxKey',
@@ -1191,7 +1203,9 @@ export const zh = {
   'error.backend.mongoDocumentGone': '这个文档已经不在了（{detail}），可能刚被别处删掉。刷新看看。',
   'error.backend.mongoDocumentChanged': '文档 {detail} 在你打开之后被别处改过，没有覆盖。先复制你的改动，刷新后再改。',
   'error.backend.mongoIdChanged': '不能改 _id（原来是 {detail}）。要换 _id 就新建一个文档，再删掉这个。',
-  'error.backend.mongoNoSql': 'MongoDB 连接上不能执行 SQL'
+  'error.backend.mongoNoSql': 'MongoDB 连接上不能执行 SQL',
+  'error.backend.mongoImportJsonArray': '这个文件是一个 JSON 数组（mongoexport --jsonArray 的输出）。这里只读每行一个文档的文件：去掉 --jsonArray 重新导出即可。',
+  'error.backend.mongoImportLineInvalid': '这一行读不成一个文档：{detail}'
 } as const;
 
 export type TranslationKey = keyof typeof zh;

@@ -3,12 +3,15 @@
 //! 条件、排序、`_id` 都以 mongosh 写法的**文本**过来，在这里解析：解析器只有
 //! 一份，报错的位置对着用户输入的那段文字。
 
-use crate::commands::database_commands::{QueryCancellationState, TIMEOUT_OUT_OF_RANGE};
+use crate::commands::database_commands::{
+  ImportPauseState, QueryCancellationState, TIMEOUT_OUT_OF_RANGE,
+};
+use crate::services::csv_import::{ImportProgress, ImportSummary};
 use crate::services::export_writer::{ExportProgress, ExportSummary};
 use crate::services::mongo_shell;
 use crate::services::mongodb::{
-  self, CollectionEntry, ExtendedJson, FindRequest, MongoCollectionStructure, MongoFindPage,
-  MongoRegistry, MONGO_NOT_CONNECTED,
+  self, CollectionEntry, ExtendedJson, FindRequest, ImportMode, MongoCollectionStructure,
+  MongoFindPage, MongoRegistry, MONGO_NOT_CONNECTED,
 };
 use crate::services::query_error::QueryError;
 use ::mongodb::Client;
@@ -216,5 +219,50 @@ pub async fn mongodb_export_to_file(
   )
   .await;
   cancellation_state.finish(&request.export_id).await;
+  result
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MongoImportRequest {
+  connection_string: String,
+  import_id: String,
+  database: String,
+  collection: String,
+  mode: ImportMode,
+  path: String,
+}
+
+/// 把一个 mongoexport 格式的文件导入集合。取消、暂停与 CSV 导入共用
+/// `cancel_import` / `set_import_paused`
+#[tauri::command]
+pub async fn mongodb_import_file(
+  request: MongoImportRequest,
+  on_progress: Channel<ImportProgress>,
+  registry: State<'_, MongoRegistry>,
+  cancellation_state: State<'_, QueryCancellationState>,
+  pause_state: State<'_, ImportPauseState>,
+) -> Result<ImportSummary, QueryError> {
+  let client = client(&registry, &request.connection_string).map_err(QueryError::message)?;
+  let mut receiver =
+    cancellation_state.register(&request.import_id).await.map_err(QueryError::message)?;
+  let mut report = |progress| {
+    on_progress.send(progress).ok();
+  };
+  let mut cancelled = || !matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty));
+  let mut paused = || pause_state.paused_now(&request.import_id);
+  let result = mongodb::import_from_file(
+    &client,
+    &request.database,
+    &request.collection,
+    request.mode,
+    std::path::Path::new(&request.path),
+    &mut report,
+    &mut cancelled,
+    &mut paused,
+  )
+  .await;
+  cancellation_state.finish(&request.import_id).await;
+  pause_state.set(&request.import_id, false).await;
   result
 }

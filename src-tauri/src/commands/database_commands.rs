@@ -342,7 +342,13 @@ impl ImportPauseState {
     self.paused.lock().await.contains(import_id)
   }
 
-  async fn set(&self, import_id: &str, paused: bool) {
+  /// 导入循环里现问一次。`try_lock` 读不到就当作没暂停：宁可多写一批，也不要
+  /// 为了读一个布尔值把导入卡在这里
+  pub(crate) fn paused_now(&self, import_id: &str) -> bool {
+    self.paused.try_lock().map(|set| set.contains(import_id)).unwrap_or(false)
+  }
+
+  pub(crate) async fn set(&self, import_id: &str, paused: bool) {
     let mut set = self.paused.lock().await;
     if paused {
       set.insert(import_id.to_string());
@@ -432,10 +438,8 @@ pub async fn import_csv_file(
     on_progress.send(progress).ok();
   };
   let mut cancelled = || !matches!(receiver.try_recv(), Err(oneshot::error::TryRecvError::Empty));
-  // 暂停是个可以来回切的开关，只能现问。`try_lock` 读不到就当作没暂停：
-  // 宁可多写一批，也不要为了读一个布尔值把导入卡在这里
-  let mut paused =
-    || pause_state.paused.try_lock().map(|set| set.contains(&request.import_id)).unwrap_or(false);
+  // 暂停是个可以来回切的开关，只能现问
+  let mut paused = || pause_state.paused_now(&request.import_id);
 
   let result =
     csv_import::import_csv(pool, &request.import, &mut report, &mut cancelled, &mut paused).await;

@@ -62,7 +62,7 @@ const SQL_SERVER_MAX_VALUES_ROWS: usize = 1000;
 const PROGRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(120);
 
 /// 暂停时的轮询间隔。暂停是人按出来的，百毫秒的反应延迟看不出来。
-const PAUSE_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+pub(crate) const PAUSE_POLL: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

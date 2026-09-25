@@ -8,6 +8,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Download,
+  Upload,
   Plus,
   RefreshCw,
   Search
@@ -28,6 +29,7 @@ import { PLAIN_TEXT_INPUT } from './FormControls';
 import { MongoDocumentPanel } from './MongoDocumentPanel';
 import { useConfirmPrompt } from './ConfirmPrompt';
 import { MongoExportDialog } from './MongoExportDialog';
+import { MongoImportDialog } from './MongoImportDialog';
 
 interface MongoCollectionViewerProps {
   database: string;
@@ -88,6 +90,7 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
   const [panel, setPanel] = useState<DocumentPanelState>({ kind: 'closed' });
   const [panelDirty, setPanelDirty] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
   const { ask, prompt: confirmPrompt } = useConfirmPrompt();
   const selectedId = panel.kind === 'document' ? panel.id : null;
   const [documentText, setDocumentText] = useState<string | null>(null);
@@ -397,6 +400,16 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
               <span>{t('mongo.newDocument')}</span>
             </button>
           )}
+          {!readOnly && (
+            <button
+              onClick={() => setImporting(true)}
+              disabled={!connectionString}
+              className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg transition-colors hover:bg-surface-hover disabled:opacity-50"
+            >
+              <Upload size={14} />
+              <span>{t('mongo.import')}</span>
+            </button>
+          )}
           <button
             onClick={() => setExporting(true)}
             disabled={!connectionString}
@@ -659,6 +672,14 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
           sort={applied.sort}
           total={total}
           onClose={() => setExporting(false)}
+        />
+      )}
+      {importing && connectionString && (
+        <MongoImportDialog
+          connectionString={connectionString}
+          database={database}
+          collection={collection}
+          onClose={() => setImporting(false)}
         />
       )}
     </div>
