@@ -60,7 +60,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 | MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 31 / 31（独立用例，`mongodb_smoke.rs`） |
 | Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机，不含集群 | 10 / 10（独立用例，`redis_smoke.rs`） |
 | Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例，不含集群路由 | 8 / 8（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |
-| Elasticsearch | 8.19、9.5 | HTTP（reqwest） | ⚠️ 控制台与只读浏览，没有结构页与界面上的改 | 5 / 5（独立用例，`elasticsearch_smoke.rs`，两个版本各跑一遍） |
+| Elasticsearch | 8.19、9.5 | HTTP（reqwest） | ⚠️ 控制台与只读浏览，没有界面上的改 | 5 / 5（独立用例，`elasticsearch_smoke.rs`，两个版本各跑一遍） |
 
 - **MariaDB**：JSON 列是 LONGTEXT 的别名，按文本显示与编辑，没有 JSON 专用
   编辑器；没有函数索引。
@@ -130,7 +130,8 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
   Kibana Dev Tools：一行方法与路径，下面跟 JSON 请求体；`_bulk` 这类多份 JSON 按 NDJSON 发；依次发，
   出错或 4xx / 5xx 就停）。回答是状态码加排好版的 JSON，搜索命中、ES|QL / SQL 的列与值、
   `_cat?format=json` 另有表格；超过 2^53 的整数原样显示。会写的按方法与路径分级，过「危险语句确认」。
-  还没有的：Mapping 结构页、在结果里改文档、建删索引的界面（控制台里都能写）。
+  索引有结构页：Mapping 按路径摊平（对象、nested、多字段、运行时字段），参数原样列出，外加分片、副本与别名。
+  还没有的：在结果里改文档、建删索引的界面（控制台里都能写）。
   详见 [用户手册](docs/user-manual.md#elasticsearch)。
   `EXPLAIN` 什么也不执行，不走确认。
   还没有的：在界面上建关系、集群路由（`neo4j://`）。

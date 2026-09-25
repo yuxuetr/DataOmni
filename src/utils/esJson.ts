@@ -149,7 +149,7 @@ export function prettyBody(body: string): string {
   return parsed === null ? body : stringifyJson(parsed, 2);
 }
 
-function field(value: JsonValue | undefined, key: string): JsonValue | undefined {
+export function jsonField(value: JsonValue | undefined, key: string): JsonValue | undefined {
   return value?.kind === 'object' ? value.entries.find(([name]) => name === key)?.[1] : undefined;
 }
 
@@ -169,15 +169,15 @@ export interface EsTable {
  */
 export function toEsTable(value: JsonValue | null): EsTable | null {
   if (value === null) return null;
-  const hits = field(field(value, 'hits'), 'hits');
+  const hits = jsonField(jsonField(value, 'hits'), 'hits');
   if (hits?.kind === 'array') return hitsTable(hits.items);
 
   // ES|QL（`values`）与 SQL（`rows`）：`columns` 是 `{name, type}` 的列表
-  const columns = field(value, 'columns');
-  const rows = field(value, 'values') ?? field(value, 'rows');
+  const columns = jsonField(value, 'columns');
+  const rows = jsonField(value, 'values') ?? jsonField(value, 'rows');
   if (columns?.kind === 'array' && rows?.kind === 'array') {
     const names = columns.items.map((column) => {
-      const name = field(column, 'name');
+      const name = jsonField(column, 'name');
       return name?.kind === 'string' ? name.value : '';
     });
     return {
@@ -194,11 +194,11 @@ export function toEsTable(value: JsonValue | null): EsTable | null {
 }
 
 function hitsTable(hits: JsonValue[]): EsTable {
-  const indices = new Set(hits.map((hit) => formatJsonCell(field(hit, '_index') ?? { kind: 'null' })));
-  const scored = hits.some((hit) => field(hit, '_score')?.kind === 'number');
+  const indices = new Set(hits.map((hit) => formatJsonCell(jsonField(hit, '_index') ?? { kind: 'null' })));
+  const scored = hits.some((hit) => jsonField(hit, '_score')?.kind === 'number');
   const meta = [...(indices.size > 1 ? ['_index'] : []), '_id', ...(scored ? ['_score'] : [])];
   const sources = hits.map((hit) => {
-    const source = field(hit, '_source');
+    const source = jsonField(hit, '_source');
     return source?.kind === 'object' ? source.entries : [];
   });
   const body = objectsTable('hits', sources);
@@ -206,7 +206,7 @@ function hitsTable(hits: JsonValue[]): EsTable {
   return {
     source: 'hits',
     columns: [...meta, ...body.columns],
-    rows: hits.map((hit, index) => [...meta.map((name) => field(hit, name) ?? MISSING), ...body.rows[index]])
+    rows: hits.map((hit, index) => [...meta.map((name) => jsonField(hit, name) ?? MISSING), ...body.rows[index]])
   };
 }
 
@@ -230,14 +230,14 @@ function objectsTable(source: EsTable['source'], objects: Array<Array<[string, J
 
 /** 搜索回答里一眼要看的：命中总数（`relation: gte` 时是下限）、服务端耗时、是否超时 */
 export function searchFacts(value: JsonValue | null): { total: string | null; atLeast: boolean; tookMs: string | null; timedOut: boolean } | null {
-  const hits = field(value ?? undefined, 'hits');
+  const hits = jsonField(value ?? undefined, 'hits');
   if (!hits) return null;
-  const total = field(hits, 'total');
+  const total = jsonField(hits, 'total');
   // 7.x 起是 `{value, relation}`，更早（以及 `rest_total_hits_as_int`）是一个数
-  const count = total?.kind === 'number' ? total : field(total, 'value');
-  const relation = field(total, 'relation');
-  const took = field(value ?? undefined, 'took');
-  const timedOut = field(value ?? undefined, 'timed_out');
+  const count = total?.kind === 'number' ? total : jsonField(total, 'value');
+  const relation = jsonField(total, 'relation');
+  const took = jsonField(value ?? undefined, 'took');
+  const timedOut = jsonField(value ?? undefined, 'timed_out');
   return {
     total: count?.kind === 'number' ? count.text : null,
     atLeast: relation?.kind === 'string' && relation.value === 'gte',

@@ -41,8 +41,9 @@ export const OBJECT_MENU_ACTIONS: Record<DatabaseObjectKind, readonly ObjectMenu
   // 标签与关系类型没有结构页，也不给删：删的是节点与关系，要写 Cypher 说清楚删哪些
   label: ['open-data', 'copy-name'],
   'relationship-type': ['open-data', 'copy-name'],
-  // 索引的删除这一阶段不在右键里：`DELETE 索引` 连数据一起没，要在控制台里写出来（TODOs 4.3 第四阶段）
-  index: ['open-data', 'copy-name'],
+  // 索引的删除这一阶段不在右键里：`DELETE 索引` 连数据一起没，要在控制台里写出来（TODOs 4.3 第四阶段）。
+  // 别名与数据流背后是几个具体索引，Mapping 各有一份，结构页只给索引
+  index: ['open-data', 'open-structure', 'copy-name'],
   alias: ['open-data', 'copy-name'],
   'data-stream': ['open-data', 'copy-name'],
   view: ['open-data', 'view-definition', 'copy-name', 'drop'],

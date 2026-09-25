@@ -24,6 +24,7 @@ import { DatabaseType } from './contracts/connection';
 import { hasQueryEditor, speaksSql } from './contracts/databaseSupport';
 import { CypherWorkbench } from './components/CypherWorkbench';
 import { EsConsole } from './components/EsConsole';
+import { EsIndexStructureView } from './components/EsIndexStructureView';
 import { requestCypherAutorun } from './stores/cypherAutorun';
 import { ErDiagramView } from './components/ErDiagramView';
 import { WelcomeScreen } from './components/WelcomeScreen';
@@ -792,6 +793,11 @@ function App() {
     // Redis 的逻辑库同样开在这种标签里（table 那一格是 `db3`），换成键浏览页
     if (activeConnection.config.db_type === DatabaseType.Redis) {
       return <RedisKeyBrowser key={activeTab.id} database={redisDatabaseIndex(activeTab.object.table)} />;
+    }
+
+    // Elasticsearch 的索引只有结构页开在这种标签里（点开索引是一个控制台标签）
+    if (activeConnection.config.db_type === DatabaseType.Elasticsearch) {
+      return <EsIndexStructureView key={activeTab.id} index={activeTab.object.table} />;
     }
 
     // MongoDB 的集合开在同一种标签里（schema 那一格是库名），换一个浏览页：

@@ -26,8 +26,8 @@ describe('每种对象右键能做什么', () => {
     // 就是此前的视图：它的 SELECT 原文在界面上根本读不到
     // Redis 的逻辑库例外：它没有定义可看，它是什么就是它里面的键——打开它就是看它。
     // Neo4j 的标签与关系类型同理：没有 schema 定义，打开它就是看带它的节点与关系。
-    // Elasticsearch 的索引有 Mapping，结构页是第二阶段（TODOs 4.3）；那之前打开它就是搜它
-    const openIsTheDefinition = new Set(['keyspace', 'label', 'relationship-type', 'index', 'alias', 'data-stream']);
+    // Elasticsearch 的别名与数据流背后是几个具体索引，看定义要落到索引上（索引走结构页）
+    const openIsTheDefinition = new Set(['keyspace', 'label', 'relationship-type', 'alias', 'data-stream']);
     for (const kind of KINDS.filter((candidate) => !openIsTheDefinition.has(candidate))) {
       const actions = OBJECT_MENU_ACTIONS[kind];
       const paths = Number(actions.includes('open-structure')) + Number(actions.includes('view-definition'));
@@ -39,9 +39,9 @@ describe('每种对象右键能做什么', () => {
   });
 
   it('「打开结构」只给表', () => {
-    // 结构页是可编辑的编辑器，它不知道自己打开的是不是视图
+    // 结构页是可编辑的编辑器，它不知道自己打开的是不是视图。Elasticsearch 的索引有自己的结构页（Mapping）
     for (const kind of KINDS) {
-      expect(OBJECT_MENU_ACTIONS[kind].includes('open-structure'), kind).toBe(kind === 'table' || kind === 'collection');
+      expect(OBJECT_MENU_ACTIONS[kind].includes('open-structure'), kind).toBe(kind === 'table' || kind === 'collection' || kind === 'index');
     }
   });
 
