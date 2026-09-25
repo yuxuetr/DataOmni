@@ -18,6 +18,8 @@ import { takeCypherAutorun } from '../stores/cypherAutorun';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { PanelResizeHandle } from './PanelResizeHandle';
 import { DestructiveStatementPrompt } from './DestructiveStatementPrompt';
+import { EsDocumentEditor } from './EsDocumentEditor';
+import { documentAddress, type DocumentAddress } from '../utils/esDocument';
 import { appEditorTheme } from '../utils/editorTheme';
 import { runShortcutKeymap, type RunShortcutHandlers } from '../utils/runShortcutKeymap';
 import { editorPhrases } from '../utils/editorPhrases';
@@ -87,6 +89,8 @@ export function EsConsole({ connection }: EsConsoleProps) {
   const [running, setRunning] = useState(false);
   const [pending, setPending] = useState<{ requests: EsConsoleRequest[]; text: string; risk: StatementRisk } | null>(null);
   const [inspecting, setInspecting] = useState<JsonValue | null>(null);
+  // 点了命中的 `_id`：改的是哪一份，是哪一段结果里的（写完重发那一条）
+  const [editing, setEditing] = useState<{ address: DocumentAddress; runId: number } | null>(null);
   const editorPanel = useResizablePanel({
     storageKey: 'es-editor-height',
     defaultSize: 220,
@@ -113,6 +117,7 @@ export function EsConsole({ connection }: EsConsoleProps) {
     nextRunId.current += requests.length;
     setRuns(requests.map((request, index) => ({ id: first + index, request, state: 'running' })));
     setInspecting(null);
+    setEditing(null);
     setRunning(true);
     let wrote = false;
     const stopAfter = (id: number) => setRuns((previous) => previous.map((run) => (
@@ -151,6 +156,27 @@ export function EsConsole({ connection }: EsConsoleProps) {
     setRunning(false);
     // 建了、删了索引，对象树可能多了或少了：让它重新拉一遍
     if (wrote) markSchemaChanged();
+  };
+
+  /** 改了、删了一份文档之后，把列出它的那条搜索再发一次：看到的就是服务端现在的样子 */
+  const refreshRun = async (runId: number) => {
+    const target = runs.find((candidate) => candidate.id === runId);
+    if (!target || !connectionString) return;
+    const { request } = target;
+    try {
+      const response = await invoke<EsResponse>('elasticsearch_run', {
+        connectionString,
+        method: request.method,
+        path: request.path,
+        body: request.body,
+        ndjson: request.ndjson,
+        timeoutMs: queryTimeoutMs
+      });
+      setRuns((previous) => previous.map((run) => (run.id === runId ? { id: runId, request, state: 'done', response } : run)));
+    } catch (caught) {
+      const error = describeError(caught);
+      setRuns((previous) => previous.map((run) => (run.id === runId ? { id: runId, request, state: 'failed', error } : run)));
+    }
   };
 
   const run = (requests: EsConsoleRequest[], source: string) => {
@@ -283,9 +309,36 @@ export function EsConsole({ connection }: EsConsoleProps) {
             {t('es.empty', { current: formatShortcut(SHORTCUTS.runCurrent), all: formatShortcut(SHORTCUTS.runAll) })}
           </p>
         )}
-        {runs.map((run) => <RunSection key={run.id} run={run} onInspect={setInspecting} />)}
+        {runs.map((run) => (
+          <RunSection
+            key={run.id}
+            run={run}
+            onInspect={(value) => {
+              setEditing(null);
+              setInspecting(value);
+            }}
+            // 只有读的请求才能在写完之后重发一遍：写的那条再发一次就是再写一次
+            onEditDocument={classifyEsRisk(run.request.method, run.request.path) === 'read'
+              ? (address) => {
+                setInspecting(null);
+                setEditing({ address, runId: run.id });
+              }
+              : undefined}
+          />
+        ))}
       </div>
 
+      {editing && (
+        <div className="h-80 max-h-[50%] shrink-0 border-t border-line bg-surface-sunken px-3 py-2">
+          <EsDocumentEditor
+            key={`${editing.address.index}/${editing.address.id}`}
+            connection={connection}
+            address={editing.address}
+            onWritten={() => void refreshRun(editing.runId)}
+            onClose={() => setEditing(null)}
+          />
+        </div>
+      )}
       {inspecting && (
         <div className="max-h-[40%] shrink-0 overflow-y-auto border-t border-line bg-surface-sunken px-3 py-2">
           <div className="mb-1 flex items-center justify-between">
@@ -322,7 +375,15 @@ export function EsConsole({ connection }: EsConsoleProps) {
   );
 }
 
-function RunSection({ run, onInspect }: { run: EsRun; onInspect: (value: JsonValue) => void }) {
+function RunSection({
+  run,
+  onInspect,
+  onEditDocument
+}: {
+  run: EsRun;
+  onInspect: (value: JsonValue) => void;
+  onEditDocument?: (address: DocumentAddress) => void;
+}) {
   const t = useLanguageStore((state) => state.t);
   const { request } = run;
   return (
@@ -344,7 +405,7 @@ function RunSection({ run, onInspect }: { run: EsRun; onInspect: (value: JsonVal
           <pre className="min-w-0 select-text whitespace-pre-wrap break-words font-mono text-xs text-danger">{run.error}</pre>
         </div>
       )}
-      {run.state === 'done' && <ResponseView response={run.response} onInspect={onInspect} />}
+      {run.state === 'done' && <ResponseView response={run.response} onInspect={onInspect} onEditDocument={onEditDocument} />}
     </section>
   );
 }
@@ -362,7 +423,15 @@ function StatusBadge({ status }: { status: number }) {
   );
 }
 
-function ResponseView({ response, onInspect }: { response: EsResponse; onInspect: (value: JsonValue) => void }) {
+function ResponseView({
+  response,
+  onInspect,
+  onEditDocument
+}: {
+  response: EsResponse;
+  onInspect: (value: JsonValue) => void;
+  onEditDocument?: (address: DocumentAddress) => void;
+}) {
   const t = useLanguageStore((state) => state.t);
   const parsed = useMemo(() => parseJson(response.body), [response.body]);
   const table = useMemo(() => toEsTable(parsed), [parsed]);
@@ -440,24 +509,36 @@ function ResponseView({ response, onInspect }: { response: EsResponse; onInspect
                 </tr>
               </thead>
               <tbody>
-                {shownRows.map((row, rowIndex) => (
+                {shownRows.map((row, rowIndex) => {
+                  // 命中的 `_id` 那一格点开是这份文档的编辑框
+                  const hit = table.hits?.[rowIndex];
+                  const address = hit && onEditDocument ? documentAddress(hit) : null;
+                  return (
                   <tr key={rowIndex} className="hover:bg-surface-hover">
-                    {row.map((cell, columnIndex) => (
+                    {row.map((cell, columnIndex) => {
+                      const editsDocument = address !== null && table.columns[columnIndex] === '_id' && columnIndex < 2;
+                      return (
                       <td
                         key={columnIndex}
-                        onClick={() => cell !== MISSING && onInspect(cell)}
+                        onClick={() => {
+                          if (editsDocument && address) onEditDocument?.(address);
+                          else if (cell !== MISSING) onInspect(cell);
+                        }}
                         className={clsx(
                           'max-w-[32rem] truncate border-b border-line px-2 py-1',
                           cell === MISSING ? 'text-fg-subtle' : 'cursor-pointer',
-                          cell?.kind === 'null' ? 'italic text-fg-subtle' : 'text-fg'
+                          editsDocument ? 'text-accent underline decoration-dotted underline-offset-2'
+                            : cell?.kind === 'null' ? 'italic text-fg-subtle' : 'text-fg'
                         )}
                         title={cell === MISSING ? undefined : formatJsonCell(cell)}
                       >
                         {cell === MISSING ? '' : formatJsonCell(cell)}
                       </td>
-                    ))}
+                      );
+                    })}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

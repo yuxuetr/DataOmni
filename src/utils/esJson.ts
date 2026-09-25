@@ -161,6 +161,8 @@ export interface EsTable {
   source: 'hits' | 'columns' | 'objects';
   columns: string[];
   rows: Array<Array<JsonValue | typeof MISSING>>;
+  /** 搜索命中才有：每一行是哪一份命中，改文档、删文档从这里找地址 */
+  hits?: JsonValue[];
 }
 
 /**
@@ -205,6 +207,7 @@ function hitsTable(hits: JsonValue[]): EsTable {
   // `_source` 里也有叫 `_id` 的字段时，元数据那一列在前、这一列照样留着
   return {
     source: 'hits',
+    hits,
     columns: [...meta, ...body.columns],
     rows: hits.map((hit, index) => [...meta.map((name) => jsonField(hit, name) ?? MISSING), ...body.rows[index]])
   };

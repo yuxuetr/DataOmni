@@ -319,3 +319,60 @@ async fn a_timed_out_search_stops_on_the_server_too() {
   assert!(uncancelled.is_empty(), "still running and not cancelled: {uncancelled:?}");
   fresh_index(&pool, "smoke_slow").await;
 }
+
+/// 界面上改文档靠的服务端行为：带过期的版本写会被 409 拒掉、带对版本能删、
+/// 按自定义路由写的文档在命中里带着 `_routing`、带上它读得到
+#[tokio::test]
+async fn documents_are_written_only_with_the_version_that_was_read() {
+  let Some(profile) = profile() else { return };
+  let pool = pool(&profile).await;
+  fresh_index(&pool, "smoke_doc").await;
+  ok(&pool, "PUT", "/smoke_doc/_doc/1?refresh=true", Some(r#"{"n":1}"#)).await;
+  let read = ok(&pool, "GET", "/smoke_doc/_doc/1", None).await;
+  let (seq_no, term) = (read["_seq_no"].clone(), read["_primary_term"].clone());
+
+  // 别人先写了一次
+  ok(&pool, "PUT", "/smoke_doc/_doc/1", Some(r#"{"n":2}"#)).await;
+  let stale =
+    format!("/smoke_doc/_doc/1?if_seq_no={seq_no}&if_primary_term={term}&refresh=wait_for");
+  let refused = send(&pool, "PUT", &stale, Some(r#"{"n":3}"#), TIMEOUT).await.expect("stale write");
+  assert_eq!(refused.status, 409, "{}", refused.body);
+  assert_eq!(ok(&pool, "GET", "/smoke_doc/_doc/1", None).await["_source"]["n"], json!(2));
+
+  let fresh = ok(&pool, "GET", "/smoke_doc/_doc/1", None).await;
+  let delete = format!(
+    "/smoke_doc/_doc/1?if_seq_no={}&if_primary_term={}&refresh=wait_for",
+    fresh["_seq_no"], fresh["_primary_term"]
+  );
+  ok(&pool, "DELETE", &delete, None).await;
+  let gone = send(&pool, "GET", "/smoke_doc/_doc/1", None, TIMEOUT).await.expect("gone");
+  assert_eq!(gone.status, 404);
+
+  // 自定义路由：读的时候要带上同一个路由；命中里带着 `_routing`，编辑框就从那里拿
+  fresh_index(&pool, "smoke_doc").await;
+  ok(
+    &pool,
+    "PUT",
+    "/smoke_doc",
+    Some(r#"{"settings":{"number_of_shards":2,"number_of_replicas":0}}"#),
+  )
+  .await;
+  let routing = "user-7";
+  ok(
+    &pool,
+    "PUT",
+    &format!("/smoke_doc/_doc/r?routing={routing}&refresh=true"),
+    Some(r#"{"n":1}"#),
+  )
+  .await;
+  let routed = ok(&pool, "GET", &format!("/smoke_doc/_doc/r?routing={routing}"), None).await;
+  assert_eq!(routed["found"], json!(true));
+  assert_eq!(routed["_routing"], json!(routing));
+  let hits = ok(&pool, "GET", "/smoke_doc/_search?q=n:1", None).await;
+  assert_eq!(
+    hits["hits"]["hits"][0]["_routing"],
+    json!(routing),
+    "hits carry _routing for the editor"
+  );
+  fresh_index(&pool, "smoke_doc").await;
+}
