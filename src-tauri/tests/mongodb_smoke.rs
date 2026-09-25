@@ -934,6 +934,56 @@ async fn a_cancelled_import_stops_after_the_batch_in_flight() {
 
 /// 建索引：没给名字就按 mongosh 的规矩起名，选项原样生效（唯一、部分索引），结构页上看得见；
 /// 一模一样的再建一次明确说「已经有了」；删掉之后就没了
+/// 执行计划：按索引字段查是 IXSCAN 且只看一个键、一个文档；按没索引的字段查是
+/// COLLSCAN、看遍整个集合。聚合同样有计划，而且只是看、不写
+#[tokio::test]
+async fn an_explain_says_whether_an_index_was_used_and_how_much_was_read() {
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_explain").await;
+  let documents: Vec<Document> =
+    (0..50).map(|n| doc! { "email": format!("u{n}@x"), "age": n }).collect();
+  collection.insert_many(documents).await.expect("seed");
+  collection
+    .create_index(mongodb::IndexModel::builder().keys(doc! { "email": 1 }).build())
+    .await
+    .expect("index");
+  let timeout = Duration::from_secs(10);
+  let explain = |target| mongo::explain(&client, DATABASE, "smoke_explain", target, timeout);
+
+  let indexed =
+    explain(mongo::ExplainTarget::Find { filter: doc! { "email": "u7@x" }, sort: doc! {} })
+      .await
+      .expect("explain indexed");
+  assert!(
+    indexed
+      .stages
+      .iter()
+      .any(|stage| stage.stage == "IXSCAN" && stage.index.as_deref() == Some("email_1")),
+    "{:?}",
+    indexed.stages
+  );
+  assert_eq!(
+    (indexed.returned, indexed.keys_examined, indexed.docs_examined),
+    (Some(1), Some(1), Some(1))
+  );
+
+  let scanned =
+    explain(mongo::ExplainTarget::Find { filter: doc! { "age": { "$gte": 40 } }, sort: doc! {} })
+      .await
+      .expect("explain scan");
+  assert!(scanned.stages.iter().any(|stage| stage.stage == "COLLSCAN"), "{:?}", scanned.stages);
+  assert_eq!((scanned.returned, scanned.docs_examined), (Some(10), Some(50)));
+
+  let pipeline = vec![
+    doc! { "$match": { "age": { "$lt": 5 } } },
+    doc! { "$group": { "_id": null, "n": { "$sum": 1 } } },
+  ];
+  let aggregated =
+    explain(mongo::ExplainTarget::Aggregate { pipeline }).await.expect("explain aggregate");
+  assert!(!aggregated.stages.is_empty(), "{}", aggregated.text);
+  assert_eq!(collection.count_documents(doc! {}).await.expect("count"), 50);
+}
+
 /// 建集合时选项原样生效（上限、校验规则），同名再建被拒；在一个还没有的库里建集合，
 /// 库就有了——MongoDB 建库就是这样。删掉之后对象树里不再有它
 #[tokio::test]

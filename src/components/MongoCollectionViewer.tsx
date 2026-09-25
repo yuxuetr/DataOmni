@@ -33,6 +33,7 @@ import { useConfirmPrompt } from './ConfirmPrompt';
 import { MongoExportDialog } from './MongoExportDialog';
 import { MongoImportDialog } from './MongoImportDialog';
 import { MongoBulkWriteDialog, type MongoBulkWriteMode } from './MongoBulkWriteDialog';
+import { MongoExplainDialog } from './MongoExplainDialog';
 
 interface MongoCollectionViewerProps {
   database: string;
@@ -113,6 +114,8 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [bulk, setBulk] = useState<MongoBulkWriteMode | null>(null);
+  // 执行计划看的是**框里**那一份：它不写库，不必先按查询；问的正是「这样写会怎么走」
+  const [explaining, setExplaining] = useState<{ filter: string; sort: string; pipeline: string | null } | null>(null);
   const { ask, prompt: confirmPrompt } = useConfirmPrompt();
   const selectedId = panel.kind === 'document' ? panel.id : null;
   const [documentText, setDocumentText] = useState<string | null>(null);
@@ -572,6 +575,13 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
               <Search size={14} />
               <span>{t('mongo.aggregate.run')}</span>
             </button>
+            <button
+              onClick={() => setExplaining({ filter: '', sort: '', pipeline: pipelineDraft })}
+              disabled={!connectionString || !pipelineDraft.trim()}
+              className="rounded-control border border-line-strong px-3 py-1 text-sm text-fg transition-colors hover:bg-surface-hover disabled:opacity-50"
+            >
+              {t('mongo.explain.open')}
+            </button>
           </div>
         ) : (
         <>
@@ -602,6 +612,13 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
             className="rounded-control border border-line-strong px-3 py-1 text-sm text-fg-muted transition-colors hover:bg-surface-hover disabled:opacity-50"
           >
             {t('mongo.reset')}
+          </button>
+          <button
+            onClick={() => setExplaining({ filter: filterDraft, sort: sortDraft, pipeline: null })}
+            disabled={!connectionString}
+            className="rounded-control border border-line-strong px-3 py-1 text-sm text-fg transition-colors hover:bg-surface-hover disabled:opacity-50"
+          >
+            {t('mongo.explain.open')}
           </button>
           {!readOnly && (
             <>
@@ -843,6 +860,18 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
           sort={applied.sort}
           total={total}
           onClose={() => setExporting(false)}
+        />
+      )}
+      {explaining && connectionString && (
+        <MongoExplainDialog
+          connectionString={connectionString}
+          database={database}
+          collection={collection}
+          filter={explaining.filter}
+          sort={explaining.sort}
+          pipeline={explaining.pipeline}
+          timeoutMs={timeoutMs}
+          onClose={() => setExplaining(null)}
         />
       )}
       {bulk && connectionString && (

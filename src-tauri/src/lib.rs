@@ -74,6 +74,7 @@ pub fn run() {
       mongodb_delete_many,
       mongodb_aggregate,
       mongodb_create_collection,
+      mongodb_explain,
       mongodb_drop_collection,
       close_mongodb,
       // 数据库操作命令

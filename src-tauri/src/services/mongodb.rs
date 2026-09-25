@@ -426,6 +426,126 @@ pub async fn aggregate(
   })
 }
 
+/// 要看执行计划的是哪一种查询：网格上生效的条件与排序，或者一条聚合管道
+pub enum ExplainTarget {
+  Find { filter: Document, sort: Document },
+  Aggregate { pipeline: Vec<Document> },
+}
+
+/// 执行计划里的一步。`depth` 0 是最外层（最后产出结果的那一步），越深越靠近数据
+#[derive(Debug, Serialize, PartialEq)]
+pub struct PlanStage {
+  pub depth: usize,
+  pub stage: String,
+  /// 索引扫描用的是哪个索引
+  pub index: Option<String>,
+}
+
+/// 执行计划的摘要加全文。摘要回答两件事：用没用上索引（`stages` 里有没有
+/// `COLLSCAN`），以及为了返回这么多个文档看了多少个（`docs_examined` / `keys_examined`）
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MongoExplain {
+  pub stages: Vec<PlanStage>,
+  pub returned: Option<i64>,
+  pub docs_examined: Option<i64>,
+  pub keys_examined: Option<i64>,
+  pub millis: Option<i64>,
+  /// 服务端回答的全文，mongosh 写法、缩进排版
+  pub text: String,
+}
+
+/// 看执行计划：`explain` 带 `executionStats`，即真的跑一遍（不取回文档）。
+/// 条件与排序照网格上生效的那一份，不带分页——问的是「这条查询怎么走」，
+/// 与看到第几页无关。服务端照样受查询超时约束
+pub async fn explain(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  target: ExplainTarget,
+  timeout: Duration,
+) -> Result<MongoExplain, String> {
+  let max_time = i64::try_from(timeout.as_millis()).unwrap_or(i64::MAX);
+  let explained = match target {
+    ExplainTarget::Find { filter, sort } => {
+      doc! { "find": collection, "filter": filter, "sort": sort, "maxTimeMS": max_time }
+    }
+    ExplainTarget::Aggregate { pipeline } => doc! {
+      "aggregate": collection, "pipeline": pipeline, "cursor": {}, "maxTimeMS": max_time,
+    },
+  };
+  let command = doc! { "explain": explained, "verbosity": "executionStats" };
+  let db = client.database(database);
+  let work = async { db.run_command(command).await.map_err(describe_error) };
+  let reply = with_deadline(timeout, work).await?;
+  Ok(summarize_explain(&reply))
+}
+
+/// 从 `explain` 的回答里摘出计划链与计数。服务端的形状有三种，都认：
+/// 经典引擎的 `queryPlanner.winningPlan`；8.0 起 SBE 的 `winningPlan.queryPlan`；
+/// 聚合没能整条下推时的 `stages` 数组，头一个 `$cursor` 里才是查询计划
+fn summarize_explain(reply: &Document) -> MongoExplain {
+  let mut stages = Vec::new();
+  let mut cursor = reply;
+  if let Ok(pipeline) = reply.get_array("stages") {
+    let mut later: Vec<&str> = Vec::new();
+    for stage in pipeline.iter().filter_map(Bson::as_document) {
+      match stage.get_document("$cursor") {
+        Ok(inner) => cursor = inner,
+        Err(_) => later.extend(stage.keys().next().map(String::as_str)),
+      }
+    }
+    for (depth, name) in later.iter().rev().enumerate() {
+      stages.push(PlanStage { depth, stage: (*name).to_string(), index: None });
+    }
+  }
+  let base = stages.len();
+  let winning =
+    cursor.get_document("queryPlanner").and_then(|planner| planner.get_document("winningPlan"));
+  if let Ok(winning) = winning {
+    let root = winning.get_document("queryPlan").unwrap_or(winning);
+    collect_plan(root, base, &mut stages);
+  }
+  let stats = cursor.get_document("executionStats").ok();
+  let stat = |key: &str| stats.and_then(|stats| stats.get(key)).and_then(bson_integer);
+  MongoExplain {
+    stages,
+    returned: stat("nReturned"),
+    docs_examined: stat("totalDocsExamined"),
+    keys_examined: stat("totalKeysExamined"),
+    millis: stat("executionTimeMillis"),
+    text: mongo_shell::format_document(reply, Layout::Indented),
+  }
+}
+
+fn collect_plan(node: &Document, depth: usize, stages: &mut Vec<PlanStage>) {
+  if let Ok(stage) = node.get_str("stage") {
+    stages.push(PlanStage {
+      depth,
+      stage: stage.to_string(),
+      index: node.get_str("indexName").ok().map(str::to_string),
+    });
+  }
+  if let Ok(child) = node.get_document("inputStage") {
+    collect_plan(child, depth + 1, stages);
+  }
+  if let Ok(children) = node.get_array("inputStages") {
+    for child in children.iter().filter_map(Bson::as_document) {
+      collect_plan(child, depth + 1, stages);
+    }
+  }
+}
+
+fn bson_integer(value: &Bson) -> Option<i64> {
+  match value {
+    Bson::Int32(number) => Some(i64::from(*number)),
+    Bson::Int64(number) => Some(*number),
+    // 整数值的双精度数：计数不会有小数，截断无损
+    Bson::Double(number) if number.fract() == 0.0 => Some(*number as i64),
+    _ => None,
+  }
+}
+
 /// 符合条件的文档数。条件为空时先用元数据里的估计值——大集合上精确计数要扫全表，
 /// 而空条件下两者只在异常关机后才会不一致；视图不支持估计，退回精确计数
 pub async fn count(
@@ -1309,6 +1429,50 @@ mod tests {
       panic!("完整校验就该开着");
     };
     assert_eq!(full.allow_invalid_certificates, None);
+  }
+
+  /// 三种形状各一份：经典引擎、SBE 的 `queryPlan`、聚合的 `stages`
+  #[test]
+  fn an_explain_reply_is_summarized_whatever_its_shape() {
+    let classic = doc! {
+      "queryPlanner": { "winningPlan": {
+        "stage": "FETCH", "inputStage": { "stage": "IXSCAN", "indexName": "email_1" }
+      } },
+      "executionStats": { "nReturned": 1, "totalDocsExamined": 1, "totalKeysExamined": 1, "executionTimeMillis": 0 },
+    };
+    let summary = summarize_explain(&classic);
+    assert_eq!(
+      summary.stages,
+      vec![
+        PlanStage { depth: 0, stage: "FETCH".into(), index: None },
+        PlanStage { depth: 1, stage: "IXSCAN".into(), index: Some("email_1".into()) },
+      ]
+    );
+    assert_eq!(
+      (summary.returned, summary.docs_examined, summary.keys_examined),
+      (Some(1), Some(1), Some(1))
+    );
+
+    let sbe = doc! { "queryPlanner": { "winningPlan": { "queryPlan": {
+      "stage": "GROUP", "inputStage": { "stage": "COLLSCAN" }
+    } } } };
+    let names: Vec<_> =
+      summarize_explain(&sbe).stages.into_iter().map(|stage| stage.stage).collect();
+    assert_eq!(names, ["GROUP", "COLLSCAN"]);
+
+    let staged = doc! { "stages": [
+      { "$cursor": {
+        "queryPlanner": { "winningPlan": { "stage": "COLLSCAN" } },
+        "executionStats": { "nReturned": Bson::Int64(4), "totalDocsExamined": 4.0 },
+      } },
+      { "$lookup": {} },
+      { "$project": {} },
+    ] };
+    let summary = summarize_explain(&staged);
+    let stages: Vec<_> =
+      summary.stages.iter().map(|stage| (stage.depth, stage.stage.as_str())).collect();
+    assert_eq!(stages, [(0, "$project"), (1, "$lookup"), (2, "COLLSCAN")]);
+    assert_eq!((summary.returned, summary.docs_examined), (Some(4), Some(4)));
   }
 
   #[tokio::test]

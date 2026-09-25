@@ -262,6 +262,34 @@ pub async fn mongodb_drop_index(
   mongodb::drop_index(&client, &database, &collection, &name, timeout).await
 }
 
+/// 执行计划。给了 `pipeline` 就看这条管道，否则看条件与排序
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn mongodb_explain(
+  connection_string: String,
+  database: String,
+  collection: String,
+  filter: String,
+  sort: String,
+  pipeline: Option<String>,
+  timeout_ms: u64,
+  registry: State<'_, MongoRegistry>,
+) -> Result<mongodb::MongoExplain, String> {
+  let target = match pipeline {
+    Some(pipeline) => {
+      let pipeline = mongo_shell::parse_value(&pipeline).map_err(|error| error.to_string())?;
+      mongodb::ExplainTarget::Aggregate { pipeline: mongodb::parse_pipeline(pipeline)? }
+    }
+    None => mongodb::ExplainTarget::Find {
+      filter: mongo_shell::parse_document(&filter).map_err(|error| error.to_string())?,
+      sort: mongo_shell::parse_document(&sort).map_err(|error| error.to_string())?,
+    },
+  };
+  let timeout = timeout(timeout_ms)?;
+  let client = client(&registry, &connection_string)?;
+  mongodb::explain(&client, &database, &collection, target, timeout).await
+}
+
 /// 建集合。选项是 mongosh 写法的文字，即 `createCollection(name, options)` 的第二个参数
 #[tauri::command]
 pub async fn mongodb_create_collection(
