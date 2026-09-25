@@ -627,16 +627,19 @@ fn sorted(entries: HashMap<String, ValueReceive>) -> Vec<(String, CypherValue)> 
   entries
 }
 
-/// Cypher 的写法：整数值的浮点数带 `.0`（不然读回来是整数），`NaN`、`Infinity`
+/// Cypher 的写法：整数值的浮点数带 `.0`、大的写成 `1e20`（不然读回来是整数，大的还越界），
+/// `NaN`、`Infinity`
 fn float_text(value: f64) -> String {
   if value.is_nan() {
     "NaN".to_string()
   } else if value.is_infinite() {
     if value > 0.0 { "Infinity" } else { "-Infinity" }.to_string()
-  } else if value.fract() == 0.0 && value.abs() < 1e16 {
+  } else if value.fract() != 0.0 {
+    value.to_string()
+  } else if value.abs() < 1e16 {
     format!("{value:.1}")
   } else {
-    value.to_string()
+    format!("{value:e}")
   }
 }
 
@@ -722,7 +725,8 @@ mod tests {
     assert_eq!(float_text(0.1), "0.1");
     assert_eq!(float_text(f64::NAN), "NaN");
     assert_eq!(float_text(f64::NEG_INFINITY), "-Infinity");
-    assert_eq!(float_text(1e20), "100000000000000000000");
+    assert_eq!(float_text(1e20), "1e20");
+    assert_eq!(float_text(-1.5e17), "-1.5e17");
   }
 
   #[test]
