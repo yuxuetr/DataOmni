@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AlertCircle, RefreshCw } from 'lucide-react';
+import { AlertCircle, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useQueryStore } from '../stores/queryStore';
 import { useLanguageStore } from '../stores/languageStore';
 import { describeError } from '../utils/describeError';
+import { useConfirmPrompt } from './ConfirmPrompt';
+import { MongoCreateIndexDialog } from './MongoCreateIndexDialog';
 
 interface MongoIndex {
   name: string;
@@ -26,8 +28,9 @@ interface MongoCollectionStructureViewProps {
 /**
  * MongoDB 集合的结构页：索引与建集合时的选项（校验规则、上限、时序、视图定义）。
  *
- * 只读。值都是后端按 mongosh 写法格式化好的原样文字，这里不做二次解释——
+ * 值都是后端按 mongosh 写法格式化好的原样文字，这里不做二次解释——
  * 一个新版本服务端多出来的索引选项，照样会出现在「选项」那一列里。
+ * 能改的只有索引：新建与按名字删除。`_id_` 删不掉，不给按钮。
  */
 export function MongoCollectionStructureView({ database, collection, isView }: MongoCollectionStructureViewProps) {
   const t = useLanguageStore((state) => state.t);
@@ -37,6 +40,8 @@ export function MongoCollectionStructureView({ database, collection, isView }: M
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const request = useRef(0);
+  const [creating, setCreating] = useState(false);
+  const { ask, prompt: confirmPrompt } = useConfirmPrompt();
 
   const load = useCallback(async () => {
     if (!connectionString) {
@@ -70,6 +75,24 @@ export function MongoCollectionStructureView({ database, collection, isView }: M
   useEffect(() => {
     void load();
   }, [load]);
+
+  const dropIndex = async (name: string) => {
+    const confirmed = await ask({
+      title: t('indexDrop.title'),
+      message: t('mongo.index.dropConfirm', { name, collection: `${database}.${collection}` }),
+      confirmLabel: t('mongo.index.drop'),
+      destructive: true
+    });
+    if (!confirmed || !connectionString) {
+      return;
+    }
+    try {
+      await invoke('mongodb_drop_index', { connectionString, database, collection, name, timeoutMs });
+      void load();
+    } catch (cause) {
+      setError(describeError(cause));
+    }
+  };
 
   return (
     <div className="flex h-full flex-col bg-surface">
@@ -105,9 +128,19 @@ export function MongoCollectionStructureView({ database, collection, isView }: M
         {structure && (
           <>
             <section>
-              <h3 className="mb-2 text-sm font-semibold text-fg">
+              <h3 className="mb-2 flex items-center text-sm font-semibold text-fg">
                 {t('mongo.structure.indexes')}
                 {!isView && <span className="ml-2 font-normal text-fg-muted">({structure.indexes.length})</span>}
+                {!isView && (
+                  <button
+                    type="button"
+                    onClick={() => setCreating(true)}
+                    className="ml-auto flex items-center gap-1 text-xs font-normal text-fg-muted hover:text-accent"
+                  >
+                    <Plus size={12} />
+                    {t('indexCreate.title')}
+                  </button>
+                )}
               </h3>
               {isView ? (
                 <p className="text-sm text-fg-muted">{t('mongo.structure.viewHasNoIndexes')}</p>
@@ -118,14 +151,28 @@ export function MongoCollectionStructureView({ database, collection, isView }: M
                       <th className="border-b border-line px-2 py-1 text-xs font-medium text-fg">{t('mongo.structure.name')}</th>
                       <th className="border-b border-line px-2 py-1 text-xs font-medium text-fg">{t('mongo.structure.keys')}</th>
                       <th className="border-b border-line px-2 py-1 text-xs font-medium text-fg">{t('mongo.structure.options')}</th>
+                      <th className="w-8 border-b border-line" />
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-line">
                     {structure.indexes.map((index) => (
-                      <tr key={index.name}>
+                      <tr key={index.name} className="group">
                         <td className="whitespace-nowrap px-2 py-1 font-mono text-[13px] text-fg">{index.name}</td>
                         <td className="px-2 py-1 font-mono text-[13px] text-fg">{index.keys}</td>
                         <td className="px-2 py-1 font-mono text-[13px] text-fg-muted">{index.options}</td>
+                        <td className="px-2 py-1 text-right">
+                          {index.name !== '_id_' && (
+                            <button
+                              type="button"
+                              onClick={() => void dropIndex(index.name)}
+                              title={t('indexDrop.title')}
+                              aria-label={t('indexDrop.title')}
+                              className="text-fg-subtle opacity-0 transition-opacity hover:text-danger focus:opacity-100 group-hover:opacity-100"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -148,6 +195,20 @@ export function MongoCollectionStructureView({ database, collection, isView }: M
           </>
         )}
       </div>
+      {creating && connectionString && (
+        <MongoCreateIndexDialog
+          connectionString={connectionString}
+          database={database}
+          collection={collection}
+          timeoutMs={timeoutMs}
+          onClose={() => setCreating(false)}
+          onCreated={() => {
+            setCreating(false);
+            void load();
+          }}
+        />
+      )}
+      {confirmPrompt}
     </div>
   );
 }

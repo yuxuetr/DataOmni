@@ -788,3 +788,74 @@ async fn a_cancelled_import_stops_after_the_batch_in_flight() {
   assert_eq!(collection.count_documents(doc! {}).await.expect("count"), 1000);
   std::fs::remove_file(&path).ok();
 }
+
+/// 建索引：没给名字就按 mongosh 的规矩起名，选项原样生效（唯一、部分索引），结构页上看得见；
+/// 一模一样的再建一次明确说「已经有了」；删掉之后就没了
+#[tokio::test]
+async fn an_index_is_created_with_its_options_and_dropped_by_name() {
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_index").await;
+  collection.insert_one(doc! { "email": "a@x", "active": true }).await.expect("insert");
+  let timeout = Duration::from_secs(10);
+  let keys = || mongo_shell::parse_document("{ email: 1, active: -1 }").expect("keys");
+  let options = || {
+    mongo_shell::parse_document("{ unique: true, partialFilterExpression: { active: true } }")
+      .expect("options")
+  };
+
+  let name = mongo::create_index(&client, DATABASE, "smoke_index", keys(), options(), timeout)
+    .await
+    .expect("create");
+  assert_eq!(name, "email_1_active_-1");
+  let structure = mongo::collection_structure(&client, DATABASE, "smoke_index", timeout)
+    .await
+    .expect("structure");
+  let index = structure.indexes.iter().find(|index| index.name == name).expect("listed");
+  assert_eq!(index.keys, "{ email: 1, active: -1 }");
+  assert_eq!(index.options, "{ unique: true, partialFilterExpression: { active: true } }");
+
+  // 选项真的生效：active 的两个同 email 撞上，不 active 的不在部分索引里
+  let duplicate = collection.insert_one(doc! { "email": "a@x", "active": true }).await;
+  assert!(duplicate.is_err(), "unique index is enforced");
+  collection.insert_one(doc! { "email": "a@x", "active": false }).await.expect("outside filter");
+
+  let again = mongo::create_index(&client, DATABASE, "smoke_index", keys(), options(), timeout)
+    .await
+    .expect_err("already there");
+  assert_eq!(again, format!("{}: {name}", mongo::MONGO_INDEX_EXISTS));
+  let empty = mongo::create_index(
+    &client,
+    DATABASE,
+    "smoke_index",
+    Document::new(),
+    Document::new(),
+    timeout,
+  )
+  .await
+  .expect_err("no keys");
+  assert_eq!(empty, mongo::MONGO_INDEX_KEYS_EMPTY);
+
+  // 名字给了就用给的
+  let named = mongo::create_index(
+    &client,
+    DATABASE,
+    "smoke_index",
+    mongo_shell::parse_document("{ active: 1 }").expect("keys"),
+    mongo_shell::parse_document("{ name: 'by_active' }").expect("options"),
+    timeout,
+  )
+  .await
+  .expect("create named");
+  assert_eq!(named, "by_active");
+
+  mongo::drop_index(&client, DATABASE, "smoke_index", &name, timeout).await.expect("drop");
+  let structure = mongo::collection_structure(&client, DATABASE, "smoke_index", timeout)
+    .await
+    .expect("structure");
+  let names: Vec<&str> = structure.indexes.iter().map(|index| index.name.as_str()).collect();
+  assert_eq!(names, ["_id_", "by_active"]);
+  let missing = mongo::drop_index(&client, DATABASE, "smoke_index", &name, timeout)
+    .await
+    .expect_err("already dropped");
+  assert!(missing.starts_with(MONGO_SERVER_ERROR), "{missing}");
+}

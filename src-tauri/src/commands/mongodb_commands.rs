@@ -166,6 +166,39 @@ pub async fn mongodb_collection_structure(
   mongodb::collection_structure(&client, &database, &collection, timeout).await
 }
 
+/// 建索引。键与选项都是 mongosh 写法的文字，即 `createIndex(keys, options)` 的两个参数
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn mongodb_create_index(
+  connection_string: String,
+  database: String,
+  collection: String,
+  keys: String,
+  options: String,
+  timeout_ms: u64,
+  registry: State<'_, MongoRegistry>,
+) -> Result<String, String> {
+  let keys = mongo_shell::parse_document(&keys).map_err(|error| error.to_string())?;
+  let options = mongo_shell::parse_document(&options).map_err(|error| error.to_string())?;
+  let timeout = timeout(timeout_ms)?;
+  let client = client(&registry, &connection_string)?;
+  mongodb::create_index(&client, &database, &collection, keys, options, timeout).await
+}
+
+#[tauri::command]
+pub async fn mongodb_drop_index(
+  connection_string: String,
+  database: String,
+  collection: String,
+  name: String,
+  timeout_ms: u64,
+  registry: State<'_, MongoRegistry>,
+) -> Result<(), String> {
+  let timeout = timeout(timeout_ms)?;
+  let client = client(&registry, &connection_string)?;
+  mongodb::drop_index(&client, &database, &collection, &name, timeout).await
+}
+
 /// 断开时去掉登记。`Client` 的最后一个引用没了，池子里的连接随之关闭
 #[tauri::command]
 pub fn close_mongodb(connection_string: String, registry: State<'_, MongoRegistry>) -> bool {

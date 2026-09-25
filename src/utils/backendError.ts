@@ -111,7 +111,9 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_MONGO_ID_CHANGED: 'error.backend.mongoIdChanged',
   DATAOMNI_MONGO_NO_SQL: 'error.backend.mongoNoSql',
   DATAOMNI_MONGO_IMPORT_JSON_ARRAY: 'error.backend.mongoImportJsonArray',
-  DATAOMNI_MONGO_IMPORT_LINE_INVALID: 'error.backend.mongoImportLineInvalid'
+  DATAOMNI_MONGO_IMPORT_LINE_INVALID: 'error.backend.mongoImportLineInvalid',
+  DATAOMNI_MONGO_INDEX_KEYS_EMPTY: 'error.backend.mongoIndexKeysEmpty',
+  DATAOMNI_MONGO_INDEX_EXISTS: 'error.backend.mongoIndexExists'
 };
 
 export interface BackendError {

@@ -413,6 +413,91 @@ fn index_row(index: &Document) -> MongoIndex {
   }
 }
 
+/// 键是空文档：索引总得建在某个字段上
+pub const MONGO_INDEX_KEYS_EMPTY: &str = "DATAOMNI_MONGO_INDEX_KEYS_EMPTY";
+/// 一模一样的索引已经有了，服务端什么都没做。数据是索引名
+pub const MONGO_INDEX_EXISTS: &str = "DATAOMNI_MONGO_INDEX_EXISTS";
+
+/// 建索引。`keys` 与 `options` 就是 mongosh 里 `createIndex(keys, options)` 的两个参数，
+/// 返回索引名。
+///
+/// 发 `createIndexes` 命令本身，选项原样并进索引说明里——和结构页只读原样一个道理，
+/// 驱动的 `IndexOptions` 只认它知道的那些。`maxTimeMS` 照查询超时给：大集合上建得太久
+/// 就让服务端停下这次建索引，而不是在本机放弃等待、留服务端接着建
+pub async fn create_index(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  keys: Document,
+  options: Document,
+  timeout: Duration,
+) -> Result<String, String> {
+  if keys.is_empty() {
+    return Err(MONGO_INDEX_KEYS_EMPTY.to_string());
+  }
+  let name = match options.get_str("name") {
+    Ok(name) => name.to_string(),
+    Err(_) => default_index_name(&keys),
+  };
+  let mut index = doc! { "key": keys, "name": name.as_str() };
+  index.extend(options);
+  let command = doc! {
+    "createIndexes": collection,
+    "indexes": [index],
+    "maxTimeMS": i64::try_from(timeout.as_millis()).unwrap_or(i64::MAX),
+  };
+  let db = client.database(database);
+  let work = async {
+    let reply = db.run_command(command).await.map_err(describe_error)?;
+    // 键和选项都相同的索引已经在了：服务端回答 ok，只多一句 note
+    if reply_integer(&reply, "numIndexesBefore") == reply_integer(&reply, "numIndexesAfter") {
+      return Err(format!("{MONGO_INDEX_EXISTS}: {name}"));
+    }
+    Ok(name.clone())
+  };
+  with_deadline(timeout, work).await
+}
+
+/// 按名字删索引。`_id_` 服务端自己会拒绝，界面上也不给删的按钮
+pub async fn drop_index(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  name: &str,
+  timeout: Duration,
+) -> Result<(), String> {
+  let command = doc! {
+    "dropIndexes": collection,
+    "index": name,
+    "maxTimeMS": i64::try_from(timeout.as_millis()).unwrap_or(i64::MAX),
+  };
+  let db = client.database(database);
+  let work = async {
+    db.run_command(command).await.map_err(describe_error)?;
+    Ok(())
+  };
+  with_deadline(timeout, work).await
+}
+
+/// 没给名字时 mongosh 起的名字：`字段_方向` 用下划线连起来（`status_1_createdAt_-1`、
+/// `title_text`）。同一套命名，建出来的索引在别的工具里看着也一样
+fn default_index_name(keys: &Document) -> String {
+  keys
+    .iter()
+    .map(|(field, direction)| {
+      let direction = match direction {
+        Bson::Int32(value) => value.to_string(),
+        Bson::Int64(value) => value.to_string(),
+        Bson::Double(value) if value.fract() == 0.0 => format!("{value:.0}"),
+        Bson::String(kind) => kind.clone(),
+        other => mongo_shell::format_value(other, Layout::OneLine),
+      };
+      format!("{field}_{direction}")
+    })
+    .collect::<Vec<_>>()
+    .join("_")
+}
+
 /// 整篇替换一个文档。
 ///
 /// 条件除了 `_id` 还要求文档与打开时**完全一样**（`$$ROOT` 与 `original` 相等，
@@ -903,6 +988,13 @@ mod tests {
       let error = parse_import_line(bad).expect_err(bad);
       assert!(error.starts_with(MONGO_IMPORT_LINE_INVALID), "{bad}: {error}");
     }
+  }
+
+  #[test]
+  fn an_unnamed_index_is_named_the_way_mongosh_names_it() {
+    assert_eq!(default_index_name(&doc! { "status": 1, "createdAt": -1 }), "status_1_createdAt_-1");
+    assert_eq!(default_index_name(&doc! { "title": "text" }), "title_text");
+    assert_eq!(default_index_name(&doc! { "n": 1.0, "at": Bson::Int64(-1) }), "n_1_at_-1");
   }
 
   #[test]

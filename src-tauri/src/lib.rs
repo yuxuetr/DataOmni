@@ -68,6 +68,8 @@ pub fn run() {
       mongodb_collection_structure,
       mongodb_export_to_file,
       mongodb_import_file,
+      mongodb_create_index,
+      mongodb_drop_index,
       close_mongodb,
       // 数据库操作命令
       execute_query,

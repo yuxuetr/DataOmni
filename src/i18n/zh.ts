@@ -1160,6 +1160,13 @@ export const zh = {
   'mongo.discardConfirm': '编辑框里的改动还没存，放弃吗？',
   'mongo.discardConfirmTitle': '放弃改动',
   'mongo.structure.indexes': '索引',
+  'mongo.index.keys': '键',
+  'mongo.index.keysHint': '字段: 1 升序、-1 降序，也可以是 \'text\'、\'2dsphere\'、\'hashed\'。复合索引按写的次序。',
+  'mongo.index.options': '选项（可空）',
+  'mongo.index.optionsHint': '如 unique: true、sparse: true、partialFilterExpression: { … }、expireAfterSeconds: 3600、name: \'…\'。不写名字就按 mongosh 的规矩起名。',
+  'mongo.index.buildNote': '建索引在服务端跑完才返回；超过查询超时服务端会停下这次建索引，可以在设置里调大。',
+  'mongo.index.drop': '删除',
+  'mongo.index.dropConfirm': '删除 {collection} 上的索引 {name}？靠它的查询会变慢；唯一索引删掉之后不再拦重复值。',
   'mongo.structure.name': '名称',
   'mongo.structure.keys': '键',
   'mongo.structure.options': '选项',
@@ -1205,7 +1212,9 @@ export const zh = {
   'error.backend.mongoIdChanged': '不能改 _id（原来是 {detail}）。要换 _id 就新建一个文档，再删掉这个。',
   'error.backend.mongoNoSql': 'MongoDB 连接上不能执行 SQL',
   'error.backend.mongoImportJsonArray': '这个文件是一个 JSON 数组（mongoexport --jsonArray 的输出）。这里只读每行一个文档的文件：去掉 --jsonArray 重新导出即可。',
-  'error.backend.mongoImportLineInvalid': '这一行读不成一个文档：{detail}'
+  'error.backend.mongoImportLineInvalid': '这一行读不成一个文档：{detail}',
+  'error.backend.mongoIndexKeysEmpty': '键不能是空的：至少写一个字段，如 { email: 1 }',
+  'error.backend.mongoIndexExists': '键和选项都相同的索引已经有了（{detail}），没有新建'
 } as const;
 
 export type TranslationKey = keyof typeof zh;

@@ -1149,6 +1149,13 @@ export const en: Translations = {
   'mongo.discardConfirm': 'Your edits have not been saved. Discard them?',
   'mongo.discardConfirmTitle': 'Discard edits',
   'mongo.structure.indexes': 'Indexes',
+  'mongo.index.keys': 'Keys',
+  'mongo.index.keysHint': 'field: 1 ascending, -1 descending, or \'text\', \'2dsphere\', \'hashed\'. Compound indexes follow the order written.',
+  'mongo.index.options': 'Options (optional)',
+  'mongo.index.optionsHint': 'e.g. unique: true, sparse: true, partialFilterExpression: { … }, expireAfterSeconds: 3600, name: \'…\'. Without a name it is named the way mongosh names it.',
+  'mongo.index.buildNote': 'Returns once the server has built the index. Past the query timeout the server stops the build; the timeout can be raised in Settings.',
+  'mongo.index.drop': 'Drop',
+  'mongo.index.dropConfirm': 'Drop index {name} on {collection}? Queries that rely on it get slower; a unique index no longer blocks duplicates once dropped.',
   'mongo.structure.name': 'Name',
   'mongo.structure.keys': 'Keys',
   'mongo.structure.options': 'Options',
@@ -1194,5 +1201,7 @@ export const en: Translations = {
   'error.backend.mongoIdChanged': 'The _id cannot be changed (it was {detail}). To use a different _id, insert a new document and delete this one.',
   'error.backend.mongoNoSql': 'SQL cannot be run on a MongoDB connection',
   'error.backend.mongoImportJsonArray': 'This file is a JSON array (the output of mongoexport --jsonArray). Only files with one document per line can be read here: export again without --jsonArray.',
-  'error.backend.mongoImportLineInvalid': 'This line is not a document: {detail}'
+  'error.backend.mongoImportLineInvalid': 'This line is not a document: {detail}',
+  'error.backend.mongoIndexKeysEmpty': 'Keys cannot be empty: name at least one field, e.g. { email: 1 }',
+  'error.backend.mongoIndexExists': 'An index with the same keys and options already exists ({detail}); nothing was created'
 };
