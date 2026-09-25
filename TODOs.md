@@ -2898,6 +2898,15 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     `--appimage-extract-and-run` 跑过（容器里没有 FUSE，22.04 起真机上还要
     `libfuse2`）；没有在真实桌面会话（GNOME / Wayland）里跑过，钥匙串的解锁
     弹窗也就没见过。
+  - **带 Oracle 客户端的 AppImage 打不出来，v0.4.0 不发 AppImage**（2026-09-25）。
+    上面验过的 AppImage 是接 Oracle 之前的包；带上 Instant Client 之后，linuxdeploy
+    先报 `Could not find dependency: libnnz.so`，补上 `LD_LIBRARY_PATH` 再报
+    `libaio.so.1`，都补齐后能出包（188 MB），但 linuxdeploy 会给 AppDir 里**每个** ELF
+    改 RPATH，Instant Client 的 .so 哈希全变了，还另拷一份 strip 过的到 `usr/lib`。
+    许可只允许原样分发（见 4.2 Oracle「打包的三件事」），所以不能发。deb / rpm 不经过
+    linuxdeploy，文件原样。
+    重估条件：tauri 的 AppImage 打包能排除某个目录不做依赖部署（或换成不改 ELF 的
+    打包方式），且 `sha256sum` 比对 AppDir 与 `src-tauri/vendor/instantclient` 一致。
   - 未做：Windows 的三件事。**必须在真机或虚拟机上做**——要看 MSI/NSIS 装卸时
     的注册表项与开始菜单，还有 SmartScreen 对未签名应用的拦截。容器模拟不了。
 - [x] 完成崩溃恢复、异常退出恢复和无网络场景测试
@@ -3031,6 +3040,21 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
       plugin-dialog 的 `confirm` 在 macOS 打包版里不弹框、Promise 不回来。换成应用内的
       确认框；门 `dialogUsage.test.ts` 不许再引插件的 confirm / ask / message。
       同一个提交：连接下拉点别处、按 Esc 收不起
+  - **2026-09-25 v0.4.0 发版前，macOS 打包版上的 MongoDB / Redis 回归**（真库，驱动方式同上）：
+    MongoDB 走了 SRV（公网测试记录 + cu 上的副本集）、客户端证书与 X.509（含同 CA 签发、
+    服务端没有对应用户的证书被拒）、建 capped 集合、执行计划、删集合；Redis 走了逻辑库、
+    六种类型、改元素与别处改过时不覆盖、命令行（拒绝 BLPOP / SELECT，FLUSHDB 先确认）、
+    改名（撞名不覆盖）、过期、新建键（撞名不覆盖）、删键。修掉的，都在新包上复验过：
+    - 新建集合的「库」默认成了认证库 admin（`efbbe68`）
+    - 连接表单滚到底按「测试连接」，名称空着在顶部，屏幕上毫无反应（`eda2eb3`，
+      聚焦第一个出错的输入框；渲染用例）
+    - 证书登录被拒时叫人「检查口令」（`88542a3`，单独的 `MONGO_X509_REJECTED`）
+    - Redis 逻辑库按字符串排，db10 在 db3 前面（`d8eabc0`）
+    - 值里的 `\0` 印出来看不见，`"a b\x00c"` 成了 `"a bc"`（`f73b175`，带控制字符的
+      文字也按转义显示、不当文字编辑；`a47096a` 改提示措辞）
+    - 命令被拒后输入框不清空，下一条接在后面打成 `SELECT 1BLPOP x 0`（`e4ab44c`，渲染用例）
+    - 改名后选中丢了、刚改的键可能因不匹配模式而消失；详情的剩余时间不随列表刷新
+      （`4b60955`）
   - 回归里看到、**没有修**的：MySQL 计划树里 cost_info 占一行——有意为之，
     `explain` 的测试钉着。
   - 还不能勾：Windows。用户在 Windows 上手测过，但 Windows 构建要改
