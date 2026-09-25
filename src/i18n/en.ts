@@ -1174,6 +1174,12 @@ export const en: Translations = {
   'mongo.export.canonicalHint': 'Every value carries its type (e.g. {"$numberLong": "5"}), so mongoimport reads back exactly what was stored. Harder to read.',
   'mongo.export.fileHint': 'One document per line; mongoimport can import it directly. Not just this page: every matching document is read again from the server.',
   'mongo.export.choosePath': 'Choose location and export…',
+  'mongo.mode.find': 'Find',
+  'mongo.mode.aggregate': 'Aggregate',
+  'mongo.aggregate.hint': 'Read-only: $out and $merge are not allowed. Each page reruns the whole pipeline; end it with $sort for stable paging.',
+  'mongo.aggregate.run': 'Run',
+  'mongo.aggregate.resultLabel': 'Aggregation result (read-only, not counted)',
+  'mongo.aggregate.exportFindOnly': 'Export uses the Find filter and sort; aggregation results are not exported',
   'mongo.bulk.updateTitle': 'Update matching',
   'mongo.bulk.deleteTitle': 'Delete matching',
   'mongo.bulk.applyFirst': 'The filter was edited but not run: run it first so the grid shows exactly what will change',
@@ -1219,5 +1225,7 @@ export const en: Translations = {
   'error.backend.mongoIndexKeysEmpty': 'Keys cannot be empty: name at least one field, e.g. { email: 1 }',
   'error.backend.mongoIndexExists': 'An index with the same keys and options already exists ({detail}); nothing was created',
   'error.backend.mongoBulkStopped': 'The server stopped partway: {detail}. Documents processed before that point have already taken effect and the server does not say how many; refresh to see.',
+  'error.backend.mongoPipelineWrites': 'The pipeline has a stage that writes ({detail}); aggregation here is read-only. Use Update matching or Import to write',
+  'error.backend.mongoPipelineInvalid': 'A pipeline is an array whose items are stages like { $match: … } (item {detail} is not)',
   'error.backend.mongoUpdateNotOperators': 'The update must use operators such as $set, or a pipeline. A whole document is a replacement, which an update of matching documents cannot do'
 };

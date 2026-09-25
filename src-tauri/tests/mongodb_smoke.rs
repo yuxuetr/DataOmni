@@ -14,7 +14,7 @@ use dataomni_lib::services::mongodb::{
   MONGO_DOCUMENT_CHANGED, MONGO_DOCUMENT_GONE, MONGO_ID_CHANGED, MONGO_SERVER_ERROR, MONGO_TIMEOUT,
   MONGO_UNREACHABLE,
 };
-use mongodb::bson::{doc, Document};
+use mongodb::bson::{doc, Bson, Document};
 use mongodb::Client;
 use serde_json::json;
 use std::time::{Duration, Instant};
@@ -963,4 +963,63 @@ async fn delete_many_reports_how_many_it_removed() {
     .expect("delete all");
   assert_eq!(rest, 7);
   assert_eq!(collection.count_documents(doc! {}).await.expect("count"), 0);
+}
+
+/// 聚合：分组结果按管道自己的排序分页，全文随页带回；写库的阶段在发出去之前就拒绝
+#[tokio::test]
+async fn an_aggregation_pages_through_its_own_results_and_never_writes() {
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_aggregate").await;
+  collection
+    .insert_many((0..30).map(
+      |n| doc! { "n": n, "group": i32::try_from(n % 7).expect("small"), "long": Bson::Int64(n) },
+    ))
+    .await
+    .expect("insert");
+  let timeout = Duration::from_secs(10);
+  let pipeline = |text: &str| {
+    mongo::parse_pipeline(mongo_shell::parse_value(text).expect("pipeline")).expect("stages")
+  };
+  let grouped = "[{ $group: { _id: '$group', total: { $sum: '$long' } } }, { $sort: { _id: 1 } }]";
+
+  let first =
+    mongo::aggregate(&client, DATABASE, "smoke_aggregate", pipeline(grouped), 0, 5, timeout)
+      .await
+      .expect("first page");
+  assert!(first.has_more);
+  assert_eq!(first.documents.len(), 5);
+  assert_eq!(first.texts.len(), 5);
+  let second =
+    mongo::aggregate(&client, DATABASE, "smoke_aggregate", pipeline(grouped), 5, 5, timeout)
+      .await
+      .expect("second page");
+  assert!(!second.has_more);
+  let ids: Vec<String> = first
+    .documents
+    .iter()
+    .chain(&second.documents)
+    .map(|row| row.id.clone().expect("group key"))
+    .collect();
+  assert_eq!(ids, ["0", "1", "2", "3", "4", "5", "6"]);
+  // 组 0 是 0、7、14、21、28：Long 求和还是 Long，全文里写得出来
+  assert_eq!(first.texts[0], "{\n  _id: 0,\n  total: Long('70')\n}");
+
+  let refused = mongo_shell::parse_value("[{ $match: {} }, { $out: 'smoke_aggregate_copy' }]")
+    .map_err(|error| error.to_string())
+    .and_then(mongo::parse_pipeline)
+    .expect_err("refused");
+  assert_eq!(refused, format!("{}: $out", mongo::MONGO_PIPELINE_WRITES));
+
+  let broken = mongo::aggregate(
+    &client,
+    DATABASE,
+    "smoke_aggregate",
+    pipeline("[{ $nosuchstage: {} }]"),
+    0,
+    5,
+    timeout,
+  )
+  .await
+  .expect_err("unknown stage");
+  assert!(broken.starts_with(MONGO_SERVER_ERROR), "{broken}");
 }

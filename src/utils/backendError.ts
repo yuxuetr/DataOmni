@@ -115,7 +115,9 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_MONGO_INDEX_KEYS_EMPTY: 'error.backend.mongoIndexKeysEmpty',
   DATAOMNI_MONGO_INDEX_EXISTS: 'error.backend.mongoIndexExists',
   DATAOMNI_MONGO_BULK_STOPPED: 'error.backend.mongoBulkStopped',
-  DATAOMNI_MONGO_UPDATE_NOT_OPERATORS: 'error.backend.mongoUpdateNotOperators'
+  DATAOMNI_MONGO_UPDATE_NOT_OPERATORS: 'error.backend.mongoUpdateNotOperators',
+  DATAOMNI_MONGO_PIPELINE_WRITES: 'error.backend.mongoPipelineWrites',
+  DATAOMNI_MONGO_PIPELINE_INVALID: 'error.backend.mongoPipelineInvalid'
 };
 
 export interface BackendError {

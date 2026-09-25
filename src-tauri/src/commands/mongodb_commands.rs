@@ -10,8 +10,8 @@ use crate::services::csv_import::{ImportProgress, ImportSummary};
 use crate::services::export_writer::{ExportProgress, ExportSummary};
 use crate::services::mongo_shell;
 use crate::services::mongodb::{
-  self, CollectionEntry, ExtendedJson, FindRequest, ImportMode, MongoCollectionStructure,
-  MongoFindPage, MongoRegistry, UpdateManyResult, MONGO_NOT_CONNECTED,
+  self, CollectionEntry, ExtendedJson, FindRequest, ImportMode, MongoAggregatePage,
+  MongoCollectionStructure, MongoFindPage, MongoRegistry, UpdateManyResult, MONGO_NOT_CONNECTED,
 };
 use crate::services::query_error::QueryError;
 use ::mongodb::Client;
@@ -184,6 +184,35 @@ pub async fn mongodb_delete_many(
   let timeout = timeout(timeout_ms)?;
   let client = client(&registry, &connection_string)?;
   mongodb::delete_many(&client, &database, &collection, filter, timeout).await
+}
+
+/// 跑一条只读的聚合管道，取一页。`pipeline` 是 mongosh 写法的数组文字
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn mongodb_aggregate(
+  connection_string: String,
+  database: String,
+  collection: String,
+  pipeline: String,
+  skip: u64,
+  limit: u64,
+  timeout_ms: u64,
+  registry: State<'_, MongoRegistry>,
+) -> Result<MongoAggregatePage, String> {
+  let pipeline = mongo_shell::parse_value(&pipeline).map_err(|error| error.to_string())?;
+  let pipeline = mongodb::parse_pipeline(pipeline)?;
+  let timeout = timeout(timeout_ms)?;
+  let client = client(&registry, &connection_string)?;
+  mongodb::aggregate(
+    &client,
+    &database,
+    &collection,
+    pipeline,
+    skip,
+    limit.min(MAX_PAGE_SIZE),
+    timeout,
+  )
+  .await
 }
 
 /// 集合的索引与选项（校验规则、上限、时序、视图定义）

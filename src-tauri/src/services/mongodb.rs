@@ -286,6 +286,83 @@ pub async fn find(
   Ok(MongoFindPage { documents: documents.iter().map(document_row).collect(), has_more })
 }
 
+/// 管道里有写库的阶段（`$out` / `$merge`）。聚合在这里只读：写库有按条件改、导入这些
+/// 看得见后果的入口。数据是那个阶段名
+pub const MONGO_PIPELINE_WRITES: &str = "DATAOMNI_MONGO_PIPELINE_WRITES";
+/// 管道要是一个数组，每个元素是一个阶段 `{ $match: … }`
+pub const MONGO_PIPELINE_INVALID: &str = "DATAOMNI_MONGO_PIPELINE_INVALID";
+
+/// 聚合的一页。结果不是库里存着的文档（`$group` 的 `_id` 是分组键，可能恰好等于某个真文档
+/// 的 `_id`），所以不能按 `_id` 回库里取——每个结果的全文随这一页一起带回来，面板只读地显示它
+#[derive(Debug, Serialize)]
+pub struct MongoAggregatePage {
+  pub documents: Vec<MongoDocumentRow>,
+  /// 与 `documents` 一一对应，缩进写法
+  pub texts: Vec<String>,
+  pub has_more: bool,
+}
+
+/// 管道的文字读成阶段列表。只写了一个阶段 `{ $match: … }` 也认，当作只有它的管道
+pub fn parse_pipeline(value: Bson) -> Result<Vec<Document>, String> {
+  let stages = match value {
+    Bson::Array(stages) => stages,
+    Bson::Document(stage) => vec![Bson::Document(stage)],
+    other => return Err(format!("{MONGO_PIPELINE_INVALID}: {}", mongo_shell::value_kind(&other))),
+  };
+  let mut pipeline = Vec::with_capacity(stages.len());
+  for (index, stage) in stages.into_iter().enumerate() {
+    let Bson::Document(stage) = stage else {
+      return Err(format!("{MONGO_PIPELINE_INVALID}: #{}", index + 1));
+    };
+    if let Some(writer) = stage.keys().find(|key| *key == "$out" || *key == "$merge") {
+      return Err(format!("{MONGO_PIPELINE_WRITES}: {writer}"));
+    }
+    pipeline.push(stage);
+  }
+  Ok(pipeline)
+}
+
+/// 跑一条聚合管道，取一页。翻页靠在管道末尾接 `$skip` 与 `$limit`（多取一条判断还有没有）：
+/// 每翻一页整条管道重跑一遍，这是服务端游标不跨请求保留时唯一不占着资源的办法
+pub async fn aggregate(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  mut pipeline: Vec<Document>,
+  skip: u64,
+  limit: u64,
+  timeout: Duration,
+) -> Result<MongoAggregatePage, String> {
+  let collection = client.database(database).collection::<Document>(collection);
+  let limit = limit.max(1);
+  if skip > 0 {
+    pipeline.push(doc! { "$skip": i64::try_from(skip).unwrap_or(i64::MAX) });
+  }
+  pipeline.push(doc! { "$limit": i64::try_from(limit + 1).unwrap_or(i64::MAX) });
+  let query = async {
+    let documents: Vec<Document> = collection
+      .aggregate(pipeline)
+      .max_time(timeout)
+      .await
+      .map_err(describe_error)?
+      .try_collect()
+      .await
+      .map_err(describe_error)?;
+    Ok::<_, String>(documents)
+  };
+  let mut documents = with_deadline(timeout, query).await?;
+  let has_more = documents.len() as u64 > limit;
+  documents.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+  Ok(MongoAggregatePage {
+    documents: documents.iter().map(document_row).collect(),
+    texts: documents
+      .iter()
+      .map(|document| mongo_shell::format_document(document, Layout::Indented))
+      .collect(),
+    has_more,
+  })
+}
+
 /// 符合条件的文档数。条件为空时先用元数据里的估计值——大集合上精确计数要扫全表，
 /// 而空条件下两者只在异常关机后才会不一致；视图不支持估计，退回精确计数
 pub async fn count(
@@ -1088,6 +1165,23 @@ mod tests {
     assert_eq!(default_index_name(&doc! { "status": 1, "createdAt": -1 }), "status_1_createdAt_-1");
     assert_eq!(default_index_name(&doc! { "title": "text" }), "title_text");
     assert_eq!(default_index_name(&doc! { "n": 1.0, "at": Bson::Int64(-1) }), "n_1_at_-1");
+  }
+
+  #[test]
+  fn a_pipeline_is_an_array_of_stages_and_never_writes() {
+    let parse = |text: &str| parse_pipeline(mongo_shell::parse_value(text).expect("value"));
+    assert_eq!(parse("[{ $match: { a: 1 } }, { $count: 'n' }]").map(|stages| stages.len()), Ok(2));
+    assert_eq!(parse("{ $match: { a: 1 } }").map(|stages| stages.len()), Ok(1), "one stage alone");
+    assert_eq!(
+      parse("[{ $match: {} }, { $out: 'copy' }]"),
+      Err(format!("{MONGO_PIPELINE_WRITES}: $out"))
+    );
+    assert_eq!(
+      parse("[{ $merge: { into: 'x' } }]"),
+      Err(format!("{MONGO_PIPELINE_WRITES}: $merge"))
+    );
+    assert_eq!(parse("[{ $match: {} }, 3]"), Err(format!("{MONGO_PIPELINE_INVALID}: #2")));
+    assert!(parse("'text'").is_err_and(|error| error.starts_with(MONGO_PIPELINE_INVALID)));
   }
 
   #[test]

@@ -72,6 +72,7 @@ pub fn run() {
       mongodb_drop_index,
       mongodb_update_many,
       mongodb_delete_many,
+      mongodb_aggregate,
       close_mongodb,
       // 数据库操作命令
       execute_query,

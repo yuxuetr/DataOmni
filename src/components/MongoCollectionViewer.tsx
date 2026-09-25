@@ -21,11 +21,13 @@ import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import {
   mongoColumnAlignment,
   mongoColumns,
+  indentOnTab,
   mongoPageRange,
   type MongoFindPage,
   type MongoValueKind
 } from '../utils/mongoDocuments';
-import { PLAIN_TEXT_INPUT } from './FormControls';
+import { PLAIN_TEXT_INPUT, SegmentedControl } from './FormControls';
+import { SHORTCUTS, formatShortcut, matchesShortcut } from '../utils/shortcuts';
 import { MongoDocumentPanel } from './MongoDocumentPanel';
 import { useConfirmPrompt } from './ConfirmPrompt';
 import { MongoExportDialog } from './MongoExportDialog';
@@ -39,16 +41,31 @@ interface MongoCollectionViewerProps {
   readOnly: boolean;
 }
 
-/** 右边的面板：没开、看一个文档、新建一个 */
+/**
+ * 右边的面板：没开、看一个文档、新建一个，或者看聚合结果里的一条。
+ *
+ * 聚合结果单独一种：它不是库里存着的文档（`$group` 的 `_id` 是分组键，可能恰好等于某个
+ * 真文档的 `_id`），按 `_id` 回库里取会打开另一个文档，还能改它
+ */
 type DocumentPanelState =
   | { kind: 'closed' }
   | { kind: 'document'; id: string }
-  | { kind: 'insert' };
+  | { kind: 'insert' }
+  | { kind: 'result'; index: number };
 
 interface AppliedQuery {
   filter: string;
   sort: string;
+  /** 不是 null 就是聚合：网格里是这条管道的结果，条件与排序不参与 */
+  pipeline: string | null;
 }
+
+interface MongoAggregatePage extends MongoFindPage {
+  /** 与 `documents` 一一对应的全文（缩进写法） */
+  texts: string[];
+}
+
+const PIPELINE_PLACEHOLDER = "[\n  { $match: { status: 'paid' } },\n  { $group: { _id: '$customer', total: { $sum: '$amount' } } },\n  { $sort: { total: -1 } }\n]";
 
 /** 值的颜色按类型分：一眼分得出 `'41'`（字符串）和 `Long('41')` */
 const KIND_CLASS: Record<MongoValueKind, string> = {
@@ -79,7 +96,10 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
   const connectionString = useQueryStore((state) => state.connectionString);
   const [filterDraft, setFilterDraft] = useState('');
   const [sortDraft, setSortDraft] = useState('');
-  const [applied, setApplied] = useState<AppliedQuery>({ filter: '', sort: '' });
+  const [applied, setApplied] = useState<AppliedQuery>({ filter: '', sort: '', pipeline: null });
+  const [mode, setMode] = useState<'find' | 'aggregate'>('find');
+  const [pipelineDraft, setPipelineDraft] = useState('');
+  const [resultTexts, setResultTexts] = useState<string[] | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(50);
   const [result, setResult] = useState<MongoFindPage | null>(null);
@@ -113,24 +133,24 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
     setLoading(true);
     setError(null);
     try {
-      const found = await invoke<MongoFindPage>('mongodb_find', {
-        connectionString,
-        database,
-        collection,
-        filter: query.filter,
-        sort: query.sort,
-        skip: (nextPage - 1) * size,
-        limit: size,
-        timeoutMs
-      });
+      const skip = (nextPage - 1) * size;
+      const [found, texts] = query.pipeline !== null
+        ? await invoke<MongoAggregatePage>('mongodb_aggregate', {
+          connectionString, database, collection, pipeline: query.pipeline, skip, limit: size, timeoutMs
+        }).then((aggregated) => [aggregated, aggregated.texts] as const)
+        : await invoke<MongoFindPage>('mongodb_find', {
+          connectionString, database, collection, filter: query.filter, sort: query.sort, skip, limit: size, timeoutMs
+        }).then((page) => [page, null] as const);
       if (request === findRequest.current) {
         setResult(found);
+        setResultTexts(texts);
         setPage(nextPage);
       }
     } catch (cause) {
       if (request === findRequest.current) {
         // 上一次的结果不留：它是另一个条件下的文档，留在错误下面会被当成这次的
         setResult(null);
+        setResultTexts(null);
         setError(describeError(cause));
       }
     } finally {
@@ -146,6 +166,13 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
       return;
     }
     const request = ++countRequest.current;
+    // 聚合结果不数：要数就得把整条管道再跑一遍加 `$count`，而翻页本来就知道还有没有下一页
+    if (query.pipeline !== null) {
+      setTotal(null);
+      setCounting(false);
+      setCountError(null);
+      return;
+    }
     setCounting(true);
     setCountError(null);
     setTotal(null);
@@ -172,7 +199,7 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
   }, [connectionString, database, collection, timeoutMs]);
 
   useEffect(() => {
-    const initial = { filter: '', sort: '' };
+    const initial = { filter: '', sort: '', pipeline: null };
     void load(1, initial, pageSize);
     void recount(initial);
     // 只在打开时跑一次；之后的每次查询由按钮与翻页触发
@@ -180,12 +207,36 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
   }, [connectionString, database, collection]);
 
   const applyQuery = () => {
-    const query = { filter: filterDraft, sort: sortDraft };
+    const query = { filter: filterDraft, sort: sortDraft, pipeline: null };
     setApplied(query);
     setPanel({ kind: 'closed' });
     void load(1, query, pageSize);
     // 排序不改变总数；只动了排序时不重新数
-    if (query.filter !== applied.filter || total === null) {
+    if (query.filter !== applied.filter || applied.pipeline !== null || total === null) {
+      void recount(query);
+    }
+  };
+
+  const runPipeline = () => {
+    const query = { ...applied, pipeline: pipelineDraft };
+    setApplied(query);
+    setPanel({ kind: 'closed' });
+    void load(1, query, pageSize);
+    void recount(query);
+  };
+
+  /** 两种模式各留着自己的草稿；切回查询时回到上次生效的条件与排序 */
+  const switchMode = async (next: 'find' | 'aggregate') => {
+    if (next === mode || !(await mayLeavePanel())) {
+      return;
+    }
+    setMode(next);
+    setPanelDirty(false);
+    setPanel({ kind: 'closed' });
+    if (next === 'find' && applied.pipeline !== null) {
+      const query = { ...applied, pipeline: null };
+      setApplied(query);
+      void load(1, query, pageSize);
       void recount(query);
     }
   };
@@ -193,7 +244,7 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
   const resetQuery = () => {
     setFilterDraft('');
     setSortDraft('');
-    const query = { filter: '', sort: '' };
+    const query = { filter: '', sort: '', pipeline: null };
     setApplied(query);
     setPanel({ kind: 'closed' });
     void load(1, query, pageSize);
@@ -203,7 +254,9 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
   const refresh = () => {
     void load(page, applied, pageSize);
     void recount(applied);
-    if (selectedId && !panelDirty) {
+    if (panel.kind === 'result') {
+      setPanel({ kind: 'closed' });
+    } else if (selectedId && !panelDirty) {
       void openDocument(selectedId);
     }
   };
@@ -256,7 +309,16 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
    * 批量改删只作用于**已经生效**的条件：框里改了还没按「查询」时，网格上看到的不是
    * 那个新条件选中的文档，这时不给按
    */
-  const bulkBlocked = filterDraft !== applied.filter;
+  const bulkBlocked = filterDraft !== applied.filter || applied.pipeline !== null;
+
+  const selectResult = async (index: number) => {
+    if ((panel.kind === 'result' && panel.index === index) || !(await mayLeavePanel())) {
+      return;
+    }
+    documentRequest.current += 1;
+    setPanelDirty(false);
+    setPanel({ kind: 'result', index });
+  };
 
   const startBulk = async (mode: MongoBulkWriteMode) => {
     if (!(await mayLeavePanel())) {
@@ -374,7 +436,8 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
     [columns, documents]
   );
   const gridWidth = widths.reduce((sum, width) => sum + width, 0);
-  const range = mongoPageRange(page, pageSize, documents.length, result?.has_more ?? false, total);
+  const aggregating = applied.pipeline !== null;
+  const range = mongoPageRange(page, pageSize, documents.length, result?.has_more ?? false, aggregating ? null : total);
 
   const onQueryKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
@@ -383,7 +446,9 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
     }
   };
 
-  const countLabel = counting
+  const countLabel = aggregating
+    ? t('mongo.aggregate.resultLabel')
+    : counting
     ? t('mongo.counting')
     : total !== null
       ? t('mongo.count', { count: total })
@@ -427,7 +492,8 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
           )}
           <button
             onClick={() => setExporting(true)}
-            disabled={!connectionString}
+            disabled={!connectionString || aggregating}
+            title={aggregating ? t('mongo.aggregate.exportFindOnly') : undefined}
             className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg transition-colors hover:bg-surface-hover disabled:opacity-50"
           >
             <Download size={14} />
@@ -459,8 +525,56 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
         </div>
       </div>
 
-      {/* 条件栏：写法同 mongosh，回车即查 */}
+      {/* 条件栏：写法同 mongosh，回车即查。聚合模式下换成管道 */}
       <div className="space-y-2 border-b border-line px-4 py-2">
+        <div className="flex items-center gap-3">
+          <SegmentedControl
+            value={mode}
+            options={[
+              { value: 'find', label: t('mongo.mode.find') },
+              { value: 'aggregate', label: t('mongo.mode.aggregate') }
+            ]}
+            onChange={(next) => void switchMode(next)}
+          />
+          {mode === 'aggregate' && (
+            <span className="text-xs text-fg-subtle">{t('mongo.aggregate.hint')}</span>
+          )}
+        </div>
+        {mode === 'aggregate' ? (
+          <div className="flex items-start gap-2">
+            <textarea
+              value={pipelineDraft}
+              onChange={(event) => setPipelineDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (matchesShortcut(event, SHORTCUTS.runCurrent)) {
+                  event.preventDefault();
+                  runPipeline();
+                } else if (event.key === 'Tab' && !event.shiftKey) {
+                  event.preventDefault();
+                  const target = event.currentTarget;
+                  const next = indentOnTab(target.value, target.selectionStart, target.selectionEnd);
+                  setPipelineDraft(next.text);
+                  requestAnimationFrame(() => target.setSelectionRange(next.caret, next.caret));
+                }
+              }}
+              aria-label={t('mongo.mode.aggregate')}
+              placeholder={PIPELINE_PLACEHOLDER}
+              rows={5}
+              className="min-w-0 flex-1 resize-y rounded-control border border-line-strong bg-surface px-2 py-1 font-mono text-[13px] text-fg outline-none placeholder:text-fg-subtle focus:ring-2 focus:ring-accent"
+              {...PLAIN_TEXT_INPUT}
+            />
+            <button
+              onClick={runPipeline}
+              disabled={loading || !pipelineDraft.trim()}
+              title={`${t('mongo.aggregate.run')} (${formatShortcut(SHORTCUTS.runCurrent)})`}
+              className="flex items-center gap-1 rounded-control border border-accent-line px-3 py-1 text-sm text-accent transition-colors hover:bg-accent-soft disabled:opacity-50"
+            >
+              <Search size={14} />
+              <span>{t('mongo.aggregate.run')}</span>
+            </button>
+          </div>
+        ) : (
+        <>
         <div className="flex items-center gap-2">
           <label htmlFor="mongo-filter" className="w-12 shrink-0 text-xs font-medium text-fg-muted">
             {t('mongo.filter')}
@@ -525,6 +639,8 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
           />
           <span className="shrink-0 text-xs text-fg-subtle">{t('mongo.syntaxHint')}</span>
         </div>
+        </>
+        )}
       </div>
 
       {error && (
@@ -581,17 +697,21 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
                   <tbody className="divide-y divide-line bg-surface">
                     {documents.map((document, rowIndex) => (
                       <tr
-                        key={document.id ?? `row-${rowIndex}`}
+                        key={aggregating ? `result-${rowIndex}` : document.id ?? `row-${rowIndex}`}
                         onClick={() => {
-                          if (document.id) {
+                          if (aggregating) {
+                            void selectResult(rowIndex);
+                          } else if (document.id) {
                             void selectRow(document.id);
                           }
                         }}
-                        title={document.id ? undefined : t('mongo.noId')}
+                        title={aggregating || document.id ? undefined : t('mongo.noId')}
                         className={clsx(
                           'hover:bg-surface-hover',
-                          document.id ? 'cursor-pointer' : 'cursor-default',
-                          document.id !== null && document.id === selectedId && 'bg-accent-soft'
+                          aggregating || document.id ? 'cursor-pointer' : 'cursor-default',
+                          (aggregating
+                            ? panel.kind === 'result' && panel.index === rowIndex
+                            : document.id !== null && document.id === selectedId) && 'bg-accent-soft'
                         )}
                       >
                         {columns.map((column, columnIndex) => {
@@ -675,7 +795,23 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
           )}
         </div>
 
-        {panel.kind !== 'closed' && (
+        {panel.kind === 'result' && (
+          <MongoDocumentPanel
+            key={`result:${page}:${panel.index}`}
+            mode="document"
+            idText={documents[panel.index]?.id ?? `#${(page - 1) * pageSize + panel.index + 1}`}
+            text={resultTexts?.[panel.index] ?? null}
+            loading={false}
+            error={null}
+            readOnly
+            onSave={async () => undefined}
+            onDelete={() => undefined}
+            onCancelEdit={() => undefined}
+            onClose={() => void closePanel()}
+            onDirtyChange={setPanelDirty}
+          />
+        )}
+        {(panel.kind === 'document' || panel.kind === 'insert') && (
           <MongoDocumentPanel
             key={panel.kind === 'document' ? `document:${panel.id}` : 'insert'}
             mode={panel.kind}

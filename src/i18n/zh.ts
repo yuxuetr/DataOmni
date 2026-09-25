@@ -1185,6 +1185,12 @@ export const zh = {
   'mongo.export.canonicalHint': '每个值都带类型（如 {"$numberLong": "5"}），mongoimport 读回来与原来一模一样，只是不太好读。',
   'mongo.export.fileHint': '每行一个文档，mongoimport 可以直接导入。不是当前这一页：会从服务端重新读出所有符合条件的文档。',
   'mongo.export.choosePath': '选择位置并导出…',
+  'mongo.mode.find': '查询',
+  'mongo.mode.aggregate': '聚合',
+  'mongo.aggregate.hint': '只读：$out、$merge 不能用。每翻一页整条管道重跑一遍，以 $sort 结尾翻页才稳定。',
+  'mongo.aggregate.run': '执行',
+  'mongo.aggregate.resultLabel': '聚合结果（只读，不数总数）',
+  'mongo.aggregate.exportFindOnly': '导出按「查询」的条件与排序；聚合结果不导出',
   'mongo.bulk.updateTitle': '按条件修改',
   'mongo.bulk.deleteTitle': '按条件删除',
   'mongo.bulk.applyFirst': '条件框改过还没按「查询」：先查询，确认网格里就是要改的那些',
@@ -1230,6 +1236,8 @@ export const zh = {
   'error.backend.mongoIndexKeysEmpty': '键不能是空的：至少写一个字段，如 { email: 1 }',
   'error.backend.mongoIndexExists': '键和选项都相同的索引已经有了（{detail}），没有新建',
   'error.backend.mongoBulkStopped': '服务端中途停下了：{detail}。在它之前处理过的文档已经生效，服务端不报个数，刷新看看。',
+  'error.backend.mongoPipelineWrites': '管道里有写库的阶段 {detail}：这里的聚合只读。要写库请用按条件修改或导入',
+  'error.backend.mongoPipelineInvalid': '管道要是一个数组，每一项是一个阶段 { $match: … }（第 {detail} 项不是）',
   'error.backend.mongoUpdateNotOperators': '「怎么改」要用 $set 这类操作符或者一条管道；写成一整个文档是替换，按条件修改不能这样用'
 } as const;
 
