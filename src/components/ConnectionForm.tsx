@@ -41,7 +41,7 @@ import {
   sshTunnelProblems,
   supportsSshTunnel
 } from '../utils/sshTunnel';
-import { isMongoSrv, withMongoSrv } from '../utils/mongoSrv';
+import { isMongoSrv, isMongoX509, withMongoSrv, withMongoX509 } from '../utils/mongoConnection';
 import { clsx } from 'clsx';
 import { PLAIN_TEXT_INPUT } from './FormControls';
 import { 
@@ -311,6 +311,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
   const tunnel = formData.ssh_tunnel ?? null;
   const srv = isMongoSrv(formData);
+  // 拿证书登录：用户名是证书的主题、认证库是 $external，那三格都不用填
+  const x509 = isMongoX509(formData);
   // 一格都没填时不提示：刚勾开就红着一片，读起来像是用户做错了什么
   const tunnelGaps = tunnel && !isSshTunnelBlank(tunnel) ? sshTunnelProblems(tunnel) : [];
 
@@ -721,8 +723,34 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   </div>
                 )}
 
+                {formData.db_type === DatabaseType.MongoDB && (
+                  <div>
+                    <label htmlFor="mongo-auth" className="block text-sm font-medium text-fg mb-1">
+                      {t('form.mongoAuth')}
+                    </label>
+                    <select
+                      id="mongo-auth"
+                      value={x509 ? 'x509' : 'password'}
+                      onChange={(event) => {
+                        const enabled = event.target.value === 'x509';
+                        // 口令那一格随之藏起来；留在里面的字不该被悄悄存进钥匙串
+                        setFormData((previous) => ({
+                          ...previous,
+                          ...withMongoX509(previous, enabled),
+                          password: enabled ? '' : previous.password
+                        }));
+                      }}
+                      className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                    >
+                      <option value="password">{t('form.mongoAuth.password')}</option>
+                      <option value="x509">{t('form.mongoAuth.x509')}</option>
+                    </select>
+                    {x509 && <p className="text-xs text-fg-muted mt-1">{t('form.mongoAuth.x509Hint')}</p>}
+                  </div>
+                )}
+
                 {/* 数据库名称 - 某些数据库类型不需要 */}
-                {(formData.db_type === DatabaseType.MySQL || 
+                {!x509 && (formData.db_type === DatabaseType.MySQL || 
                   formData.db_type === DatabaseType.PostgreSQL || 
                   formData.db_type === DatabaseType.SqlServer ||
                   formData.db_type === DatabaseType.Oracle ||
@@ -785,7 +813,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 )}
 
                 {/* 用户名密码 - 某些数据库类型不需要用户名 */}
-                {(formData.db_type === DatabaseType.MySQL || 
+                {!x509 && (formData.db_type === DatabaseType.MySQL || 
                   formData.db_type === DatabaseType.PostgreSQL || 
                   formData.db_type === DatabaseType.SqlServer ||
                   formData.db_type === DatabaseType.Oracle ||

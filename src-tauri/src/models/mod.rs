@@ -4,6 +4,10 @@ use urlencoding::encode;
 
 /// `options` 里的键：值为 `"true"` 时 MongoDB 按 SRV 记录连，见 [`ConnectionProfile::mongo_srv`]
 pub const MONGO_SRV_OPTION: &str = "srv";
+/// `options` 里的键：MongoDB 的认证方式。只认 [`MONGO_X509`]，不设就是口令（SCRAM）
+pub const MONGO_AUTH_MECHANISM_OPTION: &str = "authMechanism";
+/// 拿客户端证书登录，用户名是证书的主题，认证库固定是 `$external`
+pub const MONGO_X509: &str = "MONGODB-X509";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionProfile {
@@ -255,19 +259,17 @@ impl DatabaseType {
       DatabaseType::MongoDB if config.mongo_srv() => format!(
         "{}{}@{}/{}",
         crate::services::mongodb::MONGODB_SRV_SCHEME,
-        encode(&config.username),
+        encode(config.mongo_username()),
         config.host,
-        encode(config.database.as_deref().unwrap_or(""))
+        config.mongo_auth_segment("")
       ),
       DatabaseType::MongoDB => format!(
         "{}{}@{}:{}/{}",
         crate::services::mongodb::MONGODB_SCHEME,
-        encode(&config.username),
+        encode(config.mongo_username()),
         config.host,
         config.port,
-        encode(
-          config.database.as_deref().filter(|database| !database.is_empty()).unwrap_or("admin")
-        )
+        config.mongo_auth_segment("admin")
       ),
       DatabaseType::Redis => {
         if !config.username.is_empty() && !config.password.is_empty() {
@@ -342,6 +344,32 @@ impl ConnectionProfile {
   pub fn mongo_srv(&self) -> bool {
     self.db_type == DatabaseType::MongoDB
       && self.options.get(MONGO_SRV_OPTION).is_some_and(|value| value == "true")
+  }
+
+  /// MongoDB 用客户端证书登录（X.509），不用用户名和口令
+  pub fn mongo_x509(&self) -> bool {
+    self.db_type == DatabaseType::MongoDB
+      && self.options.get(MONGO_AUTH_MECHANISM_OPTION).is_some_and(|value| value == MONGO_X509)
+  }
+
+  /// 登录用的用户名。X.509 的用户名是证书的主题、由服务端从证书里读，表单上那一格
+  /// 就算留着字也不用
+  pub fn mongo_username(&self) -> &str {
+    if self.mongo_x509() {
+      ""
+    } else {
+      &self.username
+    }
+  }
+
+  /// 连接串最后一段：认证库。X.509 的固定是 `$external`——和同一台主机上不带凭据的
+  /// 连接因此是两个键
+  fn mongo_auth_segment(&self, fallback: &str) -> String {
+    if self.mongo_x509() {
+      return encode("$external").into_owned();
+    }
+    encode(self.database.as_deref().filter(|database| !database.is_empty()).unwrap_or(fallback))
+      .into_owned()
   }
 
   /// 这个配置的连接串。`tunnel_port` 有值就指向本地转发端口。

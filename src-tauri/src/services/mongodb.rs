@@ -28,7 +28,7 @@ use crate::services::query_error::QueryError;
 use futures_util::TryStreamExt;
 use indexmap::IndexMap;
 use mongodb::bson::{doc, Bson, Document};
-use mongodb::options::{ClientOptions, Credential, ServerAddress, Tls, TlsOptions};
+use mongodb::options::{AuthMechanism, ClientOptions, Credential, ServerAddress, Tls, TlsOptions};
 use mongodb::results::CollectionType;
 use mongodb::Client;
 use serde::{Deserialize, Serialize};
@@ -78,6 +78,8 @@ pub struct MongoTarget {
   port: u16,
   /// 按 SRV 记录找服务端：`host` 是 DNS 名字，`port` 不用
   srv: bool,
+  /// 拿客户端证书登录：不带用户名和口令，认证库是 `$external`
+  x509: bool,
   username: String,
   password: String,
   /// 认证库，表单上「数据库」那一格。空着时直连用 `admin`，SRV 先看 TXT 记录
@@ -95,7 +97,8 @@ impl MongoTarget {
       host: profile.host.clone(),
       port: profile.port,
       srv: profile.mongo_srv(),
-      username: profile.username.clone(),
+      x509: profile.mongo_x509(),
+      username: profile.mongo_username().to_string(),
       password: profile.password.clone(),
       auth_source: profile.database.clone().filter(|database| !database.is_empty()),
       tls: profile.effective_tls_mode(),
@@ -133,7 +136,13 @@ impl MongoTarget {
       }
       options
     };
-    if let Some(credential) = options.credential.as_mut() {
+    if self.x509 {
+      // 直接给整份凭据，盖掉 SRV 那条路上 TXT 可能带来的 `authSource`
+      let mut credential = Credential::default();
+      credential.mechanism = Some(AuthMechanism::MongoDbX509);
+      credential.source = Some("$external".to_string());
+      options.credential = Some(credential);
+    } else if let Some(credential) = options.credential.as_mut() {
       credential.password = Some(self.password.clone());
     }
     options.app_name = Some("DataOmni".to_string());
@@ -191,7 +200,8 @@ pub async fn connect(target: &MongoTarget) -> Result<Client, String> {
   let client = Client::with_options(target.options().await.map_err(describe_error)?)
     .map_err(describe_error)?;
   client.database("admin").run_command(doc! { "ping": 1 }).await.map_err(describe_error)?;
-  if target.username.is_empty() {
+  // X.509 也没有用户名，但握手时已经按证书认证过了，不是「没带凭据」
+  if target.username.is_empty() && !target.x509 {
     // 13 是 Unauthorized：服务端开着认证，不带凭据什么都读不了
     if let Err(error) = client.list_database_names().authorized_databases(true).await {
       return Err(match *error.kind {

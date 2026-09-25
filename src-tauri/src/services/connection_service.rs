@@ -29,6 +29,8 @@ pub const ORACLE_TLS_UNSUPPORTED: &str = "DATAOMNI_ORACLE_TLS_UNSUPPORTED";
 pub const SQLITE_PATH_REQUIRED: &str = "DATAOMNI_SQLITE_PATH_REQUIRED";
 /// MongoDB 填了单独的客户端私钥文件：它要证书与私钥合在一个文件里
 pub const MONGO_CLIENT_KEY_SEPARATE: &str = "DATAOMNI_MONGO_CLIENT_KEY_SEPARATE";
+/// MongoDB 选了拿证书登录（X.509），却没填客户端证书或没开 TLS
+pub const MONGO_X509_NEEDS_CERTIFICATE: &str = "DATAOMNI_MONGO_X509_NEEDS_CERTIFICATE";
 /// MongoDB 按 SRV 记录连时不能再走 SSH 隧道
 pub const MONGO_SRV_WITH_TUNNEL: &str = "DATAOMNI_MONGO_SRV_WITH_TUNNEL";
 pub const HOST_REQUIRED: &str = "DATAOMNI_HOST_REQUIRED";
@@ -518,6 +520,13 @@ fn validate_tls_configuration(config: &ConnectionProfile) -> Result<(), String> 
   if config.db_type == DatabaseType::MongoDB {
     if has_client_key {
       return Err(MONGO_CLIENT_KEY_SEPARATE.to_string());
+    }
+    // 拿证书登录却没有证书（或没开 TLS、证书根本发不出去）：服务端只会回一句
+    // 「认证失败」，这里先说清楚缺的是什么
+    if config.mongo_x509()
+      && (!has_client_certificate || config.effective_tls_mode() == TlsMode::Disabled)
+    {
+      return Err(MONGO_X509_NEEDS_CERTIFICATE.to_string());
     }
   } else if has_client_certificate != has_client_key {
     return Err(TLS_CLIENT_PAIR_REQUIRED.to_string());
@@ -1016,6 +1025,26 @@ mod tests {
     assert_eq!(validate_tls_configuration(&config), Ok(()));
     config.client_key_path = Some("/certs/client.key".to_string());
     assert_eq!(validate_tls_configuration(&config), Err(MONGO_CLIENT_KEY_SEPARATE.to_string()));
+  }
+
+  /// X.509 要有证书、要开 TLS；它的键落在 `$external`，不和同一台主机上不带凭据的
+  /// 连接共用一个池子，表单上残留的用户名也不进键
+  #[test]
+  fn mongodb_x509_needs_a_certificate_and_keys_on_external() {
+    let mut config = profile("profile-1", "");
+    config.db_type = DatabaseType::MongoDB;
+    config.username = "leftover".to_string();
+    config.options.insert(
+      crate::models::MONGO_AUTH_MECHANISM_OPTION.to_string(),
+      crate::models::MONGO_X509.to_string(),
+    );
+    config.tls_mode = Some(TlsMode::VerifyFull);
+    assert_eq!(validate_tls_configuration(&config), Err(MONGO_X509_NEEDS_CERTIFICATE.to_string()));
+    config.client_certificate_path = Some("/certs/client.pem".to_string());
+    assert_eq!(validate_tls_configuration(&config), Ok(()));
+    config.tls_mode = Some(TlsMode::Disabled);
+    assert_eq!(validate_tls_configuration(&config), Err(MONGO_X509_NEEDS_CERTIFICATE.to_string()));
+    assert_eq!(config.connection_string_via(None), "mongodb://@localhost:5432/%24external");
   }
 
   /// MongoDB 可以不开认证，「库」那一格是认证库、空着就是 admin；两条都不该被

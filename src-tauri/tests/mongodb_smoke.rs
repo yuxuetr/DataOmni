@@ -16,7 +16,9 @@
 //!
 //! 客户端证书的几条另设 `DATAOMNI_MONGODB_TLS_TEST_URL`（一台 `requireTLS` 且设了
 //! `tlsCAFile`、因而要求客户端证书的服务端）与 `DATAOMNI_MONGODB_TLS_TEST_DIR`：里面有
-//! `ca.pem`、`client.pem`（该 CA 签的证书加私钥）、`rogue.pem`（自签的，服务端不认）。
+//! `ca.pem`、`client.pem`（该 CA 签的证书加私钥）、`rogue.pem`（自签的，服务端不认）、
+//! `stranger.pem`（同一个 CA 签的，但 `$external` 里没有它的用户）。`client.pem` 的主题
+//! `O=DataOmni,OU=test,CN=dataomni-client` 要在 `$external` 里建好用户（X.509 那一条用）。
 
 use dataomni_lib::models::ConnectionProfile;
 use dataomni_lib::services::mongo_shell::{self, Layout};
@@ -290,6 +292,44 @@ async fn a_client_certificate_is_presented_and_only_the_right_one_gets_in() {
       mongo::connect(&MongoTarget::from_profile(&profile)).await.err().unwrap_or_default();
     assert!(error.starts_with(MONGO_UNREACHABLE), "{name:?}: {error}");
   }
+}
+
+/// 拿证书登录（X.509）：身份是证书的主题。表单上残留的用户名、口令不发出去；
+/// 同一个 CA 签的另一张证书，`$external` 里没有它的用户，登录被拒
+#[tokio::test]
+async fn an_x509_login_is_the_certificate_subject() {
+  let x509 = |name: &str| {
+    tls_profile(Some(name)).map(|mut profile| {
+      profile.options.insert(
+        dataomni_lib::models::MONGO_AUTH_MECHANISM_OPTION.to_string(),
+        dataomni_lib::models::MONGO_X509.to_string(),
+      );
+      profile.password.push_str("-ignored");
+      profile
+    })
+  };
+  let Some(profile) = x509("client.pem") else { return };
+  let client = mongo::connect(&MongoTarget::from_profile(&profile))
+    .await
+    .unwrap_or_else(|error| panic!("x509 login: {error}"));
+  let status = client
+    .database("admin")
+    .run_command(doc! { "connectionStatus": 1 })
+    .await
+    .expect("connectionStatus");
+  let user = status
+    .get_document("authInfo")
+    .and_then(|info| info.get_array("authenticatedUsers"))
+    .ok()
+    .and_then(|users| users.first())
+    .and_then(Bson::as_document)
+    .and_then(|user| user.get_str("user").ok())
+    .map(str::to_string);
+  assert_eq!(user.as_deref(), Some("O=DataOmni,OU=test,CN=dataomni-client"));
+
+  let Some(profile) = x509("stranger.pem") else { return };
+  let error = mongo::connect(&MongoTarget::from_profile(&profile)).await.err().unwrap_or_default();
+  assert!(error.starts_with(MONGO_AUTH_FAILED), "{error}");
 }
 
 /// 证书文件读不了、或读出来不是证书加私钥：说是哪个文件，不等十秒超时

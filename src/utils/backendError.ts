@@ -121,7 +121,8 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_MONGO_SRV_LOOKUP_FAILED: 'error.backend.mongoSrvLookupFailed',
   DATAOMNI_MONGO_SRV_WITH_TUNNEL: 'error.backend.mongoSrvWithTunnel',
   DATAOMNI_MONGO_TLS_FILE_INVALID: 'error.backend.mongoTlsFileInvalid',
-  DATAOMNI_MONGO_CLIENT_KEY_SEPARATE: 'error.backend.mongoClientKeySeparate'
+  DATAOMNI_MONGO_CLIENT_KEY_SEPARATE: 'error.backend.mongoClientKeySeparate',
+  DATAOMNI_MONGO_X509_NEEDS_CERTIFICATE: 'error.backend.mongoX509NeedsCertificate'
 };
 
 export interface BackendError {

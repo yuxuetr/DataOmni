@@ -5,7 +5,7 @@ import type { ConnectionProfile } from '../contracts';
 import type { DatabaseSession } from '../contracts/session';
 import { useLanguageStore } from '../stores/languageStore';
 import { serverLabel } from '../utils/serverPresets';
-import { serverAddress } from '../utils/mongoSrv';
+import { serverAddress } from '../utils/mongoConnection';
 
 interface ConnectionInfoDialogProps {
   connection: ConnectionProfile;

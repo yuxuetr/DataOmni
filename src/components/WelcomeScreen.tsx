@@ -6,7 +6,7 @@ import { useConnectionStore } from '../stores/connectionStore';
 import { useProfileConnector } from '../hooks/useProfileConnector';
 import { orderProfilesByRecency } from '../utils/connectionRecency';
 import { serverLabel } from '../utils/serverPresets';
-import { serverAddress } from '../utils/mongoSrv';
+import { serverAddress } from '../utils/mongoConnection';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
 
