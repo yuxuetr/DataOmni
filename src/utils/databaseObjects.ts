@@ -12,6 +12,8 @@ export const KIND_LABEL_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
   table: 'objectKind.table',
   collection: 'objectKind.collection',
   keyspace: 'objectKind.keyspace',
+  label: 'objectKind.label',
+  'relationship-type': 'objectKind.relationship-type',
   view: 'objectKind.view',
   'materialized-view': 'objectKind.materialized-view',
   function: 'objectKind.function',
@@ -30,6 +32,8 @@ export const KIND_BADGE_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
   table: 'objectKindOne.table',
   collection: 'objectKindOne.collection',
   keyspace: 'objectKindOne.keyspace',
+  label: 'objectKindOne.label',
+  'relationship-type': 'objectKindOne.relationship-type',
   view: 'objectKindOne.view',
   'materialized-view': 'objectKindOne.materialized-view',
   function: 'objectKindOne.function',
@@ -42,6 +46,8 @@ const KIND_ORDER: DatabaseObjectKind[] = [
   'table',
   'collection',
   'keyspace',
+  'label',
+  'relationship-type',
   'view',
   'materialized-view',
   'function',
@@ -67,16 +73,18 @@ export interface ObjectTreeNode {
 export function showsSchemaLevel(dbType: DatabaseType): boolean {
   // SQL Server 与 PostgreSQL 一样：一个库里有 dbo 和业务 schema，schema 是真实维度
   // Oracle 的 schema 就是用户：一个连接能看到别的用户授给它的表
-  // MongoDB 的一个连接横跨所有库，库就是这一层
+  // MongoDB 的一个连接横跨所有库，库就是这一层；Neo4j 同样（企业版一台服务端多个库）
   return dbType === DatabaseType.PostgreSQL
     || dbType === DatabaseType.SqlServer
     || dbType === DatabaseType.Oracle
-    || dbType === DatabaseType.MongoDB;
+    || dbType === DatabaseType.MongoDB
+    || dbType === DatabaseType.Neo4j;
 }
 
-/** 表、集合、视图、物化视图有行（文档），能打开；函数与序列没有。 */
+/** 表、集合、视图、物化视图有行（文档），能打开；Neo4j 的标签与关系类型点开是一条查询；函数与序列没有。 */
 export function isBrowsableKind(kind: DatabaseObjectKind): boolean {
-  return kind === 'table' || kind === 'collection' || kind === 'keyspace' || kind === 'view' || kind === 'materialized-view';
+  return kind === 'table' || kind === 'collection' || kind === 'keyspace' || kind === 'label'
+    || kind === 'relationship-type' || kind === 'view' || kind === 'materialized-view';
 }
 
 export function normalizeObjectRows(

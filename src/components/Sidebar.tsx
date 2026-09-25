@@ -30,6 +30,8 @@ interface SidebarProps {
   onTableSelect?: (tableName: string, schema?: string) => void;
   onOpenStructure?: (tableName: string, schema?: string) => void;
   onOpenErDiagram?: () => void;
+  /** Neo4j 的标签与关系类型点开是一条查询：开一个查询标签并跑一次 */
+  onOpenQuery?: (query: string, title: string) => void;
   /** 历史对话框由 App 渲染：它要能把一条语句开进新标签，而建标签是 App 的事 */
   onOpenHistory?: () => void;
   /** 折叠按钮。折叠后侧边栏只剩一条窄轨，展开的入口在 App 那边 */
@@ -42,6 +44,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onTableSelect,
   onOpenStructure,
   onOpenErDiagram,
+  onOpenQuery,
   onOpenHistory,
   onCollapse
 }) => {
@@ -277,6 +280,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onTableSelect={onTableSelect}
             onOpenStructure={onOpenStructure}
             onOpenErDiagram={onOpenErDiagram}
+            onOpenQuery={onOpenQuery}
           />
         ) : (
           // 右侧启动面板已经在说「选一个连接」，这里不再用 48px 图标加三行

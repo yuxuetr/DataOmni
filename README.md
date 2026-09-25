@@ -32,7 +32,8 @@
 - **可连接并执行查询**: MySQL, PostgreSQL, SQLite, SQL Server, Oracle（见兼容性矩阵）
 - **可连接、浏览与改文档**: MongoDB（库、集合、文档；条件、排序与编辑都用 mongosh 写法）
 - **可连接、浏览键值与跑命令**: Redis（逻辑库、按模式翻键、六种类型的值、redis-cli 写法的命令行）
-- **计划中，当前版本连不上**: Neo4j, DuckDB, ClickHouse, Elasticsearch
+- **可连接并执行 Cypher**: Neo4j（库、标签与关系类型；结果里的节点、关系、路径按 Cypher 字面量显示）
+- **计划中，当前版本连不上**: DuckDB, ClickHouse, Elasticsearch
 
   不是「能连上但不能查」——这些库的驱动都没有编进来，建连这一步就认不出来。
   连接表单里它们可见但置灰，选中不了；后端 `test_connection` 也会直接拒绝，
@@ -57,6 +58,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 | Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 14 / 14（独立用例，`oracle_smoke.rs`，含改结构语料） |
 | MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 31 / 31（独立用例，`mongodb_smoke.rs`） |
 | Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机，不含集群 | 10 / 10（独立用例，`redis_smoke.rs`） |
+| Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 查询与浏览，界面上还不能改、没有图 | 7 / 7（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |
 
 - **MariaDB**：JSON 列是 LONGTEXT 的别名，按文本显示与编辑，没有 JSON 专用
   编辑器；没有函数索引。
@@ -110,6 +112,13 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
   （别处改过就不覆盖，剩余时间不变）、改 hash / list / set / zset 的元素（同样先比对再写）、
   新建键。还没有的：stream 的写入（命令行里能做）、集群与 Sentinel。
   详见 [用户手册](docs/user-manual.md#redis)。
+- **Neo4j**：连接（用户名口令或不认证；库空着就是用户的主库；TLS 与 CA；SSH 隧道）、对象树按库
+  列出标签与关系类型（点开是一条 `MATCH` 查询，开出来就跑）、Cypher 查询标签（多条按分号依次
+  跑，一条失败就停；结果上限与超时，超时由服务端按事务超时停下；写入计数与服务端的提示；
+  会写的先问服务端是读是写，按「危险语句确认」的门槛决定要不要先确认）。值按 Cypher 字面量
+  显示（`(:Person {name: 'a'})`、`date('2024-01-02')`），点一格看全文与 `elementId`。
+  还没有的：界面上改节点与属性、图的画法、执行计划、集群路由（`neo4j://`）。
+  详见 [用户手册](docs/user-manual.md#neo4j)。
 - 在编辑器里用 `USE` 切库在 MySQL 类服务端上一律拒绝：它会让侧边栏的对象树
   悄悄换成另一个库。MySQL 本来就拒，MariaDB 与 TiDB 不拒，所以由应用来挡。
 
@@ -395,6 +404,11 @@ bun install
 ```
 
 ## 📝 更新日志
+
+### 未发布
+
+- 🕸️ Neo4j：连接、按库列出标签与关系类型、Cypher 查询标签（结果按 Cypher 字面量显示，
+  写入计数，会写的先按门槛确认）
 
 ### v0.4.0（首个发布版）
 

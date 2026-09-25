@@ -38,6 +38,9 @@ export const OBJECT_MENU_ACTIONS: Record<DatabaseObjectKind, readonly ObjectMenu
   collection: ['open-data', 'open-structure', 'copy-name'],
   // 逻辑库没有结构，也不给删：`FLUSHDB` 清空整个库，不该在右键菜单里
   keyspace: ['open-data', 'copy-name'],
+  // 标签与关系类型没有结构页，也不给删：删的是节点与关系，要写 Cypher 说清楚删哪些
+  label: ['open-data', 'copy-name'],
+  'relationship-type': ['open-data', 'copy-name'],
   view: ['open-data', 'view-definition', 'copy-name', 'drop'],
   'materialized-view': ['open-data', 'view-definition', 'copy-name', 'drop'],
   function: ['view-definition', 'copy-name'],
@@ -56,13 +59,16 @@ export function objectMenuActions(
   kind: DatabaseObjectKind,
   speaksSql: boolean
 ): readonly ObjectMenuAction[] {
-  if (speaksSql || kind === 'keyspace') {
+  if (speaksSql || OWN_MENU_KINDS.has(kind)) {
     return OBJECT_MENU_ACTIONS[kind];
   }
   return OBJECT_MENU_ACTIONS[kind].includes('open-data') ? NON_SQL_BROWSABLE_ACTIONS : ['copy-name'];
 }
 
 const NON_SQL_BROWSABLE_ACTIONS: readonly ObjectMenuAction[] = ['open-data', 'open-structure', 'copy-name', 'drop'];
+
+/** 只在一种库上出现的对象，菜单就是上面那张表里写的，不分走不走 SQL */
+const OWN_MENU_KINDS: ReadonlySet<DatabaseObjectKind> = new Set(['keyspace', 'label', 'relationship-type']);
 
 /**
  * 例程的显示名带着参数签名——`calc_total(integer)`——因为同名重载要分得开

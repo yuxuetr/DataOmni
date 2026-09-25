@@ -63,6 +63,9 @@ mongodb = "3.9.1"
 # 登记一个就够（Redis 单连接本来就是按顺序处理命令）。TLS 走 rustls，与另外几家一致；
 # `insecure` 给「只加密不校验」那一档用
 redis = { version = "1.7.0", default-features = false, features = ["acl", "streams", "script", "tokio-comp", "tokio-rustls-comp", "tls-rustls-insecure", "tls-rustls-webpki-roots", "connection-manager"] }
+# Neo4j（`services/neo4j.rs`）。Bolt 4.4 与 5.0–5.8，TLS 走 rustls。同步 API，放进
+# `spawn_blocking`。为什么不用 neo4rs：它只到 Bolt 4，节点没有 element_id，见 TODOs 4.3
+neo4j = "0.2.0"
 
 [dev-dependencies]
 # 只为在测试里**造**一把带口令的私钥：russh 依赖的 ssh-key 默认不开

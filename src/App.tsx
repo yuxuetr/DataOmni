@@ -21,7 +21,9 @@ import { RedisKeyBrowser } from './components/RedisKeyBrowser';
 import { redisDatabaseIndex } from './utils/redisKeys';
 import { MongoCollectionStructureView } from './components/MongoCollectionStructureView';
 import { DatabaseType } from './contracts/connection';
-import { speaksSql } from './contracts/databaseSupport';
+import { hasQueryEditor, speaksSql } from './contracts/databaseSupport';
+import { CypherWorkbench } from './components/CypherWorkbench';
+import { requestCypherAutorun } from './stores/cypherAutorun';
 import { ErDiagramView } from './components/ErDiagramView';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { CloseTabPrompt, type CloseTabChoice } from './components/CloseTabPrompt';
@@ -134,6 +136,8 @@ function App() {
   const activeProfileId = activeConnection?.config.id ?? null;
   // 当前连接能不能跑 SQL。不能的（MongoDB）上，一切「开一个 SQL 标签」的入口都不给
   const activeSpeaksSql = activeConnection ? speaksSql(activeConnection.config.db_type) : false;
+  // 能不能开查询标签：走 SQL 的，加上写 Cypher 的 Neo4j
+  const activeHasQueryEditor = activeConnection ? hasQueryEditor(activeConnection.config.db_type) : false;
   const environmentByProfileId = useMemo(
     () => Object.fromEntries(
       connections.map((connection) => [connection.id, connection.environment])
@@ -176,8 +180,8 @@ function App() {
 
   // 每个连接有一个 SQL 标签，连接就绪后按需创建；id 由连接决定，重复注册会被去重
   useEffect(() => {
-    // MongoDB 没有 SQL 编辑器可开；连上之后从对象树点集合
-    if (!activeConnection || !speaksSql(activeConnection.config.db_type)) {
+    // MongoDB 与 Redis 没有查询编辑器可开；连上之后从对象树点集合、逻辑库
+    if (!activeConnection || !hasQueryEditor(activeConnection.config.db_type)) {
       return;
     }
 
@@ -471,9 +475,9 @@ function App() {
    * 从历史里取回语句走的是「开新标签」而不是「写进当前标签」：后者会把用户
    * 正在写的草稿覆盖掉，而那份草稿没有第二个地方存着。
    */
-  const openSqlTab = (initialSql?: string, title?: string) => {
-    if (!activeConnection || !activeSpeaksSql) {
-      return;
+  const openSqlTab = (initialSql?: string, title?: string): string | undefined => {
+    if (!activeConnection || !activeHasQueryEditor) {
+      return undefined;
     }
 
     const profileId = activeConnection.config.id;
@@ -498,6 +502,7 @@ function App() {
       openDocument(tab.id);
       setSqlInput(initialSql);
     }
+    return tab.id;
   };
 
   /**
@@ -507,7 +512,7 @@ function App() {
    * 手里这份」。标签名取文件名，这样标签栏上看得出开的是哪个脚本。
    */
   const openSqlFile = async () => {
-    if (!activeConnection || !activeSpeaksSql) {
+    if (!activeConnection || !activeHasQueryEditor) {
       return;
     }
 
@@ -716,9 +721,13 @@ function App() {
     );
 
     // 连着 MongoDB 时，要开 SQL 标签的那几条放出来也只是点了没反应
-    return activeConnection && !activeSpeaksSql
-      ? items.filter((item) => !SQL_ONLY_PALETTE_ACTIONS.has(item.id))
-      : items;
+    if (!activeConnection || activeSpeaksSql) {
+      return items;
+    }
+    // Neo4j 能开查询标签、打开脚本文件，ER 图没有
+    return items.filter((item) => (
+      !SQL_ONLY_PALETTE_ACTIONS.has(item.id) || (activeHasQueryEditor && item.id !== 'action:er-diagram')
+    ));
   };
 
   const renderActiveTab = () => {
@@ -747,6 +756,11 @@ function App() {
     if (activeTab.kind === 'sql') {
       if (!activeConnection) {
         return null;
+      }
+
+      // 同一种标签，画的是 Cypher 编辑器：草稿、去重、持久化与 SQL 标签完全一样
+      if (activeConnection.config.db_type === DatabaseType.Neo4j) {
+        return <CypherWorkbench key={activeTab.id} connection={activeConnection.config} />;
       }
 
       return (
@@ -841,6 +855,10 @@ function App() {
           onTableSelect={(table, schema) => openTableTab(table, schema)}
           onOpenStructure={(table, schema) => openTableTab(table, schema, 'table-structure')}
           onOpenErDiagram={openErDiagramTab}
+          onOpenQuery={(query, title) => {
+            const tabId = openSqlTab(query, title);
+            if (tabId) requestCypherAutorun(tabId);
+          }}
           onOpenHistory={() => setShowHistory(true)}
           onCollapse={sidebar.toggleCollapsed}
         />
@@ -881,8 +899,8 @@ function App() {
             environmentByProfileId={environmentByProfileId}
             onClose={closeWorkspaceTab}
             onContextMenu={(tabId, position) => setTabMenu({ tabId, position })}
-            onNewSqlTab={activeSpeaksSql ? () => openSqlTab() : undefined}
-            onOpenSqlFile={activeSpeaksSql ? () => void openSqlFile() : undefined}
+            onNewSqlTab={activeHasQueryEditor ? () => openSqlTab() : undefined}
+            onOpenSqlFile={activeHasQueryEditor ? () => void openSqlFile() : undefined}
             onReopenClosedTab={closedTabs.length > 0 ? reopenClosedTab : undefined}
             closedTabCount={closedTabs.length}
           />

@@ -111,6 +111,7 @@ pub async fn test_connection(
   oracle_registry: State<'_, OracleRegistry>,
   mongo_registry: State<'_, MongoRegistry>,
   redis_registry: State<'_, crate::services::redis::RedisRegistry>,
+  neo4j_registry: State<'_, crate::services::neo4j::Neo4jRegistry>,
 ) -> Result<String, String> {
   println!("🧪 测试数据库连接: {}", config.name);
 
@@ -173,6 +174,14 @@ pub async fn test_connection(
     let target = crate::services::redis::RedisTarget::from_profile(&reachable)?;
     let pool = crate::services::redis::connect(target).await?;
     redis_registry.insert(connection_string.clone(), std::sync::Arc::new(pool));
+  } else if resolved.db_type == DatabaseType::Neo4j {
+    let reachable = match local_port {
+      Some(port) => resolved.redirected_to("127.0.0.1", port),
+      None => resolved,
+    };
+    let target = crate::services::neo4j::Neo4jTarget::from_profile(&reachable);
+    let pool = crate::services::neo4j::connect(target).await?;
+    neo4j_registry.insert(connection_string.clone(), std::sync::Arc::new(pool));
   }
   Ok(connection_string)
 }

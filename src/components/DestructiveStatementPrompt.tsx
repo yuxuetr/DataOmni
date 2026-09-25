@@ -33,6 +33,11 @@ interface DestructiveStatementPromptProps {
    * 那时再说「可在设置里调整」就是一句假话
    */
   alwaysAsks?: boolean;
+  /**
+   * 风险那半句的另一种说法。默认的是 SQL 的（「没有 WHERE 条件，将影响整张表」），
+   * 别的查询语言在同一等级上说的是另一件事
+   */
+  riskDescription?: string;
   /** 自动提交时多给的一条路：先开事务再执行。包不住的语句上不提供 */
   onRunInTransaction?: () => void;
   onCancel: () => void;
@@ -57,6 +62,7 @@ export function DestructiveStatementPrompt({
   reversibility,
   databaseLabel,
   alwaysAsks = false,
+  riskDescription,
   onConfirm,
   onRunInTransaction,
   onCancel
@@ -120,7 +126,7 @@ export function DestructiveStatementPrompt({
           />
           <div className="min-w-0 flex-1">
             <h2 id="destructive-prompt-title" className="text-base font-medium text-fg">
-              {t('risk.confirmTitle', { risk: t(RISK_DESCRIPTION_KEYS[risk]) })}
+              {t('risk.confirmTitle', { risk: riskDescription ?? t(RISK_DESCRIPTION_KEYS[risk]) })}
             </h2>
 
             <p className="mt-2 flex flex-wrap items-center gap-1.5 text-sm text-fg-muted">

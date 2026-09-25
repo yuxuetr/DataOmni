@@ -84,6 +84,10 @@ export type DatabaseObjectKind =
   | 'collection'
   /** Redis 的一个逻辑库（`db0`、`db3`）。键太多，不进树；点开是那个库的键浏览页 */
   | 'keyspace'
+  /** Neo4j 的标签。点开是一个查询标签：`MATCH (n:标签) RETURN n` */
+  | 'label'
+  /** Neo4j 的关系类型。点开同样是一个查询标签，看带这种关系的路径 */
+  | 'relationship-type'
   | 'view'
   | 'materialized-view'
   | 'function'

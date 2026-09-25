@@ -364,8 +364,10 @@ impl ConnectionService {
         return Err(HOST_REQUIRED.to_string());
       }
       // MongoDB 可以不开认证，而「库」那一格是认证库，空着就是 `admin`；
-      // Redis 大多只有口令（或干脆没有），用户名是 6.0 的 ACL 才有的，库号空着就是 0
-      let optional_login = matches!(config.db_type, DatabaseType::MongoDB | DatabaseType::Redis);
+      // Redis 大多只有口令（或干脆没有），用户名是 6.0 的 ACL 才有的，库号空着就是 0；
+      // Neo4j 可以关着认证，库空着就是这个用户的主库
+      let optional_login =
+        matches!(config.db_type, DatabaseType::MongoDB | DatabaseType::Redis | DatabaseType::Neo4j);
       if config.username.is_empty() && !optional_login {
         return Err(USERNAME_REQUIRED.to_string());
       }
@@ -544,14 +546,15 @@ fn validate_tls_configuration(config: &ConnectionProfile) -> Result<(), String> 
         | DatabaseType::SqlServer
         | DatabaseType::MongoDB
         | DatabaseType::Redis
+        | DatabaseType::Neo4j
     )
   {
     return Err(TLS_CERTIFICATES_UNSUPPORTED.to_string());
   }
   // tiberius 能按 CA 校验服务端，但不带客户端证书登录——填了也不会生效，
-  // 而用户会以为双向认证已经开着。Redis 这一版同样只收 CA
+  // 而用户会以为双向认证已经开着。Redis、Neo4j 这一版同样只收 CA
   if has_client_certificate
-    && matches!(config.db_type, DatabaseType::SqlServer | DatabaseType::Redis)
+    && matches!(config.db_type, DatabaseType::SqlServer | DatabaseType::Redis | DatabaseType::Neo4j)
   {
     return Err(TLS_CERTIFICATES_UNSUPPORTED.to_string());
   }
@@ -1106,12 +1109,7 @@ mod tests {
     let service =
       ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()).unwrap();
 
-    for db_type in [
-      DatabaseType::Neo4j,
-      DatabaseType::DuckDB,
-      DatabaseType::ClickHouse,
-      DatabaseType::Elasticsearch,
-    ] {
+    for db_type in [DatabaseType::DuckDB, DatabaseType::ClickHouse, DatabaseType::Elasticsearch] {
       let mut config = profile("profile-1", "secret");
       config.db_type = db_type.clone();
 

@@ -253,7 +253,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
       }
       // MongoDB 可以不开认证：本机和内网的库大多如此，空着就是不带凭据连
       // Redis 大多只有口令，用户名是 6.0 起 ACL 的
-      if (!formData.username?.trim() && formData.db_type !== DatabaseType.MongoDB && formData.db_type !== DatabaseType.Redis) {
+      // Neo4j 可以关着认证（`dbms.security.auth_enabled=false`）
+      if (!formData.username?.trim() && formData.db_type !== DatabaseType.MongoDB && formData.db_type !== DatabaseType.Redis && formData.db_type !== DatabaseType.Neo4j) {
         errors.username = t('form.error.username');
       }
       // SRV 的端口在 DNS 里，这一格藏起来了
@@ -797,7 +798,6 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         formData.db_type === DatabaseType.SqlServer ? "master" :
                         formData.db_type === DatabaseType.Oracle ? "FREEPDB1" :
                         formData.db_type === DatabaseType.MongoDB ? (srv ? "" : "admin") :
-                        formData.db_type === DatabaseType.Neo4j ? "neo4j" :
                         formData.db_type === DatabaseType.ClickHouse ? "default" : ""
                       }
                       {...PLAIN_TEXT_INPUT}
@@ -809,6 +809,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       <p className="text-xs text-fg-muted mt-1">
                         {t(srv ? 'form.mongoAuthSourceSrvHint' : 'form.mongoAuthSourceHint')}
                       </p>
+                    )}
+                    {formData.db_type === DatabaseType.Neo4j && (
+                      <p className="text-xs text-fg-muted mt-1">{t('form.neo4jDatabaseHint')}</p>
                     )}
                   </div>
                 )}
@@ -844,7 +847,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-fg mb-1">
-                        {t('form.username')} {formData.db_type === DatabaseType.Elasticsearch || formData.db_type === DatabaseType.MongoDB || formData.db_type === DatabaseType.Redis ? '' : '*'}
+                        {t('form.username')} {formData.db_type === DatabaseType.Elasticsearch || formData.db_type === DatabaseType.MongoDB || formData.db_type === DatabaseType.Redis || formData.db_type === DatabaseType.Neo4j ? '' : '*'}
                       </label>
                       <input
                         type="text"
@@ -1112,6 +1115,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   formData.db_type === DatabaseType.SqlServer ||
                   formData.db_type === DatabaseType.MongoDB ||
                   formData.db_type === DatabaseType.Redis ||
+                  formData.db_type === DatabaseType.Neo4j ||
                   formData.db_type === DatabaseType.Elasticsearch) && (
                   <div className="space-y-4">
                     <div>
@@ -1143,7 +1147,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       || formData.db_type === DatabaseType.PostgreSQL
                       || formData.db_type === DatabaseType.SqlServer
                       || formData.db_type === DatabaseType.MongoDB
-                      || formData.db_type === DatabaseType.Redis)
+                      || formData.db_type === DatabaseType.Redis
+                      || formData.db_type === DatabaseType.Neo4j)
                       && (formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')) !== 'disabled' && (
                       <div className="space-y-3 rounded-control border border-line bg-surface-sunken p-3">
                         {/* 这一组要有自己的标题：里面的「客户端私钥路径」和
@@ -1189,9 +1194,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             <p className="text-xs text-fg-muted mt-1">{t('form.mongoClientCertHint')}</p>
                           </div>
                         )}
-                        {/* tiberius 只能校验服务端证书，不带客户端证书登录；Redis 这一版同样只收 CA */}
+                        {/* tiberius 只能校验服务端证书，不带客户端证书登录；Redis、Neo4j 这一版同样只收 CA */}
                         {formData.db_type !== DatabaseType.SqlServer && formData.db_type !== DatabaseType.MongoDB
-                          && formData.db_type !== DatabaseType.Redis && (
+                          && formData.db_type !== DatabaseType.Redis && formData.db_type !== DatabaseType.Neo4j && (
                         <>
                         <div>
                           <label htmlFor="client-certificate" className="block text-sm font-medium text-fg mb-1">

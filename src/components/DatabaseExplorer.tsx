@@ -13,6 +13,8 @@ import {
   FolderPlus,
   Table2,
   KeyRound,
+  Tag,
+  Waypoints,
   RefreshCw,
   Loader,
   AlertCircle,
@@ -38,6 +40,7 @@ import {
   type DatabaseObjectKind,
   type ObjectTreeNode
 } from '../utils/databaseObjects';
+import { browseQuery, cypherName } from '../utils/cypherValue';
 import { ObjectDefinitionDialog } from './ObjectDefinitionDialog';
 import { CreateTableDialog } from './CreateTableDialog';
 import { CreateSchemaDialog } from './CreateSchemaDialog';
@@ -94,6 +97,11 @@ interface DatabaseExplorerProps {
   /** 直接打开结构页。此前没有任何入口造得出 `table-structure` 标签 */
   onOpenStructure?: (tableName: string, schema?: string) => void;
   onOpenErDiagram?: () => void;
+  /**
+   * Neo4j 的标签与关系类型点开是一条查询，不是一张表：开一个查询标签并跑一次。
+   * 标题是 `:Person`、`[:KNOWS]` 这样的写法
+   */
+  onOpenQuery?: (query: string, title: string) => void;
 }
 
 /** `get_object_catalog_queries` 的返回；字段名按 Rust 侧的 snake_case */
@@ -122,7 +130,8 @@ export default function DatabaseExplorer({
   connectionId,
   onTableSelect,
   onOpenStructure,
-  onOpenErDiagram
+  onOpenErDiagram,
+  onOpenQuery
 }: DatabaseExplorerProps) {
   const { connections } = useConnectionStore();
   const {
@@ -220,12 +229,14 @@ export default function DatabaseExplorer({
     setError(null);
     
     try {
-      // MongoDB 与 Redis 没有目录 SQL：后端直接给出同一形状的行。MongoDB 的库名在
-      // object_schema，Redis 一行是一个逻辑库（键太多，不进树）
+      // MongoDB、Redis 与 Neo4j 没有目录 SQL：后端直接给出同一形状的行。MongoDB 与 Neo4j
+      // 的库名在 object_schema，Redis 一行是一个逻辑库（键太多，不进树）
       if (!speaksSql(connection.db_type)) {
         const rows = await invoke<Record<string, unknown>[]>(
-          connection.db_type === DatabaseType.Redis ? 'redis_list_keyspaces' : 'mongodb_list_collections',
-          { connectionString }
+          connection.db_type === DatabaseType.Redis
+            ? 'redis_list_keyspaces'
+            : connection.db_type === DatabaseType.Neo4j ? 'neo4j_list_objects' : 'mongodb_list_collections',
+          { connectionString, timeoutMs: queryTimeoutMs }
         );
         const objects = normalizeObjectRows(rows);
         setDatabaseMetadata(connectionId, { objects, lastUpdated: Date.now() });
@@ -355,7 +366,25 @@ export default function DatabaseExplorer({
       setInspecting(object);
       return;
     }
+    if (object.kind === 'label' || object.kind === 'relationship-type') {
+      openGraphQuery(object.kind, object);
+      return;
+    }
     onTableSelect?.(object.name, object.schema ?? undefined);
+  };
+
+  /**
+   * 连接配置里没写库时，服务端的主库我们不知道；树里只有一个库的话就是它，
+   * 省得每条查询前面都挂一句 `USE neo4j`
+   */
+  const openGraphQuery = (kind: 'label' | 'relationship-type', object: DatabaseObject) => {
+    const configured = connection?.database?.trim() || null;
+    const databases = new Set(objects.map((candidate) => candidate.schema));
+    const defaultDatabase = configured ?? (databases.size === 1 ? object.schema : null);
+    onOpenQuery?.(
+      browseQuery(kind, object.name, object.schema, defaultDatabase),
+      kind === 'label' ? `:${cypherName(object.name)}` : `[:${cypherName(object.name)}]`
+    );
   };
 
   // Tab 进来时停在哪一个。焦点还没落下、或者落在一个已经收起来/被筛掉的节点上时
@@ -404,6 +433,10 @@ export default function DatabaseExplorer({
   const runObjectAction = (action: ObjectMenuAction, object: DatabaseObject) => {
     const schema = object.schema ?? undefined;
     if (action === 'open-data') {
+      if (object.kind === 'label' || object.kind === 'relationship-type') {
+        openGraphQuery(object.kind, object);
+        return;
+      }
       onTableSelect?.(object.name, schema);
       return;
     }
@@ -449,8 +482,12 @@ export default function DatabaseExplorer({
       return;
     }
 
+    // Neo4j 的标签与关系类型复制成 `:Person`、`:KNOWS`，粘进模式里就能用
+    const copied = object.kind === 'label' || object.kind === 'relationship-type'
+      ? `:${cypherName(object.name)}`
+      : qualifiedObjectName(object, dialect);
     navigator.clipboard
-      .writeText(qualifiedObjectName(object, dialect))
+      .writeText(copied)
       .then(() => setActionError(null))
       // 剪贴板会被权限或非安全上下文拒绝。静默失败的后果是以为复制成功了，
       // 粘出来却是上一次的东西
@@ -525,8 +562,8 @@ export default function DatabaseExplorer({
               <GitBranch size={14} />
             </button>
           )}
-          {/* Redis 这一版只读：没有「新建」 */}
-          {connection.db_type !== DatabaseType.Redis
+          {/* Redis 的键在键浏览页里建；Neo4j 没有要先建的容器——节点、标签、关系都由 Cypher 建 */}
+          {connection.db_type !== DatabaseType.Redis && connection.db_type !== DatabaseType.Neo4j
             && (!speaksSql(connection.db_type) || supportsFeature(connection.db_type, 'structureEditing')) && (
           <button
             onClick={(event) => {
@@ -970,6 +1007,12 @@ function ObjectIcon({ kind }: { kind: DatabaseObjectKind }) {
   }
   if (kind === 'keyspace') {
     return <KeyRound size={14} className="shrink-0" />;
+  }
+  if (kind === 'label') {
+    return <Tag size={14} className="shrink-0" />;
+  }
+  if (kind === 'relationship-type') {
+    return <Waypoints size={14} className="shrink-0" />;
   }
   return <Table size={14} className="shrink-0" />;
 } 
