@@ -31,6 +31,8 @@ import {
   type CypherQueryType
 } from '../utils/cypherRisk';
 import { formatCypherValue, type CypherValue } from '../utils/cypherValue';
+import { hasGraphValues } from '../utils/cypherGraph';
+import { CypherGraphView } from './CypherGraphView';
 import type { StatementRisk } from '../utils/statementRisk';
 import type { TranslationKey } from '../i18n/translate';
 
@@ -317,7 +319,13 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
           </p>
         )}
         {runs.map((run) => (
-          <RunSection key={run.id} run={run} showStatement={runs.length > 1} onInspect={setInspecting} />
+          <RunSection
+            key={run.id}
+            run={run}
+            showStatement={runs.length > 1}
+            selectedId={inspecting?.kind === 'node' || inspecting?.kind === 'relationship' ? inspecting.elementId : null}
+            onInspect={setInspecting}
+          />
         ))}
       </div>
 
@@ -363,10 +371,12 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
 function RunSection({
   run,
   showStatement,
+  selectedId,
   onInspect
 }: {
   run: CypherRun;
   showStatement: boolean;
+  selectedId: string | null;
   onInspect: (value: CypherValue) => void;
 }) {
   const t = useLanguageStore((state) => state.t);
@@ -388,7 +398,9 @@ function RunSection({
           <pre className="min-w-0 select-text whitespace-pre-wrap break-words font-mono text-xs text-danger">{run.error}</pre>
         </div>
       )}
-      {run.state === 'done' && <ResultView result={run.result} elapsedMs={run.elapsedMs} onInspect={onInspect} />}
+      {run.state === 'done' && (
+        <ResultView result={run.result} elapsedMs={run.elapsedMs} selectedId={selectedId} onInspect={onInspect} />
+      )}
     </section>
   );
 }
@@ -396,13 +408,19 @@ function RunSection({
 function ResultView({
   result,
   elapsedMs,
+  selectedId,
   onInspect
 }: {
   result: CypherResult;
   elapsedMs: number;
+  selectedId: string | null;
   onInspect: (value: CypherValue) => void;
 }) {
   const t = useLanguageStore((state) => state.t);
+  const graphable = useMemo(() => hasGraphValues(result.rows), [result.rows]);
+  // 有节点、关系的结果先看图
+  const [view, setView] = useState<'graph' | 'table'>('graph');
+  const showGraph = graphable && view === 'graph';
   const { summary } = result;
   const facts = [
     result.columns.length > 0 ? t('cypher.rows', { count: result.rows.length }) : null,
@@ -414,13 +432,34 @@ function ResultView({
 
   return (
     <div>
-      <p className={clsx('mb-1 text-xs', result.truncated ? 'text-warning' : 'text-fg-muted')}>{facts.join(' · ')}</p>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <p className={clsx('text-xs', result.truncated ? 'text-warning' : 'text-fg-muted')}>{facts.join(' · ')}</p>
+        {graphable && (
+          <div className="flex shrink-0 overflow-hidden rounded-control border border-line text-xs" role="group">
+            {(['graph', 'table'] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => setView(option)}
+                aria-pressed={view === option}
+                className={clsx(
+                  'px-2 py-0.5',
+                  view === option ? 'bg-accent-soft text-accent' : 'text-fg-muted hover:bg-surface-hover'
+                )}
+              >
+                {t(option === 'graph' ? 'cypher.view.graph' : 'cypher.view.table')}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       {summary.notifications.map((notification) => (
         <p key={`${notification.code}:${notification.description}`} className="mb-1 text-xs text-warning">
           {`${notification.title}：${notification.description}`}
         </p>
       ))}
-      {result.columns.length > 0 && (
+      {showGraph && <CypherGraphView rows={result.rows} selectedId={selectedId} onInspect={onInspect} />}
+      {!showGraph && result.columns.length > 0 && (
         <div className="overflow-x-auto rounded-control border border-line">
           <table className="min-w-full border-collapse font-mono text-[13px]">
             <thead className="bg-surface-sunken">
