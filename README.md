@@ -58,7 +58,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 | Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 14 / 14（独立用例，`oracle_smoke.rs`，含改结构语料） |
 | MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 31 / 31（独立用例，`mongodb_smoke.rs`） |
 | Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机，不含集群 | 10 / 10（独立用例，`redis_smoke.rs`） |
-| Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 查询、浏览、图与界面上改，还没有执行计划 | 7 / 7（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |
+| Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例，不含集群路由 | 8 / 8（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |
 
 - **MariaDB**：JSON 列是 LONGTEXT 的别名，按文本显示与编辑，没有 JSON 专用
   编辑器；没有函数索引。
@@ -121,7 +121,10 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
   点中看属性，最多画 300 个节点。点中的节点或关系可以在界面上改：属性（值按 Cypher 写，
   输入框里放的就是当前值的字面量）、加摘标签、删（节点还连着关系时说清连着几条、一起删），
   工具栏上「新建节点」。按 `elementId` 定位，一次只动一个，要跑的语句一直摆在下面。
-  还没有的：执行计划、在界面上建关系、集群路由（`neo4j://`）。
+  以 `EXPLAIN` / `PROFILE` 开头的，结果里多一个「计划」：与 SQL 同一棵树，每一步带估算行数，
+  `PROFILE` 还带实际行数与 DbHits，估错最多的那一步会被指出来；「计划原文」是服务端自己的那张表。
+  `EXPLAIN` 什么也不执行，不走确认。
+  还没有的：在界面上建关系、集群路由（`neo4j://`）。
   详见 [用户手册](docs/user-manual.md#neo4j)。
 - 在编辑器里用 `USE` 切库在 MySQL 类服务端上一律拒绝：它会让侧边栏的对象树
   悄悄换成另一个库。MySQL 本来就拒，MariaDB 与 TiDB 不拒，所以由应用来挡。
@@ -413,7 +416,7 @@ bun install
 
 - 🕸️ Neo4j：连接、按库列出标签与关系类型、Cypher 查询标签（结果按 Cypher 字面量显示，
   写入计数，会写的先按门槛确认）；结果里有节点与关系时画成图；在界面上改属性与标签、删节点
-  与关系、建节点
+  与关系、建节点；`EXPLAIN` / `PROFILE` 的计划树
 
 ### v0.4.0（首个发布版）
 

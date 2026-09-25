@@ -45,6 +45,7 @@ pub async fn neo4j_run(
   query: String,
   limit: u64,
   timeout_ms: u64,
+  read_all: Option<bool>,
   registry: State<'_, Neo4jRegistry>,
 ) -> Result<CypherResult, String> {
   let request = CypherRequest {
@@ -52,6 +53,7 @@ pub async fn neo4j_run(
     query,
     limit: usize::try_from(limit.clamp(1, MAX_ROW_LIMIT)).unwrap_or(1),
     timeout: timeout(timeout_ms)?,
+    read_all: read_all.unwrap_or(false),
   };
   let pool = pool(&registry, &connection_string)?;
   neo4j::run(pool, request).await

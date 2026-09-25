@@ -9,6 +9,13 @@ describe('cypherMayWrite', () => {
     expect(cypherMayWrite('CALL db.labels()')).toBe(true);
     expect(cypherMayWrite('match (n) detach delete n')).toBe(true);
   });
+
+  it('EXPLAIN 什么也不执行，写什么都不算写；PROFILE 是真的跑', () => {
+    expect(cypherMayWrite('EXPLAIN MATCH (n) DETACH DELETE n')).toBe(false);
+    expect(classifyCypherRisk('EXPLAIN MATCH (n) DETACH DELETE n', 'w')).toBe('read');
+    expect(cypherMayWrite('PROFILE MATCH (n) DETACH DELETE n')).toBe(true);
+    expect(classifyCypherRisk('PROFILE MATCH (n) DETACH DELETE n', null)).toBe('bulk-write');
+  });
 });
 
 describe('classifyCypherRisk', () => {

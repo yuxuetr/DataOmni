@@ -11,6 +11,7 @@
 //! - **属性是无序的**（驱动给的是 `HashMap`）：按名字排好再送，同一个节点每次看都是同一个次序。
 
 use crate::models::{ConnectionProfile, TlsMode};
+use crate::services::explain::{PlanDetail, PlanNode, QueryPlan};
 use crate::services::pool_registry::PoolRegistry;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
@@ -18,7 +19,7 @@ use neo4j::address::Address;
 use neo4j::driver::auth::AuthToken;
 use neo4j::driver::{ConnectionConfig, Driver, DriverConfig, Record};
 use neo4j::session::SessionConfig;
-use neo4j::summary::{Summary, SummaryQueryType};
+use neo4j::summary::{Plan, Profile, Summary, SummaryQueryType};
 use neo4j::transaction::TransactionTimeout;
 use neo4j::value::graph::{Node, RelationshipDirection, UnboundRelationship};
 use neo4j::{Neo4jError, ValueReceive};
@@ -268,6 +269,9 @@ pub struct CypherRequest {
   pub query: String,
   pub limit: usize,
   pub timeout: Duration,
+  /// 到了上限也把其余的行读完（丢掉），而不是让服务端丢弃。`PROFILE` 要这样：没读完的结果
+  /// 服务端不给统计，报 `This result has not been materialised yet`（打包版上撞见的）
+  pub read_all: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -292,6 +296,8 @@ pub struct CypherSummary {
   pub notifications: Vec<CypherNotification>,
   pub available_after_ms: Option<u128>,
   pub consumed_after_ms: Option<u128>,
+  /// 以 `EXPLAIN` / `PROFILE` 开头的才有。`PROFILE` 的带着实际行数（`analyzed`）
+  pub plan: Option<QueryPlan>,
 }
 
 #[derive(Debug, Serialize)]
@@ -304,6 +310,7 @@ pub struct CypherNotification {
 }
 
 /// 跑一条 Cypher。行读到上限就停，其余的交给 `consume` 让服务端丢掉——不会整份拉回来
+/// （`read_all` 时读完再丢，内存里仍只留上限那么多）
 // `with_receiver` 的闭包必须返回驱动自己的 `Result<_, Neo4jError>`，这个错误类型大不大由不得我们
 #[allow(clippy::result_large_err)]
 pub async fn run(pool: Arc<Neo4jPool>, request: CypherRequest) -> Result<CypherResult, String> {
@@ -311,6 +318,7 @@ pub async fn run(pool: Arc<Neo4jPool>, request: CypherRequest) -> Result<CypherR
   blocking(timeout + TIMEOUT_GRACE, move || {
     let mut session = pool.session(request.database.as_deref());
     let limit = request.limit;
+    let read_all = request.read_all;
     session
       .auto_commit(&request.query)
       .with_transaction_timeout(transaction_timeout(timeout)?)
@@ -321,7 +329,11 @@ pub async fn run(pool: Arc<Neo4jPool>, request: CypherRequest) -> Result<CypherR
         for record in stream.by_ref() {
           if rows.len() == limit {
             truncated = true;
-            break;
+            if !read_all {
+              break;
+            }
+            record?;
+            continue;
           }
           rows.push(record?.into_values().map(CypherValue::from).collect());
         }
@@ -389,7 +401,13 @@ fn summarize(summary: Option<Summary>) -> CypherSummary {
   .into_iter()
   .filter(|(_, count)| *count != 0)
   .collect();
+  let plan = match (summary.profile, summary.plan) {
+    (Some(profile), _) => Some(query_plan(profiled_node(profile), true)),
+    (None, Some(plan)) => Some(query_plan(planned_node(plan), false)),
+    (None, None) => None,
+  };
   CypherSummary {
+    plan,
     query_type: summary.query_type.and_then(query_type_code),
     database: summary.database,
     counters,
@@ -405,6 +423,83 @@ fn summarize(summary: Option<Summary>) -> CypherSummary {
       .collect(),
     available_after_ms: summary.result_available_after.map(|elapsed| elapsed.as_millis()),
     consumed_after_ms: summary.result_consumed_after.map(|elapsed| elapsed.as_millis()),
+  }
+}
+
+/// 服务端自己排好的那张计划表，挂在根节点的参数上。拿它当「文本」页：与 cypher-shell 看到的一样
+const PLAN_TEXT_ARG: &str = "string-representation";
+
+/// 计划树的根。「文本」页是服务端给的原文，没有就说没有，不自己拼一份冒充
+fn query_plan(mut root: PlanNode, analyzed: bool) -> QueryPlan {
+  let text = root.detail.iter().position(|item| item.key == PLAN_TEXT_ARG);
+  let raw = text.map(|index| root.detail.remove(index).value).unwrap_or_default();
+  QueryPlan { roots: vec![root], analyzed, planning_ms: None, execution_ms: None, raw }
+}
+
+fn planned_node(plan: Plan) -> PlanNode {
+  let children = plan.children.into_iter().map(planned_node).collect();
+  plan_node(plan.op_type, plan.identifiers, plan.args, None, children)
+}
+
+fn profiled_node(profile: Profile) -> PlanNode {
+  let children = profile.children.into_iter().map(profiled_node).collect();
+  plan_node(profile.op_type, profile.identifiers, profile.args, Some(profile.rows), children)
+}
+
+/// 一个算子。`Details`（`m:Movie`、`(m)<-[:ACTED_IN]-(p)`）是它动的东西，当 `target`；
+/// `EstimatedRows` 与 `PROFILE` 的行数对上 SQL 那几家的估计与实际，「估错最多」的提示照样成立。
+///
+/// 其余参数（`DbHits`、`Memory`、页缓存……）按服务端的名字进 `detail`，`DbHits` 排第一——
+/// `PROFILE` 最常看的就是它。耗时**不**当 `actual_ms`：社区版的 slotted runtime 每个算子报 0，
+/// 那不是「0 毫秒」而是没量（服务端上验过，`time` 恒为 0，参数里也没有 `Time`）
+fn plan_node(
+  operator: String,
+  identifiers: Vec<String>,
+  mut args: HashMap<String, ValueReceive>,
+  actual_rows: Option<i64>,
+  children: Vec<PlanNode>,
+) -> PlanNode {
+  let target = match args.remove("Details") {
+    Some(ValueReceive::String(details)) => Some(details),
+    Some(other) => Some(plan_arg_text(other)),
+    None => None,
+  };
+  let estimated_rows = match args.remove("EstimatedRows") {
+    Some(ValueReceive::Float(rows)) => Some(rows),
+    Some(ValueReceive::Integer(rows)) => Some(rows as f64),
+    _ => None,
+  };
+  // 与 `actual_rows` 重复；`Id` 是算子在表里的编号，树上用不着
+  args.remove("Rows");
+  args.remove("Id");
+  let mut detail: Vec<PlanDetail> =
+    args.into_iter().map(|(key, value)| PlanDetail { key, value: plan_arg_text(value) }).collect();
+  detail.sort_by(|left, right| {
+    (left.key != "DbHits").cmp(&(right.key != "DbHits")).then_with(|| left.key.cmp(&right.key))
+  });
+  if !identifiers.is_empty() {
+    detail.push(PlanDetail { key: "Identifiers".to_string(), value: identifiers.join(", ") });
+  }
+  PlanNode {
+    // `Expand(All)@neo4j`：后缀是哪个实现给的，每个都一样
+    operation: operator.strip_suffix("@neo4j").unwrap_or(&operator).to_string(),
+    target,
+    estimated_rows,
+    actual_rows: actual_rows.map(|rows| rows as f64),
+    cost: None,
+    actual_ms: None,
+    detail,
+    children,
+  }
+}
+
+fn plan_arg_text(value: ValueReceive) -> String {
+  match value {
+    ValueReceive::String(text) => text,
+    ValueReceive::Integer(number) => number.to_string(),
+    ValueReceive::Float(number) => float_text(number),
+    ValueReceive::Boolean(flag) => flag.to_string(),
+    other => format!("{other:?}"),
   }
 }
 
@@ -727,6 +822,49 @@ mod tests {
     assert_eq!(float_text(f64::NEG_INFINITY), "-Infinity");
     assert_eq!(float_text(1e20), "1e20");
     assert_eq!(float_text(-1.5e17), "-1.5e17");
+  }
+
+  #[test]
+  fn plan_operators_keep_what_the_server_said() {
+    let args = |pairs: Vec<(&str, ValueReceive)>| -> HashMap<String, ValueReceive> {
+      pairs.into_iter().map(|(key, value)| (key.to_string(), value)).collect()
+    };
+    let scan = plan_node(
+      "NodeByLabelScan@neo4j".to_string(),
+      vec!["m".to_string()],
+      args(vec![
+        ("Details", ValueReceive::String("m:Movie".to_string())),
+        ("EstimatedRows", ValueReceive::Float(10.0)),
+        ("Rows", ValueReceive::Integer(5)),
+        ("Id", ValueReceive::Integer(6)),
+        ("PageCacheHits", ValueReceive::Integer(0)),
+        ("DbHits", ValueReceive::Integer(6)),
+      ]),
+      Some(5),
+      Vec::new(),
+    );
+    assert_eq!(scan.operation, "NodeByLabelScan");
+    assert_eq!(scan.target.as_deref(), Some("m:Movie"));
+    assert_eq!(
+      (scan.estimated_rows, scan.actual_rows, scan.actual_ms),
+      (Some(10.0), Some(5.0), None)
+    );
+    let detail: Vec<(&str, &str)> =
+      scan.detail.iter().map(|item| (item.key.as_str(), item.value.as_str())).collect();
+    assert_eq!(detail, [("DbHits", "6"), ("PageCacheHits", "0"), ("Identifiers", "m")]);
+
+    let root = plan_node(
+      "ProduceResults@neo4j".to_string(),
+      Vec::new(),
+      args(vec![(PLAN_TEXT_ARG, ValueReceive::String("+----+".to_string()))]),
+      None,
+      vec![scan],
+    );
+    let plan = query_plan(root, false);
+    assert_eq!(plan.raw, "+----+");
+    assert!(plan.roots[0].detail.is_empty(), "服务端的文本表只进「文本」页");
+    assert_eq!(plan.roots[0].children.len(), 1);
+    assert_eq!(plan.roots[0].actual_rows, None, "EXPLAIN 没跑，没有实际行数");
   }
 
   #[test]

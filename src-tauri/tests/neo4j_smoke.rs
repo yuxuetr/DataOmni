@@ -8,6 +8,7 @@
 //! 并行跑时互不干扰，一次断言失败留下的节点下次开头就清掉。
 
 use dataomni_lib::models::ConnectionProfile;
+use dataomni_lib::services::explain::PlanNode;
 use dataomni_lib::services::neo4j::{
   self as graph, CypherRequest, CypherResult, CypherValue, Neo4jPool, Neo4jTarget,
   NEO4J_AUTH_FAILED, NEO4J_DATABASE_NOT_FOUND, NEO4J_SERVER_ERROR, NEO4J_TIMEOUT,
@@ -67,7 +68,7 @@ async fn run(
 ) -> Result<CypherResult, String> {
   graph::run(
     Arc::clone(pool),
-    CypherRequest { database: None, query: query.to_string(), limit, timeout },
+    CypherRequest { database: None, query: query.to_string(), limit, timeout, read_all: false },
   )
   .await
 }
@@ -278,6 +279,67 @@ async fn explain_tells_reads_from_writes_without_running_them() {
   let indexes =
     cypher(&pool, "SHOW INDEXES YIELD name WHERE name = 'smoke_explain' RETURN name").await;
   assert!(indexes.rows.is_empty());
+}
+
+#[tokio::test]
+async fn explain_and_profile_bring_back_the_plan_tree() {
+  let Some(profile) = profile() else { return };
+  let pool = pool(&profile).await;
+  fresh_label(&pool, "SmokePlan").await;
+  cypher(&pool, "UNWIND range(1, 5) AS i CREATE (:SmokePlan {i: i})").await;
+  let query = "MATCH (n:SmokePlan) WHERE n.i > 2 RETURN n.i ORDER BY n.i";
+  let leaf = |node: &PlanNode| -> PlanNode {
+    let mut node = node.clone();
+    while let Some(child) = node.children.first() {
+      node = child.clone();
+    }
+    node
+  };
+
+  // EXPLAIN：有树、没跑（没有行，也没有实际行数），建节点的也不建
+  let explained = cypher(&pool, &format!("EXPLAIN {query}")).await;
+  assert!(explained.rows.is_empty());
+  let plan = explained.summary.plan.expect("EXPLAIN 带计划");
+  assert!(!plan.analyzed);
+  assert_eq!(plan.roots.len(), 1);
+  assert_eq!(plan.roots[0].operation, "ProduceResults");
+  let scan = leaf(&plan.roots[0]);
+  assert_eq!(scan.operation, "NodeByLabelScan");
+  assert_eq!(scan.target.as_deref(), Some("n:SmokePlan"));
+  assert!(scan.estimated_rows.is_some());
+  assert_eq!(scan.actual_rows, None);
+  assert!(plan.raw.contains("NodeByLabelScan"), "{}", plan.raw);
+  cypher(&pool, "EXPLAIN CREATE (:SmokePlan {i: 99})").await;
+
+  // PROFILE：真的跑了，行照常回来，每个算子带实际行数与 DbHits
+  let profiled = cypher(&pool, &format!("PROFILE {query}")).await;
+  assert_eq!(profiled.rows.len(), 3);
+  let plan = profiled.summary.plan.expect("PROFILE 带计划");
+  assert!(plan.analyzed);
+  assert_eq!(plan.roots[0].actual_rows, Some(3.0));
+  let scan = leaf(&plan.roots[0]);
+  assert_eq!(scan.actual_rows, Some(5.0));
+  assert_eq!(scan.detail.first().map(|item| item.key.as_str()), Some("DbHits"));
+
+  // 行数超过上限：不读完的话服务端不给统计；读完丢掉多的，内存里仍只留上限那么多
+  let request = |read_all| CypherRequest {
+    database: None,
+    query: "PROFILE UNWIND range(1, 5000) AS x RETURN x".to_string(),
+    limit: 10,
+    timeout: TIMEOUT,
+    read_all,
+  };
+  let early = graph::run(Arc::clone(&pool), request(false)).await;
+  assert!(early.is_err_and(|error| error.contains("materialised")), "早停时服务端不给统计");
+  let drained = graph::run(Arc::clone(&pool), request(true)).await.expect("读完");
+  assert_eq!((drained.rows.len(), drained.truncated), (10, true));
+  assert_eq!(drained.summary.plan.expect("带计划").roots[0].actual_rows, Some(5000.0));
+
+  // 普通查询没有计划
+  assert!(cypher(&pool, query).await.summary.plan.is_none());
+  let count = cypher(&pool, "MATCH (n:SmokePlan) RETURN count(n) AS c").await;
+  assert_eq!(text(&count.rows[0][0]), r#"{"kind":"integer","value":"5"}"#);
+  fresh_label(&pool, "SmokePlan").await;
 }
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 import type { ConnectionEnvironment } from '../contracts';
 import type { ConfirmationPolicy } from './confirmationPolicy';
-import { cypherKeywords } from './cypherStatements';
+import { cypherKeywords, cypherPreamble } from './cypherStatements';
 import { RISK_ORDER, requiresConfirmation, type StatementRisk } from './statementRisk';
 import type { TranslationKey } from '../i18n/translate';
 
@@ -23,8 +23,9 @@ const WRITE_WORDS: ReadonlySet<string> = new Set([
 /** 改权限、改用户：影响面不在数据里，按批量写对待 */
 const SECURITY_WORDS: ReadonlySet<string> = new Set(['GRANT', 'DENY', 'REVOKE', 'ALTER', 'RENAME', 'USER', 'ROLE']);
 
+/** `EXPLAIN` 开头的什么也不执行，里面写什么都不算写（服务端上验过：`EXPLAIN CREATE` 不建节点） */
 export function cypherMayWrite(text: string): boolean {
-  return cypherKeywords(text).some((word) => WRITE_WORDS.has(word));
+  return cypherPreamble(text).mode !== 'explain' && cypherKeywords(text).some((word) => WRITE_WORDS.has(word));
 }
 
 /**

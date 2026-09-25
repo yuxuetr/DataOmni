@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cypherKeywords, cypherStatementAt, splitCypherStatements } from './cypherStatements';
+import { cypherKeywords, cypherPreamble, cypherStatementAt, splitCypherStatements } from './cypherStatements';
 
 const texts = (source: string) => splitCypherStatements(source).map((statement) => statement.text);
 
@@ -47,5 +47,28 @@ describe('cypherStatementAt', () => {
     expect(cypherStatementAt(source, 10)?.text).toBe('RETURN 1');
     expect(cypherStatementAt(source, 12)?.text).toBe('RETURN 2');
     expect(cypherStatementAt('', 0)).toBeNull();
+  });
+});
+
+describe('cypherPreamble', () => {
+  it('开头的 EXPLAIN / PROFILE，大小写都认；前面可以有注释与 CYPHER 选项', () => {
+    expect(cypherPreamble('EXPLAIN MATCH (n) RETURN n').mode).toBe('explain');
+    expect(cypherPreamble('profile match (n) return n').mode).toBe('profile');
+    expect(cypherPreamble('// 看计划\nCYPHER 25 runtime=slotted EXPLAIN CREATE (n)').mode).toBe('explain');
+    expect(cypherPreamble('EXPLAIN CYPHER planner = cost MATCH (n) RETURN n').mode).toBe('explain');
+    expect(cypherPreamble('MATCH (n) RETURN n').mode).toBeNull();
+  });
+
+  it('查询里的、字符串里的、名字里的都不算', () => {
+    expect(cypherPreamble("RETURN 'EXPLAIN'").mode).toBeNull();
+    expect(cypherPreamble('MATCH (n:`PROFILE`) RETURN n').mode).toBeNull();
+    expect(cypherPreamble('MATCH (explain) RETURN explain').mode).toBeNull();
+    expect(cypherPreamble('CYPHER EXPLAIN_x=1 MATCH (n) RETURN n').mode).toBeNull();
+  });
+
+  it('body 是摘掉那个词的原文：问服务端查询类型时要它，服务端不接受 EXPLAIN PROFILE', () => {
+    expect(cypherPreamble('PROFILE MATCH (n) SET n.x = 1').body).toBe(' MATCH (n) SET n.x = 1');
+    expect(cypherPreamble('CYPHER 25 profile CREATE (n)').body).toBe('CYPHER 25  CREATE (n)');
+    expect(cypherPreamble('MATCH (n) RETURN n').body).toBe('MATCH (n) RETURN n');
   });
 });

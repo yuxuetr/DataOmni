@@ -23,7 +23,7 @@ import { runShortcutKeymap, type RunShortcutHandlers } from '../utils/runShortcu
 import { editorPhrases } from '../utils/editorPhrases';
 import { describeError } from '../utils/describeError';
 import { SHORTCUTS, formatShortcut } from '../utils/shortcuts';
-import { cypherStatementAt, splitCypherStatements } from '../utils/cypherStatements';
+import { cypherPreamble, cypherStatementAt, splitCypherStatements } from '../utils/cypherStatements';
 import {
   CYPHER_RISK_DESCRIPTION_KEYS,
   cypherMayWrite,
@@ -34,6 +34,8 @@ import { formatCypherValue, type CypherValue } from '../utils/cypherValue';
 import { hasGraphValues } from '../utils/cypherGraph';
 import { CypherGraphView } from './CypherGraphView';
 import { CypherEntityEditor } from './CypherEntityEditor';
+import { PlanTree } from './PlanTree';
+import { formatPlanRows, worstEstimate, type QueryPlan } from '../utils/planInsights';
 import {
   degreeStatement,
   deleteStatement,
@@ -54,6 +56,8 @@ interface CypherResult {
     database: string | null;
     counters: Array<[string, number]>;
     notifications: Array<{ code: string; title: string; description: string; severity: string }>;
+    /** 以 `EXPLAIN` / `PROFILE` 开头的才有 */
+    plan: QueryPlan | null;
   };
 }
 
@@ -168,7 +172,9 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
           database: null,
           query: statement,
           limit: rowLimit,
-          timeoutMs: queryTimeoutMs
+          timeoutMs: queryTimeoutMs,
+          // 没读完的结果服务端不给 PROFILE 的统计：读完，多出来的在后端丢掉
+          readAll: cypherPreamble(statement).mode === 'profile'
         });
         wrote ||= result.summary.counters.length > 0;
         const elapsedMs = Math.round(performance.now() - started);
@@ -197,7 +203,8 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
         const queryType = await invoke<CypherQueryType>('neo4j_query_type', {
           connectionString,
           database: null,
-          query: text,
+          // 问法是在前面加 `EXPLAIN`，服务端不接受 `EXPLAIN PROFILE`：`PROFILE` 摘掉再问
+          query: cypherPreamble(text).body,
           timeoutMs: queryTimeoutMs
         });
         return { text, queryType };
@@ -640,6 +647,15 @@ function RunSection({
   );
 }
 
+const VIEW_OPTIONS = ['plan', 'planText', 'graph', 'table'] as const;
+type ResultViewOption = (typeof VIEW_OPTIONS)[number];
+const VIEW_LABEL_KEYS: Record<ResultViewOption, TranslationKey> = {
+  plan: 'cypher.view.plan',
+  planText: 'cypher.view.planText',
+  graph: 'cypher.view.graph',
+  table: 'cypher.view.table'
+};
+
 function ResultView({
   result,
   elapsedMs,
@@ -654,13 +670,30 @@ function ResultView({
   const t = useLanguageStore((state) => state.t);
   const inspect = (value: CypherValue) => onInspect(value, result.summary.database);
   const graphable = useMemo(() => hasGraphValues(result.rows), [result.rows]);
-  // 有节点、关系的结果先看图
-  const [view, setView] = useState<'graph' | 'table'>('graph');
-  const showGraph = graphable && view === 'graph';
   const { summary } = result;
+  const { plan } = summary;
+  const explainedOnly = plan !== null && !plan.analyzed;
+  // 有计划的先看计划，有节点、关系的先看图。`EXPLAIN` 没有行，不给一张空表
+  const views = VIEW_OPTIONS.filter((option) => {
+    switch (option) {
+      case 'plan':
+        return plan !== null;
+      case 'planText':
+        return plan !== null && plan.raw !== '';
+      case 'graph':
+        return graphable;
+      case 'table':
+        return result.columns.length > 0 && !explainedOnly;
+    }
+  });
+  const [chosen, setView] = useState<ResultViewOption | null>(null);
+  const view = chosen !== null && views.includes(chosen) ? chosen : views[0] ?? 'table';
+  const worst = plan ? worstEstimate(plan) : null;
   const facts = [
-    result.columns.length > 0 ? t('cypher.rows', { count: result.rows.length }) : null,
-    result.truncated ? t('cypher.truncated') : null,
+    explainedOnly ? t('cypher.explainedOnly') : null,
+    result.columns.length > 0 && !explainedOnly ? t('cypher.rows', { count: result.rows.length }) : null,
+    // `PROFILE` 的多余行是读完才丢的（不读完服务端不给统计），不能说「没有读」
+    result.truncated ? t(plan?.analyzed ? 'cypher.truncatedProfiled' : 'cypher.truncated') : null,
     ...summary.counters.map(([key, count]) => (COUNTER_KEYS[key] ? t(COUNTER_KEYS[key], { count }) : `${key}: ${count}`)),
     summary.database ? t('cypher.ranOn', { database: summary.database }) : null,
     t('cypher.elapsed', { ms: elapsedMs })
@@ -670,9 +703,9 @@ function ResultView({
     <div>
       <div className="mb-1 flex items-center justify-between gap-2">
         <p className={clsx('text-xs', result.truncated ? 'text-warning' : 'text-fg-muted')}>{facts.join(' · ')}</p>
-        {graphable && (
+        {views.length > 1 && (
           <div className="flex shrink-0 overflow-hidden rounded-control border border-line text-xs" role="group">
-            {(['graph', 'table'] as const).map((option) => (
+            {views.map((option) => (
               <button
                 key={option}
                 type="button"
@@ -683,7 +716,7 @@ function ResultView({
                   view === option ? 'bg-accent-soft text-accent' : 'text-fg-muted hover:bg-surface-hover'
                 )}
               >
-                {t(option === 'graph' ? 'cypher.view.graph' : 'cypher.view.table')}
+                {t(VIEW_LABEL_KEYS[option])}
               </button>
             ))}
           </div>
@@ -694,8 +727,27 @@ function ResultView({
           {`${notification.title}：${notification.description}`}
         </p>
       ))}
-      {showGraph && <CypherGraphView rows={result.rows} selectedId={selectedId} onInspect={inspect} />}
-      {!showGraph && result.columns.length > 0 && (
+      {view === 'plan' && plan && (
+        <div className="rounded-control border border-line px-3 py-2">
+          {worst && (
+            <p className="mb-2 text-xs text-warning">
+              {t('plan.worstHint', {
+                operation: worst.target ? `${worst.operation} (${worst.target})` : worst.operation,
+                estimated: formatPlanRows(worst.estimatedRows),
+                actual: formatPlanRows(worst.actualRows)
+              })}
+            </p>
+          )}
+          <PlanTree roots={plan.roots} />
+        </div>
+      )}
+      {view === 'planText' && plan && (
+        <pre className="select-text overflow-x-auto rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg">
+          {plan.raw}
+        </pre>
+      )}
+      {view === 'graph' && <CypherGraphView rows={result.rows} selectedId={selectedId} onInspect={inspect} />}
+      {view === 'table' && result.columns.length > 0 && (
         <div className="overflow-x-auto rounded-control border border-line">
           <table className="min-w-full border-collapse font-mono text-[13px]">
             <thead className="bg-surface-sunken">

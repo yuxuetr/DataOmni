@@ -106,6 +106,54 @@ export function cypherKeywords(source: string): string[] {
     .map((word) => word.toUpperCase());
 }
 
+export interface CypherPreamble {
+  /** 开头写了 `EXPLAIN`（只出计划、不执行）还是 `PROFILE`（执行并量每一步） */
+  mode: 'explain' | 'profile' | null;
+  /** 摘掉那个词之后的原文；没有时就是原文 */
+  body: string;
+}
+
+/**
+ * 查询前面的预解析部分：`CYPHER 25 runtime=slotted` 这类选项与 `EXPLAIN` / `PROFILE`，
+ * 次序随意、可以有注释。碰到第一个别的词（查询本身）或字符串就停，查询里叫 `explain` 的变量不算。
+ */
+export function cypherPreamble(source: string): CypherPreamble {
+  let found: { mode: 'explain' | 'profile'; from: number; length: number } | null = null;
+  // `CYPHER` 之后是一个可选的版本号与若干 `键=值`
+  let expecting: 'statement' | 'version-or-option' | 'equals' | 'value' = 'statement';
+  scan: for (const piece of pieces(source)) {
+    if (piece.kind === 'comment') continue;
+    if (piece.kind === 'quoted') break;
+    for (const token of piece.text.matchAll(/[A-Za-z_][A-Za-z0-9_.]*|\d+(?:\.\d+)?|\S/g)) {
+      const word = token[0].toUpperCase();
+      const isName = /^[A-Z_]/.test(word);
+      if (expecting === 'equals') {
+        if (word !== '=') break scan;
+        expecting = 'value';
+        continue;
+      }
+      if (expecting === 'value') {
+        expecting = 'version-or-option';
+        continue;
+      }
+      if (word === 'EXPLAIN' || word === 'PROFILE') {
+        found ??= { mode: word === 'EXPLAIN' ? 'explain' : 'profile', from: piece.from + (token.index ?? 0), length: word.length };
+        expecting = 'statement';
+      } else if (word === 'CYPHER') {
+        expecting = 'version-or-option';
+      } else if (expecting === 'version-or-option' && !isName) {
+        // 版本号只在选项前面出现一次，这里不较真
+      } else if (expecting === 'version-or-option' && isName && /^\s*=/.test(piece.text.slice((token.index ?? 0) + word.length))) {
+        expecting = 'equals';
+      } else {
+        break scan;
+      }
+    }
+  }
+  if (!found) return { mode: null, body: source };
+  return { mode: found.mode, body: source.slice(0, found.from) + source.slice(found.from + found.length) };
+}
+
 /**
  * 光标所在的那条。落在两条之间（分号后的空白）时算前一条，与 SQL 编辑器一致
  */
