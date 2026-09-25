@@ -72,6 +72,24 @@ export function matchesShortcut(
     && event.altKey === Boolean(shortcut.alt);
 }
 
+/**
+ * 按下这个快捷键会产生的那个事件（`matchesShortcut` 的反面）。给测试造按键用：
+ * 用例里自己写 `ctrlKey: true` 就又把平台差异散出去了，而且只在一个平台上对
+ */
+export function shortcutKeyEvent(
+  shortcut: Shortcut,
+  platform: ShortcutPlatform = currentPlatform()
+): ShortcutEvent {
+  const mod = Boolean(shortcut.mod);
+  return {
+    key: shortcut.key,
+    metaKey: platform === 'mac' && mod,
+    ctrlKey: platform !== 'mac' && mod,
+    shiftKey: Boolean(shortcut.shift),
+    altKey: Boolean(shortcut.alt)
+  };
+}
+
 /** 方向键这类要和 Shift 自由组合的，只问命令键按没按 */
 export function hasCommandModifier(
   event: Pick<ShortcutEvent, 'metaKey' | 'ctrlKey'>,

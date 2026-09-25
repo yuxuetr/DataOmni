@@ -48,6 +48,7 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { describeError } from '../utils/describeError';
 import { appEditorTheme } from '../utils/editorTheme';
+import { runShortcutKeymap, type RunShortcutHandlers } from '../utils/runShortcutKeymap';
 import { editorPhrases } from '../utils/editorPhrases';
 import { supportsFeature } from '../contracts/databaseSupport';
 import { useLanguageStore } from '../stores/languageStore';
@@ -138,6 +139,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
   const [formatError, setFormatError] = useState<string | null>(null);
   const formatterLanguage = sqlFormatterLanguage(connection.db_type);
   const editorViewRef = useRef<EditorView | null>(null);
+  const runShortcuts = useRef<RunShortcutHandlers>({ runCurrent: () => {}, runAll: () => {} });
 
   /**
    * 补全交给 `@codemirror/lang-sql` 自己的 schema 补全源：它按真实的语法树
@@ -152,6 +154,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
     }, connection.username);
 
     return [
+      runShortcutKeymap(runShortcuts),
       sql({
         dialect: sqlDialectFor(connection.db_type),
         schema,
@@ -284,17 +287,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
       return;
     }
 
-    if (matchesShortcut(event, SHORTCUTS.runAll)) {
-      event.preventDefault();
-      runAllGuarded();
-      return;
-    }
+  };
 
-    if (!matchesShortcut(event, SHORTCUTS.runCurrent)) {
-      return;
-    }
-
-    event.preventDefault();
+  /** 运行的两个快捷键在编辑器的键位表里（`runShortcutKeymap`），见那里为什么不在 onKeyDown */
+  const runCurrentFromShortcut = () => {
     const selection = editorViewRef.current?.state.selection.main;
     if (selection && !selection.empty) {
       executeSelectedSql();
@@ -308,6 +304,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
       void executeAllStatements();
     });
   };
+  runShortcuts.current = { runCurrent: runCurrentFromShortcut, runAll: runAllGuarded };
 
   /**
    * 排版当前选区；没有选区就排整份。

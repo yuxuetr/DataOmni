@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import CodeMirror from '@uiw/react-codemirror';
-import { EditorState, Prec } from '@codemirror/state';
+import { EditorState } from '@codemirror/state';
 import { StreamLanguage } from '@codemirror/language';
 import { cypher } from '@codemirror/legacy-modes/mode/cypher';
 import { oneDark } from '@codemirror/theme-one-dark';
-import { keymap, type EditorView } from '@codemirror/view';
+import type { EditorView } from '@codemirror/view';
 import { clsx } from 'clsx';
 import { AlertCircle, Loader2, Play, X } from 'lucide-react';
 import type { ConnectionProfile } from '../contracts/connection';
@@ -19,6 +19,7 @@ import { useResizablePanel } from '../hooks/useResizablePanel';
 import { PanelResizeHandle } from './PanelResizeHandle';
 import { DestructiveStatementPrompt } from './DestructiveStatementPrompt';
 import { appEditorTheme } from '../utils/editorTheme';
+import { runShortcutKeymap, type RunShortcutHandlers } from '../utils/runShortcutKeymap';
 import { editorPhrases } from '../utils/editorPhrases';
 import { describeError } from '../utils/describeError';
 import { SHORTCUTS, formatShortcut } from '../utils/shortcuts';
@@ -104,15 +105,10 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
     axis: 'y'
   });
 
-  // 快捷键绑在编辑器自己的键位表里、优先级最高：CodeMirror 默认把 Mod-Enter 绑成
-  // 「插入空行」，而它先于 React 的 onKeyDown 处理——绑在外面的话，跑一次查询还多一个空行
-  const shortcuts = useRef({ runCurrent: () => {}, runAll: () => {} });
+  const shortcuts = useRef<RunShortcutHandlers>({ runCurrent: () => {}, runAll: () => {} });
   const extensions = useMemo(
     () => [
-      Prec.highest(keymap.of([
-        { key: 'Mod-Enter', run: () => { shortcuts.current.runCurrent(); return true; } },
-        { key: 'Shift-Mod-Enter', run: () => { shortcuts.current.runAll(); return true; } }
-      ])),
+      runShortcutKeymap(shortcuts),
       StreamLanguage.define(cypher),
       EditorState.phrases.of(editorPhrases(t)),
       appEditorTheme

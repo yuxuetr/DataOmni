@@ -8,6 +8,7 @@ import {
   formatShortcut,
   hasCommandModifier,
   matchesShortcut,
+  shortcutKeyEvent,
   tabShortcut,
   type Shortcut,
   type ShortcutEvent
@@ -137,6 +138,16 @@ function sourceFiles(): Array<[string, string]> {
   walk(join(root, 'src'));
   return found;
 }
+
+describe('shortcutKeyEvent', () => {
+  it('造出来的事件在同一个平台上命中这个快捷键，在另一个平台上不命中', () => {
+    for (const shortcut of Object.values(SHORTCUTS)) {
+      expect(matchesShortcut(shortcutKeyEvent(shortcut, 'mac'), shortcut, 'mac')).toBe(true);
+      expect(matchesShortcut(shortcutKeyEvent(shortcut, 'other'), shortcut, 'other')).toBe(true);
+    }
+    expect(matchesShortcut(shortcutKeyEvent(SHORTCUTS.runCurrent, 'mac'), SHORTCUTS.runCurrent, 'other')).toBe(false);
+  });
+});
 
 describe('两个平台的差异只许出现在这一个文件里', () => {
   it('别处不许直接读 metaKey / ctrlKey', () => {
