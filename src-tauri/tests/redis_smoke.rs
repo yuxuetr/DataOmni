@@ -14,8 +14,9 @@
 use dataomni_lib::models::ConnectionProfile;
 use dataomni_lib::models::TlsMode;
 use dataomni_lib::services::redis::{
-  self as store, RedisTarget, RedisValue, ScanRequest, ValueRequest, REDIS_AUTH_FAILED,
-  REDIS_AUTH_REQUIRED, REDIS_KEY_GONE, REDIS_TLS_FILE_INVALID, REDIS_UNREACHABLE,
+  self as store, RedisReply, RedisTarget, RedisValue, ScanRequest, ValueRequest, REDIS_AUTH_FAILED,
+  REDIS_AUTH_REQUIRED, REDIS_COMMAND_CONNECTION_STATE, REDIS_KEY_GONE, REDIS_TLS_FILE_INVALID,
+  REDIS_UNREACHABLE,
 };
 use serde_json::json;
 use std::collections::HashSet;
@@ -411,5 +412,49 @@ async fn tls_is_verified_against_the_given_ca_and_only_skipped_when_asked() {
   assert!(
     missing.starts_with(REDIS_TLS_FILE_INVALID) && missing.contains("/nonexistent/ca.pem"),
     "{missing}"
+  );
+}
+
+/// 命令行：参数按字节原样发（二进制也行）；服务端的错误回答是一条正常的回答；命令落在
+/// 指定的库号上；会改共用连接状态的命令被拒，而拒绝之后连接照常能用
+#[tokio::test]
+async fn the_command_line_runs_in_its_database_and_keeps_errors_as_replies() {
+  let Some(profile) = profile(12) else { return };
+  let mut seed = seed_connection(&profile).await;
+  let pool = pool(&profile).await;
+  let run = |arguments: Vec<&[u8]>| {
+    store::execute(&pool, 12, arguments.into_iter().map(<[u8]>::to_vec).collect(), TIMEOUT)
+  };
+
+  assert_eq!(
+    run(vec![b"SET", b"bin\xff", &[0xff, 0x00]]).await,
+    Ok(RedisReply::Status { value: "OK".into() })
+  );
+  let Ok(RedisReply::Bulk { value }) = run(vec![b"GET", b"bin\xff"]).await else { panic!("GET") };
+  assert_eq!(store::decode_key(&value.raw), Ok(vec![0xff, 0x00]));
+  let stored: Vec<u8> =
+    redis::cmd("GET").arg(&b"bin\xff"[..]).query_async(&mut seed).await.expect("seed GET");
+  assert_eq!(stored, vec![0xff, 0x00], "落在库 12 上");
+
+  let Ok(RedisReply::Error { message }) = run(vec![b"INCR", b"bin\xff"]).await else {
+    panic!("INCR")
+  };
+  assert!(message.contains("not an integer"), "{message}");
+  assert_eq!(run(vec![b"GET", b"missing"]).await, Ok(RedisReply::Nil));
+  run(vec![b"RPUSH", b"l", b"a", b"b"]).await.expect("rpush");
+  let Ok(RedisReply::Array { items }) = run(vec![b"LRANGE", b"l", b"0", b"-1"]).await else {
+    panic!("LRANGE")
+  };
+  assert_eq!(items.len(), 2);
+
+  let refused = run(vec![b"select", b"0"]).await.err().unwrap_or_default();
+  assert!(
+    refused.starts_with(REDIS_COMMAND_CONNECTION_STATE) && refused.contains("SELECT"),
+    "{refused}"
+  );
+  assert_eq!(
+    run(vec![b"EXISTS", b"l"]).await,
+    Ok(RedisReply::Integer { value: 1 }),
+    "拒绝之后还在库 12"
   );
 }

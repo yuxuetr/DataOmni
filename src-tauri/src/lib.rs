@@ -79,6 +79,7 @@ pub fn run() {
       redis_list_keyspaces,
       redis_scan,
       redis_read_value,
+      redis_execute,
       close_redis,
       mongodb_drop_collection,
       close_mongodb,

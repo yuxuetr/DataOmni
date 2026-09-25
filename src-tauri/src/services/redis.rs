@@ -627,6 +627,181 @@ fn pairs(flat: Vec<Vec<u8>>) -> Vec<(RedisBytes, RedisBytes)> {
   pairs
 }
 
+/// 命令行里不许跑：这条会阻塞，共用的连接上别的请求都得排在它后面。冒号后面是命令名
+pub const REDIS_COMMAND_BLOCKING: &str = "DATAOMNI_REDIS_COMMAND_BLOCKING";
+/// 命令行里不许跑：这条会改共用连接的状态（切库、事务、换身份）。冒号后面是命令名
+pub const REDIS_COMMAND_CONNECTION_STATE: &str = "DATAOMNI_REDIS_COMMAND_CONNECTION_STATE";
+/// 命令行里什么都没写
+pub const REDIS_COMMAND_EMPTY: &str = "DATAOMNI_REDIS_COMMAND_EMPTY";
+
+/// 为什么这条不能在这里跑。
+///
+/// 这里的连接是多路复用、各处共用的一条：会阻塞的命令（`BLPOP`、`MONITOR`、订阅）
+/// 在它返回之前，对象树、键列表、值面板发出的每一条都排在它后面；改连接状态的
+/// （`SELECT`、`MULTI`、`AUTH`、`CLIENT REPLY`）会让同一条连接上别处的命令落进
+/// 另一个库、进了事务队列、或者换了身份。切库用对象树
+fn refusal(name: &str, arguments: &[Vec<u8>]) -> Option<&'static str> {
+  const BLOCKING: &[&str] = &[
+    "BLPOP",
+    "BRPOP",
+    "BRPOPLPUSH",
+    "BLMOVE",
+    "BLMPOP",
+    "BZPOPMIN",
+    "BZPOPMAX",
+    "BZMPOP",
+    "WAIT",
+    "WAITAOF",
+    "MONITOR",
+    "SUBSCRIBE",
+    "PSUBSCRIBE",
+    "SSUBSCRIBE",
+    "UNSUBSCRIBE",
+    "PUNSUBSCRIBE",
+    "SUNSUBSCRIBE",
+    "SYNC",
+    "PSYNC",
+  ];
+  const CONNECTION_STATE: &[&str] =
+    &["SELECT", "MULTI", "EXEC", "DISCARD", "WATCH", "UNWATCH", "AUTH", "HELLO", "RESET", "QUIT"];
+  if BLOCKING.contains(&name) {
+    return Some(REDIS_COMMAND_BLOCKING);
+  }
+  if CONNECTION_STATE.contains(&name) {
+    return Some(REDIS_COMMAND_CONNECTION_STATE);
+  }
+  let has =
+    |word: &str| arguments.iter().any(|argument| argument.eq_ignore_ascii_case(word.as_bytes()));
+  // `XREAD` 本身不阻塞，带了 `BLOCK` 才阻塞
+  if matches!(name, "XREAD" | "XREADGROUP") && has("BLOCK") {
+    return Some(REDIS_COMMAND_BLOCKING);
+  }
+  let first = arguments.first().map(|argument| argument.to_ascii_uppercase());
+  if name == "CLIENT"
+    && matches!(
+      first.as_deref(),
+      Some(b"REPLY" | b"TRACKING" | b"CACHING" | b"NO-EVICT" | b"NO-TOUCH")
+    )
+  {
+    return Some(REDIS_COMMAND_CONNECTION_STATE);
+  }
+  None
+}
+
+/// 一条回答，形状照服务端给的（RESP2 与 RESP3 的都认）。前端按 redis-cli 的样子画
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RedisReply {
+  Nil,
+  Integer {
+    value: i64,
+  },
+  Bulk {
+    value: RedisBytes,
+  },
+  Status {
+    value: String,
+  },
+  Error {
+    message: String,
+  },
+  Array {
+    items: Vec<RedisReply>,
+  },
+  Map {
+    entries: Vec<(RedisReply, RedisReply)>,
+  },
+  Double {
+    value: f64,
+  },
+  Boolean {
+    value: bool,
+  },
+  /// 超出 64 位的整数，原样的十进制文字
+  BigNumber {
+    value: String,
+  },
+}
+
+impl RedisReply {
+  fn from_value(value: Value) -> Self {
+    match value {
+      Value::Nil => Self::Nil,
+      Value::Int(value) => Self::Integer { value },
+      Value::BulkString(bytes) => Self::Bulk { value: RedisBytes::new(bytes) },
+      Value::SimpleString(value) => Self::Status { value },
+      Value::Okay => Self::Status { value: "OK".to_string() },
+      Value::Array(items) | Value::Set(items) | Value::Push { data: items, .. } => {
+        Self::Array { items: items.into_iter().map(Self::from_value).collect() }
+      }
+      Value::Map(entries) => Self::Map {
+        entries: entries
+          .into_iter()
+          .map(|(key, value)| (Self::from_value(key), Self::from_value(value)))
+          .collect(),
+      },
+      Value::Attribute { data, .. } => Self::from_value(*data),
+      Value::Double(value) => Self::Double { value },
+      Value::Boolean(value) => Self::Boolean { value },
+      Value::VerbatimString { text, .. } => {
+        Self::Bulk { value: RedisBytes::new(text.into_bytes()) }
+      }
+      Value::BigNumber(digits) => {
+        Self::BigNumber { value: String::from_utf8_lossy(&digits).into_owned() }
+      }
+      Value::ServerError(error) => Self::Error {
+        message: format!("{} {}", error.code(), error.details().unwrap_or_default())
+          .trim()
+          .to_string(),
+      },
+      // `Value` 标了 non_exhaustive：驱动将来多一种形状时照原样说出来，不假装认识
+      other => Self::Status { value: format!("{other:?}") },
+    }
+  }
+}
+
+/// 命令行：照原样发一条命令。参数是字节串（前端按 redis-cli 的规矩拆好、编成 base64），
+/// 服务端的错误回答算作一条正常的回答（`(error) …`），不当作失败——那正是人要看的。
+/// 网络断了、超时这类才是失败
+pub async fn execute(
+  pool: &RedisPool,
+  database: i64,
+  arguments: Vec<Vec<u8>>,
+  timeout: Duration,
+) -> Result<RedisReply, String> {
+  let Some((name, rest)) = arguments.split_first() else {
+    return Err(REDIS_COMMAND_EMPTY.to_string());
+  };
+  let name = String::from_utf8_lossy(name).to_ascii_uppercase();
+  if let Some(reason) = refusal(&name, rest) {
+    return Err(format!("{reason}: {name}"));
+  }
+  let mut connection = pool.connection(database).await?;
+  let mut command = redis::cmd(&name);
+  for argument in rest {
+    command.arg(argument);
+  }
+  let work = async {
+    use redis::aio::ConnectionLike;
+    match connection.req_packed_command(&command).await {
+      Ok(value) => Ok(RedisReply::from_value(value)),
+      Err(error)
+        if matches!(error.kind(), redis::ErrorKind::Server(_) | redis::ErrorKind::Extension) =>
+      {
+        Ok(RedisReply::Error {
+          message: format!(
+            "{} {}",
+            error.code().unwrap_or("ERR"),
+            error.detail().unwrap_or_default()
+          ),
+        })
+      }
+      Err(error) => Err(describe_error(error)),
+    }
+  };
+  with_deadline(timeout, work).await
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -658,6 +833,21 @@ mod tests {
     assert_eq!(counts.get(&0), Some(&12));
     assert_eq!(counts.get(&3), Some(&5));
     assert_eq!(counts.len(), 2);
+  }
+
+  #[test]
+  fn commands_that_block_or_change_the_shared_connection_are_refused() {
+    assert_eq!(refusal("BLPOP", &[]), Some(REDIS_COMMAND_BLOCKING));
+    assert_eq!(refusal("SELECT", &[b"3".to_vec()]), Some(REDIS_COMMAND_CONNECTION_STATE));
+    assert_eq!(refusal("XREAD", &[b"block".to_vec(), b"0".to_vec()]), Some(REDIS_COMMAND_BLOCKING));
+    assert_eq!(
+      refusal("CLIENT", &[b"reply".to_vec(), b"off".to_vec()]),
+      Some(REDIS_COMMAND_CONNECTION_STATE)
+    );
+    // 反向：不阻塞的同名兄弟照常跑
+    assert_eq!(refusal("XREAD", &[b"COUNT".to_vec(), b"1".to_vec()]), None);
+    assert_eq!(refusal("CLIENT", &[b"LIST".to_vec()]), None);
+    assert_eq!(refusal("GET", &[b"k".to_vec()]), None);
   }
 
   #[test]

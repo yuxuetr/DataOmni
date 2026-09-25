@@ -4,8 +4,8 @@
 
 use crate::commands::database_commands::TIMEOUT_OUT_OF_RANGE;
 use crate::services::redis::{
-  self, KeyspaceEntry, RedisPool, RedisRegistry, RedisValue, ScanPage, ScanRequest, ValueRequest,
-  REDIS_NOT_CONNECTED,
+  self, KeyspaceEntry, RedisPool, RedisRegistry, RedisReply, RedisValue, ScanPage, ScanRequest,
+  ValueRequest, REDIS_NOT_CONNECTED,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -80,6 +80,22 @@ pub async fn redis_read_value(
   };
   let pool = pool(&registry, &connection_string)?;
   redis::read_value(&pool, request).await
+}
+
+/// 命令行：参数是前端拆好的字节串（base64），见 `redis::execute`
+#[tauri::command]
+pub async fn redis_execute(
+  connection_string: String,
+  database: i64,
+  arguments: Vec<String>,
+  timeout_ms: u64,
+  registry: State<'_, RedisRegistry>,
+) -> Result<RedisReply, String> {
+  let arguments =
+    arguments.iter().map(|argument| redis::decode_key(argument)).collect::<Result<Vec<_>, _>>()?;
+  let timeout = timeout(timeout_ms)?;
+  let pool = pool(&registry, &connection_string)?;
+  redis::execute(&pool, database, arguments, timeout).await
 }
 
 /// 断开时去掉登记。最后一个引用没了，各库号上的连接随之关闭

@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Loader2, RefreshCw, Search } from 'lucide-react';
 import { clsx } from 'clsx';
-import { PLAIN_TEXT_INPUT } from './FormControls';
+import { PLAIN_TEXT_INPUT, SegmentedControl } from './FormControls';
+import { RedisConsole } from './RedisConsole';
 import { useLanguageStore } from '../stores/languageStore';
 import { useQueryStore } from '../stores/queryStore';
 import { describeError } from '../utils/describeError';
@@ -43,6 +44,9 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
   const connectionString = useQueryStore((state) => state.connectionString);
   const timeoutMs = useQueryStore((state) => state.queryTimeoutMs);
 
+  const [mode, setMode] = useState<'keys' | 'console'>('keys');
+  // 命令行里跑过东西：切回键列表时重读一遍，不然看到的是跑之前的样子
+  const [stale, setStale] = useState(false);
   const [patternDraft, setPatternDraft] = useState('*');
   const [kindDraft, setKindDraft] = useState('');
   const [applied, setApplied] = useState<AppliedScan>({ pattern: '*', kind: '' });
@@ -143,23 +147,45 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
       <div className="flex items-center justify-between border-b bg-surface-sunken p-4">
         <div className="min-w-0">
           <h2 className="truncate text-sm font-semibold text-fg">{`db${database}`}</h2>
-          <p className="mt-1 text-xs text-fg-muted">
+          <p className={clsx('mt-1 text-xs text-fg-muted', mode === 'console' && 'invisible')}>
             {cursor === null
               ? t('redis.keys.all', { count: keys.length })
               : t('redis.keys.partial', { count: keys.length })}
           </p>
         </div>
-        <button
-          onClick={refresh}
-          disabled={!connectionString || scanning}
-          className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg transition-colors hover:bg-surface-hover disabled:opacity-50"
-        >
-          <RefreshCw size={14} />
-          <span>{t('redis.refresh')}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <SegmentedControl
+            value={mode}
+            options={[
+              { value: 'keys', label: t('redis.mode.keys') },
+              { value: 'console', label: t('redis.mode.console') }
+            ]}
+            onChange={(next) => {
+              setMode(next);
+              if (next === 'keys' && stale) {
+                setStale(false);
+                refresh();
+              }
+            }}
+          />
+          {mode === 'keys' && (
+            <button
+              onClick={refresh}
+              disabled={!connectionString || scanning}
+              className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg transition-colors hover:bg-surface-hover disabled:opacity-50"
+            >
+              <RefreshCw size={14} />
+              <span>{t('redis.refresh')}</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      {/* 两页都不卸掉，只藏起来：键列表翻到哪、选着哪个，命令行跑过什么，切回来都还在 */}
+      <div className={clsx('flex min-h-0 flex-1 flex-col', mode !== 'console' && 'hidden')}>
+        <RedisConsole database={database} onRan={() => setStale(true)} />
+      </div>
+      <div className={clsx('flex min-h-0 flex-1', mode === 'console' && 'hidden')}>
         <div className="flex w-[360px] shrink-0 flex-col border-r border-line">
           <div className="space-y-2 border-b border-line p-3">
             <div className="flex gap-2">
