@@ -88,7 +88,9 @@ export function RedisConsole({ database, onRan }: RedisConsoleProps) {
       setLine('');
       onRan();
     } catch (caught) {
+      // 和成功时一样清掉：留着的话下一条会接在后面打；要改就按 ↑ 取回来
       record({ line: text, output: describeError(caught), failed: true });
+      setLine('');
     } finally {
       setRunning(false);
     }
