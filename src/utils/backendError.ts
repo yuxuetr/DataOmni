@@ -136,7 +136,9 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_REDIS_KEY_INVALID: 'error.backend.redisKeyInvalid',
   DATAOMNI_REDIS_COMMAND_BLOCKING: 'error.backend.redisCommandBlocking',
   DATAOMNI_REDIS_COMMAND_CONNECTION_STATE: 'error.backend.redisCommandConnectionState',
-  DATAOMNI_REDIS_COMMAND_EMPTY: 'error.backend.redisCommandEmpty'
+  DATAOMNI_REDIS_COMMAND_EMPTY: 'error.backend.redisCommandEmpty',
+  DATAOMNI_REDIS_KEY_EXISTS: 'error.backend.redisKeyExists',
+  DATAOMNI_REDIS_VALUE_CHANGED: 'error.backend.redisValueChanged'
 };
 
 export interface BackendError {

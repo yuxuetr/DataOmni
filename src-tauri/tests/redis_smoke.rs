@@ -9,14 +9,14 @@
 //! TLS 那一条另设 `DATAOMNI_REDIS_TLS_TEST_URL`（一台只开 TLS 端口的服务端）与
 //! `DATAOMNI_REDIS_TLS_TEST_CA`（签它证书的 CA 文件路径；证书上写着 127.0.0.1）。
 //!
-//! 用例各占一个库号（9–14），开头 `FLUSHDB` 清掉残留——那几个库号只给这里用。
+//! 用例各占一个库号（8–15，并行跑时互不干扰），开头 `FLUSHDB` 清掉残留——那几个库号只给这里用。
 
 use dataomni_lib::models::ConnectionProfile;
 use dataomni_lib::models::TlsMode;
 use dataomni_lib::services::redis::{
-  self as store, RedisReply, RedisTarget, RedisValue, ScanRequest, ValueRequest, REDIS_AUTH_FAILED,
-  REDIS_AUTH_REQUIRED, REDIS_COMMAND_CONNECTION_STATE, REDIS_KEY_GONE, REDIS_TLS_FILE_INVALID,
-  REDIS_UNREACHABLE,
+  self as store, KeyChange, RedisReply, RedisTarget, RedisValue, ScanRequest, ValueRequest,
+  REDIS_AUTH_FAILED, REDIS_AUTH_REQUIRED, REDIS_COMMAND_CONNECTION_STATE, REDIS_KEY_EXISTS,
+  REDIS_KEY_GONE, REDIS_TLS_FILE_INVALID, REDIS_UNREACHABLE, REDIS_VALUE_CHANGED,
 };
 use serde_json::json;
 use std::collections::HashSet;
@@ -419,11 +419,11 @@ async fn tls_is_verified_against_the_given_ca_and_only_skipped_when_asked() {
 /// 指定的库号上；会改共用连接状态的命令被拒，而拒绝之后连接照常能用
 #[tokio::test]
 async fn the_command_line_runs_in_its_database_and_keeps_errors_as_replies() {
-  let Some(profile) = profile(12) else { return };
+  let Some(profile) = profile(15) else { return };
   let mut seed = seed_connection(&profile).await;
   let pool = pool(&profile).await;
   let run = |arguments: Vec<&[u8]>| {
-    store::execute(&pool, 12, arguments.into_iter().map(<[u8]>::to_vec).collect(), TIMEOUT)
+    store::execute(&pool, 15, arguments.into_iter().map(<[u8]>::to_vec).collect(), TIMEOUT)
   };
 
   assert_eq!(
@@ -434,7 +434,7 @@ async fn the_command_line_runs_in_its_database_and_keeps_errors_as_replies() {
   assert_eq!(store::decode_key(&value.raw), Ok(vec![0xff, 0x00]));
   let stored: Vec<u8> =
     redis::cmd("GET").arg(&b"bin\xff"[..]).query_async(&mut seed).await.expect("seed GET");
-  assert_eq!(stored, vec![0xff, 0x00], "落在库 12 上");
+  assert_eq!(stored, vec![0xff, 0x00], "落在库 15 上");
 
   let Ok(RedisReply::Error { message }) = run(vec![b"INCR", b"bin\xff"]).await else {
     panic!("INCR")
@@ -455,6 +455,79 @@ async fn the_command_line_runs_in_its_database_and_keeps_errors_as_replies() {
   assert_eq!(
     run(vec![b"EXISTS", b"l"]).await,
     Ok(RedisReply::Integer { value: 1 }),
-    "拒绝之后还在库 12"
+    "拒绝之后还在库 15"
   );
+}
+
+/// 界面上的改动：改字符串只在服务端那份还是打开时那份时才写、且保留剩余时间；改名不覆盖
+/// 已有的键；设与去过期；删。每一种碰到「键已经没了」都说没了，不悄悄建一个新的
+#[tokio::test]
+async fn key_changes_never_overwrite_what_changed_elsewhere() {
+  let Some(profile) = profile(8) else { return };
+  let mut seed = seed_connection(&profile).await;
+  redis::pipe()
+    .cmd("SET")
+    .arg("s")
+    .arg("before")
+    .ignore()
+    .cmd("PEXPIRE")
+    .arg("s")
+    .arg(600_000)
+    .ignore()
+    .cmd("SET")
+    .arg("taken")
+    .arg("mine")
+    .ignore()
+    .query_async::<()>(&mut seed)
+    .await
+    .expect("seed");
+  let pool = pool(&profile).await;
+  let change = |key: &[u8], change| store::change_key(&pool, 8, key.to_vec(), change, TIMEOUT);
+  let reader = seed.clone();
+  let get = |key: &'static str| {
+    let mut connection = reader.clone();
+    async move {
+      redis::cmd("GET").arg(key).query_async::<Option<String>>(&mut connection).await.expect("GET")
+    }
+  };
+
+  let stale =
+    change(b"s", KeyChange::SetString { expected: b"other".to_vec(), value: b"x".to_vec() }).await;
+  assert_eq!(stale, Err(REDIS_VALUE_CHANGED.to_string()));
+  assert_eq!(get("s").await.as_deref(), Some("before"), "别处改过就不覆盖");
+  change(
+    b"s",
+    KeyChange::SetString { expected: b"before".to_vec(), value: "之后".as_bytes().to_vec() },
+  )
+  .await
+  .expect("set string");
+  assert_eq!(get("s").await.as_deref(), Some("之后"));
+  let ttl: i64 = redis::cmd("PTTL").arg("s").query_async(&mut seed).await.expect("PTTL");
+  assert!(ttl > 590_000, "剩余时间要保留：{ttl}");
+
+  assert_eq!(
+    change(b"s", KeyChange::Rename { to: b"taken".to_vec() }).await,
+    Err(format!("{REDIS_KEY_EXISTS}: taken"))
+  );
+  assert_eq!(get("taken").await.as_deref(), Some("mine"));
+  change(b"s", KeyChange::Rename { to: b"moved".to_vec() }).await.expect("rename");
+  assert_eq!(get("moved").await.as_deref(), Some("之后"));
+
+  change(b"moved", KeyChange::Expire { ttl_ms: None }).await.expect("persist");
+  let ttl: i64 = redis::cmd("PTTL").arg("moved").query_async(&mut seed).await.expect("PTTL");
+  assert_eq!(ttl, -1);
+  change(b"moved", KeyChange::Expire { ttl_ms: Some(30_000) }).await.expect("expire");
+  change(b"moved", KeyChange::Delete).await.expect("delete");
+  assert_eq!(get("moved").await, None);
+
+  for gone in [
+    KeyChange::Delete,
+    KeyChange::Rename { to: b"anywhere".to_vec() },
+    KeyChange::Expire { ttl_ms: None },
+    KeyChange::Expire { ttl_ms: Some(1_000) },
+    KeyChange::SetString { expected: b"x".to_vec(), value: b"y".to_vec() },
+  ] {
+    assert_eq!(change(b"moved", gone).await, Err(REDIS_KEY_GONE.to_string()));
+  }
+  assert_eq!(get("moved").await, None, "改一个没了的键不该把它建出来");
 }

@@ -627,6 +627,103 @@ fn pairs(flat: Vec<Vec<u8>>) -> Vec<(RedisBytes, RedisBytes)> {
   pairs
 }
 
+/// 改名的目标已经有了：不覆盖（`RENAMENX`）
+pub const REDIS_KEY_EXISTS: &str = "DATAOMNI_REDIS_KEY_EXISTS";
+/// 要改的值在打开之后被别处改过；不覆盖别人的改动
+pub const REDIS_VALUE_CHANGED: &str = "DATAOMNI_REDIS_VALUE_CHANGED";
+
+/// 界面上对一个键做的事。都是单个命令或一段先比对再写的脚本，发出去就生效
+pub enum KeyChange {
+  Delete,
+  Rename {
+    to: Vec<u8>,
+  },
+  /// `None` 是去掉过期（`PERSIST`）
+  Expire {
+    ttl_ms: Option<u64>,
+  },
+  /// 改字符串：服务端那份还是 `expected` 才写，剩余时间保留（`KEEPTTL`）
+  SetString {
+    expected: Vec<u8>,
+    value: Vec<u8>,
+  },
+}
+
+/// 比对后再写。多路复用的连接上没法 `WATCH`（它是整条连接的状态），而一段脚本在服务端
+/// 是原子执行的：读、比、写之间插不进别的命令
+const SET_STRING_IF_UNCHANGED: &str = r"
+local current = redis.call('GET', KEYS[1])
+if current == false then return -2 end
+if current ~= ARGV[1] then return -1 end
+redis.call('SET', KEYS[1], ARGV[2], 'KEEPTTL')
+return 1
+";
+
+pub async fn change_key(
+  pool: &RedisPool,
+  database: i64,
+  key: Vec<u8>,
+  change: KeyChange,
+  timeout: Duration,
+) -> Result<(), String> {
+  let mut connection = pool.connection(database).await?;
+  let work = async {
+    let outcome: i64 = match change {
+      KeyChange::Delete => {
+        redis::cmd("UNLINK").arg(&key).query_async(&mut connection).await.map_err(describe_error)?
+      }
+      KeyChange::Rename { to } => {
+        let renamed =
+          redis::cmd("RENAMENX").arg(&key).arg(&to).query_async::<i64>(&mut connection).await;
+        match renamed {
+          Ok(0) => return Err(format!("{REDIS_KEY_EXISTS}: {}", RedisBytes::new(to).text)),
+          Ok(_) => 1,
+          // 源键不在时服务端报 `ERR no such key`
+          Err(error) if error.detail().is_some_and(|detail| detail.contains("no such key")) => 0,
+          Err(error) => return Err(describe_error(error)),
+        }
+      }
+      KeyChange::Expire { ttl_ms: Some(ttl) } => redis::cmd("PEXPIRE")
+        .arg(&key)
+        .arg(ttl)
+        .query_async(&mut connection)
+        .await
+        .map_err(describe_error)?,
+      KeyChange::Expire { ttl_ms: None } => {
+        // `PERSIST` 对「本来就不过期」也回 0，和「键不在」分不开，所以另问一次在不在
+        let (_, exists): (i64, i64) = redis::pipe()
+          .cmd("PERSIST")
+          .arg(&key)
+          .cmd("EXISTS")
+          .arg(&key)
+          .query_async(&mut connection)
+          .await
+          .map_err(describe_error)?;
+        exists
+      }
+      KeyChange::SetString { expected, value } => {
+        let outcome: i64 = redis::Script::new(SET_STRING_IF_UNCHANGED)
+          .key(&key)
+          .arg(expected)
+          .arg(value)
+          .invoke_async(&mut connection)
+          .await
+          .map_err(describe_error)?;
+        match outcome {
+          -1 => return Err(REDIS_VALUE_CHANGED.to_string()),
+          -2 => 0,
+          _ => 1,
+        }
+      }
+    };
+    if outcome == 0 {
+      return Err(REDIS_KEY_GONE.to_string());
+    }
+    Ok(())
+  };
+  with_deadline(timeout, work).await
+}
+
 /// 命令行里不许跑：这条会阻塞，共用的连接上别的请求都得排在它后面。冒号后面是命令名
 pub const REDIS_COMMAND_BLOCKING: &str = "DATAOMNI_REDIS_COMMAND_BLOCKING";
 /// 命令行里不许跑：这条会改共用连接的状态（切库、事务、换身份）。冒号后面是命令名

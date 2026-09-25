@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendValuePage, nextPosition, redisDatabaseIndex, ttlView, type RedisBytes } from './redisKeys';
+import { appendValuePage, nextPosition, parseTtlSeconds, redisDatabaseIndex, ttlView, type RedisBytes } from './redisKeys';
 
 const bytes = (text: string): RedisBytes => ({ raw: btoa(text), text, binary: false });
 
@@ -44,5 +44,14 @@ describe('redisKeys', () => {
     const text = { kind: 'string' as const, size: 1, value: bytes('x'), truncated: false };
     expect(appendValuePage(hash, text)).toBe(text);
     expect(nextPosition(text)).toBeNull();
+  });
+
+  it('过期那一格：空着不过期，正整数秒换成毫秒，别的写法不收', () => {
+    expect(parseTtlSeconds('  ')).toBeNull();
+    expect(parseTtlSeconds('3600')).toBe(3_600_000);
+    expect(parseTtlSeconds('0')).toBeUndefined();
+    expect(parseTtlSeconds('1.5')).toBeUndefined();
+    expect(parseTtlSeconds('-5')).toBeUndefined();
+    expect(parseTtlSeconds('1h')).toBeUndefined();
   });
 });

@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { Loader2, RefreshCw, Search } from 'lucide-react';
+import { Clock, Loader2, Pencil, RefreshCw, Search, TextCursorInput, Trash2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { PLAIN_TEXT_INPUT, SegmentedControl } from './FormControls';
 import { RedisConsole } from './RedisConsole';
+import { RedisInputDialog } from './RedisInputDialog';
+import { useConfirmPrompt } from './ConfirmPrompt';
+import { bytesToBase64 } from '../utils/redisCommandLine';
 import { useLanguageStore } from '../stores/languageStore';
 import { useQueryStore } from '../stores/queryStore';
 import { describeError } from '../utils/describeError';
@@ -11,6 +14,7 @@ import {
   REDIS_KEY_KINDS,
   appendValuePage,
   nextPosition,
+  parseTtlSeconds,
   ttlView,
   type RedisBytes,
   type RedisKeyRow,
@@ -61,6 +65,12 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
   const [valueError, setValueError] = useState<string | null>(null);
   // 快速点两个键时，先发的那次晚回来不能盖掉后点的
   const valueRequest = useRef(0);
+  const { ask, prompt: confirmPrompt } = useConfirmPrompt();
+  const [dialog, setDialog] = useState<'rename' | 'ttl' | null>(null);
+  // 正在改的字符串；null 是没在改
+  const [stringDraft, setStringDraft] = useState<string | null>(null);
+  const [savingString, setSavingString] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const scan = useCallback(async (query: AppliedScan, from: string | null) => {
     if (!connectionString) return;
@@ -117,7 +127,49 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
   const select = (row: RedisKeyRow) => {
     setSelected(row);
     setValue(null);
+    setStringDraft(null);
+    setActionError(null);
     void loadValue(row, null);
+  };
+
+  /** 对选中的键做一件事。失败时抛出去，由调用的地方决定显示在哪 */
+  const changeKey = async (row: RedisKeyRow, change: Record<string, unknown>) => {
+    await invoke('redis_change_key', { connectionString, database, key: row.key.raw, change, timeoutMs });
+  };
+
+  const encodeText = (text: string) => bytesToBase64(new TextEncoder().encode(text));
+
+  const deleteKey = async (row: RedisKeyRow) => {
+    const confirmed = await ask({
+      title: t('redis.action.deleteTitle'),
+      message: t('redis.action.deleteMessage', { key: row.key.text, database: `db${database}` }),
+      confirmLabel: t('redis.action.delete'),
+      destructive: true
+    });
+    if (!confirmed) return;
+    try {
+      await changeKey(row, { kind: 'delete' });
+      setKeys((previous) => previous.filter((candidate) => candidate.key.raw !== row.key.raw));
+      setSelected(null);
+      setValue(null);
+    } catch (caught) {
+      setActionError(describeError(caught));
+    }
+  };
+
+  const saveString = async (row: RedisKeyRow, original: RedisBytes, draft: string) => {
+    setSavingString(true);
+    setActionError(null);
+    try {
+      await changeKey(row, { kind: 'setString', expected: original.raw, value: encodeText(draft) });
+      setStringDraft(null);
+      void loadValue(row, null);
+    } catch (caught) {
+      // 草稿留着：别处改过的话，先看一眼再决定
+      setActionError(describeError(caught));
+    } finally {
+      setSavingString(false);
+    }
   };
 
   const apply = () => {
@@ -285,6 +337,35 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
                   {value && <span>{sizeText(value, t)}</span>}
                   {selected.key.binary && <span className="text-warning">{t('redis.binaryKey')}</span>}
                 </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {/* 二进制的键改名要写出原样的字节，框里的转义文字写不回去 */}
+                  <button
+                    type="button"
+                    onClick={() => setDialog('rename')}
+                    disabled={selected.key.binary}
+                    title={selected.key.binary ? t('redis.action.binaryKeyRename') : undefined}
+                    className="flex items-center gap-1 rounded-control border border-line-strong px-2 py-1 text-xs text-fg hover:bg-surface-hover disabled:opacity-50"
+                  >
+                    <TextCursorInput size={12} />
+                    {t('redis.action.rename')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDialog('ttl')}
+                    className="flex items-center gap-1 rounded-control border border-line-strong px-2 py-1 text-xs text-fg hover:bg-surface-hover"
+                  >
+                    <Clock size={12} />
+                    {t('redis.action.ttl')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void deleteKey(selected)}
+                    className="flex items-center gap-1 rounded-control border border-danger-line px-2 py-1 text-xs text-danger hover:bg-danger-soft"
+                  >
+                    <Trash2 size={12} />
+                    {t('redis.action.delete')}
+                  </button>
+                </div>
               </div>
               <div className="min-h-0 flex-1 overflow-auto p-4">
                 {valueError && <p className="select-text text-sm text-danger">{valueError}</p>}
@@ -294,7 +375,57 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
                     {t('redis.value.loading')}
                   </p>
                 )}
-                {value && <ValueView value={value} t={t} />}
+                {actionError && <p className="mb-2 select-text text-sm text-danger">{actionError}</p>}
+                {value?.kind === 'string' && stringDraft !== null ? (
+                  <div className="space-y-2">
+                    <textarea
+                      value={stringDraft}
+                      onChange={(event) => setStringDraft(event.target.value)}
+                      aria-label={t('redis.action.editValue')}
+                      rows={12}
+                      className="w-full resize-y rounded-control border border-line-strong bg-surface px-3 py-2 font-mono text-[13px] text-fg outline-none focus:ring-2 focus:ring-accent"
+                      {...PLAIN_TEXT_INPUT}
+                    />
+                    <p className="text-xs text-fg-subtle">{t('redis.action.editNote')}</p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void saveString(selected, value.value, stringDraft)}
+                        disabled={savingString}
+                        className="flex items-center gap-1.5 rounded-control bg-accent px-3 py-1 text-sm text-fg-on-accent hover:opacity-90 disabled:opacity-50"
+                      >
+                        {savingString && <Loader2 size={14} className="animate-spin" />}
+                        {t('redis.action.save')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStringDraft(null);
+                          setActionError(null);
+                        }}
+                        disabled={savingString}
+                        className="rounded-control border border-line-strong px-3 py-1 text-sm text-fg hover:bg-surface-hover"
+                      >
+                        {t('common.cancel')}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* 只改得了完整读回来的文字：截断的写回去会丢掉后半截，二进制的转义文字写不回原样的字节 */}
+                    {value?.kind === 'string' && !value.truncated && !value.value.binary && (
+                      <button
+                        type="button"
+                        onClick={() => setStringDraft(value.value.text)}
+                        className="mb-2 flex items-center gap-1 rounded-control border border-line-strong px-2 py-1 text-xs text-fg hover:bg-surface-hover"
+                      >
+                        <Pencil size={12} />
+                        {t('redis.action.edit')}
+                      </button>
+                    )}
+                    {value && <ValueView value={value} t={t} />}
+                  </>
+                )}
                 {more !== null && (
                   <button
                     onClick={() => void loadValue(selected, more)}
@@ -310,6 +441,53 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
           )}
         </div>
       </div>
+      {confirmPrompt}
+      {dialog === 'rename' && selected && (
+        <RedisInputDialog
+          title={t('redis.action.renameTitle')}
+          label={t('redis.action.renameLabel')}
+          initial={selected.key.text}
+          hint={t('redis.action.renameHint')}
+          confirmLabel={t('redis.action.rename')}
+          validate={(text) => (text === '' ? t('redis.action.renameEmpty') : text === selected.key.text ? t('redis.action.renameSame') : null)}
+          onSubmit={async (text) => {
+            try {
+              await changeKey(selected, { kind: 'rename', to: encodeText(text) });
+            } catch (caught) {
+              throw new Error(describeError(caught));
+            }
+            setDialog(null);
+            setSelected(null);
+            setValue(null);
+            void scan(applied, null);
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'ttl' && selected && (
+        <RedisInputDialog
+          title={t('redis.action.ttlTitle')}
+          label={t('redis.action.ttlLabel')}
+          initial={selected.ttlMs > 0 ? String(Math.ceil(selected.ttlMs / 1000)) : ''}
+          hint={t('redis.action.ttlHint')}
+          placeholder="3600"
+          confirmLabel={t('redis.action.save')}
+          validate={(text) => (parseTtlSeconds(text) === undefined ? t('redis.action.ttlInvalid') : null)}
+          onSubmit={async (text) => {
+            const ttlMs = parseTtlSeconds(text) ?? null;
+            try {
+              await changeKey(selected, { kind: 'expire', ttlMs });
+            } catch (caught) {
+              throw new Error(describeError(caught));
+            }
+            const updated = { ...selected, ttlMs: ttlMs ?? -1 };
+            setDialog(null);
+            setSelected(updated);
+            setKeys((previous) => previous.map((row) => (row.key.raw === updated.key.raw ? updated : row)));
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
     </div>
   );
 }

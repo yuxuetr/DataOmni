@@ -4,8 +4,8 @@
 
 use crate::commands::database_commands::TIMEOUT_OUT_OF_RANGE;
 use crate::services::redis::{
-  self, KeyspaceEntry, RedisPool, RedisRegistry, RedisReply, RedisValue, ScanPage, ScanRequest,
-  ValueRequest, REDIS_NOT_CONNECTED,
+  self, KeyChange, KeyspaceEntry, RedisPool, RedisRegistry, RedisReply, RedisValue, ScanPage,
+  ScanRequest, ValueRequest, REDIS_NOT_CONNECTED,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -96,6 +96,48 @@ pub async fn redis_execute(
   let timeout = timeout(timeout_ms)?;
   let pool = pool(&registry, &connection_string)?;
   redis::execute(&pool, database, arguments, timeout).await
+}
+
+/// 界面上对一个键做的事，字节串都是 base64
+#[derive(serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum KeyChangeRequest {
+  Delete,
+  Rename {
+    to: String,
+  },
+  #[serde(rename_all = "camelCase")]
+  Expire {
+    ttl_ms: Option<u64>,
+  },
+  SetString {
+    expected: String,
+    value: String,
+  },
+}
+
+#[tauri::command]
+pub async fn redis_change_key(
+  connection_string: String,
+  database: i64,
+  key: String,
+  change: KeyChangeRequest,
+  timeout_ms: u64,
+  registry: State<'_, RedisRegistry>,
+) -> Result<(), String> {
+  let change = match change {
+    KeyChangeRequest::Delete => KeyChange::Delete,
+    KeyChangeRequest::Rename { to } => KeyChange::Rename { to: redis::decode_key(&to)? },
+    KeyChangeRequest::Expire { ttl_ms } => KeyChange::Expire { ttl_ms },
+    KeyChangeRequest::SetString { expected, value } => KeyChange::SetString {
+      expected: redis::decode_key(&expected)?,
+      value: redis::decode_key(&value)?,
+    },
+  };
+  let key = redis::decode_key(&key)?;
+  let timeout = timeout(timeout_ms)?;
+  let pool = pool(&registry, &connection_string)?;
+  redis::change_key(&pool, database, key, change, timeout).await
 }
 
 /// 断开时去掉登记。最后一个引用没了，各库号上的连接随之关闭

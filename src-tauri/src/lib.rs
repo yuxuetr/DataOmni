@@ -80,6 +80,7 @@ pub fn run() {
       redis_scan,
       redis_read_value,
       redis_execute,
+      redis_change_key,
       close_redis,
       mongodb_drop_collection,
       close_mongodb,

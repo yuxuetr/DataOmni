@@ -96,3 +96,15 @@ export function appendValuePage(previous: RedisValue, next: RedisValue): RedisVa
 export function nextPosition(value: RedisValue): string | null {
   return value.kind === 'string' || value.kind === 'unsupported' ? null : value.next;
 }
+
+/**
+ * 「过期」那一格：空着是不过期（`PERSIST`），否则是正整数秒。返回毫秒；`undefined` 是写得不对。
+ * 只收整数秒：毫秒级的过期是程序的事，界面上填的人想的是「一小时后」
+ */
+export function parseTtlSeconds(text: string): number | null | undefined {
+  const trimmed = text.trim();
+  if (trimmed === '') return null;
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const seconds = Number(trimmed);
+  return seconds > 0 && Number.isSafeInteger(seconds * 1000) ? seconds * 1000 : undefined;
+}
