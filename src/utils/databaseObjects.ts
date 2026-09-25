@@ -185,6 +185,11 @@ export function trailingSchemas(dbType: DatabaseType): ReadonlySet<string> {
 const MONGODB_SYSTEM_DATABASES: ReadonlySet<string> = new Set(['admin', 'config', 'local']);
 const NO_TRAILING_SCHEMAS: ReadonlySet<string> = new Set();
 
+/** 对象树与「选一个库」的下拉用同一个次序：业务库在前、按名字，服务端自己的库在后 */
+export function schemaOrder(trailing: ReadonlySet<string>): (left: string, right: string) => number {
+  return (left, right) => Number(trailing.has(left)) - Number(trailing.has(right)) || left.localeCompare(right);
+}
+
 export function buildObjectTree(
   objects: readonly DatabaseObject[],
   withSchemaLevel: boolean,
@@ -204,9 +209,7 @@ export function buildObjectTree(
   }
 
   return [...bySchema.entries()]
-    .sort(([left], [right]) => (
-      Number(trailing.has(left)) - Number(trailing.has(right)) || left.localeCompare(right)
-    ))
+    .sort(([left], [right]) => schemaOrder(trailing)(left, right))
     .map(([schema, schemaObjects]) => ({
       key: `schema:${schema}`,
       label: schema,

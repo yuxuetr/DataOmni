@@ -11,6 +11,7 @@ import {
   isBrowsableKind,
   normalizeObjectRows,
   renderedTreeObjects,
+  schemaOrder,
   showsSchemaLevel,
   trailingSchemas,
   type DatabaseObject
@@ -268,5 +269,10 @@ describe('MongoDB 的库排序', () => {
     // 反向：别的库上没有这条规则，一个叫 admin 的 schema 照字母排
     const plain = buildObjectTree(objects, true, stubLabel, trailingSchemas(DatabaseType.PostgreSQL));
     expect(plain.map((node) => node.label)[0]).toBe('admin');
+  });
+
+  it('新建集合时「库」默认取的第一个也是业务库，不是认证库 admin', () => {
+    const names = ['admin', 'shop', 'config', 'analytics'];
+    expect([...names].sort(schemaOrder(trailingSchemas(DatabaseType.MongoDB)))[0]).toBe('analytics');
   });
 });

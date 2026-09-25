@@ -31,6 +31,7 @@ import {
   isBrowsableKind,
   normalizeObjectRows,
   renderedTreeObjects,
+  schemaOrder,
   showsSchemaLevel,
   trailingSchemas,
   type DatabaseObject,
@@ -746,7 +747,7 @@ export default function DatabaseExplorer({
           connectionString={connectionString}
           databases={[...new Set(
             objects.map((object) => object.schema).filter((name): name is string => !!name)
-          )].sort()}
+          )].sort(schemaOrder(trailingSchemas(DatabaseType.MongoDB)))}
           timeoutMs={queryTimeoutMs}
           onClose={() => setCreatingCollection(false)}
           onCreated={() => {
