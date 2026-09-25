@@ -95,6 +95,15 @@ export function parseEsConsole(source: string): EsConsoleRequest[] {
   });
 }
 
+/**
+ * 真会发出去的那几条：依次发、一条失败就停，请求体写错的那条之后的一条也发不出去。
+ * 确认框只该为这些问——为一条到不了的 `DELETE` 弹框，人会以为它要执行了
+ */
+export function reachableRequests(requests: readonly EsConsoleRequest[]): EsConsoleRequest[] {
+  const broken = requests.findIndex((request) => request.problem !== null);
+  return broken === -1 ? [...requests] : requests.slice(0, broken + 1);
+}
+
 /** 光标所在的那条；落在第一条之前算第一条，落在两条之间算前一条 */
 export function esRequestAt(source: string, offset: number): EsConsoleRequest | null {
   const requests = parseEsConsole(source);

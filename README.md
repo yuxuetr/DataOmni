@@ -33,7 +33,8 @@
 - **可连接、浏览与改文档**: MongoDB（库、集合、文档；条件、排序与编辑都用 mongosh 写法）
 - **可连接、浏览键值与跑命令**: Redis（逻辑库、按模式翻键、六种类型的值、redis-cli 写法的命令行）
 - **可连接并执行 Cypher**: Neo4j（库、标签与关系类型；结果里的节点、关系、路径按 Cypher 字面量显示）
-- **计划中，当前版本连不上**: DuckDB, ClickHouse, Elasticsearch
+- **可连接并发请求**: Elasticsearch（索引、别名、数据流；Kibana Dev Tools 写法的控制台）
+- **计划中，当前版本连不上**: DuckDB, ClickHouse
 
   不是「能连上但不能查」——这些库的驱动都没有编进来，建连这一步就认不出来。
   连接表单里它们可见但置灰，选中不了；后端 `test_connection` 也会直接拒绝，
@@ -59,6 +60,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 | MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 31 / 31（独立用例，`mongodb_smoke.rs`） |
 | Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机，不含集群 | 10 / 10（独立用例，`redis_smoke.rs`） |
 | Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例，不含集群路由 | 8 / 8（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |
+| Elasticsearch | 8.19、9.5 | HTTP（reqwest） | ⚠️ 控制台与只读浏览，没有结构页与界面上的改 | 5 / 5（独立用例，`elasticsearch_smoke.rs`，两个版本各跑一遍） |
 
 - **MariaDB**：JSON 列是 LONGTEXT 的别名，按文本显示与编辑，没有 JSON 专用
   编辑器；没有函数索引。
@@ -123,6 +125,13 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
   工具栏上「新建节点」。按 `elementId` 定位，一次只动一个，要跑的语句一直摆在下面。
   以 `EXPLAIN` / `PROFILE` 开头的，结果里多一个「计划」：与 SQL 同一棵树，每一步带估算行数，
   `PROFILE` 还带实际行数与 DbHits，估错最多的那一步会被指出来；「计划原文」是服务端自己的那张表。
+- **Elasticsearch**：连接（用户名口令或不认证；TLS 与 CA；SSH 隧道，经隧道仍按原主机名校验证书）、
+  对象树列出索引、别名、数据流（点开是一条 `GET 名字/_search`，开出来就发）、控制台标签（写法同
+  Kibana Dev Tools：一行方法与路径，下面跟 JSON 请求体；`_bulk` 这类多份 JSON 按 NDJSON 发；依次发，
+  出错或 4xx / 5xx 就停）。回答是状态码加排好版的 JSON，搜索命中、ES|QL / SQL 的列与值、
+  `_cat?format=json` 另有表格；超过 2^53 的整数原样显示。会写的按方法与路径分级，过「危险语句确认」。
+  还没有的：Mapping 结构页、在结果里改文档、建删索引的界面（控制台里都能写）。
+  详见 [用户手册](docs/user-manual.md#elasticsearch)。
   `EXPLAIN` 什么也不执行，不走确认。
   还没有的：在界面上建关系、集群路由（`neo4j://`）。
   详见 [用户手册](docs/user-manual.md#neo4j)。
@@ -417,6 +426,8 @@ bun install
 - 🕸️ Neo4j：连接、按库列出标签与关系类型、Cypher 查询标签（结果按 Cypher 字面量显示，
   写入计数，会写的先按门槛确认）；结果里有节点与关系时画成图；在界面上改属性与标签、删节点
   与关系、建节点；`EXPLAIN` / `PROFILE` 的计划树
+- 🔎 Elasticsearch：连接、对象树（索引、别名、数据流）、Dev Tools 写法的控制台（JSON 与表格两种看法，
+  大整数不失真，会写的先按门槛确认）
 
 ### v0.4.0（首个发布版）
 

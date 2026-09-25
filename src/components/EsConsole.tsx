@@ -29,6 +29,7 @@ import {
   classifyEsRisk,
   esRequestAt,
   parseEsConsole,
+  reachableRequests,
   riskiestEsRequest,
   type EsConsoleRequest
 } from '../utils/esConsole';
@@ -154,7 +155,7 @@ export function EsConsole({ connection }: EsConsoleProps) {
 
   const run = (requests: EsConsoleRequest[], source: string) => {
     if (running || requests.length === 0 || !connectionString) return;
-    const riskiest = riskiestEsRequest(requests, connection.environment, confirmationPolicy);
+    const riskiest = riskiestEsRequest(reachableRequests(requests), connection.environment, confirmationPolicy);
     if (riskiest) {
       const request = requests.find((candidate) => candidate === riskiest.request) ?? requests[0];
       setPending({ requests, text: source.slice(request.from, request.to), risk: riskiest.risk });

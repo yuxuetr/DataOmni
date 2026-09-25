@@ -1484,7 +1484,7 @@ export const en: Translations = {
   'error.backend.neo4jTimeout': 'Neo4j ran past the query timeout and the server stopped it ({detail}); it can be raised in the toolbar',
   'error.backend.neo4jTlsFileInvalid': 'The CA certificate file cannot be used: {detail}',
   'error.backend.esAuthFailed': 'Elasticsearch refused the login: wrong username or password. Details: {detail}',
-  'error.backend.esUnreachable': 'Could not reach Elasticsearch: check the host, the port (9200 by default) and TLS. Since 8.0 it speaks HTTPS with a self-signed certificate by default: choose "Required", or give the CA certificate. Details: {detail}',
+  'error.backend.esUnreachable': 'Could not reach Elasticsearch: check the host, the port (9200 by default) and TLS. Since 8.0 it speaks HTTPS with a self-signed certificate by default: choose "Require TLS" as the TLS mode, or give the CA certificate. Details: {detail}',
   'error.backend.esNotElasticsearch': 'That is not Elasticsearch ({detail}): check the port. Elasticsearch defaults to 9200, Kibana is 5601',
   'error.backend.esTimeout': 'Ran past the query timeout ({detail}); the connection was dropped and the server cancels the search. It can be raised in the toolbar',
   'error.backend.esTlsFileInvalid': 'The CA certificate file cannot be used: {detail}',

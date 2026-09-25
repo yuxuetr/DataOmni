@@ -1495,7 +1495,7 @@ export const zh = {
   'error.backend.neo4jTimeout': 'Neo4j 超过了查询时限，服务端已经停下（{detail}）。可以在工具栏调大',
   'error.backend.neo4jTlsFileInvalid': 'CA 证书文件用不了：{detail}',
   'error.backend.esAuthFailed': 'Elasticsearch 拒绝了登录：用户名或口令不对。详情：{detail}',
-  'error.backend.esUnreachable': '没连上 Elasticsearch：检查地址、端口（默认 9200）和 TLS。8.0 起默认是 HTTPS、证书自签，要么选「必须加密」，要么给 CA 证书。详情：{detail}',
+  'error.backend.esUnreachable': '没连上 Elasticsearch：检查地址、端口（默认 9200）和 TLS。8.0 起默认是 HTTPS、证书自签，要么在「TLS 模式」里选「要求 TLS」，要么给 CA 证书。详情：{detail}',
   'error.backend.esNotElasticsearch': '连上的不是 Elasticsearch（{detail}）：检查端口，ES 默认 9200，Kibana 是 5601',
   'error.backend.esTimeout': '超过了查询时限（{detail}），连接已经断开，服务端会取消这次搜索。可以在工具栏调大',
   'error.backend.esTlsFileInvalid': 'CA 证书文件用不了：{detail}',

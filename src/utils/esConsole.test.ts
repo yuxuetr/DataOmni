@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { browseRequest, classifyEsRisk, esRequestAt, parseEsConsole, riskiestEsRequest } from './esConsole';
+import { browseRequest, classifyEsRisk, esRequestAt, parseEsConsole, reachableRequests, riskiestEsRequest } from './esConsole';
 
 describe('parseEsConsole', () => {
   it('splits requests at method lines and keeps the body as written', () => {
@@ -65,6 +65,16 @@ describe('parseEsConsole', () => {
     expect(requests[0].problem).toBeNull();
     expect(requests[1].problem?.line).toBe(5);
     expect(parseEsConsole('POST a/_doc\n{ "unclosed": 1\n')[0].problem?.line).toBe(2);
+  });
+
+  it('counts only the requests a broken body lets through', () => {
+    const requests = parseEsConsole('GET a/_count\nPOST a/_search\n{ "size": , }\nDELETE a\n');
+    expect(reachableRequests(requests).map((request) => request.method)).toEqual(['GET', 'POST']);
+    // 删索引那条到不了：不该为它弹确认
+    expect(riskiestEsRequest(reachableRequests(requests), 'development')).toBeNull();
+    expect(riskiestEsRequest(requests, 'development')?.risk).toBe('destructive');
+    const fine = parseEsConsole('GET a/_count\nDELETE a\n');
+    expect(reachableRequests(fine)).toHaveLength(2);
   });
 
   it('finds the request under the cursor', () => {
