@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Database, 
   FileText, 
@@ -203,6 +203,17 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   // 成败来自结构化的 ok，而不是在文案里找「成功」二字——那在翻译之后必然失效
   const testSucceeded = testResult?.ok ?? false;
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  /**
+   * 校验没过的次数。表单比窗口高，出错的那一格常在视野外：按了「测试连接」而屏幕上
+   * 什么也没变。每没过一次就把焦点交给第一个出错的输入框，浏览器会顺带把它滚进来
+   */
+  const [failedValidations, setFailedValidations] = useState(0);
+  const formBodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (failedValidations > 0) {
+      formBodyRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    }
+  }, [failedValidations]);
   // 诊断是用户在测试失败之后自己点的：不自动跑，免得每次失败都多两次
   // 网络等待——最常见的失败是密码错，那时诊断只会说「网络没问题」
   const [diagnosis, setDiagnosis] = useState<ConnectionDiagnosis | null>(null);
@@ -256,7 +267,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     }
 
     setValidationErrors(errors);
-    return Object.keys(errors).length === 0;
+    const valid = Object.keys(errors).length === 0;
+    if (!valid) {
+      setFailedValidations((count) => count + 1);
+    }
+    return valid;
   };
 
   // 处理数据库类型变化
@@ -448,7 +463,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         </div>
 
         {/* 表单内容 */}
-        <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+        <div ref={formBodyRef} className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
           {/* 基本信息 */}
           <div className="space-y-4">
             <h3 className="text-xs font-semibold tracking-wide text-fg-subtle">{t('form.section.basics')}</h3>
@@ -467,6 +482,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   "w-full px-3 py-2 border rounded-control focus:outline-none focus:ring-2 focus:ring-accent",
                   validationErrors.name ? "border-danger-line" : "border-line-strong"
                 )}
+                aria-invalid={!!validationErrors.name}
                 placeholder={t('form.namePlaceholder')}
                 {...PLAIN_TEXT_INPUT}
               />
@@ -637,6 +653,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         'min-w-0 flex-1 rounded-control border px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent',
                         validationErrors.database ? 'border-danger-line' : 'border-line-strong'
                       )}
+                      aria-invalid={!!validationErrors.database}
                       {...PLAIN_TEXT_INPUT}
                     />
                     <button
@@ -673,6 +690,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         "w-full px-3 py-2 border rounded-control focus:outline-none focus:ring-2 focus:ring-accent",
                         validationErrors.host ? "border-danger-line" : "border-line-strong"
                       )}
+                      aria-invalid={!!validationErrors.host}
                       placeholder={srv ? 'cluster0.abcde.mongodb.net' : 'localhost'}
                       {...PLAIN_TEXT_INPUT}
                     />
@@ -694,6 +712,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         "w-full px-3 py-2 border rounded-control focus:outline-none focus:ring-2 focus:ring-accent",
                         validationErrors.port ? "border-danger-line" : "border-line-strong"
                       )}
+                      aria-invalid={!!validationErrors.port}
                       placeholder={getDefaultPort(formData.db_type!).toString()}
                     />
                     {validationErrors.port && (
@@ -836,6 +855,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                           "w-full px-3 py-2 border rounded-control focus:outline-none focus:ring-2 focus:ring-accent",
                           validationErrors.username ? "border-danger-line" : "border-line-strong"
                         )}
+                        aria-invalid={!!validationErrors.username}
                         placeholder={t('form.usernamePlaceholder')}
                         {...PLAIN_TEXT_INPUT}
                       />
