@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { esDropRequest } from './esConsole';
 import type { DatabaseObjectKind } from '../contracts/databaseMetadata';
 import { isBrowsableKind } from './databaseObjects';
 import { DESTRUCTIVE_MENU_ACTIONS, OBJECT_MENU_ACTIONS, objectMenuActions, qualifiedObjectName } from './objectMenu';
@@ -34,7 +35,9 @@ describe('每种对象右键能做什么', () => {
       expect(paths, `${kind} 有 ${paths} 条看定义的路`).toBe(1);
     }
     for (const kind of openIsTheDefinition) {
-      expect(OBJECT_MENU_ACTIONS[kind as keyof typeof OBJECT_MENU_ACTIONS]).toEqual(['open-data', 'copy-name']);
+      const actions = OBJECT_MENU_ACTIONS[kind as keyof typeof OBJECT_MENU_ACTIONS];
+      expect(actions[0], kind).toBe('open-data');
+      expect(actions.includes('open-structure') || actions.includes('view-definition'), kind).toBe(false);
     }
   });
 
@@ -52,9 +55,10 @@ describe('每种对象右键能做什么', () => {
   });
 
   it('「删除」当且仅当生成得出那条 DROP', () => {
-    // 两处写法：菜单给了而 dropObjectSql 不认，点下去就是一条类型对不上的语句
+    // 两处写法：菜单给了而 dropObjectSql 不认，点下去就是一条类型对不上的语句。
+    // Elasticsearch 的索引与数据流由 esDropRequest 生成
     for (const kind of KINDS) {
-      expect(OBJECT_MENU_ACTIONS[kind].includes('drop'), kind).toBe(isDroppableKind(kind));
+      expect(OBJECT_MENU_ACTIONS[kind].includes('drop'), kind).toBe(isDroppableKind(kind) || esDropRequest(kind, 'x') !== null);
     }
   });
 

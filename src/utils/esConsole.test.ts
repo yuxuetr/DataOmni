@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { browseRequest, classifyEsRisk, esRequestAt, parseEsConsole, reachableRequests, riskiestEsRequest } from './esConsole';
+import { browseRequest, classifyEsRisk, esDropRequest, esRequestAt, parseEsConsole, reachableRequests, riskiestEsRequest } from './esConsole';
 
 describe('parseEsConsole', () => {
   it('splits requests at method lines and keeps the body as written', () => {
@@ -118,6 +118,17 @@ describe('classifyEsRisk', () => {
     expect(classifyEsRisk('DELETE', '/_data_stream/logs-app')).toBe('destructive');
     expect(classifyEsRisk('DELETE', '/books/_alias/library')).toBe('scoped-write');
     expect(classifyEsRisk('DELETE', '/_index_template/logs')).toBe('scoped-write');
+  });
+
+  it('drops indices and data streams from the tree as requests that lose data', () => {
+    const index = esDropRequest('index', 'logs 1');
+    expect(index).toEqual({ method: 'DELETE', path: '/logs%201' });
+    expect(classifyEsRisk(index!.method, index!.path)).toBe('destructive');
+    const stream = esDropRequest('data-stream', 'logs-app');
+    expect(stream?.path).toBe('/_data_stream/logs-app');
+    expect(classifyEsRisk(stream!.method, stream!.path)).toBe('destructive');
+    // 别名不给删：删别名不动数据，和别处的「删除」不是一回事
+    expect(esDropRequest('alias', 'library')).toBeNull();
   });
 
   it('asks about the riskiest request in a batch, under the configured threshold', () => {

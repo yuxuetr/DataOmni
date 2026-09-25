@@ -254,6 +254,16 @@ export function riskiestEsRequest(
   return worst;
 }
 
+/**
+ * 对象树上删一个索引或数据流发的请求。别名不在里面：删别名不动数据，而右键「删除」在别的库上
+ * 都是连数据一起删——同一个按钮做两种轻重不同的事，人会按轻的那种理解它
+ */
+export function esDropRequest(kind: string, name: string): { method: 'DELETE'; path: string } | null {
+  if (kind === 'index') return { method: 'DELETE', path: `/${encodeURIComponent(name)}` };
+  if (kind === 'data-stream') return { method: 'DELETE', path: `/_data_stream/${encodeURIComponent(name)}` };
+  return null;
+}
+
 /** 对象树点开一个索引、别名、数据流：看前 20 份 */
 export function browseRequest(name: string): string {
   return `GET ${encodeURIComponent(name)}/_search\n{\n  "size": 20,\n  "query": { "match_all": {} }\n}\n`;

@@ -60,7 +60,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 | MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 31 / 31（独立用例，`mongodb_smoke.rs`） |
 | Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机，不含集群 | 10 / 10（独立用例，`redis_smoke.rs`） |
 | Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例，不含集群路由 | 8 / 8（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |
-| Elasticsearch | 8.19、9.5 | HTTP（reqwest） | ⚠️ 单节点直连，没有建删索引的界面 | 6 / 6（独立用例，`elasticsearch_smoke.rs`，两个版本各跑一遍） |
+| Elasticsearch | 8.19、9.5 | HTTP（reqwest） | ⚠️ 单节点直连，不含 API Key 认证 | 6 / 6（独立用例，`elasticsearch_smoke.rs`，两个版本各跑一遍） |
 
 - **MariaDB**：JSON 列是 LONGTEXT 的别名，按文本显示与编辑，没有 JSON 专用
   编辑器；没有函数索引。
@@ -132,7 +132,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
   `_cat?format=json` 另有表格；超过 2^53 的整数原样显示。会写的按方法与路径分级，过「危险语句确认」。
   索引有结构页：Mapping 按路径摊平（对象、nested、多字段、运行时字段），参数原样列出，外加分片、副本与别名。
   搜索结果里点 `_id` 改或删这一份文档，带着读到的版本（`if_seq_no`），别处改过就不覆盖。
-  还没有的：建删索引的界面（控制台里都能写）。
+  对象树上右键删索引、删数据流（确认框写明现在有几份文档）。建索引、改别名在控制台里写。
   详见 [用户手册](docs/user-manual.md#elasticsearch)。
   `EXPLAIN` 什么也不执行，不走确认。
   还没有的：在界面上建关系、集群路由（`neo4j://`）。

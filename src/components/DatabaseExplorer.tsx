@@ -41,7 +41,8 @@ import {
   type ObjectTreeNode
 } from '../utils/databaseObjects';
 import { browseQuery, cypherName } from '../utils/cypherValue';
-import { browseRequest } from '../utils/esConsole';
+import { browseRequest, esDropRequest } from '../utils/esConsole';
+import { jsonField, parseJson } from '../utils/esJson';
 import { ObjectDefinitionDialog } from './ObjectDefinitionDialog';
 import { CreateTableDialog } from './CreateTableDialog';
 import { CreateSchemaDialog } from './CreateSchemaDialog';
@@ -90,6 +91,8 @@ interface PendingObjectChange {
   object: DatabaseObject;
   action: 'drop' | 'truncate';
   sql: string;
+  /** Elasticsearch 删之前数过里面有几份文档；数不出来（没权限）是 `null` */
+  documentCount?: string | null;
 }
 
 interface DatabaseExplorerProps {
@@ -456,6 +459,28 @@ export default function DatabaseExplorer({
       return;
     }
 
+    // Elasticsearch 删索引、数据流：先数一下里面有几份，确认框里说清楚要丢掉多少
+    if (connection?.db_type === DatabaseType.Elasticsearch && action === 'drop') {
+      const request = esDropRequest(object.kind, object.name);
+      if (!request) return;
+      setActionError(null);
+      void (async () => {
+        let documentCount: string | null = null;
+        try {
+          const counted = await invoke<{ status: number; body: string }>('elasticsearch_run', {
+            connectionString, method: 'GET', path: `/${encodeURIComponent(object.name)}/_count`,
+            body: null, ndjson: false, timeoutMs: queryTimeoutMs
+          });
+          const count = jsonField(parseJson(counted.body) ?? undefined, 'count');
+          documentCount = counted.status < 300 && count?.kind === 'number' ? count.text : null;
+        } catch {
+          // 数不出来照样可以删，确认框里就不写个数
+        }
+        setPendingChange({ object, action, sql: `${request.method} ${request.path}`, documentCount });
+      })();
+      return;
+    }
+
     // MongoDB 删集合或视图发 `drop` 命令；确认框里给人看的是等价的 mongosh 写法
     if (connection && !speaksSql(connection.db_type) && action === 'drop') {
       setActionError(null);
@@ -503,7 +528,16 @@ export default function DatabaseExplorer({
 
   const runObjectChange = async ({ object, action, sql }: PendingObjectChange) => {
     try {
-      if (connection && !speaksSql(connection.db_type)) {
+      const esDrop = connection?.db_type === DatabaseType.Elasticsearch ? esDropRequest(object.kind, object.name) : null;
+      if (esDrop) {
+        const response = await invoke<{ status: number; body: string }>('elasticsearch_run', {
+          connectionString, method: esDrop.method, path: esDrop.path, body: null, ndjson: false, timeoutMs: queryTimeoutMs
+        });
+        if (response.status >= 300) {
+          setActionError(`HTTP ${response.status}: ${response.body.slice(0, 300)}`);
+          return;
+        }
+      } else if (connection && !speaksSql(connection.db_type)) {
         await invoke('mongodb_drop_collection', {
           connectionString,
           database: object.schema ?? '',
@@ -529,8 +563,14 @@ export default function DatabaseExplorer({
     markSchemaChanged();
   };
 
-  const changeImpact = ({ object, action }: PendingObjectChange): string => {
+  const changeImpact = ({ object, action, documentCount }: PendingObjectChange): string => {
     const name = object.schema ? `${object.schema}.${object.name}` : object.name;
+    if (object.kind === 'index' || object.kind === 'data-stream') {
+      const key = object.kind === 'index' ? 'object.impact.dropIndex' : 'object.impact.dropDataStream';
+      return documentCount === null || documentCount === undefined
+        ? t(key, { name })
+        : `${t(key, { name })}${t('object.impact.documentCount', { total: documentCount })}`;
+    }
     if (action === 'truncate') {
       return connection && identifierDialectFor(connection.db_type) === 'sqlite'
         ? t('object.impact.truncateSqlite', { name })
