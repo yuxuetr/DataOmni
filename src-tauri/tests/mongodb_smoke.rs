@@ -859,3 +859,108 @@ async fn an_index_is_created_with_its_options_and_dropped_by_name() {
     .expect_err("already dropped");
   assert!(missing.starts_with(MONGO_SERVER_ERROR), "{missing}");
 }
+
+/// 按条件改：操作符与管道两种写法；匹配到但没变的不算「改了」；整篇替换的写法发出去之前
+/// 就拦下；校验规则挡住其中一个时说清楚停在哪、前面的可能已经改了——服务端这时报的个数是 0，
+/// 而库里确实有改掉的，这条用例把这件事钉住
+#[tokio::test]
+async fn update_many_counts_what_it_changed_and_says_where_it_stopped() {
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_update_many").await;
+  collection.insert_many((0..10).map(|n| doc! { "_id": n, "n": n })).await.expect("insert");
+  let timeout = Duration::from_secs(10);
+  let parse = |text: &str| mongo_shell::parse_value(text).expect("update");
+
+  let changed = mongo::update_many(
+    &client,
+    DATABASE,
+    "smoke_update_many",
+    doc! { "n": { "$gte": 5 } },
+    parse("{ $set: { big: true } }"),
+    timeout,
+  )
+  .await
+  .expect("update");
+  assert_eq!(changed, mongo::UpdateManyResult { matched: 5, modified: 5 });
+  let again = mongo::update_many(
+    &client,
+    DATABASE,
+    "smoke_update_many",
+    doc! { "n": { "$gte": 5 } },
+    parse("{ $set: { big: true } }"),
+    timeout,
+  )
+  .await
+  .expect("update");
+  assert_eq!(again, mongo::UpdateManyResult { matched: 5, modified: 0 }, "already true");
+
+  let piped = mongo::update_many(
+    &client,
+    DATABASE,
+    "smoke_update_many",
+    doc! { "_id": 3 },
+    parse("[{ $set: { twice: { $multiply: ['$n', 2] } } }]"),
+    timeout,
+  )
+  .await
+  .expect("pipeline");
+  assert_eq!(piped.modified, 1);
+  let three = collection.find_one(doc! { "_id": 3 }).await.expect("find").expect("exists");
+  assert_eq!(three.get_i32("twice").expect("twice"), 6);
+
+  let replacement =
+    mongo::update_many(&client, DATABASE, "smoke_update_many", doc! {}, parse("{ n: 0 }"), timeout)
+      .await
+      .expect_err("replacement is refused");
+  assert_eq!(replacement, mongo::MONGO_UPDATE_NOT_OPERATORS);
+  let empty =
+    mongo::update_many(&client, DATABASE, "smoke_update_many", doc! {}, parse("{}"), timeout)
+      .await
+      .expect_err("empty update is refused");
+  assert_eq!(empty, mongo::MONGO_UPDATE_NOT_OPERATORS);
+
+  // n 不许到 50：加 45 之后 n >= 5 的那几个过不了
+  client
+    .database(DATABASE)
+    .run_command(doc! { "collMod": "smoke_update_many", "validator": { "n": { "$lt": 50 } } })
+    .await
+    .expect("validator");
+  let stopped = mongo::update_many(
+    &client,
+    DATABASE,
+    "smoke_update_many",
+    doc! {},
+    parse("{ $inc: { n: 45 } }"),
+    timeout,
+  )
+  .await
+  .expect_err("stopped by the validator");
+  assert!(
+    stopped.starts_with(&format!("{}: Document failed validation", mongo::MONGO_BULK_STOPPED)),
+    "{stopped}"
+  );
+  assert!(stopped.contains(" · _id: "), "names the document that stopped it: {stopped}");
+  // 服务端回答 nModified: 0，但前面的确实改了：这正是界面上要说「可能已经改了一部分」的原因
+  let changed = collection.count_documents(doc! { "n": { "$gte": 45 } }).await.expect("count");
+  assert!(changed > 0 && changed < 10, "partially applied: {changed}");
+}
+
+/// 按条件删：删了几个就报几个，空条件是整个集合
+#[tokio::test]
+async fn delete_many_reports_how_many_it_removed() {
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_delete_many").await;
+  collection.insert_many((0..10).map(|n| doc! { "n": n })).await.expect("insert");
+  let timeout = Duration::from_secs(10);
+  let deleted =
+    mongo::delete_many(&client, DATABASE, "smoke_delete_many", doc! { "n": { "$lt": 3 } }, timeout)
+      .await
+      .expect("delete");
+  assert_eq!(deleted, 3);
+  assert_eq!(collection.count_documents(doc! {}).await.expect("count"), 7);
+  let rest = mongo::delete_many(&client, DATABASE, "smoke_delete_many", doc! {}, timeout)
+    .await
+    .expect("delete all");
+  assert_eq!(rest, 7);
+  assert_eq!(collection.count_documents(doc! {}).await.expect("count"), 0);
+}

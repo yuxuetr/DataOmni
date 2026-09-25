@@ -1185,6 +1185,20 @@ export const zh = {
   'mongo.export.canonicalHint': '每个值都带类型（如 {"$numberLong": "5"}），mongoimport 读回来与原来一模一样，只是不太好读。',
   'mongo.export.fileHint': '每行一个文档，mongoimport 可以直接导入。不是当前这一页：会从服务端重新读出所有符合条件的文档。',
   'mongo.export.choosePath': '选择位置并导出…',
+  'mongo.bulk.updateTitle': '按条件修改',
+  'mongo.bulk.deleteTitle': '按条件删除',
+  'mongo.bulk.applyFirst': '条件框改过还没按「查询」：先查询，确认网格里就是要改的那些',
+  'mongo.bulk.wholeCollection': '没有条件：会作用于这个集合里的全部文档。',
+  'mongo.bulk.update': '怎么改',
+  'mongo.bulk.updateHint': '用 $set、$unset、$inc、$push 这类操作符，或者一条管道 [ { $set: … } ]。不能写成一整个文档——那是替换，不是修改。',
+  'mongo.bulk.noTransaction': '不在事务里：被校验规则挡住或超时时，在它之前处理过的文档已经改掉了（服务端不报个数），刷新就能看到。',
+  'mongo.bulk.noTransactionDelete': '不在事务里，删掉的不能撤销。超时停下时，在它之前处理过的文档已经删掉了。',
+  'mongo.bulk.updateRun': '修改',
+  'mongo.bulk.deleteRun': '删除',
+  'mongo.bulk.updated': '匹配 {matched} 个，改了 {modified} 个。',
+  'mongo.bulk.unchanged': '另外 {count} 个本来就是这个值，没有变。',
+  'mongo.bulk.deleted': '删了 {count} 个文档。',
+  'mongo.bulk.deleted.one': '删了 {count} 个文档。',
   'mongo.import': '导入',
   'mongo.import.file': '文件',
   'mongo.import.chooseFile': '选择文件…',
@@ -1214,7 +1228,9 @@ export const zh = {
   'error.backend.mongoImportJsonArray': '这个文件是一个 JSON 数组（mongoexport --jsonArray 的输出）。这里只读每行一个文档的文件：去掉 --jsonArray 重新导出即可。',
   'error.backend.mongoImportLineInvalid': '这一行读不成一个文档：{detail}',
   'error.backend.mongoIndexKeysEmpty': '键不能是空的：至少写一个字段，如 { email: 1 }',
-  'error.backend.mongoIndexExists': '键和选项都相同的索引已经有了（{detail}），没有新建'
+  'error.backend.mongoIndexExists': '键和选项都相同的索引已经有了（{detail}），没有新建',
+  'error.backend.mongoBulkStopped': '服务端中途停下了：{detail}。在它之前处理过的文档已经生效，服务端不报个数，刷新看看。',
+  'error.backend.mongoUpdateNotOperators': '「怎么改」要用 $set 这类操作符或者一条管道；写成一整个文档是替换，按条件修改不能这样用'
 } as const;
 
 export type TranslationKey = keyof typeof zh;

@@ -70,6 +70,8 @@ pub fn run() {
       mongodb_import_file,
       mongodb_create_index,
       mongodb_drop_index,
+      mongodb_update_many,
+      mongodb_delete_many,
       close_mongodb,
       // 数据库操作命令
       execute_query,

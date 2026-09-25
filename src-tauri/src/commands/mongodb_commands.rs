@@ -11,7 +11,7 @@ use crate::services::export_writer::{ExportProgress, ExportSummary};
 use crate::services::mongo_shell;
 use crate::services::mongodb::{
   self, CollectionEntry, ExtendedJson, FindRequest, ImportMode, MongoCollectionStructure,
-  MongoFindPage, MongoRegistry, MONGO_NOT_CONNECTED,
+  MongoFindPage, MongoRegistry, UpdateManyResult, MONGO_NOT_CONNECTED,
 };
 use crate::services::query_error::QueryError;
 use ::mongodb::Client;
@@ -150,6 +150,40 @@ pub async fn mongodb_delete_document(
   let timeout = timeout(timeout_ms)?;
   let client = client(&registry, &connection_string)?;
   mongodb::delete_document(&client, &database, &collection, id, timeout).await
+}
+
+/// 按条件改。`update` 是 mongosh 写法的文字：`$` 操作符的文档，或一条聚合管道
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn mongodb_update_many(
+  connection_string: String,
+  database: String,
+  collection: String,
+  filter: String,
+  update: String,
+  timeout_ms: u64,
+  registry: State<'_, MongoRegistry>,
+) -> Result<UpdateManyResult, String> {
+  let filter = mongo_shell::parse_document(&filter).map_err(|error| error.to_string())?;
+  let update = mongo_shell::parse_value(&update).map_err(|error| error.to_string())?;
+  let timeout = timeout(timeout_ms)?;
+  let client = client(&registry, &connection_string)?;
+  mongodb::update_many(&client, &database, &collection, filter, update, timeout).await
+}
+
+#[tauri::command]
+pub async fn mongodb_delete_many(
+  connection_string: String,
+  database: String,
+  collection: String,
+  filter: String,
+  timeout_ms: u64,
+  registry: State<'_, MongoRegistry>,
+) -> Result<u64, String> {
+  let filter = mongo_shell::parse_document(&filter).map_err(|error| error.to_string())?;
+  let timeout = timeout(timeout_ms)?;
+  let client = client(&registry, &connection_string)?;
+  mongodb::delete_many(&client, &database, &collection, filter, timeout).await
 }
 
 /// 集合的索引与选项（校验规则、上限、时序、视图定义）

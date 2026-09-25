@@ -30,6 +30,7 @@ import { MongoDocumentPanel } from './MongoDocumentPanel';
 import { useConfirmPrompt } from './ConfirmPrompt';
 import { MongoExportDialog } from './MongoExportDialog';
 import { MongoImportDialog } from './MongoImportDialog';
+import { MongoBulkWriteDialog, type MongoBulkWriteMode } from './MongoBulkWriteDialog';
 
 interface MongoCollectionViewerProps {
   database: string;
@@ -91,6 +92,7 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
   const [panelDirty, setPanelDirty] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [bulk, setBulk] = useState<MongoBulkWriteMode | null>(null);
   const { ask, prompt: confirmPrompt } = useConfirmPrompt();
   const selectedId = panel.kind === 'document' ? panel.id : null;
   const [documentText, setDocumentText] = useState<string | null>(null);
@@ -248,6 +250,19 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
     setDocumentError(null);
     setDocumentLoading(false);
     setPanel({ kind: 'insert' });
+  };
+
+  /**
+   * 批量改删只作用于**已经生效**的条件：框里改了还没按「查询」时，网格上看到的不是
+   * 那个新条件选中的文档，这时不给按
+   */
+  const bulkBlocked = filterDraft !== applied.filter;
+
+  const startBulk = async (mode: MongoBulkWriteMode) => {
+    if (!(await mayLeavePanel())) {
+      return;
+    }
+    setBulk(mode);
   };
 
   /** 写完之后这一页与总数都重新读：改过的文档可能已经不符合条件、排到别处去了 */
@@ -474,6 +489,26 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
           >
             {t('mongo.reset')}
           </button>
+          {!readOnly && (
+            <>
+              <button
+                onClick={() => void startBulk('update')}
+                disabled={!connectionString || bulkBlocked}
+                title={bulkBlocked ? t('mongo.bulk.applyFirst') : undefined}
+                className="rounded-control border border-line-strong px-3 py-1 text-sm text-fg transition-colors hover:bg-surface-hover disabled:opacity-50"
+              >
+                {t('mongo.bulk.updateTitle')}
+              </button>
+              <button
+                onClick={() => void startBulk('delete')}
+                disabled={!connectionString || bulkBlocked}
+                title={bulkBlocked ? t('mongo.bulk.applyFirst') : undefined}
+                className="rounded-control border border-danger-line px-3 py-1 text-sm text-danger transition-colors hover:bg-danger-soft disabled:opacity-50"
+              >
+                {t('mongo.bulk.deleteTitle')}
+              </button>
+            </>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <label htmlFor="mongo-sort" className="w-12 shrink-0 text-xs font-medium text-fg-muted">
@@ -672,6 +707,24 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
           sort={applied.sort}
           total={total}
           onClose={() => setExporting(false)}
+        />
+      )}
+      {bulk && connectionString && (
+        <MongoBulkWriteDialog
+          mode={bulk}
+          connectionString={connectionString}
+          database={database}
+          collection={collection}
+          filter={applied.filter}
+          total={total}
+          timeoutMs={timeoutMs}
+          onClose={() => setBulk(null)}
+          onWritten={() => {
+            // 面板里开着的那个文档可能刚被改掉或删掉
+            setPanel({ kind: 'closed' });
+            setDocumentText(null);
+            reloadAfterWrite(1);
+          }}
         />
       )}
       {importing && connectionString && (

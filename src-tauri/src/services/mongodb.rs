@@ -574,6 +574,99 @@ pub async fn delete_document(
   with_deadline(timeout, write).await
 }
 
+/// 按条件改 / 删被服务端中途停下了（某个文档过不了校验规则）。没有事务，而服务端这时回答
+/// `n: 0, nModified: 0`——在它之前处理过的文档其实已经改掉了，个数谁也不知道（实测，8.0）。
+/// 数据是服务端的原话，带上挡住的那个文档的 `_id`
+pub const MONGO_BULK_STOPPED: &str = "DATAOMNI_MONGO_BULK_STOPPED";
+/// 改的写法是整篇替换（顶层没有 `$` 操作符）：按条件改只能用操作符或管道
+pub const MONGO_UPDATE_NOT_OPERATORS: &str = "DATAOMNI_MONGO_UPDATE_NOT_OPERATORS";
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateManyResult {
+  pub matched: u64,
+  pub modified: u64,
+}
+
+/// 按条件改：`updateMany(filter, update)`。`update` 是一个 `$` 操作符的文档，或者一条
+/// 聚合管道（数组）。整篇替换的写法在发出去之前就拦下：服务端也会拒，但它的拒绝和
+/// 「改到一半被挡住」走的是同一种回答，分不开。
+///
+/// 不在事务里：中途停下（校验规则挡住某一个、超时）时前面改掉的留着
+pub async fn update_many(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  filter: Document,
+  update: Bson,
+  timeout: Duration,
+) -> Result<UpdateManyResult, String> {
+  if let Bson::Document(update) = &update {
+    if update.is_empty() || update.keys().any(|key| !key.starts_with('$')) {
+      return Err(MONGO_UPDATE_NOT_OPERATORS.to_string());
+    }
+  }
+  let command = doc! {
+    "update": collection,
+    "updates": [{ "q": filter, "u": update, "multi": true }],
+    "maxTimeMS": i64::try_from(timeout.as_millis()).unwrap_or(i64::MAX),
+  };
+  let db = client.database(database);
+  let work = async {
+    let reply = db.run_command(command).await.map_err(describe_error)?;
+    bulk_write_error(&reply)?;
+    Ok(UpdateManyResult {
+      matched: u64::try_from(reply_integer(&reply, "n")).unwrap_or(0),
+      modified: u64::try_from(reply_integer(&reply, "nModified")).unwrap_or(0),
+    })
+  };
+  with_deadline(timeout, work).await
+}
+
+/// 按条件删：`deleteMany(filter)`，返回删了几个。空条件就是整个集合，拦不拦由界面问
+pub async fn delete_many(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  filter: Document,
+  timeout: Duration,
+) -> Result<u64, String> {
+  let command = doc! {
+    "delete": collection,
+    "deletes": [{ "q": filter, "limit": 0 }],
+    "maxTimeMS": i64::try_from(timeout.as_millis()).unwrap_or(i64::MAX),
+  };
+  let db = client.database(database);
+  let work = async {
+    let reply = db.run_command(command).await.map_err(describe_error)?;
+    bulk_write_error(&reply)?;
+    Ok(u64::try_from(reply_integer(&reply, "n")).unwrap_or(0))
+  };
+  with_deadline(timeout, work).await
+}
+
+/// 写命令回答 ok 也可能带着 `writeErrors`：那是被中途停下了，回答里的个数这时不作数
+fn bulk_write_error(reply: &Document) -> Result<(), String> {
+  let first = reply
+    .get_array("writeErrors")
+    .ok()
+    .and_then(|errors| errors.iter().find_map(Bson::as_document));
+  let Some(error) = first else {
+    return Ok(());
+  };
+  let failing = error
+    .get_document("errInfo")
+    .ok()
+    .and_then(|info| info.get("failingDocumentId"))
+    .map(|id| format!(" · _id: {}", mongo_shell::format_value(id, Layout::OneLine)))
+    .unwrap_or_default();
+  Err(format!(
+    "{MONGO_BULK_STOPPED}: {} (code {}){failing}",
+    error.get_str("errmsg").unwrap_or_default(),
+    reply_integer(error, "code")
+  ))
+}
+
 /// 导出文件里每个文档的 JSON 写法，即 mongoexport 的 `--jsonFormat`
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
