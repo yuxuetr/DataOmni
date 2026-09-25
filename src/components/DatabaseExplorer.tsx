@@ -63,6 +63,8 @@ import {
 import { useConnectionStore } from '../stores/connectionStore';
 import { useContextMenu } from '../hooks/useContextMenu';
 import { useQueryStore } from '../stores/queryStore';
+import { MongoCreateCollectionDialog } from './MongoCreateCollectionDialog';
+import { dropCollectionCommand } from '../utils/mongoCommandText';
 import { METADATA_TTL_MS, useAppStore } from '../stores/appStore';
 import { validateDatabaseConnection } from '../utils/stateSync';
 import { clsx } from 'clsx';
@@ -150,6 +152,8 @@ export default function DatabaseExplorer({
   const [inspecting, setInspecting] = useState<DatabaseObject | null>(null);
   const [creatingTable, setCreatingTable] = useState(false);
   const [creatingSchema, setCreatingSchema] = useState(false);
+  const [creatingCollection, setCreatingCollection] = useState(false);
+  const queryTimeoutMs = useQueryStore((state) => state.queryTimeoutMs);
   const [createMenu, setCreateMenu] = useState<{ x: number; y: number } | null>(null);
   /**
    * 刚建好的 schema。树上的 schema 来自对象，空的那个不会出现，建表框的
@@ -309,9 +313,11 @@ export default function DatabaseExplorer({
     );
   }
 
-  const createLabel = CREATES_SCHEMAS.has(identifierDialectFor(connection.db_type))
-    ? t('explorer.createMenu')
-    : t('ddl.createTable');
+  const createLabel = !speaksSql(connection.db_type)
+    ? t('mongo.collection.new')
+    : CREATES_SCHEMAS.has(identifierDialectFor(connection.db_type))
+      ? t('explorer.createMenu')
+      : t('ddl.createTable');
 
   // 过期只决定「该重新拉了」，不决定「不给看」。此前两件事是同一个条件：
   // 连上五分钟之后随便点一下，整棵树就变成「没有数据库对象」，而且没有
@@ -405,6 +411,13 @@ export default function DatabaseExplorer({
       return;
     }
 
+    // MongoDB 删集合或视图发 `drop` 命令；确认框里给人看的是等价的 mongosh 写法
+    if (connection && !speaksSql(connection.db_type) && action === 'drop') {
+      setActionError(null);
+      setPendingChange({ object, action, sql: dropCollectionCommand(object.schema ?? '', object.name) });
+      return;
+    }
+
     // MongoDB 复制的是命名空间 `库.集合`：mongosh 的 `use` 与各家工具认的都是它
     if (connection && !speaksSql(connection.db_type)) {
       navigator.clipboard
@@ -441,10 +454,19 @@ export default function DatabaseExplorer({
 
   const runObjectChange = async ({ object, action, sql }: PendingObjectChange) => {
     try {
-      await invoke<number[]>('execute_write_batch', {
-        connectionId,
-        statements: [{ sql, params: [], expectRows: null }]
-      });
+      if (connection && !speaksSql(connection.db_type)) {
+        await invoke('mongodb_drop_collection', {
+          connectionString,
+          database: object.schema ?? '',
+          collection: object.name,
+          timeoutMs: queryTimeoutMs
+        });
+      } else {
+        await invoke<number[]>('execute_write_batch', {
+          connectionId,
+          statements: [{ sql, params: [], expectRows: null }]
+        });
+      }
     } catch (cause) {
       setActionError(describeError(cause));
       return;
@@ -464,6 +486,9 @@ export default function DatabaseExplorer({
       return connection && identifierDialectFor(connection.db_type) === 'sqlite'
         ? t('object.impact.truncateSqlite', { name })
         : t('object.impact.truncate', { name });
+    }
+    if (object.kind === 'collection') {
+      return t('object.impact.dropCollection', { name });
     }
     return isDroppableKind(object.kind)
       ? t(DROP_IMPACT_KEYS[object.kind], { name })
@@ -495,9 +520,13 @@ export default function DatabaseExplorer({
               <GitBranch size={14} />
             </button>
           )}
-          {speaksSql(connection.db_type) && supportsFeature(connection.db_type, 'structureEditing') && (
+          {(!speaksSql(connection.db_type) || supportsFeature(connection.db_type, 'structureEditing')) && (
           <button
             onClick={(event) => {
+              if (!speaksSql(connection.db_type)) {
+                setCreatingCollection(true);
+                return;
+              }
               // 能建 schema 的方言上「+」是一个两项的小菜单，而不是再加一个图标：
               // 侧边栏默认宽度下多一个图标，「+」与刷新就被挤出头部了
               if (CREATES_SCHEMAS.has(identifierDialectFor(connection.db_type))) {
@@ -652,10 +681,10 @@ export default function DatabaseExplorer({
           environment={connection.environment}
           databaseLabel={serverLabel(connection)}
           alwaysAsks
-          reversibility={batchReversibility(
-            [pendingChange.sql],
-            identifierDialectFor(connection.db_type)
-          )}
+          // MongoDB 的 drop 发出去就生效，没有事务可言；一条命令，说「执行即生效」
+          reversibility={speaksSql(connection.db_type)
+            ? batchReversibility([pendingChange.sql], identifierDialectFor(connection.db_type))
+            : { kind: 'atomic-batch' }}
           impacts={[changeImpact(pendingChange)]}
           onCancel={() => setPendingChange(null)}
           onConfirm={() => {
@@ -702,6 +731,21 @@ export default function DatabaseExplorer({
             setCreatingSchema(false);
             setNewSchema(schema);
             setCreatingTable(true);
+          }}
+        />
+      )}
+
+      {creatingCollection && connectionString && (
+        <MongoCreateCollectionDialog
+          connectionString={connectionString}
+          databases={[...new Set(
+            objects.map((object) => object.schema).filter((name): name is string => !!name)
+          )].sort()}
+          timeoutMs={queryTimeoutMs}
+          onClose={() => setCreatingCollection(false)}
+          onCreated={() => {
+            setCreatingCollection(false);
+            void loadDatabaseMetadata(true);
           }}
         />
       )}

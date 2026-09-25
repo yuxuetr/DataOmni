@@ -934,6 +934,52 @@ async fn a_cancelled_import_stops_after_the_batch_in_flight() {
 
 /// 建索引：没给名字就按 mongosh 的规矩起名，选项原样生效（唯一、部分索引），结构页上看得见；
 /// 一模一样的再建一次明确说「已经有了」；删掉之后就没了
+/// 建集合时选项原样生效（上限、校验规则），同名再建被拒；在一个还没有的库里建集合，
+/// 库就有了——MongoDB 建库就是这样。删掉之后对象树里不再有它
+#[tokio::test]
+async fn a_collection_is_created_with_its_options_and_dropped() {
+  let Some(client) = client().await else { return };
+  let scratch = "dataomni_test_created_db";
+  client.database(scratch).drop().await.expect("drop leftover database");
+  fresh_collection(&client, "smoke_created").await;
+  let options = mongo_shell::parse_document(
+    "{ capped: true, size: 65536, validator: { $jsonSchema: { required: ['name'] } } }",
+  )
+  .expect("options");
+  let timeout = Duration::from_secs(10);
+  mongo::create_collection(&client, DATABASE, "smoke_created", options, timeout)
+    .await
+    .expect("create");
+  let spec = client
+    .database(DATABASE)
+    .run_command(doc! { "listCollections": 1, "filter": { "name": "smoke_created" } })
+    .await
+    .expect("listCollections");
+  let created = spec
+    .get_document("cursor")
+    .and_then(|cursor| cursor.get_array("firstBatch"))
+    .ok()
+    .and_then(|batch| batch.first())
+    .and_then(Bson::as_document)
+    .and_then(|collection| collection.get_document("options").ok())
+    .cloned()
+    .unwrap_or_default();
+  assert_eq!(created.get_bool("capped"), Ok(true), "{created:?}");
+  assert!(created.contains_key("validator"), "{created:?}");
+
+  let again = mongo::create_collection(&client, DATABASE, "smoke_created", doc! {}, timeout).await;
+  assert!(again.as_ref().err().is_some_and(|error| error.contains("NamespaceExists")), "{again:?}");
+
+  mongo::create_collection(&client, scratch, "first", doc! {}, timeout).await.expect("new db");
+  let names = client.list_database_names().await.expect("list databases");
+  assert!(names.iter().any(|name| name == scratch), "{names:?}");
+
+  mongo::drop_collection(&client, DATABASE, "smoke_created", timeout).await.expect("drop");
+  let entries = mongo::list_collections(&client).await.expect("list collections");
+  assert!(!entries.iter().any(|entry| entry.object_name == "smoke_created"), "{entries:?}");
+  client.database(scratch).drop().await.expect("drop scratch database");
+}
+
 #[tokio::test]
 async fn an_index_is_created_with_its_options_and_dropped_by_name() {
   let Some(client) = client().await else { return };

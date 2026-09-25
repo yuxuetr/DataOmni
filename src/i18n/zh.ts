@@ -72,6 +72,7 @@ export const zh = {
   'explorer.menu.truncate': '清空表',
   'explorer.menu.drop': '删除',
   'object.impact.dropTable': '删除表 {name}，表里的数据一并丢掉',
+  'object.impact.dropCollection': '删除集合 {name}：里面的文档和索引一起删掉，撤不回来',
   'object.impact.dropView': '删除视图 {name}：它的定义没了就回不来，引用它的查询与对象随之失效',
   'object.impact.dropMaterializedView': '删除物化视图 {name}，它存下的结果一并丢掉',
   'object.impact.truncate': '清空表 {name}，全部行都会被删掉',
@@ -1173,6 +1174,14 @@ export const zh = {
   'mongo.index.keysHint': '字段: 1 升序、-1 降序，也可以是 \'text\'、\'2dsphere\'、\'hashed\'。复合索引按写的次序。',
   'mongo.index.options': '选项（可空）',
   'mongo.index.optionsHint': '如 unique: true、sparse: true、partialFilterExpression: { … }、expireAfterSeconds: 3600、name: \'…\'。不写名字就按 mongosh 的规矩起名。',
+  'mongo.collection.createTitle': '新建集合',
+  'mongo.collection.new': '新建集合',
+  'mongo.collection.database': '库',
+  'mongo.collection.newDatabase': '还没有这个库：建集合时会一起建出来。',
+  'mongo.collection.name': '集合名',
+  'mongo.collection.options': '选项',
+  'mongo.collection.optionsHint': '可不填。和 mongosh 的 createCollection 第二个参数一样，如上限 { capped: true, size: 1048576 }、校验规则 { validator: { $jsonSchema: … } }、时序 { timeseries: { timeField: \'at\' } }。',
+  'mongo.collection.create': '新建',
   'mongo.index.buildNote': '建索引在服务端跑完才返回；超过查询超时服务端会停下这次建索引，可以在设置里调大。',
   'mongo.index.drop': '删除',
   'mongo.index.dropConfirm': '删除 {collection} 上的索引 {name}？靠它的查询会变慢；唯一索引删掉之后不再拦重复值。',
@@ -1252,6 +1261,7 @@ export const zh = {
   'error.backend.mongoTlsFileInvalid': '证书文件用不了：{detail}',
   'error.backend.mongoClientKeySeparate': 'MongoDB 的客户端证书要和私钥放在同一个 PEM 文件里（mongosh 的 --tlsCertificateKeyFile 也是这样），不另给私钥文件',
   'error.backend.mongoX509NeedsCertificate': '用客户端证书登录要开着 TLS，并在 TLS 证书那一组填上客户端证书',
+  'error.backend.mongoNameEmpty': '库名和集合名都要填',
   'error.backend.mongoUpdateNotOperators': '「怎么改」要用 $set 这类操作符或者一条管道；写成一整个文档是替换，按条件修改不能这样用'
 } as const;
 

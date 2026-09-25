@@ -262,6 +262,35 @@ pub async fn mongodb_drop_index(
   mongodb::drop_index(&client, &database, &collection, &name, timeout).await
 }
 
+/// 建集合。选项是 mongosh 写法的文字，即 `createCollection(name, options)` 的第二个参数
+#[tauri::command]
+pub async fn mongodb_create_collection(
+  connection_string: String,
+  database: String,
+  collection: String,
+  options: String,
+  timeout_ms: u64,
+  registry: State<'_, MongoRegistry>,
+) -> Result<(), String> {
+  let options = mongo_shell::parse_document(&options).map_err(|error| error.to_string())?;
+  let timeout = timeout(timeout_ms)?;
+  let client = client(&registry, &connection_string)?;
+  mongodb::create_collection(&client, &database, &collection, options, timeout).await
+}
+
+#[tauri::command]
+pub async fn mongodb_drop_collection(
+  connection_string: String,
+  database: String,
+  collection: String,
+  timeout_ms: u64,
+  registry: State<'_, MongoRegistry>,
+) -> Result<(), String> {
+  let timeout = timeout(timeout_ms)?;
+  let client = client(&registry, &connection_string)?;
+  mongodb::drop_collection(&client, &database, &collection, timeout).await
+}
+
 /// 断开时去掉登记。`Client` 的最后一个引用没了，池子里的连接随之关闭
 #[tauri::command]
 pub fn close_mongodb(connection_string: String, registry: State<'_, MongoRegistry>) -> bool {

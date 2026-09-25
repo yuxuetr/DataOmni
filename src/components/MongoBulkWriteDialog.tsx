@@ -5,6 +5,7 @@ import { clsx } from 'clsx';
 import { PLAIN_TEXT_INPUT } from './FormControls';
 import { useLanguageStore } from '../stores/languageStore';
 import { describeError } from '../utils/describeError';
+import { shellString } from '../utils/mongoCommandText';
 
 export type MongoBulkWriteMode = 'update' | 'delete';
 
@@ -68,7 +69,7 @@ export function MongoBulkWriteDialog({
   }, [running, onClose]);
 
   const scope = filter.trim();
-  const collectionLiteral = `'${collection.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+  const collectionLiteral = shellString(collection);
   const command = mode === 'delete'
     ? `db.getCollection(${collectionLiteral}).deleteMany(${scope || '{}'})`
     : update.trim()

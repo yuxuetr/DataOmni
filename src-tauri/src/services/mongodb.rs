@@ -58,6 +58,8 @@ pub const MONGO_DOCUMENT_GONE: &str = "DATAOMNI_MONGO_DOCUMENT_GONE";
 pub const MONGO_DOCUMENT_CHANGED: &str = "DATAOMNI_MONGO_DOCUMENT_CHANGED";
 /// 编辑时改了 `_id`。服务端不许改它，这里先拦下、说人话
 pub const MONGO_ID_CHANGED: &str = "DATAOMNI_MONGO_ID_CHANGED";
+/// 建集合时库名或集合名是空的
+pub const MONGO_NAME_EMPTY: &str = "DATAOMNI_MONGO_NAME_EMPTY";
 /// CA 或客户端证书文件读不了，或读出来不是要的东西。冒号后面带着文件路径
 pub const MONGO_TLS_FILE_INVALID: &str = "DATAOMNI_MONGO_TLS_FILE_INVALID";
 /// SRV 记录查不到或不合规矩（名字不对、记录指向别的域）。冒号后面是驱动的原话
@@ -612,6 +614,46 @@ pub async fn drop_index(
   let db = client.database(database);
   let work = async {
     db.run_command(command).await.map_err(describe_error)?;
+    Ok(())
+  };
+  with_deadline(timeout, work).await
+}
+
+/// 建集合，即 mongosh 的 `createCollection(name, options)`：发 `create` 本身，选项原样
+/// 并入（校验规则、上限、时序、排序规则……），不经驱动的 `CreateCollectionOptions`——
+/// 它不认识的选项会被丢掉。库不存在时服务端顺带建出来，这正是 MongoDB 建库的办法。
+/// 已有同名集合时服务端报 `NamespaceExists`，原样给
+pub async fn create_collection(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  options: Document,
+  timeout: Duration,
+) -> Result<(), String> {
+  if database.trim().is_empty() || collection.trim().is_empty() {
+    return Err(MONGO_NAME_EMPTY.to_string());
+  }
+  let mut command = doc! { "create": collection };
+  command.extend(options);
+  command.insert("maxTimeMS", i64::try_from(timeout.as_millis()).unwrap_or(i64::MAX));
+  let db = client.database(database);
+  let work = async {
+    db.run_command(command).await.map_err(describe_error)?;
+    Ok(())
+  };
+  with_deadline(timeout, work).await
+}
+
+/// 删集合或视图，连同它的索引。撤不回来：界面上先确认
+pub async fn drop_collection(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  timeout: Duration,
+) -> Result<(), String> {
+  let db = client.database(database);
+  let work = async {
+    db.run_command(doc! { "drop": collection }).await.map_err(describe_error)?;
     Ok(())
   };
   with_deadline(timeout, work).await

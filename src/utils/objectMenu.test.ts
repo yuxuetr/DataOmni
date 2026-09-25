@@ -128,10 +128,11 @@ describe('复制出来的限定名', () => {
 });
 
 describe('不走 SQL 的连接上', () => {
-  it('只有打开、结构与复制：MongoDB 的视图也叫 view，而查看定义、删除是拼 SQL 做的', () => {
-    // 视图的定义在它的结构页里，所以视图也有「打开结构」
-    expect(objectMenuActions('view', false)).toEqual(['open-data', 'open-structure', 'copy-name']);
-    expect(objectMenuActions('collection', false)).toEqual(['open-data', 'open-structure', 'copy-name']);
+  it('打开、结构、复制与删除：MongoDB 的视图也叫 view，而「查看定义」是拼 SQL 做的', () => {
+    // 视图的定义在它的结构页里，所以视图也有「打开结构」；删除走 drop 命令，不拼 SQL
+    expect(objectMenuActions('view', false)).toEqual(['open-data', 'open-structure', 'copy-name', 'drop']);
+    expect(objectMenuActions('collection', false)).toEqual(['open-data', 'open-structure', 'copy-name', 'drop']);
+    // 清空（truncate）没有：MongoDB 没有这条命令，按条件删除在集合页上
     // 反向：SQL 连接上的视图照旧
     expect(objectMenuActions('view', true)).toEqual(OBJECT_MENU_ACTIONS.view);
   });

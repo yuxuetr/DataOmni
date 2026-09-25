@@ -4,43 +4,42 @@ import { Loader2, X } from 'lucide-react';
 import { PLAIN_TEXT_INPUT } from './FormControls';
 import { useLanguageStore } from '../stores/languageStore';
 import { describeError } from '../utils/describeError';
-import { shellString } from '../utils/mongoCommandText';
+import { createCollectionCommand } from '../utils/mongoCommandText';
 
-interface MongoCreateIndexDialogProps {
+interface MongoCreateCollectionDialogProps {
   connectionString: string;
-  database: string;
-  collection: string;
+  /** 对象树里已有的库，给库名那一格做候选；也可以填一个新名字 */
+  databases: readonly string[];
   timeoutMs: number;
   onClose: () => void;
   onCreated: () => void;
 }
 
 /**
- * MongoDB 新建索引：键与选项各一格，就是 mongosh 里 `createIndex(keys, options)` 的两个参数。
+ * MongoDB 新建集合：库、名字、选项三格，就是 mongosh 里
+ * `db.getSiblingDB(库).createCollection(名字, 选项)`。
  *
- * 不做成勾选框：MongoDB 的键不只是「升序 / 降序」（还有 text、2dsphere、hashed、通配），
- * 选项也是一个开放的文档（部分索引的条件、TTL、排序规则）。结构页上显示的正是这种写法，
- * 照着抄一个已有的索引就能用。
+ * 选项和建索引一样是一格文档而不是一排勾选框：上限、校验规则、时序、排序规则、
+ * 视图（`viewOn` + `pipeline`）都是同一个参数，结构页上显示的也正是这种写法。
+ * 库名可以填一个还没有的——MongoDB 建库就是往里建第一个集合
  */
-export function MongoCreateIndexDialog({
+export function MongoCreateCollectionDialog({
   connectionString,
-  database,
-  collection,
+  databases,
   timeoutMs,
   onClose,
   onCreated
-}: MongoCreateIndexDialogProps) {
+}: MongoCreateCollectionDialogProps) {
   const t = useLanguageStore((state) => state.t);
-  const [keys, setKeys] = useState('');
+  const [database, setDatabase] = useState(databases[0] ?? '');
+  const [name, setName] = useState('');
   const [options, setOptions] = useState('');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const keysRef = useRef<HTMLInputElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
 
-  // 只在打开时聚焦一次：放进下面那个 effect 会在每次「新建」前后（`running` 变了）把
-  // 焦点从正在改的选项框抢回键那一格
   useEffect(() => {
-    keysRef.current?.focus();
+    nameRef.current?.focus();
   }, []);
 
   useEffect(() => {
@@ -54,23 +53,21 @@ export function MongoCreateIndexDialog({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [running, onClose]);
 
-  const collectionLiteral = shellString(collection);
-  const command = keys.trim()
-    ? `db.getCollection(${collectionLiteral}).createIndex(${keys.trim()}${options.trim() ? `, ${options.trim()}` : ''})`
-    : null;
+  const ready = database.trim() !== '' && name.trim() !== '';
+  const command = ready ? createCollectionCommand(database.trim(), name.trim(), options) : null;
+  const newDatabase = ready && !databases.includes(database.trim());
 
   const run = async () => {
-    if (!command || running) {
+    if (!ready || running) {
       return;
     }
     setRunning(true);
     setError(null);
     try {
-      await invoke<string>('mongodb_create_index', {
+      await invoke('mongodb_create_collection', {
         connectionString,
-        database,
-        collection,
-        keys,
+        database: database.trim(),
+        collection: name.trim(),
         options,
         timeoutMs
       });
@@ -96,7 +93,7 @@ export function MongoCreateIndexDialog({
       className="fixed inset-0 z-50 flex items-center justify-center bg-scrim"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="mongo-create-index-title"
+      aria-labelledby="mongo-create-collection-title"
       onClick={() => !running && onClose()}
     >
       <div
@@ -104,8 +101,8 @@ export function MongoCreateIndexDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-line px-5 py-3">
-          <h2 id="mongo-create-index-title" className="text-base font-medium text-fg">
-            {t('indexCreate.title')}
+          <h2 id="mongo-create-collection-title" className="text-base font-medium text-fg">
+            {t('mongo.collection.createTitle')}
           </h2>
           <button
             type="button"
@@ -120,29 +117,45 @@ export function MongoCreateIndexDialog({
 
         <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
           <label className="block space-y-1">
-            <span className="text-xs text-fg-muted">{t('mongo.index.keys')}</span>
+            <span className="text-xs text-fg-muted">{t('mongo.collection.database')}</span>
             <input
-              ref={keysRef}
-              value={keys}
-              onChange={(event) => setKeys(event.target.value)}
+              value={database}
+              onChange={(event) => setDatabase(event.target.value)}
               onKeyDown={submitOnEnter}
-              placeholder="{ email: 1, createdAt: -1 }"
+              list="mongo-create-collection-databases"
               className={inputClass}
               {...PLAIN_TEXT_INPUT}
             />
-            <span className="block text-xs text-fg-subtle">{t('mongo.index.keysHint')}</span>
+            <datalist id="mongo-create-collection-databases">
+              {databases.map((candidate) => <option key={candidate} value={candidate} />)}
+            </datalist>
+            {newDatabase && (
+              <span className="block text-xs text-fg-subtle">{t('mongo.collection.newDatabase')}</span>
+            )}
           </label>
           <label className="block space-y-1">
-            <span className="text-xs text-fg-muted">{t('mongo.index.options')}</span>
+            <span className="text-xs text-fg-muted">{t('mongo.collection.name')}</span>
+            <input
+              ref={nameRef}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              onKeyDown={submitOnEnter}
+              placeholder="orders"
+              className={inputClass}
+              {...PLAIN_TEXT_INPUT}
+            />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-xs text-fg-muted">{t('mongo.collection.options')}</span>
             <input
               value={options}
               onChange={(event) => setOptions(event.target.value)}
               onKeyDown={submitOnEnter}
-              placeholder="{ unique: true }"
+              placeholder="{ capped: true, size: 1048576 }"
               className={inputClass}
               {...PLAIN_TEXT_INPUT}
             />
-            <span className="block text-xs text-fg-subtle">{t('mongo.index.optionsHint')}</span>
+            <span className="block text-xs text-fg-subtle">{t('mongo.collection.optionsHint')}</span>
           </label>
 
           {command && (
@@ -150,7 +163,6 @@ export function MongoCreateIndexDialog({
               {command}
             </pre>
           )}
-          <p className="text-xs text-fg-subtle">{t('mongo.index.buildNote')}</p>
           {error && <p className="select-text text-sm text-danger">{error}</p>}
         </div>
 
@@ -166,11 +178,11 @@ export function MongoCreateIndexDialog({
           <button
             type="button"
             onClick={() => void run()}
-            disabled={!command || running}
+            disabled={!ready || running}
             className="flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:opacity-90 disabled:opacity-50"
           >
             {running && <Loader2 size={14} className="animate-spin" />}
-            {t('indexCreate.create')}
+            {t('mongo.collection.create')}
           </button>
         </div>
       </div>
