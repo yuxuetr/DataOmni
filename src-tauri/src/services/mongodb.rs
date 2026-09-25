@@ -43,6 +43,9 @@ pub const MONGODB_SRV_SCHEME: &str = "mongodb+srv://";
 
 /// 登录被拒：用户名、口令或认证库不对
 pub const MONGO_AUTH_FAILED: &str = "DATAOMNI_MONGO_AUTH_FAILED";
+/// 用证书登录被拒：`$external` 里没有与证书主题同名的用户。和 `MONGO_AUTH_FAILED` 分开，
+/// 因为那一句叫人查口令，而这里根本没有口令
+pub const MONGO_X509_REJECTED: &str = "DATAOMNI_MONGO_X509_REJECTED";
 /// 没填用户名，而服务端开着认证。`ping` 不要认证，不另查一次的话测试连接会报成功，
 /// 展开对象树时才报「未授权」
 pub const MONGO_AUTH_REQUIRED: &str = "DATAOMNI_MONGO_AUTH_REQUIRED";
@@ -201,7 +204,13 @@ pub async fn connect(target: &MongoTarget) -> Result<Client, String> {
   }
   let client = Client::with_options(target.options().await.map_err(describe_error)?)
     .map_err(describe_error)?;
-  client.database("admin").run_command(doc! { "ping": 1 }).await.map_err(describe_error)?;
+  let ping = client.database("admin").run_command(doc! { "ping": 1 }).await.map_err(describe_error);
+  if let Err(message) = &ping {
+    if let Some(detail) = message.strip_prefix(MONGO_AUTH_FAILED).filter(|_| target.x509) {
+      return Err(format!("{MONGO_X509_REJECTED}{detail}"));
+    }
+  }
+  ping?;
   // X.509 也没有用户名，但握手时已经按证书认证过了，不是「没带凭据」
   if target.username.is_empty() && !target.x509 {
     // 13 是 Unauthorized：服务端开着认证，不带凭据什么都读不了

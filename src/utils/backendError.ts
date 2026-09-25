@@ -123,6 +123,7 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_MONGO_TLS_FILE_INVALID: 'error.backend.mongoTlsFileInvalid',
   DATAOMNI_MONGO_CLIENT_KEY_SEPARATE: 'error.backend.mongoClientKeySeparate',
   DATAOMNI_MONGO_X509_NEEDS_CERTIFICATE: 'error.backend.mongoX509NeedsCertificate',
+  DATAOMNI_MONGO_X509_REJECTED: 'error.backend.mongoX509Rejected',
   DATAOMNI_MONGO_NAME_EMPTY: 'error.backend.mongoNameEmpty',
   DATAOMNI_REDIS_AUTH_FAILED: 'error.backend.redisAuthFailed',
   DATAOMNI_REDIS_AUTH_REQUIRED: 'error.backend.redisAuthRequired',

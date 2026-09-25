@@ -1263,6 +1263,7 @@ export const en: Translations = {
   'error.backend.mongoSrvWithTunnel': 'An SRV connection cannot go through an SSH tunnel: SRV gives a set of servers and a tunnel forwards one address',
   'error.backend.mongoTlsFileInvalid': 'The certificate file cannot be used: {detail}',
   'error.backend.mongoClientKeySeparate': 'A MongoDB client certificate and its private key go in one PEM file (as with mongosh --tlsCertificateKeyFile); there is no separate key file',
+  'error.backend.mongoX509Rejected': 'MongoDB did not accept this client certificate: $external needs a user named after the certificate subject. Details: {detail}',
   'error.backend.mongoX509NeedsCertificate': 'Logging in with a client certificate needs TLS turned on and a client certificate in the TLS certificates group',
   'error.backend.mongoNameEmpty': 'Both the database and the collection name are required',
   'redis.action.rename': 'Rename',

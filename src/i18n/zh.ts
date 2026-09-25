@@ -1274,6 +1274,7 @@ export const zh = {
   'error.backend.mongoSrvWithTunnel': '按 SRV 记录连接时不能走 SSH 隧道：SRV 给的是一组服务端，隧道只转发一个地址',
   'error.backend.mongoTlsFileInvalid': '证书文件用不了：{detail}',
   'error.backend.mongoClientKeySeparate': 'MongoDB 的客户端证书要和私钥放在同一个 PEM 文件里（mongosh 的 --tlsCertificateKeyFile 也是这样），不另给私钥文件',
+  'error.backend.mongoX509Rejected': 'MongoDB 不认这张客户端证书：$external 里要有一个和证书主题同名的用户。详情：{detail}',
   'error.backend.mongoX509NeedsCertificate': '用客户端证书登录要开着 TLS，并在 TLS 证书那一组填上客户端证书',
   'error.backend.mongoNameEmpty': '库名和集合名都要填',
   'redis.action.rename': '改名',

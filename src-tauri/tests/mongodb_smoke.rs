@@ -26,6 +26,7 @@ use dataomni_lib::services::mongodb::{
   self as mongo, FindRequest, MongoTarget, MONGO_AUTH_FAILED, MONGO_AUTH_REQUIRED,
   MONGO_DOCUMENT_CHANGED, MONGO_DOCUMENT_GONE, MONGO_ID_CHANGED, MONGO_SERVER_ERROR,
   MONGO_SRV_LOOKUP_FAILED, MONGO_TIMEOUT, MONGO_TLS_FILE_INVALID, MONGO_UNREACHABLE,
+  MONGO_X509_REJECTED,
 };
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::Client;
@@ -329,7 +330,7 @@ async fn an_x509_login_is_the_certificate_subject() {
 
   let Some(profile) = x509("stranger.pem") else { return };
   let error = mongo::connect(&MongoTarget::from_profile(&profile)).await.err().unwrap_or_default();
-  assert!(error.starts_with(MONGO_AUTH_FAILED), "{error}");
+  assert!(error.starts_with(MONGO_X509_REJECTED), "{error}");
 }
 
 /// 证书文件读不了、或读出来不是证书加私钥：说是哪个文件，不等十秒超时
