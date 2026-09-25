@@ -1,6 +1,6 @@
 [package]
 name = "dataomni"
-version = "0.1.0"
+version = "0.4.0"
 description = "DataOmni is a Data Management Platform"
 authors = ["yuxuetr"]
 edition = "2021"

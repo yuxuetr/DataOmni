@@ -251,9 +251,9 @@ Tauri 本身跨平台，但**本项目只在下表记录的环境上实际验证
 
 | 平台 | 产出安装包 | 状态 | 依据 |
 |---|---|---|---|
-| macOS (Apple Silicon / aarch64) | `DataOmni.app`、`DataOmni_0.1.0_aarch64.dmg` | ✅ 已验证 | 2026-09-20 于 macOS 27.0 / arm64 执行 `bun tauri build`，退出码 0 |
+| macOS (Apple Silicon / aarch64) | `DataOmni.app`、`DataOmni_0.4.0_aarch64.dmg` | ✅ 已验证 | 2026-09-25 于 macOS 27.0 / arm64 执行 `bun run package`（带 Oracle Instant Client），退出码 0；装上后逐库回归，见 TODOs「发布里程碑」 |
 | macOS (Intel / x86_64) | — | ⚠️ 未验证 | 无 x86_64 机器，也未做交叉编译 |
-| Linux (Ubuntu 22.04 / x86_64) | `DataOmni_0.1.0_amd64.deb`、`.AppImage`、`.rpm` | ✅ 已验证（容器内） | 2026-09-23 执行 `bun tauri build`，退出码 0。`.deb` 在干净的 Ubuntu 22.04 容器里装、升级、卸载都验过，在 Xvfb + openbox 里跑通界面、Ctrl+W 与 gnome-keyring 存取密码；AppImage 只以 `--appimage-extract-and-run` 跑过（容器里没有 FUSE）；`.rpm` 没装过。**没有在真实桌面会话（GNOME / Wayland）里验过** |
+| Linux (Ubuntu 22.04 / x86_64) | `DataOmni_0.4.0_amd64.deb`、`DataOmni-0.4.0-1.x86_64.rpm` | ✅ 已验证（容器内） | 2026-09-25 执行 `bun tauri build --bundles deb,rpm --config src-tauri/tauri.oracle.conf.json`，退出码 0，包里的 Instant Client 与原件逐字节相同。**不发 AppImage**：打包工具会改 Instant Client 的 .so，而它的许可只许原样分发（TODOs 5.4）。以下为 2026-09-23 的验证记录：`.deb` 在干净的 Ubuntu 22.04 容器里装、升级、卸载都验过，在 Xvfb + openbox 里跑通界面、Ctrl+W 与 gnome-keyring 存取密码；AppImage 只以 `--appimage-extract-and-run` 跑过（容器里没有 FUSE）；`.rpm` 没装过。**没有在真实桌面会话（GNOME / Wayland）里验过** |
 | Windows | — | ❌ 未验证 | 既无 CI job，也无本地构建记录 |
 
 应用未签名 / 未公证，macOS 首次打开需在「系统设置 → 隐私与安全性」中放行。
@@ -396,12 +396,21 @@ bun install
 
 ## 📝 更新日志
 
-### v0.1.0（开发中，尚未发布）
+### v0.4.0（首个发布版）
 
-- 🔗 MySQL、PostgreSQL、SQLite 的连接、查询与分页
-- 🛡️ 凭据存入系统钥匙串，TLS 模式可配置，日志脱敏
-- ⚡ 查询超时、取消、结果截断与流式回传
-- 📊 表数据浏览与行级增删改
+版本号对应 [TODOs.md](TODOs.md)「发布里程碑」：v0.2、v0.4 的条件已满足；
+v0.3 只差 Windows 安装验证，所以这一版**不提供 Windows 安装包**。
+
+- 🔗 MySQL、PostgreSQL、SQLite、SQL Server、Oracle；MariaDB、TiDB、CockroachDB
+  走对应的连接类型，每一格都有真库用例（见兼容性矩阵）
+- 🍃 MongoDB：库与集合、文档的条件 / 排序 / 分页、增删改、集合的建与删、执行计划；
+  认证库、TLS、客户端证书与 X.509 登录、`mongodb+srv://`、SSH 隧道
+- 🔑 Redis：逻辑库、按模式翻键、六种类型的值、redis-cli 写法的命令行，
+  键与元素的增删改；口令 / ACL 用户、TLS、SSH 隧道。不含集群与 Sentinel
+- 🛡️ 凭据存入系统钥匙串，TLS 模式可配置，SSH 隧道，日志脱敏
+- ⚡ 查询超时、取消、结果截断与流式回传；多标签、脚本、历史
+- 📊 表数据浏览与编辑、事务、结构变更、执行计划、导入导出、ER 图
+- 📦 macOS（Apple Silicon）与 Linux（x86_64）安装包，均未签名
 
 当前开发进度与阶段划分见 [TODOs.md](TODOs.md)。
 
