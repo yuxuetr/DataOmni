@@ -9,7 +9,7 @@ import {
   type QueryExecution
 } from './queryExecution';
 import type { DatabaseSession } from './session';
-import { annotateEntry, historyEntryFromExecution, isAnnotated, normalizeTags } from './queryHistory';
+import { annotateEntry, historyEntryFromConsole, historyEntryFromExecution, historyLanguage, isAnnotated, normalizeTags } from './queryHistory';
 
 const SESSION = {
   id: 's1',
@@ -192,5 +192,31 @@ describe('annotateEntry', () => {
   it('不改原对象', () => {
     annotateEntry(base, { favorite: true });
     expect(base).not.toHaveProperty('favorite');
+  });
+});
+
+describe('historyEntryFromConsole', () => {
+  const run = {
+    id: 'r1',
+    language: 'redis' as const,
+    profileId: 'p1',
+    connectionName: 'cache',
+    database: 'db3',
+    text: 'AUTH reader hunter2',
+    startedAt: Date.parse('2026-09-25T10:00:00.000Z'),
+    durationMs: 12,
+    status: 'succeeded' as const,
+    rowsAffected: null
+  };
+
+  it('脱敏之后再记，带着语言', () => {
+    const entry = historyEntryFromConsole(run);
+    expect(entry).toMatchObject({ sql: 'AUTH reader ***', redacted: true, language: 'redis', startedAt: '2026-09-25T10:00:00.000Z', database: 'db3' });
+    expect(historyLanguage(entry)).toBe('redis');
+  });
+
+  it('超时说不出行数；没写语言的旧记录是 SQL', () => {
+    expect(historyEntryFromConsole({ ...run, language: 'cypher', text: 'MATCH (n) RETURN n', status: 'timed-out', rowsAffected: 5 }).rowsAffected).toBeNull();
+    expect(historyLanguage({ ...historyEntryFromConsole(run), language: undefined })).toBe('sql');
   });
 });

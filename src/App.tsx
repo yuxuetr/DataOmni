@@ -986,7 +986,11 @@ function App() {
       {showHistory && (
         <QueryHistoryDialog
           onClose={() => setShowHistory(false)}
-          onOpenInNewTab={activeSpeaksSql ? (sql) => openSqlTab(sql) : undefined}
+          onOpenInNewTab={activeHasQueryEditor ? (sql) => openSqlTab(sql) : undefined}
+          openLanguage={!activeConnection ? null
+            : activeSpeaksSql ? 'sql'
+              : activeConnection.config.db_type === DatabaseType.Neo4j ? 'cypher'
+                : activeConnection.config.db_type === DatabaseType.Elasticsearch ? 'elasticsearch' : null}
         />
       )}
 

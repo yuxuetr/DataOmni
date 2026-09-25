@@ -154,6 +154,21 @@ describe('loadQueryHistory / saveQueryHistory', () => {
     expect(loadQueryHistory().map((e) => e.id)).toEqual(['good']);
   });
 
+  it('控制台的记录带着语言读回来；认不出的语言不收（旧版本读新版本写的）', () => {
+    localStorage.setItem(
+      'dataomni.query-history',
+      JSON.stringify({
+        version: 1,
+        entries: [
+          entry({ id: 'sql' }),
+          entry({ id: 'cypher', language: 'cypher', sql: 'MATCH (n) RETURN n' }),
+          { ...entry({ id: 'future' }), language: 'ppl' }
+        ]
+      })
+    );
+    expect(loadQueryHistory().map((e) => [e.id, e.language])).toEqual([['sql', undefined], ['cypher', 'cypher']]);
+  });
+
   it('配额写不下时砍掉最旧的部分而不是整份丢掉', () => {
     const entries = Array.from({ length: 8 }, (_, index) =>
       entry({ id: `e${index}`, startedAt: daysAgo(index) })

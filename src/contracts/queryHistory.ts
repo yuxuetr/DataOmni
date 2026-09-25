@@ -12,7 +12,7 @@
  * 记录里只有行数这个标量。SQL 里的口令在入库前被 `redactSqlForHistory` 换掉。
  */
 
-import { redactSqlForHistory } from '../utils/historyRedaction';
+import { redactConsoleForHistory, redactSqlForHistory, type ConsoleLanguage } from '../utils/historyRedaction';
 import type { QueryExecution, QueryExecutionStatus } from './queryExecution';
 
 /**
@@ -44,8 +44,13 @@ export interface QueryHistoryEntry {
    */
   connectionName: string;
   database: string | null;
-  /** 已经脱敏的语句。原文从不落盘 */
+  /** 已经脱敏的语句（Cypher、ES 的请求、Redis 的命令也放在这里）。原文从不落盘 */
   sql: string;
+  /**
+   * 不是 SQL 时写着是哪一种。没有这一项的是 SQL——这一项出现之前存下的记录都是
+   * SQL 标签跑的，不必迁移。重新打开时按它挑编辑器，对不上的连接上不给打开
+   */
+  language?: ConsoleLanguage;
   /** 语句里有口令被替换过，照原样重跑会失败 */
   redacted: boolean;
   durationMs: number;
@@ -127,6 +132,45 @@ export function historyEntryFromExecution(
         : null,
     errorMessage: execution.error?.message
   };
+}
+
+/** 控制台（Cypher、Elasticsearch、Redis）跑完的一条。它们没有 `QueryExecution`，要记的就这些 */
+export interface ConsoleRun {
+  id: string;
+  language: ConsoleLanguage;
+  profileId: string;
+  connectionName: string;
+  database: string | null;
+  text: string;
+  /** 开始的时刻，毫秒 */
+  startedAt: number;
+  durationMs: number;
+  status: 'succeeded' | 'failed' | 'timed-out';
+  rowsAffected: number | null;
+  errorMessage?: string;
+}
+
+export function historyEntryFromConsole(run: ConsoleRun): QueryHistoryEntry {
+  const { sql, redacted } = redactConsoleForHistory(run.language, run.text);
+  return {
+    id: run.id,
+    startedAt: new Date(run.startedAt).toISOString(),
+    profileId: run.profileId,
+    connectionName: run.connectionName,
+    database: run.database,
+    sql,
+    redacted,
+    language: run.language,
+    durationMs: run.durationMs,
+    status: run.status,
+    rowsAffected: run.status === 'timed-out' ? null : run.rowsAffected,
+    errorMessage: run.errorMessage
+  };
+}
+
+/** 记录是哪一种语言写的；没写的是 SQL */
+export function historyLanguage(entry: QueryHistoryEntry): ConsoleLanguage | 'sql' {
+  return entry.language ?? 'sql';
 }
 
 /**

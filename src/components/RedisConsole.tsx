@@ -6,6 +6,8 @@ import { PLAIN_TEXT_INPUT } from './FormControls';
 import { useConfirmPrompt } from './ConfirmPrompt';
 import { useLanguageStore } from '../stores/languageStore';
 import { useQueryStore } from '../stores/queryStore';
+import { useAppStore } from '../stores/appStore';
+import { useHistoryStore } from '../stores/historyStore';
 import { describeError } from '../utils/describeError';
 import {
   bytesToBase64,
@@ -77,6 +79,25 @@ export function RedisConsole({ database, onRan }: RedisConsoleProps) {
       if (!confirmed) return;
     }
     setRunning(true);
+    const started = Date.now();
+    // 跑完的一条记进查询历史（AUTH 这类的口令在记录时打掉）
+    const remember = (status: 'succeeded' | 'failed' | 'timed-out', errorMessage?: string) => {
+      const connection = useAppStore.getState().activeConnection?.config;
+      if (!connection) return;
+      useHistoryStore.getState().recordConsole({
+        id: crypto.randomUUID(),
+        language: 'redis',
+        profileId: connection.id,
+        connectionName: connection.name,
+        database: `db${database}`,
+        text,
+        startedAt: started,
+        durationMs: Date.now() - started,
+        status,
+        rowsAffected: null,
+        errorMessage
+      });
+    };
     try {
       const reply = await invoke<RedisReply>('redis_execute', {
         connectionString,
@@ -85,11 +106,14 @@ export function RedisConsole({ database, onRan }: RedisConsoleProps) {
         timeoutMs
       });
       record({ line: text, output: formatReply(reply), failed: false });
+      // 服务端回的错误是一条正常的回答，但对历史来说这条没跑成
+      remember(reply.kind === 'error' ? 'failed' : 'succeeded', reply.kind === 'error' ? reply.message : undefined);
       setLine('');
       onRan();
     } catch (caught) {
       // 和成功时一样清掉：留着的话下一条会接在后面打；要改就按 ↑ 取回来
       record({ line: text, output: describeError(caught), failed: true });
+      remember(String(caught).startsWith('DATAOMNI_REDIS_TIMEOUT') ? 'timed-out' : 'failed', describeError(caught));
       setLine('');
     } finally {
       setRunning(false);

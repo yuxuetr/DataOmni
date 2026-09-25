@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { redactSqlForHistory } from './historyRedaction';
+import { redactConsoleForHistory, redactSqlForHistory } from './historyRedaction';
 
 describe('redactSqlForHistory', () => {
   it('打掉 MySQL 的 IDENTIFIED BY，连带中间的插件名', () => {
@@ -89,5 +89,46 @@ describe('redactSqlForHistory', () => {
   it('PostgreSQL 的函数体整段跳过，里面的撇号不影响外面', () => {
     const sql = "CREATE FUNCTION f() RETURNS text AS $$ SELECT 'it''s' $$ LANGUAGE sql";
     expect(redactSqlForHistory(sql).sql).toBe(sql);
+  });
+});
+
+describe('redactConsoleForHistory', () => {
+  it('打掉 Cypher 的口令，改自己口令时新旧两个都打', () => {
+    expect(redactConsoleForHistory('cypher', "CREATE USER jake SET PASSWORD 'abc123' CHANGE NOT REQUIRED").sql)
+      .toBe("CREATE USER jake SET PASSWORD '***' CHANGE NOT REQUIRED");
+    expect(redactConsoleForHistory('cypher', 'ALTER CURRENT USER SET PASSWORD FROM "old" TO \'new\'').sql)
+      .toBe("ALTER CURRENT USER SET PASSWORD FROM '***' TO '***'");
+    expect(redactConsoleForHistory('cypher', "CREATE (:Account {name: 'a', api_key: 'sk-1'})").sql)
+      .toBe("CREATE (:Account {name: 'a', api_key: '***'})");
+    expect(redactConsoleForHistory('cypher', "MATCH (u) SET u.password = 'x' RETURN u").sql)
+      .toBe("MATCH (u) SET u.password = '***' RETURN u");
+    // 普通的查询原样
+    const plain = "MATCH (n:Person {name: 'token ring'}) RETURN n";
+    expect(redactConsoleForHistory('cypher', plain)).toEqual({ sql: plain, redacted: false });
+  });
+
+  it('打掉 Elasticsearch 请求体与查询串里按名字认出的口令', () => {
+    const request = 'PUT /_security/user/app\n{ "password" : "hunter2", "roles": ["r"], "metadata": { "client_secret": "s\\"x" } }';
+    const result = redactConsoleForHistory('elasticsearch', request);
+    expect(result.sql).toBe('PUT /_security/user/app\n{ "password" : "***", "roles": ["r"], "metadata": { "client_secret": "***" } }');
+    expect(result.redacted).toBe(true);
+    expect(redactConsoleForHistory('elasticsearch', 'GET /x/_search?api_key=abc&size=1').sql).toBe('GET /x/_search?api_key=***&size=1');
+    expect(redactConsoleForHistory('elasticsearch', 'GET /books/_search\n{ "query": { "match": { "title": "password" } } }').redacted).toBe(false);
+  });
+
+  it('按参数打掉 Redis 命令里的口令', () => {
+    const redis = (line: string) => redactConsoleForHistory('redis', line).sql;
+    expect(redis('AUTH hunter2')).toBe('AUTH ***');
+    expect(redis('auth reader "p w"')).toBe('auth reader ***');
+    expect(redis('HELLO 3 AUTH default hunter2 SETNAME x')).toBe('HELLO 3 AUTH default *** SETNAME x');
+    expect(redis('MIGRATE h 6379 k 0 5000 AUTH2 u pw KEYS a')).toBe('MIGRATE h 6379 k 0 5000 AUTH2 u *** KEYS a');
+    expect(redis('CONFIG SET requirepass s3cret maxmemory 1gb')).toBe('CONFIG SET requirepass *** maxmemory 1gb');
+    expect(redis('ACL SETUSER app on >pw1 <old ~cache:* +get')).toBe('ACL SETUSER app on >*** <*** ~cache:* +get');
+    expect(redactConsoleForHistory('redis', 'GET password')).toEqual({ sql: 'GET password', redacted: false });
+  });
+
+  it('三种都打掉连接串里的口令', () => {
+    expect(redactConsoleForHistory('cypher', "LOAD CSV FROM 'https://u:pw@h/x.csv' AS row RETURN row").sql)
+      .toBe("LOAD CSV FROM 'https://u:***@h/x.csv' AS row RETURN row");
   });
 });

@@ -15,6 +15,7 @@ import { useThemeStore } from '../stores/themeStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useAppStore } from '../stores/appStore';
 import { takeCypherAutorun } from '../stores/cypherAutorun';
+import { useHistoryStore } from '../stores/historyStore';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { PanelResizeHandle } from './PanelResizeHandle';
 import { DestructiveStatementPrompt } from './DestructiveStatementPrompt';
@@ -112,6 +113,26 @@ export function EsConsole({ connection }: EsConsoleProps) {
     [t]
   );
 
+  /**
+   * 发出去的一条记进查询历史：写成控制台的写法（方法、路径、请求体），从历史里打开就能再发。
+   * 请求体写错、没发出去的不记
+   */
+  const remember = (request: EsConsoleRequest, started: number, status: 'succeeded' | 'failed' | 'timed-out', errorMessage?: string) => {
+    useHistoryStore.getState().recordConsole({
+      id: crypto.randomUUID(),
+      language: 'elasticsearch',
+      profileId: connection.id,
+      connectionName: connection.name,
+      database: null,
+      text: request.body === null ? `${request.method} ${request.path}` : `${request.method} ${request.path}\n${request.body.trimEnd()}`,
+      startedAt: started,
+      durationMs: Date.now() - started,
+      status,
+      rowsAffected: null,
+      errorMessage
+    });
+  };
+
   /** 真的发：依次一条，失败就停，后面的标成没发 */
   const execute = async (requests: EsConsoleRequest[]) => {
     if (!connectionString) return;
@@ -133,6 +154,7 @@ export function EsConsole({ connection }: EsConsoleProps) {
         stopAfter(id);
         break;
       }
+      const started = Date.now();
       try {
         const response = await invoke<EsResponse>('elasticsearch_run', {
           connectionString,
@@ -143,6 +165,7 @@ export function EsConsole({ connection }: EsConsoleProps) {
           timeoutMs: queryTimeoutMs
         });
         setRuns((previous) => previous.map((run) => (run.id === id ? { id, request, state: 'done', response } : run)));
+        remember(request, started, response.status < 400 ? 'succeeded' : 'failed', response.status < 400 ? undefined : `HTTP ${response.status}`);
         if (response.status >= 400) {
           stopAfter(id);
           break;
@@ -151,6 +174,7 @@ export function EsConsole({ connection }: EsConsoleProps) {
       } catch (caught) {
         const error = describeError(caught);
         setRuns((previous) => previous.map((run) => (run.id === id ? { id, request, state: 'failed', error } : run)));
+        remember(request, started, String(caught).startsWith('DATAOMNI_ES_TIMEOUT') ? 'timed-out' : 'failed', error);
         stopAfter(id);
         break;
       }

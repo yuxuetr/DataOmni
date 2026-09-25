@@ -279,3 +279,93 @@ export function redactSqlForHistory(sql: string): RedactedSql {
     redacted: targets.size > 0 || withoutUrlCredentials !== result
   };
 }
+
+/** 控制台那几种语言：Cypher、Elasticsearch 的请求、Redis 的命令 */
+export type ConsoleLanguage = 'cypher' | 'elasticsearch' | 'redis';
+
+/** 名字里带着这些词的键、属性、参数，值就当口令 */
+const SECRET_WORDS = '[\\w.-]*?(?:password|passwd|pwd|secret|token|api_?key|private_key|credentials?)';
+/** Cypher 的字符串：单双引号都行，反斜杠转义 */
+const CYPHER_STRING = `'(?:[^'\\\\]|\\\\.)*'|"(?:[^"\\\\]|\\\\.)*"`;
+const JSON_STRING = '"(?:[^"\\\\]|\\\\.)*"';
+
+function replaceAll(text: string, pattern: RegExp, replacer: (...groups: string[]) => string): string {
+  return text.replace(pattern, (...match) => replacer(...(match.slice(0, -2) as string[])));
+}
+
+/**
+ * `CREATE USER x SET PASSWORD 'pw'`、`ALTER CURRENT USER SET PASSWORD FROM 'old' TO 'new'`，
+ * 以及按属性名的 `{password: 'x'}` 与 `n.api_key = 'x'`
+ */
+function redactCypher(text: string): string {
+  // 改自己的口令要写旧的和新的，两个都打；先打这一种，免得下一条只打掉 FROM 后面那个
+  let result = replaceAll(
+    text,
+    new RegExp(`(\\bPASSWORD\\s+FROM\\s+)(?:${CYPHER_STRING})(\\s+TO\\s+)(?:${CYPHER_STRING})`, 'gi'),
+    (_, from, to) => `${from}${REDACTED}${to}${REDACTED}`
+  );
+  result = replaceAll(result, new RegExp(`(\\bPASSWORD\\s+)(?:${CYPHER_STRING})`, 'gi'), (_, keyword) => `${keyword}${REDACTED}`);
+  return replaceAll(
+    result,
+    new RegExp(`((?:[{,]\\s*|\\.)${SECRET_WORDS}\\s*(?::|=)\\s*)(?:${CYPHER_STRING})`, 'gi'),
+    (_, prefix) => `${prefix}${REDACTED}`
+  );
+}
+
+/** 请求体里按键名：`"password": "…"`；路径的查询串里按参数名 */
+function redactEsRequest(text: string): string {
+  const body = replaceAll(text, new RegExp(`("${SECRET_WORDS}"\\s*:\\s*)(${JSON_STRING})`, 'gi'), (_, prefix) => `${prefix}"***"`);
+  return replaceAll(body, new RegExp(`([?&]${SECRET_WORDS}=)([^&\\s]*)`, 'gi'), (_, prefix) => `${prefix}***`);
+}
+
+/**
+ * redis-cli 写法的一行：`AUTH [user] pass`、`HELLO 3 AUTH user pass`、`MIGRATE … AUTH pass` /
+ * `AUTH2 user pass`、`CONFIG SET requirepass x`、`ACL SETUSER u >pass <pass`。
+ * 按参数打码（参数可以带引号），不按正则套整行
+ */
+function redactRedisCommand(text: string): string {
+  const tokens = [...text.matchAll(/"(?:[^"\\]|\\.)*"|'[^']*'|\S+/g)].map((match) => ({
+    text: match[0],
+    from: match.index ?? 0,
+    upper: match[0].replace(/^["']|["']$/g, '').toUpperCase()
+  }));
+  const secret = new Set<number>();
+  const command = tokens[0]?.upper;
+  if (command === 'AUTH') {
+    secret.add(tokens.length - 1);
+  }
+  tokens.forEach((token, index) => {
+    if (index === 0) return;
+    // HELLO 与 MIGRATE 里的 AUTH user pass / AUTH pass、MIGRATE 的 AUTH2 user pass
+    if ((command === 'HELLO' || command === 'MIGRATE') && (token.upper === 'AUTH' || token.upper === 'AUTH2')) {
+      const withUser = command === 'HELLO' || token.upper === 'AUTH2';
+      secret.add(index + (withUser ? 2 : 1));
+    }
+    if (command === 'ACL' && tokens[1]?.upper === 'SETUSER' && index > 2 && /^["']?[<>]/.test(token.text)) {
+      secret.add(index);
+    }
+  });
+  if (command === 'CONFIG' && tokens[1]?.upper === 'SET') {
+    for (let index = 2; index + 1 < tokens.length; index += 2) {
+      if (/PASS|AUTH|SECRET/.test(tokens[index].upper)) secret.add(index + 1);
+    }
+  }
+  let result = '';
+  let cursor = 0;
+  [...secret].filter((index) => index > 0 && index < tokens.length).sort((a, b) => a - b).forEach((index) => {
+    const token = tokens[index];
+    const kept = /^["']?[<>]/.test(token.text) && command === 'ACL' ? token.text.replace(/^(["']?[<>]).*$/s, '$1') : '';
+    result += text.slice(cursor, token.from) + kept + '***';
+    cursor = token.from + token.text.length;
+  });
+  return result + text.slice(cursor);
+}
+
+/** 控制台的一条写进历史之前：规则按语言，连接串里的口令三种都打 */
+export function redactConsoleForHistory(language: ConsoleLanguage, text: string): RedactedSql {
+  const redacted = language === 'cypher' ? redactCypher(text)
+    : language === 'elasticsearch' ? redactEsRequest(text)
+      : redactRedisCommand(text);
+  const withoutUrlCredentials = redacted.replace(URL_CREDENTIAL, '$1***$3');
+  return { sql: withoutUrlCredentials, redacted: withoutUrlCredentials !== text };
+}

@@ -3,6 +3,7 @@ import { PLAIN_TEXT_INPUT } from './FormControls';
 import { Check, Copy, Search, Star, Tag, Timer, Trash2, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import {
+  historyLanguage,
   normalizeTags,
   QUERY_HISTORY_STATUSES,
   type QueryHistoryEntry,
@@ -23,7 +24,19 @@ interface QueryHistoryDialogProps {
    * 没反应，不如让那一行不是按钮，复制仍然可用。
    */
   onOpenInNewTab?: (sql: string) => void;
+  /**
+   * 当前连接的查询标签认哪一种语言。只有同一种语言的记录能打开：Cypher 放进 SQL 编辑器里
+   * 只会报语法错。Redis 没有查询标签，它的记录只能复制
+   */
+  openLanguage?: ReturnType<typeof historyLanguage> | null;
 }
+
+/** 非 SQL 的记录挂一个标记；产品名，不翻译 */
+const LANGUAGE_BADGES: Partial<Record<ReturnType<typeof historyLanguage>, string>> = {
+  cypher: 'Cypher',
+  elasticsearch: 'Elasticsearch',
+  redis: 'Redis'
+};
 
 const STATUS_LABEL_KEYS: Record<QueryHistoryStatus, TranslationKey> = {
   succeeded: 'history.status.succeeded',
@@ -43,7 +56,7 @@ function formatDuration(durationMs: number): string {
   return durationMs < 1000 ? `${durationMs} ms` : `${(durationMs / 1000).toFixed(2)} s`;
 }
 
-export function QueryHistoryDialog({ onClose, onOpenInNewTab }: QueryHistoryDialogProps) {
+export function QueryHistoryDialog({ onClose, onOpenInNewTab, openLanguage = null }: QueryHistoryDialogProps) {
   const t = useLanguageStore((state) => state.t);
   const entries = useHistoryStore((state) => state.entries);
   const annotate = useHistoryStore((state) => state.annotate);
@@ -243,6 +256,11 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab }: QueryHistoryDial
                     >
                       {t(STATUS_LABEL_KEYS[entry.status])}
                     </span>
+                    {LANGUAGE_BADGES[historyLanguage(entry)] && (
+                      <span className="shrink-0 rounded-control border border-line-strong px-1.5 py-0.5 font-medium text-fg-muted">
+                        {LANGUAGE_BADGES[historyLanguage(entry)]}
+                      </span>
+                    )}
                     <span className="shrink-0">{new Date(entry.startedAt).toLocaleString()}</span>
                     <span className="truncate">
                       {entry.connectionName}
@@ -313,7 +331,7 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab }: QueryHistoryDial
                     </span>
                   </div>
 
-                  {onOpenInNewTab ? (
+                  {onOpenInNewTab && historyLanguage(entry) === openLanguage ? (
                     <button
                       type="button"
                       onClick={() => {

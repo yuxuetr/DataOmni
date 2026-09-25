@@ -443,7 +443,6 @@ Neo4j 连接用 Cypher 查询，结果按 Cypher 的写法显示。
   - `PROFILE` 的结果超过上限时，多出来的行会读完再丢掉（服务端要整份读完才给统计），
     所以比同一条不带 `PROFILE` 的慢。
   - 每一步的耗时没有显示：社区版的服务端不量它（报的是 0），显示出来会被当成「0 毫秒」。
-- 还没有的：查询历史（Cypher 的执行还不进历史）。
 
 ## Elasticsearch
 
@@ -503,7 +502,7 @@ Elasticsearch 连接用的是控制台：写法和 Kibana 的 Dev Tools 一样�
   `_update_by_query`、`_reindex` 与改权限、改集群设置按「批量写」，删索引、删数据流、删快照按
   「会丢掉数据」。写错请求体的那条之后的请求到不了，不会为它们弹框。
 - 建索引、改别名在控制台里写（`PUT 索引 {…}`、`POST _aliases`），没有另做对话框。
-- 还没有的：API Key 认证；查询历史（请求还不进历史）。
+- 还没有的：API Key 认证。
 
 ## 写 SQL 与执行
 
@@ -804,6 +803,13 @@ TiDB 上同时改列和改表名会拆成两条语句（它不收一条 ALTER �
 - 每条可以收藏、命名、打标签，复制 SQL，或「在新标签里打开」。
 - **历史里不存查询结果**。语句里的口令（`IDENTIFIED BY`、`PASSWORD =` 之类）在
   写入前就被换成 `'***'`，照原样重跑会失败，界面上会提示。
+- Neo4j 的 Cypher、Elasticsearch 控制台的请求、Redis 命令行的命令也记，前面挂着 `Cypher`、
+  `Elasticsearch`、`Redis` 的标记。口令同样在写入前换掉：Cypher 的 `SET PASSWORD '…'`（改自己口令时新旧两个）
+  与名叫 `password`、`api_key` 这类的属性；ES 请求体里这类名字的键、查询串里的这类参数；Redis 的
+  `AUTH`、`HELLO … AUTH`、`MIGRATE … AUTH`、`CONFIG SET requirepass`、`ACL SETUSER` 的 `>口令`。
+  ES 的请求体写错、Redis 的命令拆不开这种没发出去的不记。
+- 「在新标签里打开」只对和当前连接同一种语言的记录可用：连着 Neo4j 时能打开 Cypher 的，打不开 SQL 的。
+  Redis 没有查询标签，它的记录只能复制。
 
 保留规则在「设置 → 查询历史保留」：默认保留 30 天、最多 500 条。收藏、命名或打过
 标签的不按时间过期；跑得比「慢查询阈值」（默认 1000 毫秒）还久的也不按时间淘汰。

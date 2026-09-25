@@ -15,6 +15,7 @@ import { useThemeStore } from '../stores/themeStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useAppStore } from '../stores/appStore';
 import { takeCypherAutorun } from '../stores/cypherAutorun';
+import { useHistoryStore } from '../stores/historyStore';
 import { useResizablePanel } from '../hooks/useResizablePanel';
 import { PanelResizeHandle } from './PanelResizeHandle';
 import { DestructiveStatementPrompt } from './DestructiveStatementPrompt';
@@ -154,6 +155,28 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
     [t]
   );
 
+  /** 跑完的一条记进查询历史（口令在记录时打掉） */
+  const remember = (
+    statement: string,
+    started: number,
+    status: 'succeeded' | 'failed' | 'timed-out',
+    rows: number | null,
+    database: string | null,
+    errorMessage?: string
+  ) => useHistoryStore.getState().recordConsole({
+    id: crypto.randomUUID(),
+    language: 'cypher',
+    profileId: connection.id,
+    connectionName: connection.name,
+    database: database ?? (connection.database?.trim() || null),
+    text: statement,
+    startedAt: Date.now() - Math.round(performance.now() - started),
+    durationMs: Math.round(performance.now() - started),
+    status,
+    rowsAffected: rows,
+    errorMessage
+  });
+
   /** 真的跑：依次一条，失败就停，后面的标成没跑 */
   const execute = async (statements: string[]) => {
     if (!connectionString) return;
@@ -179,8 +202,10 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
         wrote ||= result.summary.counters.length > 0;
         const elapsedMs = Math.round(performance.now() - started);
         setRuns((previous) => previous.map((run) => (run.id === id ? { id, statement, state: 'done', result, elapsedMs } : run)));
+        remember(statement, started, 'succeeded', result.rows.length, result.summary.database);
       } catch (caught) {
         const error = describeError(caught);
+        remember(statement, started, String(caught).startsWith('DATAOMNI_NEO4J_TIMEOUT') ? 'timed-out' : 'failed', null, null, error);
         setRuns((previous) => previous.map((run) => {
           if (run.id === id) return { id, statement, state: 'failed', error };
           return run.id > id ? { id: run.id, statement: run.statement, state: 'skipped' } : run;

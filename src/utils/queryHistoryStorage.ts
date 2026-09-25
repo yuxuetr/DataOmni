@@ -17,6 +17,7 @@ import type { QueryHistoryEntry } from '../contracts/queryHistory';
 import { isAnnotated, isSlowQuery } from '../contracts/queryHistory';
 
 const STORAGE_KEY = 'dataomni.query-history';
+const CONSOLE_LANGUAGES: readonly string[] = ['cypher', 'elasticsearch', 'redis'];
 const RETENTION_KEY = 'dataomni.history-retention';
 const SNAPSHOT_VERSION = 1;
 
@@ -155,7 +156,9 @@ function isEntry(value: unknown): value is QueryHistoryEntry {
     typeof entry.sql === 'string' &&
     typeof entry.startedAt === 'string' &&
     typeof entry.profileId === 'string' &&
-    typeof entry.status === 'string'
+    typeof entry.status === 'string' &&
+    // 新版本加了别的语言、又退回旧版本时，认不出的语言不收：拿它当 SQL 重跑就错了
+    (entry.language === undefined || CONSOLE_LANGUAGES.includes(entry.language))
   );
 }
 

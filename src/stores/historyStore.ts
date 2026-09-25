@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import {
   annotateEntry,
+  historyEntryFromConsole,
   historyEntryFromExecution,
+  type ConsoleRun,
   type QueryHistoryContext,
   type QueryHistoryEntry
 } from '../contracts/queryHistory';
@@ -22,6 +24,8 @@ interface HistoryState {
   entries: QueryHistoryEntry[];
   retention: HistoryRetention;
   record: (execution: QueryExecution, context: QueryHistoryContext) => void;
+  /** Cypher、Elasticsearch、Redis 控制台跑完的一条 */
+  recordConsole: (run: ConsoleRun) => void;
   /** 改保留策略。立刻按新策略淘汰一遍，见实现处的说明 */
   setRetention: (retention: Partial<HistoryRetention>) => void;
   /** 收藏 / 命名 / 打标签。只传要改的那几项 */
@@ -41,6 +45,15 @@ export const useHistoryStore = create<HistoryState>((set) => ({
     if (!entry) {
       return;
     }
+    set((state) => {
+      const entries = pruneHistory([entry, ...state.entries], state.retention);
+      saveQueryHistory(entries);
+      return { entries };
+    });
+  },
+
+  recordConsole: (run) => {
+    const entry = historyEntryFromConsole(run);
     set((state) => {
       const entries = pruneHistory([entry, ...state.entries], state.retention);
       saveQueryHistory(entries);
