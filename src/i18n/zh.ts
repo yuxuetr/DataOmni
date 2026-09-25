@@ -812,8 +812,8 @@ export const zh = {
   'offline.reconnectHint': '在左侧重新选择该连接即可继续，标签不会改到当前连接上。',
   'offline.emptyDraft': '这个查询标签还没有写过内容。',
   'offline.erNeedsConnection': 'ER 关系图需要连接后才能读取。',
-  'offline.tableNeedsConnection': '表「{table}」的数据需要连接后才能读取。',
-  'offline.structureNeedsConnection': '表「{table}」的结构需要连接后才能读取。',
+  'offline.tableNeedsConnection': '「{table}」的数据需要连接后才能读取。',
+  'offline.structureNeedsConnection': '「{table}」的结构需要连接后才能读取。',
 
   // 连接表单
   'form.category.relational': '关系型数据库',
