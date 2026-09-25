@@ -226,7 +226,8 @@ function groupByKind(
   return KIND_ORDER.flatMap(kind => {
     const matching = objects
       .filter(object => object.kind === kind)
-      .sort((left, right) => left.name.localeCompare(right.name));
+      // Redis 的逻辑库名是 db 加序号：按字符串比 db10 会排在 db3 前面
+      .sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: kind === 'keyspace' }));
 
     // 查不到的类型不出现空分组：一行「函数 0」既占地方又不提供信息
     return matching.length === 0

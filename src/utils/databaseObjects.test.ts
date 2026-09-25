@@ -276,3 +276,13 @@ describe('MongoDB 的库排序', () => {
     expect([...names].sort(schemaOrder(trailingSchemas(DatabaseType.MongoDB)))[0]).toBe('analytics');
   });
 });
+
+describe('Redis 逻辑库的次序', () => {
+  it('按序号排，db3 在 db10 前面；别的类型仍按字符串', () => {
+    const keyspaces = ['db10', 'db3', 'db15', 'db7'].map((name) => ({ schema: null, name, kind: 'keyspace' as const, id: name }));
+    const [group] = buildObjectTree(keyspaces, false, stubLabel);
+    expect(group.objects.map((object) => object.name)).toEqual(['db3', 'db7', 'db10', 'db15']);
+    const tables = ['t10', 't3'].map((name) => objectNamed(name));
+    expect(buildObjectTree(tables, false, stubLabel)[0].objects.map((object) => object.name)).toEqual(['t10', 't3']);
+  });
+});
