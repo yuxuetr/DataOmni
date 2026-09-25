@@ -89,6 +89,8 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
         timeoutMs
       });
       setKeys((previous) => (from === null ? page.keys : [...previous, ...page.keys]));
+      // 选中的那个键又扫到了：剩余时间换成这次的，否则列表写 42 秒、详情还写着 2 分
+      setSelected((current) => (current && page.keys.find((row) => row.key.raw === current.key.raw)) ?? current);
       setCursor(page.cursor);
     } catch (caught) {
       setScanError(describeError(caught));
@@ -508,10 +510,12 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
             } catch (caught) {
               throw new Error(describeError(caught));
             }
+            // 就地换掉这一行、选中不变：值没变，不必重读；重扫的话新名字未必匹配当前的模式，
+            // 刚改的键就从眼前消失了
+            const renamed = { ...selected, key: { raw: encodeText(text), text, binary: false } };
             setDialog(null);
-            setSelected(null);
-            setValue(null);
-            void scan(applied, null);
+            setSelected(renamed);
+            setKeys((previous) => previous.map((row) => (row.key.raw === selected.key.raw ? renamed : row)));
           }}
           onClose={() => setDialog(null)}
         />
