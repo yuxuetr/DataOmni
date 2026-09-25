@@ -192,6 +192,7 @@ export function EsDocumentEditor({ connection, address, onWritten, onClose }: Es
       )}
       {asking && (
         <DestructiveStatementPrompt
+          language="json"
           sql={asking === 'save' ? savePreview : deletePreview}
           risk="scoped-write"
           statementCount={1}

@@ -7,9 +7,13 @@ import { RISK_DESCRIPTION_KEYS, type StatementRisk } from '../utils/statementRis
 import type { ExecutionReversibility } from '../utils/statementReversibility';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
+import { HighlightedCode } from './HighlightedCode';
+import type { CodeLanguage } from '../utils/codeHighlight';
 
 interface DestructiveStatementPromptProps {
   sql: string;
+  /** 语句用哪种语言上色；Cypher、ES 的请求、MongoDB 的命令也从这里过 */
+  language?: CodeLanguage;
   risk: StatementRisk;
   connectionName: string;
   environment: ConnectionEnvironment;
@@ -54,6 +58,7 @@ interface DestructiveStatementPromptProps {
  */
 export function DestructiveStatementPrompt({
   sql,
+  language = 'sql',
   risk,
   connectionName,
   environment,
@@ -149,9 +154,7 @@ export function DestructiveStatementPrompt({
               </ul>
             )}
 
-            <pre className="mt-2 max-h-40 overflow-auto rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg select-text whitespace-pre-wrap break-words">
-              {sql}
-            </pre>
+            <pre className="mt-2 max-h-40 overflow-auto rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg select-text whitespace-pre-wrap break-words"><HighlightedCode code={sql} language={language} /></pre>
 
             {/* 被拦下来的人最想知道的下一件事：按下去之后还能不能反悔 */}
             <p

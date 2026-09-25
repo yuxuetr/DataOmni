@@ -6,6 +6,7 @@ import clsx from 'clsx';
 import { DatabaseType } from '../contracts/connection';
 import type { ConnectionProfile } from '../contracts';
 import type { IndexInfo, SchemaObjects } from '../utils/schemaObjects';
+import { HighlightedCode } from './HighlightedCode';
 
 export type { SchemaObjects };
 
@@ -160,9 +161,7 @@ export function SchemaObjectSections({
                 <Pill tone="accent">{trigger.timing} {trigger.event}</Pill>
               )}
             </div>
-            <pre className="mt-1 overflow-x-auto font-mono text-xs text-fg-muted select-text whitespace-pre">
-              {trigger.definition}
-            </pre>
+            <pre className="mt-1 overflow-x-auto font-mono text-xs text-fg-muted select-text whitespace-pre"><HighlightedCode code={trigger.definition} language="sql" /></pre>
           </li>
         ))}
       </SchemaSection>
@@ -238,9 +237,7 @@ function DdlSection({
       ) : failure ? (
         <SectionFailure message={failure} />
       ) : ddl ? (
-        <pre className="overflow-x-auto px-4 py-3 font-mono text-xs text-fg select-text whitespace-pre">
-          {ddl}
-        </pre>
+        <pre className="overflow-x-auto px-4 py-3 font-mono text-xs text-fg select-text whitespace-pre"><HighlightedCode code={ddl} language="sql" /></pre>
       ) : (
         <p className="px-4 py-2 text-xs text-fg-subtle">
           {dbType === DatabaseType.PostgreSQL || dbType === DatabaseType.SqlServer

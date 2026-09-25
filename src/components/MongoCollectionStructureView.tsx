@@ -6,6 +6,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import { describeError } from '../utils/describeError';
 import { useConfirmPrompt } from './ConfirmPrompt';
 import { MongoCreateIndexDialog } from './MongoCreateIndexDialog';
+import { HighlightedCode } from './HighlightedCode';
 
 interface MongoIndex {
   name: string;
@@ -185,9 +186,7 @@ export function MongoCollectionStructureView({ database, collection, isView }: M
                 {isView ? t('mongo.structure.viewDefinition') : t('mongo.structure.collectionOptions')}
               </h3>
               {structure.options ? (
-                <pre className="select-text overflow-auto rounded-control border border-line bg-surface-sunken p-3 font-mono text-[13px] text-fg">
-                  {structure.options}
-                </pre>
+                <pre className="select-text overflow-auto rounded-control border border-line bg-surface-sunken p-3 font-mono text-[13px] text-fg"><HighlightedCode code={structure.options} language="javascript" /></pre>
               ) : (
                 <p className="text-sm text-fg-muted">{t('mongo.structure.noOptions')}</p>
               )}

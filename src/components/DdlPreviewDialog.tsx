@@ -4,6 +4,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import type { TranslationKey } from '../i18n/translate';
 import type { DdlAction, DdlPlan } from '../utils/tableDdl';
 import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
+import { HighlightedCode } from './HighlightedCode';
 
 interface DdlPreviewDialogProps {
   plan: DdlPlan;
@@ -124,9 +125,7 @@ export function DdlPreviewDialog({
                   <span className="mt-2 w-4 shrink-0 text-right font-mono text-xs text-fg-subtle">
                     {index + 1}
                   </span>
-                  <pre className="min-w-0 flex-1 select-text whitespace-pre-wrap break-words rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg">
-                    {sql}
-                  </pre>
+                  <pre className="min-w-0 flex-1 select-text whitespace-pre-wrap break-words rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg"><HighlightedCode code={sql} language="sql" /></pre>
                 </li>
               ))}
             </ol>

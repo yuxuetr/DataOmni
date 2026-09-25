@@ -6,6 +6,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import { describeError } from '../utils/describeError';
 import { createSchemaSql } from '../utils/objectDdl';
 import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
+import { HighlightedCode } from './HighlightedCode';
 
 interface CreateSchemaDialogProps {
   connectionId: string;
@@ -111,9 +112,7 @@ export function CreateSchemaDialog({
             />
           </label>
           {sql && (
-            <pre className="select-text whitespace-pre-wrap break-words rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg">
-              {sql}
-            </pre>
+            <pre className="select-text whitespace-pre-wrap break-words rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg"><HighlightedCode code={sql} language="sql" /></pre>
           )}
           <p className="text-xs text-fg-subtle">{t('schemaCreate.thenTable')}</p>
           {error && <p className="select-text text-sm text-danger">{error}</p>}

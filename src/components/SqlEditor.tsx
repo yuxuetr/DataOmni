@@ -57,6 +57,7 @@ import {
   buildCompletionSchema,
   sqlDialectFor
 } from '../utils/sqlCompletionSchema';
+import { HighlightedCode } from './HighlightedCode';
 
 interface SqlEditorProps {
   /** 补全要方言与库名，确认框要把「在哪个库上执行」说清楚 */
@@ -790,9 +791,10 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
         <div className="flex min-w-0 items-center gap-2">
           <span className="shrink-0 text-xs font-medium text-fg-muted">#{ordinal}</span>
           {/* 语句原文折成一行：完整内容就在上面的编辑器里，这里只是用来认
-              「这份结果是哪条语句的」 */}
+              「这份结果是哪条语句的」。靠 nowrap 在显示上折，不改原文再上色——
+              把换行换成空格，前面一行 `-- 注释` 就把整条语句都吞成了注释 */}
           <span className="min-w-0 truncate font-mono text-xs text-fg" title={statement.sql}>
-            {statement.sql.replace(/\s+/g, ' ').trim()}
+            <HighlightedCode code={statement.sql.trim()} language="sql" />
           </span>
           {statement.executedAt && (
             <span className="flex shrink-0 items-center gap-1 text-xs text-fg-subtle">

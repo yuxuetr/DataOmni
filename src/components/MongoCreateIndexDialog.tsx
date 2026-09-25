@@ -5,6 +5,7 @@ import { PLAIN_TEXT_INPUT } from './FormControls';
 import { useLanguageStore } from '../stores/languageStore';
 import { describeError } from '../utils/describeError';
 import { shellString } from '../utils/mongoCommandText';
+import { HighlightedCode } from './HighlightedCode';
 
 interface MongoCreateIndexDialogProps {
   connectionString: string;
@@ -146,9 +147,7 @@ export function MongoCreateIndexDialog({
           </label>
 
           {command && (
-            <pre className="select-text whitespace-pre-wrap break-words rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg">
-              {command}
-            </pre>
+            <pre className="select-text whitespace-pre-wrap break-words rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg"><HighlightedCode code={command} language="javascript" /></pre>
           )}
           <p className="text-xs text-fg-subtle">{t('mongo.index.buildNote')}</p>
           {error && <p className="select-text text-sm text-danger">{error}</p>}

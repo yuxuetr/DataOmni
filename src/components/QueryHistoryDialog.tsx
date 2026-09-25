@@ -14,6 +14,8 @@ import { useHistoryStore } from '../stores/historyStore';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useLanguageStore } from '../stores/languageStore';
 import type { TranslationKey } from '../i18n/translate';
+import { HighlightedCode } from './HighlightedCode';
+import type { CodeLanguage } from '../utils/codeHighlight';
 
 interface QueryHistoryDialogProps {
   onClose: () => void;
@@ -341,10 +343,10 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab, openLanguage = nul
                       title={t('history.openInNewTab')}
                       className="mt-1 block w-full truncate text-left font-mono text-sm text-fg hover:underline"
                     >
-                      {entry.sql}
+                      <HistoryText entry={entry} />
                     </button>
                   ) : (
-                    <p className="mt-1 truncate font-mono text-sm text-fg">{entry.sql}</p>
+                    <p className="mt-1 truncate font-mono text-sm text-fg"><HistoryText entry={entry} /></p>
                   )}
 
                   {(entry.name || (entry.tags?.length ?? 0) > 0) && (
@@ -474,3 +476,16 @@ function AnnotationEditor({ entry, onSubmit, onCancel }: AnnotationEditorProps) 
     </form>
   );
 }
+
+/** 记录按它自己的语言上色；Redis 的命令没有合适的词法器，照原样 */
+function HistoryText({ entry }: { entry: QueryHistoryEntry }) {
+  const language = HISTORY_CODE_LANGUAGES[historyLanguage(entry)];
+  return language ? <HighlightedCode code={entry.sql} language={language} /> : <>{entry.sql}</>;
+}
+
+const HISTORY_CODE_LANGUAGES: Record<ReturnType<typeof historyLanguage>, CodeLanguage | null> = {
+  sql: 'sql',
+  cypher: 'cypher',
+  elasticsearch: 'json',
+  redis: null
+};

@@ -46,6 +46,7 @@ import {
 } from '../utils/cypherEdit';
 import { requiresConfirmation, type StatementRisk } from '../utils/statementRisk';
 import type { TranslationKey } from '../i18n/translate';
+import { HighlightedCode } from './HighlightedCode';
 
 /** 与后端 `CypherResult` 一致 */
 interface CypherResult {
@@ -564,14 +565,15 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
               <X size={14} />
             </button>
           </div>
-          <pre className="select-text whitespace-pre-wrap break-all font-mono text-[13px] text-fg">
-            {formatCypherValue(inspecting.value)}
-          </pre>
+          {inspecting.value.kind === 'string'
+            ? <pre className="select-text whitespace-pre-wrap break-all font-mono text-[13px] text-fg">{inspecting.value.value}</pre>
+            : <pre className="select-text whitespace-pre-wrap break-all font-mono text-[13px] text-fg"><HighlightedCode code={formatCypherValue(inspecting.value)} language="cypher" /></pre>}
         </div>
       )}
 
       {pendingEdit && (
         <DestructiveStatementPrompt
+          language="cypher"
           sql={pendingEdit.edit.statement}
           risk={pendingEdit.risk}
           statementCount={1}
@@ -590,6 +592,7 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
 
       {pendingDelete && (
         <DestructiveStatementPrompt
+          language="cypher"
           sql={deleteStatement(pendingDelete.entity, pendingDelete.relationships > 0)}
           risk="scoped-write"
           statementCount={1}
@@ -615,6 +618,7 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
 
       {pending && (
         <DestructiveStatementPrompt
+          language="cypher"
           sql={pending.text}
           risk={pending.risk}
           statementCount={pending.statements.length}
@@ -650,7 +654,7 @@ function RunSection({
   return (
     <section className="mb-4" data-run-id={run.id}>
       {showStatement && (
-        <p className="mb-1 truncate font-mono text-xs text-fg-muted" title={run.statement}>{run.statement}</p>
+        <p className="mb-1 truncate font-mono text-xs text-fg-muted" title={run.statement}><HighlightedCode code={run.statement} language="cypher" /></p>
       )}
       {run.state === 'running' && (
         <p className="flex items-center gap-2 text-sm text-fg-muted">

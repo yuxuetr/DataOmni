@@ -5,6 +5,7 @@ import { describeError } from '../utils/describeError';
 import { indentOnTab } from '../utils/mongoDocuments';
 import { formatShortcut, matchesShortcut, SHORTCUTS } from '../utils/shortcuts';
 import { PLAIN_TEXT_INPUT } from './FormControls';
+import { HighlightedCode } from './HighlightedCode';
 
 /** 新建文档时编辑框里的起点：一对空括号，光标放在中间那行 */
 export const NEW_DOCUMENT_TEMPLATE = '{\n  \n}';
@@ -213,7 +214,7 @@ export function MongoDocumentPanel({
           ) : text === null ? (
             <p className="text-sm text-fg-muted">{t('mongo.documentGone')}</p>
           ) : (
-            <pre className="select-text whitespace-pre font-mono text-[13px] text-fg">{text}</pre>
+            <pre className="select-text whitespace-pre font-mono text-[13px] text-fg"><HighlightedCode code={text} language="javascript" /></pre>
           )}
         </div>
       )}

@@ -768,6 +768,7 @@ export default function DatabaseExplorer({
       {pendingChange && (
         <DestructiveStatementPrompt
           sql={pendingChange.sql}
+          language={connection.db_type === DatabaseType.Elasticsearch ? 'json' : speaksSql(connection.db_type) ? 'sql' : 'javascript'}
           risk="destructive"
           statementCount={1}
           connectionName={connection.name}

@@ -742,14 +742,13 @@ function App() {
     // 标签永久绑定到打开它的连接。只有一个活跃会话，所以绑定到别的连接的
     // 标签不执行任何查询，而不是静默改到当前连接上执行；草稿仍然可以离线查看。
     if (activeTab.binding.profileId !== activeProfileId) {
+      const boundProfile = connections.find((connection) => connection.id === activeTab.binding.profileId);
       return (
         <OfflineTabView
           tab={activeTab}
-          profileName={
-            connections.find(
-              (connection) => connection.id === activeTab.binding.profileId
-            )?.name ?? null
-          }
+          profileName={boundProfile?.name ?? null}
+          language={boundProfile?.db_type === DatabaseType.Neo4j ? 'cypher'
+            : boundProfile?.db_type === DatabaseType.Elasticsearch ? 'json' : 'sql'}
           draft={documents[activeTab.id]?.sqlInput ?? ''}
         />
       );

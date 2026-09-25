@@ -17,6 +17,7 @@ import {
   type IndexSettings,
   type MappingField
 } from '../utils/esMapping';
+import { HighlightedCode } from './HighlightedCode';
 
 interface EsResponse {
   status: number;
@@ -187,9 +188,7 @@ export function EsIndexStructureView({ index }: EsIndexStructureViewProps) {
                 {t('es.structure.raw')}
               </button>
               {showRaw && (
-                <pre className="mt-2 max-h-[32rem] select-text overflow-auto rounded-control border border-line bg-surface-sunken p-3 font-mono text-xs text-fg">
-                  {stringifyJson(loaded.raw, 2)}
-                </pre>
+                <pre className="mt-2 max-h-[32rem] select-text overflow-auto rounded-control border border-line bg-surface-sunken p-3 font-mono text-xs text-fg"><HighlightedCode code={stringifyJson(loaded.raw, 2)} language="json" /></pre>
               )}
             </section>
           </>

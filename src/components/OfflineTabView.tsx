@@ -1,6 +1,8 @@
 import { AlertCircle, Trash2 } from 'lucide-react';
 import type { WorkspaceTab } from '../contracts/workspace';
 import { useLanguageStore } from '../stores/languageStore';
+import { HighlightedCode } from './HighlightedCode';
+import type { CodeLanguage } from '../utils/codeHighlight';
 
 interface OfflineTabViewProps {
   tab: WorkspaceTab;
@@ -8,12 +10,14 @@ interface OfflineTabViewProps {
   profileName: string | null;
   /** SQL 标签的草稿内容；没有草稿时为空串 */
   draft: string;
+  /** 草稿用哪种语言上色：Cypher、ES 的标签也是 `sql` 这一种，草稿跟着连接走 */
+  language: CodeLanguage;
 }
 
 // 这里不放「连接」按钮：连接要处理 SESSION_PASSWORD_REQUIRED 的密码提示，
 // 那套流程在 Sidebar 里，复刻一份不全的只会更糟。侧边栏本来就常驻可见。
 
-export function OfflineTabView({ tab, profileName, draft }: OfflineTabViewProps) {
+export function OfflineTabView({ tab, profileName, draft, language }: OfflineTabViewProps) {
   const t = useLanguageStore((state) => state.t);
   const profileDeleted = tab.availability === 'profile-deleted';
   const connectionLabel = profileName ?? t('offline.thisConnection');
@@ -58,9 +62,7 @@ export function OfflineTabView({ tab, profileName, draft }: OfflineTabViewProps)
             draft.trim().length > 0
               ? (
                 // 只读呈现：用 pre 保留原有换行与缩进，用户可以直接选中复制
-                <pre className="whitespace-pre-wrap break-words font-mono text-sm text-fg bg-surface-sunken border border-line rounded-control p-4 select-text">
-                  {draft}
-                </pre>
+                <pre className="whitespace-pre-wrap break-words font-mono text-sm text-fg bg-surface-sunken border border-line rounded-control p-4 select-text"><HighlightedCode code={draft} language={language} /></pre>
               )
               : <p className="text-sm text-fg-muted">{t('offline.emptyDraft')}</p>
           )

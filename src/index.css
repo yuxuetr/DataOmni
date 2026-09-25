@@ -71,6 +71,15 @@
   --dm-series-6: #008300;
   --dm-series-7: #4a3aa7;
   --dm-series-8: #e34948;
+
+  /* 只读代码块的颜色，与编辑器浅色下的那套（CodeMirror 默认高亮）一致 */
+  --dm-code-keyword: #770088;
+  --dm-code-type: #008855;
+  --dm-code-string: #aa1111;
+  --dm-code-number: #116644;
+  --dm-code-atom: #221199;
+  --dm-code-property: #0550ae;
+  --dm-code-comment: #8a6d3b;
 }
 
 [data-theme='dark'] {
@@ -125,6 +134,15 @@
   --dm-series-6: #008300;
   --dm-series-7: #9085e9;
   --dm-series-8: #e66767;
+
+  /* 与编辑器深色下的 oneDark 一致 */
+  --dm-code-keyword: #c678dd;
+  --dm-code-type: #e5c07b;
+  --dm-code-string: #98c379;
+  --dm-code-number: #d19a66;
+  --dm-code-atom: #d19a66;
+  --dm-code-property: #e06c75;
+  --dm-code-comment: #7d8799;
 }
 
 @theme inline {
@@ -175,6 +193,15 @@ body {
   background-color: var(--dm-canvas);
   color: var(--dm-fg);
 }
+
+/* HighlightedCode 的片段，见 utils/codeHighlight.ts */
+.code-keyword { color: var(--dm-code-keyword); }
+.code-type { color: var(--dm-code-type); }
+.code-string { color: var(--dm-code-string); }
+.code-number { color: var(--dm-code-number); }
+.code-atom { color: var(--dm-code-atom); }
+.code-property { color: var(--dm-code-property); }
+.code-comment { color: var(--dm-code-comment); font-style: italic; }
 
 /* 滚动条跟随主题。此前写死 #64748b / #e2e8f0 / #3b82f6，深色下会是亮条。 */
 .scrollbar-visible,

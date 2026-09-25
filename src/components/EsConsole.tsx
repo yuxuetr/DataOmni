@@ -48,6 +48,7 @@ import {
 import type { StatementRisk } from '../utils/statementRisk';
 import type { TranslationKey } from '../i18n/translate';
 import { toAggTables, type AggTable } from '../utils/esAggregations';
+import { HighlightedCode } from './HighlightedCode';
 
 /** 与后端 `EsResponse` 一致 */
 interface EsResponse {
@@ -373,14 +374,15 @@ export function EsConsole({ connection }: EsConsoleProps) {
               <X size={14} />
             </button>
           </div>
-          <pre className="select-text whitespace-pre-wrap break-all font-mono text-[13px] text-fg">
-            {inspecting.kind === 'string' ? inspecting.value : stringifyJson(inspecting, 2)}
-          </pre>
+          {inspecting.kind === 'string'
+            ? <pre className="select-text whitespace-pre-wrap break-all font-mono text-[13px] text-fg">{inspecting.value}</pre>
+            : <pre className="select-text whitespace-pre-wrap break-all font-mono text-[13px] text-fg"><HighlightedCode code={stringifyJson(inspecting, 2)} language="json" /></pre>}
         </div>
       )}
 
       {pending && (
         <DestructiveStatementPrompt
+          language="json"
           sql={pending.text}
           risk={pending.risk}
           statementCount={pending.requests.length}
@@ -567,9 +569,7 @@ function ResponseView({
       </div>
       {view === 'json' && pretty !== '' && (
         <>
-          <pre className="max-h-[32rem] select-text overflow-auto rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg">
-            {pretty.length > MAX_RENDERED_JSON_CHARS ? pretty.slice(0, MAX_RENDERED_JSON_CHARS) : pretty}
-          </pre>
+          <pre className="max-h-[32rem] select-text overflow-auto rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg"><HighlightedCode code={pretty.length > MAX_RENDERED_JSON_CHARS ? pretty.slice(0, MAX_RENDERED_JSON_CHARS) : pretty} language="json" /></pre>
           {pretty.length > MAX_RENDERED_JSON_CHARS && (
             <p className="mt-1 text-xs text-warning">{t('es.jsonCapped', { shown: MAX_RENDERED_JSON_CHARS.toLocaleString() })}</p>
           )}

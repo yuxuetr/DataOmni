@@ -5,6 +5,7 @@ import { clsx } from 'clsx';
 import { useLanguageStore } from '../stores/languageStore';
 import { describeError } from '../utils/describeError';
 import { explainVerdict, planLine, type MongoExplain } from '../utils/mongoExplain';
+import { HighlightedCode } from './HighlightedCode';
 
 interface MongoExplainDialogProps {
   connectionString: string;
@@ -141,9 +142,7 @@ export function MongoExplainDialog({
               )}
               <details>
                 <summary className="cursor-pointer text-xs text-fg-muted">{t('mongo.explain.full')}</summary>
-                <pre className="mt-1 max-h-80 select-text overflow-auto whitespace-pre rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg">
-                  {explain.text}
-                </pre>
+                <pre className="mt-1 max-h-80 select-text overflow-auto whitespace-pre rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg"><HighlightedCode code={explain.text} language="javascript" /></pre>
               </details>
             </>
           )}

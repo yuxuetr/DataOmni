@@ -5,6 +5,7 @@ import { PLAIN_TEXT_INPUT } from './FormControls';
 import { draftOf, entityWrite, type DraftProblem, type EditableEntity, type EntityDraft } from '../utils/cypherEdit';
 import { cypherName, formatCypherValue } from '../utils/cypherValue';
 import type { TranslationKey, TranslationParams } from '../i18n/translate';
+import { HighlightedCode } from './HighlightedCode';
 
 interface CypherEntityEditorProps {
   /** `null` 是建一个新节点 */
@@ -146,9 +147,7 @@ export function CypherEntityEditor({ entity, busy, error, onSave, onDelete, onCl
       </div>
 
       {write.kind === 'write' && (
-        <pre className="mt-2 select-text whitespace-pre-wrap break-all rounded-control bg-surface px-2 py-1 font-mono text-xs text-fg-muted">
-          {write.statement}
-        </pre>
+        <pre className="mt-2 select-text whitespace-pre-wrap break-all rounded-control bg-surface px-2 py-1 font-mono text-xs text-fg-muted"><HighlightedCode code={write.statement} language="cypher" /></pre>
       )}
       {write.kind === 'invalid' && <p className="mt-2 text-xs text-warning">{problemText(write.problem, t)}</p>}
       {error && <pre className="mt-2 select-text whitespace-pre-wrap break-words font-mono text-xs text-danger">{error}</pre>}

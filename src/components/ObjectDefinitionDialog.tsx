@@ -11,6 +11,7 @@ import { requireDatabase } from '../utils/requireDatabase';
 import { ddlRequest, type SchemaMetadataQueries } from '../utils/catalogQueries';
 import { extractDdlStatements, joinDdlStatements } from '../utils/schemaObjects';
 import { identifierDialectFor } from '../utils/sqlIdentifiers';
+import { HighlightedCode } from './HighlightedCode';
 
 interface ObjectDefinitionDialogProps {
   object: DatabaseObject;
@@ -198,9 +199,7 @@ export function ObjectDefinitionDialog({
           {definition !== null && (
             definition
               ? (
-                <pre className="font-mono text-xs text-fg select-text whitespace-pre-wrap break-words">
-                  {definition}
-                </pre>
+                <pre className="font-mono text-xs text-fg select-text whitespace-pre-wrap break-words"><HighlightedCode code={definition} language="sql" /></pre>
               )
               : <p className="text-xs text-fg-subtle">{t('objectDefinition.empty')}</p>
           )}
