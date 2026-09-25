@@ -225,7 +225,9 @@ async fn with_deadline<T>(
 }
 
 /// 一段字节串：`raw` 是原样的 base64，拿去定位；`text` 给人看——是 UTF-8 就原样，
-/// 不是就按 redis-cli 的写法转义（`\xff`），并且 `binary` 为真，界面据此标出来
+/// 不是就按 redis-cli 的写法转义（`\xff`），并且 `binary` 为真，界面据此标出来。
+/// 带控制字符（换行、回车、制表之外）的 UTF-8 也算：`\0` 印出来看不见，
+/// 当文字编辑还会被输入框吞掉
 #[derive(Debug, Serialize, PartialEq)]
 pub struct RedisBytes {
   pub raw: String,
@@ -237,7 +239,10 @@ impl RedisBytes {
   fn new(bytes: Vec<u8>) -> Self {
     let raw = BASE64.encode(&bytes);
     match String::from_utf8(bytes) {
-      Ok(text) => Self { raw, text, binary: false },
+      Ok(text) if !text.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t')) => {
+        Self { raw, text, binary: false }
+      }
+      Ok(text) => Self { raw, text: escape_bytes(text.as_bytes()), binary: true },
       Err(error) => Self { raw, text: escape_bytes(error.as_bytes()), binary: true },
     }
   }
@@ -1143,6 +1148,15 @@ mod tests {
     let binary = RedisBytes::new(vec![b'k', 0xff, b'\\', b'"', b'\n']);
     assert_eq!((binary.text.as_str(), binary.binary), ("k\\xff\\\\\\\"\\x0a", true));
     assert_eq!(decode_key(&binary.raw), Ok(vec![b'k', 0xff, b'\\', b'"', b'\n']));
+  }
+
+  #[test]
+  fn text_with_control_characters_is_escaped_too() {
+    let nul = RedisBytes::new(b"a b\0c".to_vec());
+    assert_eq!((nul.text.as_str(), nul.binary), ("a b\\x00c", true));
+    // 多行的 JSON 很常见：换行、回车、制表仍是文字，由显示的那一侧转义
+    let lines = RedisBytes::new(b"{\n\t\"a\": 1\r\n}".to_vec());
+    assert_eq!((lines.text.as_str(), lines.binary), ("{\n\t\"a\": 1\r\n}", false));
   }
 
   #[test]
