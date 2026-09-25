@@ -1120,6 +1120,8 @@ export const en: Translations = {
   'form.mongoSrv': 'Connect using an SRV record (mongodb+srv://)',
   'form.mongoSrvHint': 'Enter the DNS name as the host: the part after @ in an Atlas connection string, such as cluster0.abcde.mongodb.net. Server addresses and ports come from DNS, and an SSH tunnel cannot be used.',
   'form.mongoAuthSourceSrvHint': 'The database the user is defined in. Leave it empty to use the one in the DNS TXT record (Atlas puts admin there), or admin if there is none.',
+  'form.mongoClientCertPath': 'Client certificate and key (one PEM file)',
+  'form.mongoClientCertHint': 'Only needed when the server requires a client certificate. The certificate and private key go in one file, as with mongosh --tlsCertificateKeyFile; two separate files can be combined with cat client.crt client.key > client.pem.',
   'form.mongoAuthSourceHint': 'The database the user is defined in, usually admin. Leave the username empty if the server has no authentication. The connection is not bound to one database: every database you have access to is listed.',
   'mongo.filter': 'Filter',
   'mongo.filterPlaceholder': "{ status: 'paid', amount: { $gt: 100 } }",
@@ -1232,5 +1234,7 @@ export const en: Translations = {
   'error.backend.mongoPipelineInvalid': 'A pipeline is an array whose items are stages like { $match: … } (item {detail} is not)',
   'error.backend.mongoSrvLookupFailed': 'No SRV record was found for this name, or the record points to another domain (which must be refused): check the host name. Details: {detail}',
   'error.backend.mongoSrvWithTunnel': 'An SRV connection cannot go through an SSH tunnel: SRV gives a set of servers and a tunnel forwards one address',
+  'error.backend.mongoTlsFileInvalid': 'The certificate file cannot be used: {detail}',
+  'error.backend.mongoClientKeySeparate': 'A MongoDB client certificate and its private key go in one PEM file (as with mongosh --tlsCertificateKeyFile); there is no separate key file',
   'error.backend.mongoUpdateNotOperators': 'The update must use operators such as $set, or a pipeline. A whole document is a replacement, which an update of matching documents cannot do'
 };

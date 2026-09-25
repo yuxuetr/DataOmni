@@ -13,13 +13,17 @@
 //! 的 SRV 都指向 `localhost.test.build.10gen.cc`（即 127.0.0.1）的 27017，`test1` 另有
 //! 一个没人听的 27018，`test5` 的 TXT 写着 `replicaSet=repl0&authSource=thisDB`。
 //! 地址里的主机与端口不用，只取账号与认证库。
+//!
+//! 客户端证书的几条另设 `DATAOMNI_MONGODB_TLS_TEST_URL`（一台 `requireTLS` 且设了
+//! `tlsCAFile`、因而要求客户端证书的服务端）与 `DATAOMNI_MONGODB_TLS_TEST_DIR`：里面有
+//! `ca.pem`、`client.pem`（该 CA 签的证书加私钥）、`rogue.pem`（自签的，服务端不认）。
 
 use dataomni_lib::models::ConnectionProfile;
 use dataomni_lib::services::mongo_shell::{self, Layout};
 use dataomni_lib::services::mongodb::{
   self as mongo, FindRequest, MongoTarget, MONGO_AUTH_FAILED, MONGO_AUTH_REQUIRED,
   MONGO_DOCUMENT_CHANGED, MONGO_DOCUMENT_GONE, MONGO_ID_CHANGED, MONGO_SERVER_ERROR,
-  MONGO_SRV_LOOKUP_FAILED, MONGO_TIMEOUT, MONGO_UNREACHABLE,
+  MONGO_SRV_LOOKUP_FAILED, MONGO_TIMEOUT, MONGO_TLS_FILE_INVALID, MONGO_UNREACHABLE,
 };
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::Client;
@@ -258,6 +262,47 @@ async fn an_srv_name_without_records_or_pointing_elsewhere_is_refused() {
     let error =
       mongo::connect(&MongoTarget::from_profile(&profile)).await.err().unwrap_or_default();
     assert!(error.starts_with(MONGO_SRV_LOOKUP_FAILED), "{host}: {error}");
+  }
+}
+
+/// 客户端证书那几条：没设就跳过。TLS 按完整校验，CA 用测试目录里那一份
+fn tls_profile(client_certificate: Option<&str>) -> Option<ConnectionProfile> {
+  let url = std::env::var("DATAOMNI_MONGODB_TLS_TEST_URL").ok().filter(|url| !url.is_empty())?;
+  let directory = std::env::var("DATAOMNI_MONGODB_TLS_TEST_DIR").ok()?;
+  let mut profile = profile_from_url(&url);
+  profile.ssl = true;
+  profile.tls_mode = Some(dataomni_lib::models::TlsMode::VerifyFull);
+  profile.ca_certificate_path = Some(format!("{directory}/ca.pem"));
+  profile.client_certificate_path = client_certificate.map(|name| format!("{directory}/{name}"));
+  Some(profile)
+}
+
+/// 服务端要求客户端证书：带着 CA 签的那份连得上，不带、或带一份自签的都连不上。
+/// 只验前一半的话，一个根本不发证书、而服务端恰好不要求的实现也是绿的
+#[tokio::test]
+async fn a_client_certificate_is_presented_and_only_the_right_one_gets_in() {
+  let Some(profile) = tls_profile(Some("client.pem")) else { return };
+  let client = mongo::connect(&MongoTarget::from_profile(&profile)).await;
+  assert!(client.is_ok(), "{:?}", client.err());
+  for name in [None, Some("rogue.pem")] {
+    let Some(profile) = tls_profile(name) else { return };
+    let error =
+      mongo::connect(&MongoTarget::from_profile(&profile)).await.err().unwrap_or_default();
+    assert!(error.starts_with(MONGO_UNREACHABLE), "{name:?}: {error}");
+  }
+}
+
+/// 证书文件读不了、或读出来不是证书加私钥：说是哪个文件，不等十秒超时
+#[tokio::test]
+async fn an_unreadable_client_certificate_names_the_file() {
+  for name in ["missing.pem", "ca.pem"] {
+    let Some(profile) = tls_profile(Some(name)) else { return };
+    let started = Instant::now();
+    let error =
+      mongo::connect(&MongoTarget::from_profile(&profile)).await.err().unwrap_or_default();
+    assert!(error.starts_with(MONGO_TLS_FILE_INVALID), "{name}: {error}");
+    assert!(error.contains(name), "{name}: {error}");
+    assert!(started.elapsed() < Duration::from_secs(3), "{name}: {:?}", started.elapsed());
   }
 }
 

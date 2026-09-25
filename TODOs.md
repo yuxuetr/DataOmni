@@ -1958,7 +1958,17 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     `test3` 连上；`test5` 的 TXT 写 `authSource=thisDB`——空着被拒、填 `admin` 连上；`test4`（无
     记录）与 `test14`（指向别的域）报 `MONGO_SRV_LOOKUP_FAILED`。反向验过：SRV 也直连 → `test1`
     红（第一版只用 `test3` 单条记录时这个变异是绿的，单台直连也连得上）；不带填的认证库 → 红。
-  - 还没做：mongosh 命令、客户端证书。
+  - **客户端证书已落地**（2026-09-25）：MongoDB 在 TLS 那一组只有**一格**「客户端证书与私钥」，
+    即 mongosh 的 `--tlsCertificateKeyFile`——驱动只读合在一起的 PEM。不替用户拼两个文件（要把
+    私钥另写一份到磁盘）；另填了私钥路径就拒（`MONGO_CLIENT_KEY_SEPARATE`）。文件先打开一次：
+    驱动打不开时只说「No such file」不说是哪个（反向验过：去掉这一步，报出来的正是这句）。
+    测试服务端 `dataomni-mongo-tls`（127.0.0.1:37019，`requireTLS` + `tlsCAFile`，证书在 cu 的
+    `/data/dataomni-mongo-tls`，一次性自签）。真库用例 2 条（共 28 条）：CA 签的证书连上，
+    不带与自签的都连不上（只验前一半，一个根本不发证书的实现也会绿）；文件不存在 / 不是证书
+    3 秒内报出且带文件名。反向验过：不把证书交给驱动 → 两条红。
+    **不做**：X.509 认证（`MONGODB-X509`，用证书的主题当用户名）——这里的证书只用于 TLS 握手，
+    登录仍是口令；有人要证书登录时再加认证方式，那是表单上多一个选择。
+  - 还没做：mongosh 命令。
 - [ ] Redis 使用键空间、类型和值浏览模型
 - [ ] Neo4j 使用 Cypher 和图结果模型
 - [ ] Elasticsearch 使用索引、Mapping 和 Query DSL 模型

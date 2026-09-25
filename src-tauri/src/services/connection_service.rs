@@ -27,6 +27,8 @@ pub const TLS_CERTIFICATES_UNSUPPORTED: &str = "DATAOMNI_TLS_CERTIFICATES_UNSUPP
 /// 连上，而表单上写着加密
 pub const ORACLE_TLS_UNSUPPORTED: &str = "DATAOMNI_ORACLE_TLS_UNSUPPORTED";
 pub const SQLITE_PATH_REQUIRED: &str = "DATAOMNI_SQLITE_PATH_REQUIRED";
+/// MongoDB 填了单独的客户端私钥文件：它要证书与私钥合在一个文件里
+pub const MONGO_CLIENT_KEY_SEPARATE: &str = "DATAOMNI_MONGO_CLIENT_KEY_SEPARATE";
 /// MongoDB 按 SRV 记录连时不能再走 SSH 隧道
 pub const MONGO_SRV_WITH_TUNNEL: &str = "DATAOMNI_MONGO_SRV_WITH_TUNNEL";
 pub const HOST_REQUIRED: &str = "DATAOMNI_HOST_REQUIRED";
@@ -511,7 +513,13 @@ fn validate_tls_configuration(config: &ConnectionProfile) -> Result<(), String> 
     config.client_certificate_path.as_ref().is_some_and(|path| !path.is_empty());
   let has_client_key = config.client_key_path.as_ref().is_some_and(|path| !path.is_empty());
 
-  if has_client_certificate != has_client_key {
+  // MongoDB 的驱动（和 mongosh 的 `--tlsCertificateKeyFile`）要证书与私钥在**同一个**
+  // PEM 文件里，所以它只有一格。不替用户把两个文件拼成一个：那要把私钥另写一份到磁盘
+  if config.db_type == DatabaseType::MongoDB {
+    if has_client_key {
+      return Err(MONGO_CLIENT_KEY_SEPARATE.to_string());
+    }
+  } else if has_client_certificate != has_client_key {
     return Err(TLS_CLIENT_PAIR_REQUIRED.to_string());
   }
 
@@ -530,11 +538,8 @@ fn validate_tls_configuration(config: &ConnectionProfile) -> Result<(), String> 
     return Err(TLS_CERTIFICATES_UNSUPPORTED.to_string());
   }
   // tiberius 能按 CA 校验服务端，但不带客户端证书登录——填了也不会生效，
-  // 而用户会以为双向认证已经开着。MongoDB 的驱动要证书与私钥合在一个文件里，
-  // 表单上是分开的两格，这一版不替用户拼
-  if has_client_certificate
-    && matches!(config.db_type, DatabaseType::SqlServer | DatabaseType::MongoDB)
-  {
+  // 而用户会以为双向认证已经开着
+  if has_client_certificate && config.db_type == DatabaseType::SqlServer {
     return Err(TLS_CERTIFICATES_UNSUPPORTED.to_string());
   }
   if config.db_type == DatabaseType::Oracle
@@ -1000,6 +1005,17 @@ mod tests {
     config.client_certificate_path = Some("/certs/client.pem".to_string());
 
     assert_eq!(validate_tls_configuration(&config), Err(TLS_CLIENT_PAIR_REQUIRED.to_string()));
+  }
+
+  /// MongoDB 的客户端证书是一个文件（证书加私钥），不成对；另给私钥文件就拒
+  #[test]
+  fn a_mongodb_client_certificate_is_one_file() {
+    let mut config = profile("profile-1", "secret");
+    config.db_type = DatabaseType::MongoDB;
+    config.client_certificate_path = Some("/certs/client.pem".to_string());
+    assert_eq!(validate_tls_configuration(&config), Ok(()));
+    config.client_key_path = Some("/certs/client.key".to_string());
+    assert_eq!(validate_tls_configuration(&config), Err(MONGO_CLIENT_KEY_SEPARATE.to_string()));
   }
 
   /// MongoDB 可以不开认证，「库」那一格是认证库、空着就是 admin；两条都不该被

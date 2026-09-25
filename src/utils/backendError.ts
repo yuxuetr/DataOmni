@@ -119,7 +119,9 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_MONGO_PIPELINE_WRITES: 'error.backend.mongoPipelineWrites',
   DATAOMNI_MONGO_PIPELINE_INVALID: 'error.backend.mongoPipelineInvalid',
   DATAOMNI_MONGO_SRV_LOOKUP_FAILED: 'error.backend.mongoSrvLookupFailed',
-  DATAOMNI_MONGO_SRV_WITH_TUNNEL: 'error.backend.mongoSrvWithTunnel'
+  DATAOMNI_MONGO_SRV_WITH_TUNNEL: 'error.backend.mongoSrvWithTunnel',
+  DATAOMNI_MONGO_TLS_FILE_INVALID: 'error.backend.mongoTlsFileInvalid',
+  DATAOMNI_MONGO_CLIENT_KEY_SEPARATE: 'error.backend.mongoClientKeySeparate'
 };
 
 export interface BackendError {

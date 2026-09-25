@@ -1116,8 +1116,29 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             {...PLAIN_TEXT_INPUT}
                           />
                         </div>
-                        {/* tiberius 只能校验服务端证书，不带客户端证书登录；MongoDB 的驱动
-                            要证书与私钥合在一个文件里，这一版不替用户拼 */}
+                        {/* MongoDB 的驱动（和 mongosh 的 --tlsCertificateKeyFile）要证书与私钥
+                            在同一个 PEM 文件里，所以只有一格；不替用户拼，那要把私钥另写一份 */}
+                        {formData.db_type === DatabaseType.MongoDB && (
+                          <div>
+                            <label htmlFor="client-certificate" className="block text-sm font-medium text-fg mb-1">
+                              {t('form.mongoClientCertPath')}
+                            </label>
+                            <input
+                              id="client-certificate"
+                              type="text"
+                              value={formData.client_certificate_path ?? ''}
+                              onChange={(event) => setFormData((previous) => ({
+                                ...previous,
+                                client_certificate_path: event.target.value
+                              }))}
+                              placeholder="/path/to/client.pem"
+                              className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                              {...PLAIN_TEXT_INPUT}
+                            />
+                            <p className="text-xs text-fg-muted mt-1">{t('form.mongoClientCertHint')}</p>
+                          </div>
+                        )}
+                        {/* tiberius 只能校验服务端证书，不带客户端证书登录 */}
                         {formData.db_type !== DatabaseType.SqlServer && formData.db_type !== DatabaseType.MongoDB && (
                         <>
                         <div>

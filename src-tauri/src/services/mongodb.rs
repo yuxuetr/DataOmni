@@ -58,6 +58,8 @@ pub const MONGO_DOCUMENT_GONE: &str = "DATAOMNI_MONGO_DOCUMENT_GONE";
 pub const MONGO_DOCUMENT_CHANGED: &str = "DATAOMNI_MONGO_DOCUMENT_CHANGED";
 /// 编辑时改了 `_id`。服务端不许改它，这里先拦下、说人话
 pub const MONGO_ID_CHANGED: &str = "DATAOMNI_MONGO_ID_CHANGED";
+/// CA 或客户端证书文件读不了，或读出来不是要的东西。冒号后面带着文件路径
+pub const MONGO_TLS_FILE_INVALID: &str = "DATAOMNI_MONGO_TLS_FILE_INVALID";
 /// SRV 记录查不到或不合规矩（名字不对、记录指向别的域）。冒号后面是驱动的原话
 pub const MONGO_SRV_LOOKUP_FAILED: &str = "DATAOMNI_MONGO_SRV_LOOKUP_FAILED";
 /// 连接串对应的连接不在（断开之后还有请求过来）
@@ -83,6 +85,8 @@ pub struct MongoTarget {
   auth_source: Option<String>,
   tls: TlsMode,
   ca_certificate_path: Option<String>,
+  /// 证书与私钥合在一起的 PEM 文件，即 mongosh 的 `--tlsCertificateKeyFile`
+  client_certificate_path: Option<String>,
 }
 
 impl MongoTarget {
@@ -96,6 +100,10 @@ impl MongoTarget {
       auth_source: profile.database.clone().filter(|database| !database.is_empty()),
       tls: profile.effective_tls_mode(),
       ca_certificate_path: profile.ca_certificate_path.clone().filter(|path| !path.is_empty()),
+      client_certificate_path: profile
+        .client_certificate_path
+        .clone()
+        .filter(|path| !path.is_empty()),
     }
   }
 
@@ -135,7 +143,11 @@ impl MongoTarget {
     options.max_idle_time = Some(crate::services::sqlx_pool::IDLE_TIMEOUT);
     // SRV 默认开 TLS，但表单上的档位是用户明确选的，照它来（选了「不加密」就是
     // 规范里的 `tls=false`）
-    options.tls = tls_options(self.tls, self.ca_certificate_path.as_deref());
+    options.tls = tls_options(
+      self.tls,
+      self.ca_certificate_path.as_deref(),
+      self.client_certificate_path.as_deref(),
+    );
     Ok(options)
   }
 }
@@ -149,9 +161,14 @@ impl MongoTarget {
 /// `VerifyCa`（只校验证书链、不校验主机名）也按完整校验：驱动只在 OpenSSL 那一版
 /// 里能单独放过主机名，rustls 这一版没有这个开关。往严里走——证书上没写这个
 /// 地址时连接失败、报的是主机名不符，而不是悄悄少校验一项
-fn tls_options(mode: TlsMode, ca_certificate_path: Option<&str>) -> Option<Tls> {
+fn tls_options(
+  mode: TlsMode,
+  ca_certificate_path: Option<&str>,
+  client_certificate_path: Option<&str>,
+) -> Option<Tls> {
   let mut options = TlsOptions::default();
   options.ca_file_path = ca_certificate_path.map(std::path::PathBuf::from);
+  options.cert_key_file_path = client_certificate_path.map(std::path::PathBuf::from);
   match mode {
     TlsMode::Disabled => return Some(Tls::Disabled),
     TlsMode::Preferred | TlsMode::Required => options.allow_invalid_certificates = Some(true),
@@ -165,6 +182,12 @@ fn tls_options(mode: TlsMode, ca_certificate_path: Option<&str>) -> Option<Tls> 
 /// `Client::with_options` 不碰网络，第一次操作才连；所以这里发一次 `ping`。
 /// 带了凭据时握手就会认证，口令错在这一步报出来——不发的话要等到展开对象树
 pub async fn connect(target: &MongoTarget) -> Result<Client, String> {
+  // 驱动打不开文件时只报「No such file」、不说是哪一个；这里先查一遍，报出路径
+  for path in [&target.ca_certificate_path, &target.client_certificate_path].into_iter().flatten() {
+    if let Err(error) = std::fs::File::open(path) {
+      return Err(format!("{MONGO_TLS_FILE_INVALID}: {path}: {error}"));
+    }
+  }
   let client = Client::with_options(target.options().await.map_err(describe_error)?)
     .map_err(describe_error)?;
   client.database("admin").run_command(doc! { "ping": 1 }).await.map_err(describe_error)?;
@@ -189,6 +212,8 @@ pub fn describe_error(error: mongodb::error::Error) -> String {
     ErrorKind::Authentication { message, .. } => format!("{MONGO_AUTH_FAILED}: {message}"),
     ErrorKind::ServerSelection { message, .. } => format!("{MONGO_UNREACHABLE}: {message}"),
     ErrorKind::DnsResolve { message, .. } => format!("{MONGO_SRV_LOOKUP_FAILED}: {message}"),
+    // 驱动的原话带着文件路径，如「Unable to parse PEM-encoded item from /x/ca.pem」
+    ErrorKind::InvalidTlsConfig { message, .. } => format!("{MONGO_TLS_FILE_INVALID}: {message}"),
     // 50 是 MaxTimeMSExpired
     ErrorKind::Command(command) if command.code == 50 => {
       format!("{MONGO_TIMEOUT}: {}", command.message)
@@ -1217,17 +1242,18 @@ mod tests {
 
   #[test]
   fn tls_modes_map_to_what_the_other_databases_mean_by_them() {
-    assert!(matches!(tls_options(TlsMode::Disabled, None), Some(Tls::Disabled)));
-    let Some(Tls::Enabled(required)) = tls_options(TlsMode::Required, None) else {
+    assert!(matches!(tls_options(TlsMode::Disabled, None, None), Some(Tls::Disabled)));
+    let Some(Tls::Enabled(required)) = tls_options(TlsMode::Required, None, None) else {
       panic!("要求 TLS 就该开着");
     };
     assert_eq!(required.allow_invalid_certificates, Some(true));
-    let Some(Tls::Enabled(verify_ca)) = tls_options(TlsMode::VerifyCa, Some("/ca.pem")) else {
+    let Some(Tls::Enabled(verify_ca)) = tls_options(TlsMode::VerifyCa, Some("/ca.pem"), None)
+    else {
       panic!("校验 CA 就该开着");
     };
     assert_eq!(verify_ca.allow_invalid_certificates, None);
     assert_eq!(verify_ca.ca_file_path, Some(std::path::PathBuf::from("/ca.pem")));
-    let Some(Tls::Enabled(full)) = tls_options(TlsMode::VerifyFull, None) else {
+    let Some(Tls::Enabled(full)) = tls_options(TlsMode::VerifyFull, None, None) else {
       panic!("完整校验就该开着");
     };
     assert_eq!(full.allow_invalid_certificates, None);

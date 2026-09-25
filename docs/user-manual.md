@@ -272,6 +272,9 @@ MongoDB 连接能浏览库、集合与文档，并按 `_id` 改、增、删单�
   后面那段（如 `cluster0.abcde.mongodb.net`），端口不用填——服务端地址从 DNS 里查。
   认证库空着时用 DNS 的 TXT 记录里写的。勾上后 TLS 若是「不加密」会改成完整校验
   （Atlas 只收 TLS），SSH 隧道那一组不再出现：SRV 给的是一组服务端，隧道只转发一个地址。
+- **客户端证书**：服务端要求时，在 TLS 证书那一组填「客户端证书与私钥」。和 mongosh 的
+  `--tlsCertificateKeyFile` 一样是**一个** PEM 文件；手上是分开的两个文件的话，
+  `cat client.crt client.key > client.pem` 合成一个。
 - **单击集合或视图**打开它的文档。每一列是这一页文档顶层字段的并集，`_id` 在最前；
   某个文档没有这个字段时那一格是空的，和写着 `null` 的格子不同。
 - **条件与排序**用 mongosh 的写法，回车即查：`{ age: { $gt: 30 } }`、
