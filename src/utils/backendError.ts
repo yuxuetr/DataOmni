@@ -123,7 +123,17 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_MONGO_TLS_FILE_INVALID: 'error.backend.mongoTlsFileInvalid',
   DATAOMNI_MONGO_CLIENT_KEY_SEPARATE: 'error.backend.mongoClientKeySeparate',
   DATAOMNI_MONGO_X509_NEEDS_CERTIFICATE: 'error.backend.mongoX509NeedsCertificate',
-  DATAOMNI_MONGO_NAME_EMPTY: 'error.backend.mongoNameEmpty'
+  DATAOMNI_MONGO_NAME_EMPTY: 'error.backend.mongoNameEmpty',
+  DATAOMNI_REDIS_AUTH_FAILED: 'error.backend.redisAuthFailed',
+  DATAOMNI_REDIS_AUTH_REQUIRED: 'error.backend.redisAuthRequired',
+  DATAOMNI_REDIS_NO_PERMISSION: 'error.backend.redisNoPermission',
+  DATAOMNI_REDIS_UNREACHABLE: 'error.backend.redisUnreachable',
+  DATAOMNI_REDIS_SERVER_ERROR: 'error.backend.redisServerError',
+  DATAOMNI_REDIS_TIMEOUT: 'error.backend.redisTimeout',
+  DATAOMNI_REDIS_KEY_GONE: 'error.backend.redisKeyGone',
+  DATAOMNI_REDIS_DATABASE_INVALID: 'error.backend.redisDatabaseInvalid',
+  DATAOMNI_REDIS_TLS_FILE_INVALID: 'error.backend.redisTlsFileInvalid',
+  DATAOMNI_REDIS_KEY_INVALID: 'error.backend.redisKeyInvalid'
 };
 
 export interface BackendError {

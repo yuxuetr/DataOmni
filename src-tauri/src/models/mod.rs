@@ -119,7 +119,7 @@ impl DatabaseType {
   /// 都由测试钉在 `Cargo.toml` 的 features 上。界面那份是提前告知，这份是
   /// 最终裁决——任何绕过界面的路径（老配置、手改存档）都过不去。
   pub fn has_driver(&self) -> bool {
-    self.speaks_sql() || *self == DatabaseType::MongoDB
+    self.speaks_sql() || matches!(self, DatabaseType::MongoDB | DatabaseType::Redis)
   }
 
   /// 走 SQL 的那一族：编辑器、五张目录查询表、执行计划、表格写入都是为它们写的。
@@ -271,25 +271,22 @@ impl DatabaseType {
         config.port,
         config.mongo_auth_segment("admin")
       ),
-      DatabaseType::Redis => {
-        if !config.username.is_empty() && !config.password.is_empty() {
-          format!(
-            "redis://{}:{}@{}:{}/{}",
-            encode(&config.username),
-            encode(&config.password),
-            config.host,
-            config.port,
-            config.database.as_ref().unwrap_or(&"0".to_string())
-          )
-        } else {
-          format!(
-            "redis://{}:{}/{}",
-            config.host,
-            config.port,
-            config.database.as_ref().unwrap_or(&"0".to_string())
-          )
-        }
-      }
+      // 和 SQL Server 同一个理由：是 `RedisRegistry` 里的键，不带口令。最后一段是库号
+      DatabaseType::Redis => format!(
+        "{}{}@{}:{}/{}",
+        crate::services::redis::REDIS_SCHEME,
+        encode(&config.username),
+        config.host,
+        config.port,
+        encode(
+          config
+            .database
+            .as_deref()
+            .map(str::trim)
+            .filter(|index| !index.is_empty())
+            .unwrap_or("0")
+        )
+      ),
       DatabaseType::Neo4j => {
         format!(
           "bolt://{}:{}@{}:{}/{}",

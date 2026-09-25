@@ -24,11 +24,13 @@ describe('每种对象右键能做什么', () => {
   it('每种对象恰好有一条看它是什么的路', () => {
     // 表走结构页（顺带给列、索引、外键），其余走定义弹窗。两条都没有的那一种
     // 就是此前的视图：它的 SELECT 原文在界面上根本读不到
-    for (const kind of KINDS) {
+    // Redis 的逻辑库例外：它没有定义可看，它是什么就是它里面的键——打开它就是看它
+    for (const kind of KINDS.filter((candidate) => candidate !== 'keyspace')) {
       const actions = OBJECT_MENU_ACTIONS[kind];
       const paths = Number(actions.includes('open-structure')) + Number(actions.includes('view-definition'));
       expect(paths, `${kind} 有 ${paths} 条看定义的路`).toBe(1);
     }
+    expect(OBJECT_MENU_ACTIONS.keyspace).toEqual(['open-data', 'copy-name']);
   });
 
   it('「打开结构」只给表', () => {

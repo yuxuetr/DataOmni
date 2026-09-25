@@ -14,7 +14,8 @@ export const SUPPORTED_DATABASE_TYPES: ReadonlySet<DatabaseType> = new Set([
   DatabaseType.PostgreSQL,
   DatabaseType.SqlServer,
   DatabaseType.Oracle,
-  DatabaseType.MongoDB
+  DatabaseType.MongoDB,
+  DatabaseType.Redis
 ]);
 
 /** sqlx 的 driver feature 名到本项目类型的对应 */
@@ -28,19 +29,23 @@ export const SQLX_DRIVER_FEATURES: Readonly<Record<string, DatabaseType>> = {
 export const STANDALONE_DRIVER_CRATES: Readonly<Record<string, DatabaseType>> = {
   tiberius: DatabaseType.SqlServer,
   oracle: DatabaseType.Oracle,
-  mongodb: DatabaseType.MongoDB
+  mongodb: DatabaseType.MongoDB,
+  redis: DatabaseType.Redis
 };
 
 /**
  * 走 SQL 的那一族：编辑器、对象目录查询、表格写入、执行计划都是为它们写的。
  * 与后端 `DatabaseType::speaks_sql` 同一个集合。
  *
- * MongoDB 之前它和「能连上」是同一件事；MongoDB 有驱动而不走 SQL，于是界面上
- * 凡是「这里要跑 SQL」的入口（新建查询标签、ER 图、建表）都要先问这一句
+ * MongoDB 之前它和「能连上」是同一件事；MongoDB 与 Redis 有驱动而不走 SQL，于是界面上
+ * 凡是「这里要跑 SQL」的入口（新建查询标签、ER 图、建表）都要先问这一句。
+ * 不走 SQL 的两家之间也各不相同，那些地方按类型分，不靠这一句的否定
  */
 export function speaksSql(type: string): boolean {
-  return isDatabaseTypeSupported(type as DatabaseType) && type !== DatabaseType.MongoDB;
+  return isDatabaseTypeSupported(type as DatabaseType) && !NON_SQL_TYPES.has(type as DatabaseType);
 }
+
+const NON_SQL_TYPES: ReadonlySet<DatabaseType> = new Set([DatabaseType.MongoDB, DatabaseType.Redis]);
 
 export function isDatabaseTypeSupported(type: DatabaseType): boolean {
   return SUPPORTED_DATABASE_TYPES.has(type);

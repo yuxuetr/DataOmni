@@ -241,7 +241,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         errors.host = t('form.error.host');
       }
       // MongoDB 可以不开认证：本机和内网的库大多如此，空着就是不带凭据连
-      if (!formData.username?.trim() && formData.db_type !== DatabaseType.MongoDB) {
+      // Redis 大多只有口令，用户名是 6.0 起 ACL 的
+      if (!formData.username?.trim() && formData.db_type !== DatabaseType.MongoDB && formData.db_type !== DatabaseType.Redis) {
         errors.username = t('form.error.username');
       }
       // SRV 的端口在 DNS 里，这一格藏起来了
@@ -806,7 +807,6 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
                       placeholder="0"
                       min="0"
-                      max="15"
                     />
                     <p className="text-xs text-fg-muted mt-1">{t('form.redisDbHint')}</p>
                   </div>
@@ -818,13 +818,14 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   formData.db_type === DatabaseType.SqlServer ||
                   formData.db_type === DatabaseType.Oracle ||
                   formData.db_type === DatabaseType.MongoDB ||
+                  formData.db_type === DatabaseType.Redis ||
                   formData.db_type === DatabaseType.Neo4j ||
                   formData.db_type === DatabaseType.ClickHouse ||
                   formData.db_type === DatabaseType.Elasticsearch) && (
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-fg mb-1">
-                        {t('form.username')} {formData.db_type === DatabaseType.Elasticsearch || formData.db_type === DatabaseType.MongoDB ? '' : '*'}
+                        {t('form.username')} {formData.db_type === DatabaseType.Elasticsearch || formData.db_type === DatabaseType.MongoDB || formData.db_type === DatabaseType.Redis ? '' : '*'}
                       </label>
                       <input
                         type="text"
@@ -1090,6 +1091,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   formData.db_type === DatabaseType.PostgreSQL ||
                   formData.db_type === DatabaseType.SqlServer ||
                   formData.db_type === DatabaseType.MongoDB ||
+                  formData.db_type === DatabaseType.Redis ||
                   formData.db_type === DatabaseType.Elasticsearch) && (
                   <div className="space-y-4">
                     <div>
@@ -1120,7 +1122,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                     {(formData.db_type === DatabaseType.MySQL
                       || formData.db_type === DatabaseType.PostgreSQL
                       || formData.db_type === DatabaseType.SqlServer
-                      || formData.db_type === DatabaseType.MongoDB)
+                      || formData.db_type === DatabaseType.MongoDB
+                      || formData.db_type === DatabaseType.Redis)
                       && (formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')) !== 'disabled' && (
                       <div className="space-y-3 rounded-control border border-line bg-surface-sunken p-3">
                         {/* 这一组要有自己的标题：里面的「客户端私钥路径」和
@@ -1166,8 +1169,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             <p className="text-xs text-fg-muted mt-1">{t('form.mongoClientCertHint')}</p>
                           </div>
                         )}
-                        {/* tiberius 只能校验服务端证书，不带客户端证书登录 */}
-                        {formData.db_type !== DatabaseType.SqlServer && formData.db_type !== DatabaseType.MongoDB && (
+                        {/* tiberius 只能校验服务端证书，不带客户端证书登录；Redis 这一版同样只收 CA */}
+                        {formData.db_type !== DatabaseType.SqlServer && formData.db_type !== DatabaseType.MongoDB
+                          && formData.db_type !== DatabaseType.Redis && (
                         <>
                         <div>
                           <label htmlFor="client-certificate" className="block text-sm font-medium text-fg mb-1">

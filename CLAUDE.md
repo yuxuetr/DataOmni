@@ -47,10 +47,12 @@ DATAOMNI_POSTGRES_TEST_URL=...
 用真表（不能用临时表：导出等路径会另开连接），所以用例开头会清掉同前缀的
 残留——测试库是共享的，一次断言失败留下的表会一直攒着。
 
-SQL Server、Oracle、MongoDB 各有独立的用例文件（`sql_server_smoke.rs`、
-`oracle_smoke.rs`、`mongodb_smoke.rs`），规矩相同，连接串分别是
+SQL Server、Oracle、MongoDB、Redis 各有独立的用例文件（`sql_server_smoke.rs`、
+`oracle_smoke.rs`、`mongodb_smoke.rs`、`redis_smoke.rs`），规矩相同，连接串分别是
 `DATAOMNI_SQLSERVER_TEST_URL`、`DATAOMNI_ORACLE_TEST_URL`、
-`DATAOMNI_MONGODB_TEST_URL`（`mongodb://user:password@host:port/authSource`）。
+`DATAOMNI_MONGODB_TEST_URL`（`mongodb://user:password@host:port/authSource`）、
+`DATAOMNI_REDIS_TEST_URL`（`redis://user:password@host:port`，只有口令时用户写 `default`）。
+几个文件开头另列了可选的变量（SRV、TLS、客户端证书、只读用户），没设就跳过那几条。
 
 ## 目录
 

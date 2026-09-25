@@ -1,0 +1,671 @@
+//! Redis：第二种非关系型库。
+//!
+//! 连接由后端持有，与 MongoDB 同一个办法：`test_connection` 连上之后把 [`RedisPool`]
+//! 登记在 [`RedisRegistry`] 里，键是不带口令的 `redis://user@host:port/库号`。
+//!
+//! 和 MongoDB 不同、值得记住的：
+//! - **一个库号一条连接。** `SELECT` 改的是整条连接的状态，而 `ConnectionManager` 是
+//!   多路复用的——在它上面切库，同时在跑的另一条命令就落到别的库里。所以每个库号
+//!   各开一条，第一次用到时才开（`RedisPool::connection`）。
+//! - **键和值都是字节串**，不一定是 UTF-8。往前端送的是 [`RedisBytes`]：原样的
+//!   base64（拿去定位用）加一份给人看的文字；前端回传的永远是 base64，不是那份文字。
+//! - **只用 `SCAN` 族，不用 `KEYS`。** `KEYS` 在大库上会把整台服务端卡住。
+
+use crate::models::{ConnectionProfile, TlsMode};
+use crate::services::pool_registry::PoolRegistry;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
+use redis::aio::{ConnectionManager, ConnectionManagerConfig};
+use redis::{ConnectionAddr, IntoConnectionInfo, RedisConnectionInfo, Value};
+use serde::Serialize;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
+/// 与前端 `REDIS_SCHEME` 一致：连接串以它开头就归这里管
+pub const REDIS_SCHEME: &str = "redis://";
+
+/// 口令或用户名不对（`WRONGPASS`，或旧版的 `invalid password`）
+pub const REDIS_AUTH_FAILED: &str = "DATAOMNI_REDIS_AUTH_FAILED";
+/// 没给口令，而服务端要（`NOAUTH`）
+pub const REDIS_AUTH_REQUIRED: &str = "DATAOMNI_REDIS_AUTH_REQUIRED";
+/// 这个用户没有这条命令或这个键的权限（`NOPERM`，ACL）。冒号后面是服务端原话
+pub const REDIS_NO_PERMISSION: &str = "DATAOMNI_REDIS_NO_PERMISSION";
+/// 在时限内没连上：地址不通、TLS 对不上、服务没起
+pub const REDIS_UNREACHABLE: &str = "DATAOMNI_REDIS_UNREACHABLE";
+/// 服务端报错，冒号后面是 `错误码: 原话`
+pub const REDIS_SERVER_ERROR: &str = "DATAOMNI_REDIS_SERVER_ERROR";
+/// 超过了查询时限
+pub const REDIS_TIMEOUT: &str = "DATAOMNI_REDIS_TIMEOUT";
+/// 要看的键已经不在了（过期或被删）
+pub const REDIS_KEY_GONE: &str = "DATAOMNI_REDIS_KEY_GONE";
+/// 「库」那一格不是 0 或正整数
+pub const REDIS_DATABASE_INVALID: &str = "DATAOMNI_REDIS_DATABASE_INVALID";
+/// 前端传回来的键不是合法的 base64——只会是程序错误，报出来比拿错的键去查强
+pub const REDIS_KEY_INVALID: &str = "DATAOMNI_REDIS_KEY_INVALID";
+/// CA 证书文件读不了。冒号后面带着路径
+pub const REDIS_TLS_FILE_INVALID: &str = "DATAOMNI_REDIS_TLS_FILE_INVALID";
+/// 连接串对应的连接不在（断开之后还有请求过来）
+pub const REDIS_NOT_CONNECTED: &str = "DATAOMNI_DB_SESSION_NOT_CONNECTED";
+
+/// 连上的等待上限。和前端建立会话的 15 秒错开，让这里先报出原因
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 字符串值最多带多少字节过来。整份要看得另想办法（导出），界面上是一眼
+const STRING_PREVIEW_BYTES: usize = 512 * 1024;
+
+/// `SCAN` 一次让服务端看多少个槽位。`COUNT` 只是提示，服务端每次返回的个数不定
+const SCAN_COUNT: u64 = 1_000;
+
+pub type RedisRegistry = PoolRegistry<RedisPool>;
+
+#[derive(Clone)]
+pub struct RedisTarget {
+  host: String,
+  port: u16,
+  username: String,
+  password: String,
+  /// 表单上「库」那一格，默认 0。对象树里另外几个库各开各的连接
+  database: i64,
+  tls: TlsMode,
+  ca_certificate_path: Option<String>,
+}
+
+impl RedisTarget {
+  pub fn from_profile(profile: &ConnectionProfile) -> Result<Self, String> {
+    Ok(Self {
+      host: profile.host.clone(),
+      port: profile.port,
+      username: profile.username.clone(),
+      password: profile.password.clone(),
+      database: database_index(profile.database.as_deref())?,
+      tls: profile.effective_tls_mode(),
+      ca_certificate_path: profile.ca_certificate_path.clone().filter(|path| !path.is_empty()),
+    })
+  }
+
+  fn client(&self, database: i64) -> Result<redis::Client, String> {
+    // `Required` 只加密不校验，与另外几家一致；`VerifyCa` 按完整校验（rustls 没有
+    // 只放过主机名的开关），往严里走
+    let address = match self.tls {
+      TlsMode::Disabled => ConnectionAddr::Tcp(self.host.clone(), self.port),
+      mode => ConnectionAddr::TcpTls {
+        host: self.host.clone(),
+        port: self.port,
+        insecure: matches!(mode, TlsMode::Preferred | TlsMode::Required),
+        tls_params: None,
+      },
+    };
+    let mut settings = RedisConnectionInfo::default().set_db(database);
+    if !self.username.is_empty() {
+      settings = settings.set_username(&self.username);
+    }
+    if !self.password.is_empty() {
+      settings = settings.set_password(&self.password);
+    }
+    let info = address.into_connection_info().map_err(describe_error)?.set_redis_settings(settings);
+    match (&self.ca_certificate_path, self.tls) {
+      (Some(path), mode) if mode != TlsMode::Disabled => {
+        let root = std::fs::read(path)
+          .map_err(|error| format!("{REDIS_TLS_FILE_INVALID}: {path}: {error}"))?;
+        redis::Client::build_with_tls(
+          info,
+          redis::TlsCertificates { client_tls: None, root_cert: Some(root) },
+        )
+        .map_err(|error| format!("{REDIS_TLS_FILE_INVALID}: {path}: {error}"))
+      }
+      _ => redis::Client::open(info).map_err(describe_error),
+    }
+  }
+}
+
+/// 「库」那一格：空着是 0。别的写法当场拒——拿 `SELECT abc` 去问服务端，报出来的是
+/// 一句「invalid DB index」，而且要等到连上之后
+fn database_index(text: Option<&str>) -> Result<i64, String> {
+  match text.map(str::trim).filter(|text| !text.is_empty()) {
+    None => Ok(0),
+    Some(text) => text
+      .parse::<i64>()
+      .ok()
+      .filter(|index| *index >= 0)
+      .ok_or_else(|| format!("{REDIS_DATABASE_INVALID}: {text}")),
+  }
+}
+
+/// 一个连接配置在后端的全部：连接参数加每个库号一条连接
+pub struct RedisPool {
+  target: RedisTarget,
+  connections: tokio::sync::Mutex<HashMap<i64, ConnectionManager>>,
+}
+
+impl RedisPool {
+  /// 这个库号上的连接，第一次用到时才开。`ConnectionManager` 断了自己重连，
+  /// 克隆一份就是同一条连接
+  pub async fn connection(&self, database: i64) -> Result<ConnectionManager, String> {
+    let mut connections = self.connections.lock().await;
+    if let Some(connection) = connections.get(&database) {
+      return Ok(connection.clone());
+    }
+    let connection = open(&self.target, database).await?;
+    connections.insert(database, connection.clone());
+    Ok(connection)
+  }
+
+  /// 配置里的那个库号：对象树总是列出它，哪怕里面一个键都没有
+  pub fn default_database(&self) -> i64 {
+    self.target.database
+  }
+}
+
+/// 连上配置里的那个库并确认真的可用（`PING` 要认证，口令错在这一步报出来）
+pub async fn connect(target: RedisTarget) -> Result<RedisPool, String> {
+  let connection = open(&target, target.database).await?;
+  let mut connections = HashMap::new();
+  connections.insert(target.database, connection);
+  Ok(RedisPool { target, connections: tokio::sync::Mutex::new(connections) })
+}
+
+async fn open(target: &RedisTarget, database: i64) -> Result<ConnectionManager, String> {
+  let client = target.client(database)?;
+  // 不设响应时限：每条命令外面各套一层查询超时（默认的 500 毫秒对大库上的 SCAN
+  // 太短）。重试只留一次：连不上时要尽快说出来，不是在后台退避六轮
+  let config = ConnectionManagerConfig::new()
+    .set_connection_timeout(Some(CONNECT_TIMEOUT))
+    .set_response_timeout(None)
+    .set_number_of_retries(1);
+  let attempt = async {
+    let mut connection =
+      client.get_connection_manager_with_config(config).await.map_err(describe_connect_error)?;
+    redis::cmd("PING")
+      .query_async::<String>(&mut connection)
+      .await
+      .map_err(describe_connect_error)?;
+    Ok::<_, String>(connection)
+  };
+  match tokio::time::timeout(CONNECT_TIMEOUT + Duration::from_secs(2), attempt).await {
+    Ok(result) => result,
+    Err(_) => Err(format!("{REDIS_UNREACHABLE}: {}s", CONNECT_TIMEOUT.as_secs())),
+  }
+}
+
+/// 连接阶段的错误：网络层的一律是「连不上」，认证与服务端的照常分
+fn describe_connect_error(error: redis::RedisError) -> String {
+  if error.is_io_error() || error.is_timeout() || error.is_connection_refusal() {
+    return format!("{REDIS_UNREACHABLE}: {error}");
+  }
+  describe_error(error)
+}
+
+/// 驱动的错误 → 带码的一句话。认不出的原样给
+pub fn describe_error(error: redis::RedisError) -> String {
+  let detail = error.detail().unwrap_or_default().to_string();
+  match error.code() {
+    Some("NOAUTH") => return format!("{REDIS_AUTH_REQUIRED}: {detail}"),
+    Some("WRONGPASS") => return format!("{REDIS_AUTH_FAILED}: {detail}"),
+    Some("NOPERM") => return format!("{REDIS_NO_PERMISSION}: {detail}"),
+    _ => {}
+  }
+  match error.kind() {
+    redis::ErrorKind::AuthenticationFailed => format!("{REDIS_AUTH_FAILED}: {error}"),
+    redis::ErrorKind::Server(_) | redis::ErrorKind::Extension => {
+      format!("{REDIS_SERVER_ERROR}: {}: {detail}", error.code().unwrap_or("ERR"))
+    }
+    _ if error.is_timeout() => format!("{REDIS_TIMEOUT}: {error}"),
+    _ => error.to_string(),
+  }
+}
+
+async fn with_deadline<T>(
+  timeout: Duration,
+  work: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+  match tokio::time::timeout(timeout, work).await {
+    Ok(result) => result,
+    Err(_) => Err(format!("{REDIS_TIMEOUT}: {}ms", timeout.as_millis())),
+  }
+}
+
+/// 一段字节串：`raw` 是原样的 base64，拿去定位；`text` 给人看——是 UTF-8 就原样，
+/// 不是就按 redis-cli 的写法转义（`\xff`），并且 `binary` 为真，界面据此标出来
+#[derive(Debug, Serialize, PartialEq)]
+pub struct RedisBytes {
+  pub raw: String,
+  pub text: String,
+  pub binary: bool,
+}
+
+impl RedisBytes {
+  fn new(bytes: Vec<u8>) -> Self {
+    let raw = BASE64.encode(&bytes);
+    match String::from_utf8(bytes) {
+      Ok(text) => Self { raw, text, binary: false },
+      Err(error) => Self { raw, text: escape_bytes(error.as_bytes()), binary: true },
+    }
+  }
+}
+
+/// redis-cli 的写法：可打印的 ASCII 原样（反斜杠与双引号加转义），其余 `\xHH`
+fn escape_bytes(bytes: &[u8]) -> String {
+  let mut text = String::with_capacity(bytes.len());
+  for &byte in bytes {
+    match byte {
+      b'\\' => text.push_str("\\\\"),
+      b'"' => text.push_str("\\\""),
+      0x20..=0x7e => text.push(char::from(byte)),
+      _ => text.push_str(&format!("\\x{byte:02x}")),
+    }
+  }
+  text
+}
+
+/// 前端传回来的键
+pub fn decode_key(raw: &str) -> Result<Vec<u8>, String> {
+  BASE64.decode(raw).map_err(|_| REDIS_KEY_INVALID.to_string())
+}
+
+/// 对象树的一行：一个逻辑库。形状与关系库的对象目录一致，`object_schema` 空着
+#[derive(Debug, Serialize, PartialEq)]
+pub struct KeyspaceEntry {
+  pub object_schema: Option<String>,
+  pub object_name: String,
+  pub object_kind: &'static str,
+  pub object_id: String,
+  pub keys: u64,
+}
+
+/// 有键的库，加上配置里那个库（哪怕是空的）。数的是 `INFO keyspace`——它只列有键的库，
+/// 也不用 `CONFIG GET databases`：那条在 ACL 里属于危险命令，只读用户多半没有
+pub async fn list_keyspaces(pool: &RedisPool) -> Result<Vec<KeyspaceEntry>, String> {
+  let mut connection = pool.connection(pool.default_database()).await?;
+  let info: String = redis::cmd("INFO")
+    .arg("keyspace")
+    .query_async(&mut connection)
+    .await
+    .map_err(describe_error)?;
+  let mut counts = parse_keyspace(&info);
+  counts.entry(pool.default_database()).or_insert(0);
+  let mut indexes: Vec<_> = counts.into_iter().collect();
+  indexes.sort_unstable();
+  Ok(
+    indexes
+      .into_iter()
+      .map(|(index, keys)| KeyspaceEntry {
+        object_schema: None,
+        object_name: format!("db{index}"),
+        object_kind: "keyspace",
+        object_id: format!("db{index}"),
+        keys,
+      })
+      .collect(),
+  )
+}
+
+/// `db0:keys=12,expires=0,avg_ttl=0` 这样的行 → 库号与键数
+fn parse_keyspace(info: &str) -> HashMap<i64, u64> {
+  info
+    .lines()
+    .filter_map(|line| {
+      let (name, fields) = line.trim().split_once(':')?;
+      let index = name.strip_prefix("db")?.parse::<i64>().ok()?;
+      let keys = fields.split(',').find_map(|field| field.strip_prefix("keys="))?.parse().ok()?;
+      Some((index, keys))
+    })
+    .collect()
+}
+
+pub struct ScanRequest {
+  pub database: i64,
+  pub pattern: String,
+  /// 上一页给的游标，第一页是 "0"
+  pub cursor: String,
+  /// 只要这一种类型（`SCAN … TYPE`）
+  pub kind: Option<String>,
+  /// 凑够这么多个就停；一次 `SCAN` 多给的不丢——丢了下一页就再也看不到它们
+  pub page: usize,
+  pub timeout: Duration,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RedisKeyRow {
+  pub key: RedisBytes,
+  /// `TYPE` 的回答：string / hash / list / set / zset / stream，或模块类型的名字
+  pub kind: String,
+  /// 毫秒；-1 是不过期，-2 是这一刻已经没了
+  pub ttl_ms: i64,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct ScanPage {
+  pub keys: Vec<RedisKeyRow>,
+  /// 下一页的游标；`None` 是扫完了。游标可以大过 2⁵³，所以是字符串
+  pub cursor: Option<String>,
+}
+
+/// 按模式翻一页键，顺带每个键的类型与剩余时间（一次流水线取回，不是一个键一趟）
+pub async fn scan(pool: &RedisPool, request: ScanRequest) -> Result<ScanPage, String> {
+  let mut connection = pool.connection(request.database).await?;
+  let started = Instant::now();
+  let work = async {
+    let mut cursor: u64 = request.cursor.parse().unwrap_or(0);
+    let mut keys: Vec<Vec<u8>> = Vec::new();
+    loop {
+      let mut command = redis::cmd("SCAN");
+      command.arg(cursor).arg("MATCH").arg(&request.pattern).arg("COUNT").arg(SCAN_COUNT);
+      if let Some(kind) = &request.kind {
+        command.arg("TYPE").arg(kind);
+      }
+      let (next, batch): (u64, Vec<Vec<u8>>) =
+        command.query_async(&mut connection).await.map_err(describe_error)?;
+      keys.extend(batch);
+      cursor = next;
+      // 大库里匹配得很稀时一页可能要扫很多轮；过了一半时限就先交出已有的，
+      // 带着游标让人接着翻，而不是整页超时
+      if cursor == 0 || keys.len() >= request.page || started.elapsed() > request.timeout / 2 {
+        break;
+      }
+    }
+    let rows = describe_keys(&mut connection, keys).await?;
+    Ok(ScanPage { keys: rows, cursor: (cursor != 0).then(|| cursor.to_string()) })
+  };
+  with_deadline(request.timeout, work).await
+}
+
+async fn describe_keys(
+  connection: &mut ConnectionManager,
+  keys: Vec<Vec<u8>>,
+) -> Result<Vec<RedisKeyRow>, String> {
+  if keys.is_empty() {
+    return Ok(Vec::new());
+  }
+  let mut pipe = redis::pipe();
+  for key in &keys {
+    pipe.cmd("TYPE").arg(key).cmd("PTTL").arg(key);
+  }
+  let replies: Vec<Value> = pipe.query_async(connection).await.map_err(describe_error)?;
+  let mut replies = replies.into_iter();
+  Ok(
+    keys
+      .into_iter()
+      .map(|key| {
+        let kind = match replies.next() {
+          Some(Value::SimpleString(kind)) => kind,
+          Some(Value::BulkString(kind)) => String::from_utf8_lossy(&kind).into_owned(),
+          _ => "none".to_string(),
+        };
+        let ttl_ms = match replies.next() {
+          Some(Value::Int(ttl)) => ttl,
+          _ => -2,
+        };
+        RedisKeyRow { key: RedisBytes::new(key), kind, ttl_ms }
+      })
+      .collect(),
+  )
+}
+
+/// 一个键的值，按类型各一种形状；集合类的都是一页，`next` 是下一页从哪接（`None` 是完了）。
+/// 翻页的位置对前端是不透明的字符串：散列与集合是 `*SCAN` 的游标，列表与有序集合是
+/// 下标，流是上一页最后一条的 ID
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RedisValue {
+  String {
+    size: u64,
+    value: RedisBytes,
+    truncated: bool,
+  },
+  Hash {
+    length: u64,
+    entries: Vec<(RedisBytes, RedisBytes)>,
+    next: Option<String>,
+  },
+  List {
+    length: u64,
+    offset: u64,
+    items: Vec<RedisBytes>,
+    next: Option<String>,
+  },
+  Set {
+    length: u64,
+    members: Vec<RedisBytes>,
+    next: Option<String>,
+  },
+  Zset {
+    length: u64,
+    offset: u64,
+    entries: Vec<(RedisBytes, String)>,
+    next: Option<String>,
+  },
+  Stream {
+    length: u64,
+    entries: Vec<StreamEntry>,
+    next: Option<String>,
+  },
+  /// 模块类型（RedisJSON、布隆过滤器……）：说出类型名，不假装看得懂
+  #[serde(rename_all = "camelCase")]
+  Unsupported {
+    redis_type: String,
+  },
+}
+
+/// `XRANGE` 的一条：ID 与 `[f1, v1, …]`
+type RawStreamEntry = (String, Vec<Vec<u8>>);
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct StreamEntry {
+  pub id: String,
+  pub fields: Vec<(RedisBytes, RedisBytes)>,
+}
+
+pub struct ValueRequest {
+  pub database: i64,
+  pub key: Vec<u8>,
+  /// 上一页给的 `next`；第一页是 `None`
+  pub position: Option<String>,
+  pub page: u64,
+  pub timeout: Duration,
+}
+
+pub async fn read_value(pool: &RedisPool, request: ValueRequest) -> Result<RedisValue, String> {
+  let mut connection = pool.connection(request.database).await?;
+  let work = async {
+    let kind: String = redis::cmd("TYPE")
+      .arg(&request.key)
+      .query_async(&mut connection)
+      .await
+      .map_err(describe_error)?;
+    let key = &request.key;
+    let page = request.page.max(1);
+    let position = request.position.as_deref();
+    let offset: u64 = position.and_then(|position| position.parse().ok()).unwrap_or(0);
+    let cursor = position.unwrap_or("0");
+    let value = match kind.as_str() {
+      "none" => return Err(REDIS_KEY_GONE.to_string()),
+      "string" => {
+        let (size, bytes): (u64, Vec<u8>) = redis::pipe()
+          .cmd("STRLEN")
+          .arg(key)
+          .cmd("GETRANGE")
+          .arg(key)
+          .arg(0)
+          .arg(STRING_PREVIEW_BYTES - 1)
+          .query_async(&mut connection)
+          .await
+          .map_err(describe_error)?;
+        let truncated = size > bytes.len() as u64;
+        RedisValue::String { size, value: preview_bytes(bytes, truncated), truncated }
+      }
+      "hash" => {
+        let (length, (next, flat)): (u64, (u64, Vec<Vec<u8>>)) = redis::pipe()
+          .cmd("HLEN")
+          .arg(key)
+          .cmd("HSCAN")
+          .arg(key)
+          .arg(cursor)
+          .arg("COUNT")
+          .arg(page)
+          .query_async(&mut connection)
+          .await
+          .map_err(describe_error)?;
+        RedisValue::Hash {
+          length,
+          entries: pairs(flat),
+          next: (next != 0).then(|| next.to_string()),
+        }
+      }
+      "list" => {
+        let end = offset + page - 1;
+        let (length, items): (u64, Vec<Vec<u8>>) = redis::pipe()
+          .cmd("LLEN")
+          .arg(key)
+          .cmd("LRANGE")
+          .arg(key)
+          .arg(offset)
+          .arg(end)
+          .query_async(&mut connection)
+          .await
+          .map_err(describe_error)?;
+        RedisValue::List {
+          length,
+          offset,
+          items: items.into_iter().map(RedisBytes::new).collect(),
+          next: (end + 1 < length).then(|| (end + 1).to_string()),
+        }
+      }
+      "set" => {
+        let (length, (next, members)): (u64, (u64, Vec<Vec<u8>>)) = redis::pipe()
+          .cmd("SCARD")
+          .arg(key)
+          .cmd("SSCAN")
+          .arg(key)
+          .arg(cursor)
+          .arg("COUNT")
+          .arg(page)
+          .query_async(&mut connection)
+          .await
+          .map_err(describe_error)?;
+        RedisValue::Set {
+          length,
+          members: members.into_iter().map(RedisBytes::new).collect(),
+          next: (next != 0).then(|| next.to_string()),
+        }
+      }
+      "zset" => {
+        let end = offset + page - 1;
+        let (length, flat): (u64, Vec<Vec<u8>>) = redis::pipe()
+          .cmd("ZCARD")
+          .arg(key)
+          .cmd("ZRANGE")
+          .arg(key)
+          .arg(offset)
+          .arg(end)
+          .arg("WITHSCORES")
+          .query_async(&mut connection)
+          .await
+          .map_err(describe_error)?;
+        let entries = pairs(flat).into_iter().map(|(member, score)| (member, score.text)).collect();
+        RedisValue::Zset {
+          length,
+          offset,
+          entries,
+          next: (end + 1 < length).then(|| (end + 1).to_string()),
+        }
+      }
+      "stream" => {
+        // 接着上一页最后一条往后读：`(` 是不含它自己（6.2 起）
+        let start = position.map_or_else(|| "-".to_string(), |id| format!("({id}"));
+        let (length, entries): (u64, Vec<RawStreamEntry>) = redis::pipe()
+          .cmd("XLEN")
+          .arg(key)
+          .cmd("XRANGE")
+          .arg(key)
+          .arg(start)
+          .arg("+")
+          .arg("COUNT")
+          .arg(page)
+          .query_async(&mut connection)
+          .await
+          .map_err(describe_error)?;
+        let next = (entries.len() as u64 == page)
+          .then(|| entries.last().map(|(id, _)| id.clone()))
+          .flatten();
+        RedisValue::Stream {
+          length,
+          entries: entries
+            .into_iter()
+            .map(|(id, flat)| StreamEntry { id, fields: pairs(flat) })
+            .collect(),
+          next,
+        }
+      }
+      other => RedisValue::Unsupported { redis_type: other.to_string() },
+    };
+    Ok(value)
+  };
+  with_deadline(request.timeout, work).await
+}
+
+/// 截断了的字符串值：截在一个多字节字符中间时，把那半个字符去掉再判断是不是 UTF-8——
+/// 不然一段中文的前 512 KiB 会被当成二进制
+fn preview_bytes(mut bytes: Vec<u8>, truncated: bool) -> RedisBytes {
+  if truncated {
+    if let Err(error) = std::str::from_utf8(&bytes) {
+      if error.error_len().is_none() {
+        bytes.truncate(error.valid_up_to());
+      }
+    }
+  }
+  RedisBytes::new(bytes)
+}
+
+/// `[f1, v1, f2, v2, …]` → `[(f1, v1), …]`
+fn pairs(flat: Vec<Vec<u8>>) -> Vec<(RedisBytes, RedisBytes)> {
+  let mut items = flat.into_iter();
+  let mut pairs = Vec::new();
+  while let (Some(first), Some(second)) = (items.next(), items.next()) {
+    pairs.push((RedisBytes::new(first), RedisBytes::new(second)));
+  }
+  pairs
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn bytes_that_are_not_utf8_are_escaped_and_flagged() {
+    let text = RedisBytes::new("user:中文".as_bytes().to_vec());
+    assert_eq!((text.text.as_str(), text.binary), ("user:中文", false));
+    let binary = RedisBytes::new(vec![b'k', 0xff, b'\\', b'"', b'\n']);
+    assert_eq!((binary.text.as_str(), binary.binary), ("k\\xff\\\\\\\"\\x0a", true));
+    assert_eq!(decode_key(&binary.raw), Ok(vec![b'k', 0xff, b'\\', b'"', b'\n']));
+  }
+
+  #[test]
+  fn a_string_cut_inside_a_character_is_still_text() {
+    let mut bytes = "中文".as_bytes().to_vec();
+    bytes.pop();
+    let preview = preview_bytes(bytes.clone(), true);
+    assert_eq!((preview.text.as_str(), preview.binary), ("中", false));
+    // 反向：没截断时那半个字符是真的坏字节
+    assert!(preview_bytes(bytes, false).binary);
+  }
+
+  #[test]
+  fn the_keyspace_section_is_read_into_counts() {
+    let info =
+      "# Keyspace\r\ndb0:keys=12,expires=1,avg_ttl=0\r\ndb3:keys=5,expires=0,avg_ttl=0\r\n";
+    let counts = parse_keyspace(info);
+    assert_eq!(counts.get(&0), Some(&12));
+    assert_eq!(counts.get(&3), Some(&5));
+    assert_eq!(counts.len(), 2);
+  }
+
+  #[test]
+  fn the_database_field_is_a_non_negative_index() {
+    assert_eq!(database_index(None), Ok(0));
+    assert_eq!(database_index(Some(" ")), Ok(0));
+    assert_eq!(database_index(Some("3")), Ok(3));
+    assert!(database_index(Some("-1")).is_err());
+    assert!(database_index(Some("abc")).is_err());
+  }
+}

@@ -12,6 +12,7 @@ import {
   Plus,
   FolderPlus,
   Table2,
+  KeyRound,
   RefreshCw,
   Loader,
   AlertCircle,
@@ -20,6 +21,7 @@ import {
   X
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { DatabaseType } from '../contracts/connection';
 import { speaksSql, supportsFeature } from '../contracts/databaseSupport';
 import { useLanguageStore } from '../stores/languageStore';
 import {
@@ -217,11 +219,13 @@ export default function DatabaseExplorer({
     setError(null);
     
     try {
-      // MongoDB 没有目录 SQL：后端直接给出同一形状的行（库名在 object_schema）
+      // MongoDB 与 Redis 没有目录 SQL：后端直接给出同一形状的行。MongoDB 的库名在
+      // object_schema，Redis 一行是一个逻辑库（键太多，不进树）
       if (!speaksSql(connection.db_type)) {
-        const rows = await invoke<Record<string, unknown>[]>('mongodb_list_collections', {
-          connectionString
-        });
+        const rows = await invoke<Record<string, unknown>[]>(
+          connection.db_type === DatabaseType.Redis ? 'redis_list_keyspaces' : 'mongodb_list_collections',
+          { connectionString }
+        );
         const objects = normalizeObjectRows(rows);
         setDatabaseMetadata(connectionId, { objects, lastUpdated: Date.now() });
         setExpandedNodes(new Set(defaultExpandedKeys(
@@ -520,7 +524,9 @@ export default function DatabaseExplorer({
               <GitBranch size={14} />
             </button>
           )}
-          {(!speaksSql(connection.db_type) || supportsFeature(connection.db_type, 'structureEditing')) && (
+          {/* Redis 这一版只读：没有「新建」 */}
+          {connection.db_type !== DatabaseType.Redis
+            && (!speaksSql(connection.db_type) || supportsFeature(connection.db_type, 'structureEditing')) && (
           <button
             onClick={(event) => {
               if (!speaksSql(connection.db_type)) {
@@ -960,6 +966,9 @@ function ObjectIcon({ kind }: { kind: DatabaseObjectKind }) {
   }
   if (kind === 'sequence') {
     return <Hash size={14} className="shrink-0" />;
+  }
+  if (kind === 'keyspace') {
+    return <KeyRound size={14} className="shrink-0" />;
   }
   return <Table size={14} className="shrink-0" />;
 } 

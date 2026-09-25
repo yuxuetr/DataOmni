@@ -14,6 +14,7 @@ pub mod pool_registry;
 pub mod query_error;
 pub mod query_executor;
 pub mod query_session;
+pub mod redis;
 pub mod schema_metadata;
 pub mod session_target;
 pub mod sql_server;

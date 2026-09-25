@@ -82,6 +82,8 @@ export type DatabaseObjectKind =
   | 'table'
   /** MongoDB 的集合。和表分开：它没有结构页、没有 DDL，右键能做的事也不一样 */
   | 'collection'
+  /** Redis 的一个逻辑库（`db0`、`db3`）。键太多，不进树；点开是那个库的键浏览页 */
+  | 'keyspace'
   | 'view'
   | 'materialized-view'
   | 'function'

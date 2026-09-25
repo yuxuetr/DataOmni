@@ -36,6 +36,8 @@ export const DESTRUCTIVE_MENU_ACTIONS: ReadonlySet<ObjectMenuAction> = new Set([
 export const OBJECT_MENU_ACTIONS: Record<DatabaseObjectKind, readonly ObjectMenuAction[]> = {
   table: ['open-data', 'open-structure', 'copy-name', 'truncate', 'drop'],
   collection: ['open-data', 'open-structure', 'copy-name'],
+  // 逻辑库没有结构，也不给删：`FLUSHDB` 清空整个库，不该在右键菜单里
+  keyspace: ['open-data', 'copy-name'],
   view: ['open-data', 'view-definition', 'copy-name', 'drop'],
   'materialized-view': ['open-data', 'view-definition', 'copy-name', 'drop'],
   function: ['view-definition', 'copy-name'],
@@ -54,7 +56,7 @@ export function objectMenuActions(
   kind: DatabaseObjectKind,
   speaksSql: boolean
 ): readonly ObjectMenuAction[] {
-  if (speaksSql) {
+  if (speaksSql || kind === 'keyspace') {
     return OBJECT_MENU_ACTIONS[kind];
   }
   return OBJECT_MENU_ACTIONS[kind].includes('open-data') ? NON_SQL_BROWSABLE_ACTIONS : ['copy-name'];

@@ -11,6 +11,7 @@ export type { DatabaseObject, DatabaseObjectKind };
 export const KIND_LABEL_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
   table: 'objectKind.table',
   collection: 'objectKind.collection',
+  keyspace: 'objectKind.keyspace',
   view: 'objectKind.view',
   'materialized-view': 'objectKind.materialized-view',
   function: 'objectKind.function',
@@ -28,6 +29,7 @@ export const KIND_LABEL_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
 export const KIND_BADGE_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
   table: 'objectKindOne.table',
   collection: 'objectKindOne.collection',
+  keyspace: 'objectKindOne.keyspace',
   view: 'objectKindOne.view',
   'materialized-view': 'objectKindOne.materialized-view',
   function: 'objectKindOne.function',
@@ -39,6 +41,7 @@ export const KIND_BADGE_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
 const KIND_ORDER: DatabaseObjectKind[] = [
   'table',
   'collection',
+  'keyspace',
   'view',
   'materialized-view',
   'function',
@@ -73,7 +76,7 @@ export function showsSchemaLevel(dbType: DatabaseType): boolean {
 
 /** 表、集合、视图、物化视图有行（文档），能打开；函数与序列没有。 */
 export function isBrowsableKind(kind: DatabaseObjectKind): boolean {
-  return kind === 'table' || kind === 'collection' || kind === 'view' || kind === 'materialized-view';
+  return kind === 'table' || kind === 'collection' || kind === 'keyspace' || kind === 'view' || kind === 'materialized-view';
 }
 
 export function normalizeObjectRows(

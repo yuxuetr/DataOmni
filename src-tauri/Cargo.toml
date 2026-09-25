@@ -59,6 +59,10 @@ russh = "0.63.3"
 # MongoDB（`services/mongodb.rs`）。官方驱动，纯 Rust、TLS 走 rustls；默认 features 里的
 # DNS 解析是 `mongodb+srv://`（Atlas）要的。bson 用它自带的 2.x（`mongodb::bson`）
 mongodb = "3.9.1"
+# Redis（`services/redis.rs`）。`ConnectionManager` 是一条多路复用、断了自己重连的连接，
+# 登记一个就够（Redis 单连接本来就是按顺序处理命令）。TLS 走 rustls，与另外几家一致；
+# `insecure` 给「只加密不校验」那一档用
+redis = { version = "1.7.0", default-features = false, features = ["acl", "streams", "tokio-comp", "tokio-rustls-comp", "tls-rustls-insecure", "tls-rustls-webpki-roots", "connection-manager"] }
 
 [dev-dependencies]
 # 只为在测试里**造**一把带口令的私钥：russh 依赖的 ssh-key 默认不开

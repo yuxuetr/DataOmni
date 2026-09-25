@@ -101,6 +101,7 @@ pub async fn diagnose_connection(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn test_connection(
   config: ConnectionProfile,
   app_handle: AppHandle,
@@ -109,6 +110,7 @@ pub async fn test_connection(
   sql_server_registry: State<'_, SqlServerRegistry>,
   oracle_registry: State<'_, OracleRegistry>,
   mongo_registry: State<'_, MongoRegistry>,
+  redis_registry: State<'_, crate::services::redis::RedisRegistry>,
 ) -> Result<String, String> {
   println!("🧪 测试数据库连接: {}", config.name);
 
@@ -163,6 +165,14 @@ pub async fn test_connection(
     };
     let client = crate::services::mongodb::connect(&MongoTarget::from_profile(&reachable)).await?;
     mongo_registry.insert(connection_string.clone(), std::sync::Arc::new(client));
+  } else if resolved.db_type == DatabaseType::Redis {
+    let reachable = match local_port {
+      Some(port) => resolved.redirected_to("127.0.0.1", port),
+      None => resolved,
+    };
+    let target = crate::services::redis::RedisTarget::from_profile(&reachable)?;
+    let pool = crate::services::redis::connect(target).await?;
+    redis_registry.insert(connection_string.clone(), std::sync::Arc::new(pool));
   }
   Ok(connection_string)
 }
