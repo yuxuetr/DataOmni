@@ -640,10 +640,11 @@ export default function TableDataViewer({
     }
     return editColumnWidth(width, columnEditorKind(tableSchema?.columns[index]?.data_type ?? '', dialect));
   });
-  // 进入行编辑时光标放在第一个看得见、又不是键列的格子上
+  // 进入行编辑时光标放在第一个看得见、又改得了的格子上（不是键列，也不是计算列）
   const firstEditableColumn = visibleIndexes
-    .map((index) => tableSchema?.columns[index]?.name)
-    .find((name): name is string => name !== undefined && !keyColumnSet.has(name)) ?? null;
+    .map((index) => tableSchema?.columns[index])
+    .find((column) => column !== undefined && !keyColumnSet.has(column.name) && !column.is_generated)
+    ?.name ?? null;
 
   const hiddenColumnsNote =
     hiddenColumns.size > 0 ? ` ${t('export.scopeHiddenColumns', { count: hiddenColumns.size })}` : '';
@@ -992,7 +993,7 @@ export default function TableDataViewer({
     field,
     isEditing,
     autoFocus = false,
-    isKeyColumn = false,
+    readOnly = false,
     dataType = '',
     align = 'left',
     densityClass = 'px-2 py-1',
@@ -1008,8 +1009,11 @@ export default function TableDataViewer({
     isEditing: boolean;
     /** 进入编辑时光标落在哪一格：只给一行里第一个可改的格子 */
     autoFocus?: boolean;
-    /** 这一列参与定位行：改它等于换一行的身份，所以不让改 */
-    isKeyColumn?: boolean;
+    /**
+     * 编辑时这一格不给改：参与定位行的键列（改它等于换一行的身份），以及由数据库产生的
+     * 计算列（写它会被数据库拒绝——此前行编辑里照样给了输入框）
+     */
+    readOnly?: boolean;
     /** 列的声明类型，决定编辑时用哪种控件 */
     dataType?: string;
     align?: 'left' | 'right';
@@ -1023,8 +1027,8 @@ export default function TableDataViewer({
     onSelect?: (extend: boolean) => void;
     onContextMenu?: (event: React.MouseEvent) => void;
   }) => {
-    if (!isEditing || isKeyColumn) {
-      // 非编辑状态或键列，显示只读
+    if (!isEditing || readOnly) {
+      // 非编辑状态或改不了的列，显示只读
       // 自建执行器把 BigInt / Decimal / 二进制等包成 tagged value 以保住精度，
       // 显示时统一交给 formatResultValue 还原成人能读的形式
       return (
@@ -1624,7 +1628,7 @@ export default function TableDataViewer({
                                   field: column.name,
                                   isEditing: editState.mode === 'edit' && editState.rowIndex === rowIndex,
                                   autoFocus: column.name === firstEditableColumn,
-                                  isKeyColumn: keyColumnSet.has(column.name),
+                                  readOnly: keyColumnSet.has(column.name) || column.is_generated === true,
                                   dataType: column.data_type,
                                   align: alignments[colIndex],
                                   densityClass,

@@ -66,7 +66,17 @@ export function CellInputEditor({
   className
 }: CellInputEditorProps) {
   const t = useLanguageStore((state) => state.t);
-  const [menuOpen, setMenuOpen] = useState(false);
+  /**
+   * 菜单开着时它在屏幕上的位置。用 fixed 而不是挂在格子下面的 absolute：编辑器结果只有
+   * 一两行时，absolute 的菜单被结果卡片的滚动区裁掉，NULL 的格子就切不到「值」
+   * （打包版上看到的）。位置在打开那一刻按格子算，滚动时收起，免得菜单和格子分家
+   */
+  const [menuAt, setMenuAt] = useState<{ top: number; right: number } | null>(null);
+  const menuOpen = menuAt !== null;
+  const toggleMenu = () => {
+    const rect = rootRef.current?.getBoundingClientRect();
+    setMenuAt((open) => (open || !rect ? null : { top: rect.bottom + 4, right: window.innerWidth - rect.right }));
+  };
   /** 从菜单换了一档：换出来的编辑框要拿到焦点，否则人还得再点一下才能打字 */
   const [focusAfterPick, setFocusAfterPick] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -77,18 +87,24 @@ export function CellInputEditor({
     }
     const onPointerDown = (event: MouseEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) {
-        setMenuOpen(false);
+        setMenuAt(null);
       }
     };
+    const onScroll = () => setMenuAt(null);
     document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
+    // capture：结果卡片自己的滚动区滚动时也要收起，它的 scroll 事件不冒泡到 document
+    document.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('scroll', onScroll, true);
+    };
   }, [menuOpen]);
 
   const kinds = CELL_INPUT_KINDS.filter((kind) => allowDefault || kind !== 'default');
   const editor = columnEditorKind(dataType, dialect);
 
   const pick = (kind: CellInputKind) => {
-    setMenuOpen(false);
+    setMenuAt(null);
     setFocusAfterPick(kind === 'value' || kind === 'expression');
     switch (kind) {
       case 'value':
@@ -124,7 +140,7 @@ export function CellInputEditor({
           type="button"
           // 也能点：NULL / DEFAULT 那一格长得像个输入框，用户的第一反应是点它
           // 然后开始打字，而不是先去找旁边那个箭头
-          onClick={() => setMenuOpen((open) => !open)}
+          onClick={toggleMenu}
           className="flex min-w-0 flex-1 items-center rounded-control border border-dashed border-line-strong bg-surface-sunken px-2 py-1 text-left font-mono text-xs italic text-fg-subtle hover:bg-surface-hover"
           title={t(value.kind === 'null' ? 'cellInput.nullHint' : 'cellInput.defaultHint')}
         >
@@ -147,7 +163,7 @@ export function CellInputEditor({
 
       <button
         type="button"
-        onClick={() => setMenuOpen((open) => !open)}
+        onClick={toggleMenu}
         title={t('cellInput.pickKind')}
         aria-label={t('cellInput.pickKind')}
         // 顶端对齐：JSON 的多行框和二进制的两行控件下面，一根从头拉到尾的
@@ -157,8 +173,11 @@ export function CellInputEditor({
         <ChevronDown size={14} />
       </button>
 
-      {menuOpen && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-40 rounded-control border border-line-strong bg-surface py-1 shadow-lg">
+      {menuAt && (
+        <div
+          style={{ top: menuAt.top, right: menuAt.right }}
+          className="fixed z-50 w-40 rounded-control border border-line-strong bg-surface py-1 shadow-lg"
+        >
           {kinds.map((kind) => (
             <button
               key={kind}
