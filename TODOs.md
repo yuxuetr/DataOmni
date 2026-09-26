@@ -1857,6 +1857,38 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
        位置、格式化（sql-formatter 的 `duckdb`）
     2. 表格编辑、事务（语句推断，同 PostgreSQL）、风险判断
     3. 执行计划（`EXPLAIN (FORMAT JSON)`）、改结构与建表、CSV 导入、整表导出
+  - **第一阶段完成（2026-09-26，`f6dcc64`）**：后端 `services/duckdb.rs`、五套目录查询
+    （全在 1.5.5 的命令行上逐段跑过再落进代码）、前端 `duckdb` 方言、表单与「打开数据库
+    文件」、`PENDING_FEATURES` 登记另外六项。执行计划的语句与解析后端已接（门
+    `every_supported_type_can_produce_a_plan` 要求走 SQL 的类型都出得了语句），界面第三
+    阶段再开。真库用例 `tests/duckdb_smoke.rs` 9 条，**每次 `bun run check` 都跑**（不要
+    服务器，库是临时目录里的文件）。目录查询上 1.5.5 的几处事实：计算列在目录里没有
+    标记（`column_default` 放的是表达式），只能从 `duckdb_tables().sql` 认；
+    `duckdb_indexes().expressions` 是文本 `[note, pa]`、带引号的名字写成 `'"my col"'`；
+    约束名是 DuckDB 起的、写的 `CONSTRAINT x` 不保留；外键不能跨 schema、只有 NO ACTION；
+    没有触发器；宏的定义没有原文，由参数与定义拼回。事务包不住的语句也是试出来的：
+    回滚之后 `SET` 的值还在、`COPY … TO` 与 `EXPORT` 的文件已写出、`ATTACH` 撤了但文件
+    建出来了。
+    反向验证：去掉 interrupt → 超时用例红（这条一开始**只会卡住不会红**：测试运行时
+    退出前要等阻塞线程数完一千亿行；改成十亿行加 5 秒上限之后在 5.8 秒红）；
+    `aborts_transaction_on_error` 不含 DuckDB → 红在 Active ≠ Failed。
+    顺带补上了本节末尾记着的那道缺口：`identifierDialectFor` 对不认识的类型静默回落
+    `sqlite`，现在有门——每种走 SQL 的类型必须映射到它自己（去掉 duckdb → 红）。
+    打包版（macOS）上渲染验过：表单（有缺口的说明、选文件那一格）、编辑器（直接查
+    parquet、各类型的显示、错误的类别 / 位置 / 提示）、对象树（schema、表、函数、
+    序列）、20 万行无主键表按 `rowid` 翻到末页、有主键表按主键分页且只读原因是
+    「分阶段接入」、结构页（计算列、表达式索引、复合外键、定义里带着 CREATE INDEX）、
+    ER 图；连着时别的进程打不开、断开后立刻能开；文件被命令行占着时报出程序与 PID。
+    渲染抓到两处、同一个提交里修了：头部印成「DuckDB · :0 / demo」（三处「SQLite 没有
+    主机端口」的判断没算上 DuckDB，改成 `isFileDatabase`）；宏的定义打不开——前端写死
+    「PostgreSQL 绑一个参数，其余两个」，DuckDB 报 Got 2, needed 1，SQL Server 与 Oracle
+    的驱动只是不计较多给的那一个。改成后端给 `routine_parameter_count`，加了一道比对
+    占位符的门。
+    体积：打包版的可执行文件 47 → 91 MB（Tauri 的 release 不 strip；strip 到 71 MB 但
+    压缩后只差 3 MB，不改）；dmg 多约 12–14 MB，与实验一致。
+  - 已知不做（这一阶段）：时区扩展（ICU，要 cmake 构建）；`WITH … INSERT` 当查询走、
+    结果是一行 `Count`；扩展按 DuckDB 默认自动下载（`autoinstall_known_extensions`
+    与 `autoload_known_extensions` 在编进来的这份上都是开的，实测过），没有另加开关。
 - [ ] 为每个新数据库补齐连接、元数据、执行、分页、导入导出和测试
 - [ ] 新数据库达到核心验收标准后才能标记为“已支持”
 - [x] ~~前置重构：前端直连收进后端命令~~ **评估完成（2026-09-23）：当前版本不做，
@@ -1905,6 +1937,8 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
 - 还缺一道、接的时候要补：`identifierDialectFor()` 对不认识的类型回落到
   `sqlite`（双引号）而不是报错。这在「只有三种」时是对的容错，多出第四种
   方言时会变成静默用错引用字符。
+  **已补（2026-09-26，`f6dcc64`）**：`sqlIdentifiers.test.ts` 断言每种走 SQL 的类型都
+  映射到它自己。
 
 ### 4.3 非关系型数据库专属工作区
 
