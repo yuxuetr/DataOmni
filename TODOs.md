@@ -1424,7 +1424,7 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
 > 跨模块重构，SQL Server / Oracle 就是这么接的。仍然成立的是：DuckDB 要把 libduckdb
 > 打进安装包；ClickHouse 不适用 2.5 的写入不变量。
 
-- [x] ~~评估并接入 DuckDB~~ **评估完成：不接**
+- [x] ~~评估并接入 DuckDB~~ **评估完成：不接**（2026-09-26 已推翻，见下面的「DuckDB」一条）
   - 驱动证据（查本地 registry 的 Cargo.toml，不是印象）：
     `sqlx 0.8.6` 的 driver features 只有 `mysql` / `postgres` / `sqlite`（外加
     `any`）；`tauri-plugin-sql 2.2.1` 只导出这三个，每个都是 `sqlx/<driver>`
@@ -1814,6 +1814,49 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
   - 观察到但没有归因：冷启动之后第一条匿名块在 `DBMS_METADATA` 同时跑着时超时
     （30 秒），热了之后 120 毫秒；当时容器内存 2.15 / 2.44 GB、宿主可用不到 1 GB。
     重估条件：在内存宽裕的 Oracle 上复现。
+- [ ] **DuckDB**（2026-09-26 立项，用户决定「直接打包进去」）
+  - 为什么推翻上面「不接」的结论：那条结论的前置条件（前端直连收进后端）在接 SQL Server
+    与 Oracle 时已经做完；剩下的只是体积。实测（空项目，release + strip）：
+    `duckdb = { features = ["bundled"] }` 让可执行文件从 0.34 MB 到 33.3 MB，压缩后
+    10.9 MB，冷编译多 111 秒；再加 `parquet`、`json` 两个扩展是 36.2 MB、压缩后 12.0 MB
+    ——只多 1.1 MB，而读 parquet 正是 DuckDB 最常见的用法，一起编进去。当时的 dmg 是
+    17 MB，接进来之后约 29 MB。插件化（按需下载）评估过、当前版本不做：只有这一个重的
+    成员，为它搭签名、分发、版本兼容与前端动态加载，成本高出一个数量级。
+    重估条件：第二个同量级的原生库出现，或 dmg 超过 50 MB。
+  - 先做的实验（scratchpad `duckprobe`，duckdb crate 1.10505.0 = DuckDB 1.5.5）定了这几处：
+    (1) **结果要流式读**：`query()` 走 `duckdb_execute_prepared`，整个结果在客户端物化，
+    `SELECT * FROM 'big.parquet'` 会把内存吃光。`stream_arrow` 之后丢掉迭代器、改用
+    `raw_query()` 逐行读（迭代器在取数出错时 panic，`Rows` 返回错误）：十亿行的 range
+    取前 1000 行 15 ms。
+    (2) **没有公开的「语句类型」**：非查询语句流式执行也给一个结果集——DDL 是一列
+    `Count`、零行；DML 是一行 `Count`；`SET` 是 `Success`；`RETURNING` 给真正的列。
+    所以按开头的关键字分（DML 之外的 DDL、SET、事务控制、ATTACH 这些都是非查询），
+    DML 的影响行数取 `Count` 那一格；带 RETURNING 的当查询。
+    (3) **事务语义和 PostgreSQL 一样**：事务里一条出错，之后都是「Current transaction
+    is aborted (please ROLLBACK)」；DDL 在事务里、能回滚；影响行数可信，2.5 的行数不变量
+    原样成立。
+    (4) **取消是真的取消**：另一线程上 `interrupt()`，CPU 密集的查询 0.5 秒停下，报
+    「INTERRUPT Error」，之后连接照常可用（不用像 Oracle 那样丢掉连接）。
+    (5) **错误没有码，有位置**：错误是「Catalog Error: …」「Parser Error: …」，后面跟
+    `LINE 1: …` 和一行 `^`。类别作码，位置由 `^` 那一列换算。
+    (6) **文件锁是进程级的、排他的**：另一个进程以读写打开着，这边**只读也打不开**，报
+    「Could not set lock on file … Conflicting lock is held in <程序> (PID n)」。
+    所以「只读模式」解决不了冲突，要做的是把这句话翻清楚，并在连接断开时真的关掉库
+    （所有连接都 drop）把锁还回去。同一进程里再开一次同一个文件不报错。
+    (7) **类型**：UUID 与 JSON 到驱动这边是文本；TIMESTAMPTZ 是 UTC 微秒（不编 ICU
+    时区扩展，显示成 UTC）；DECIMAL 给宽度、标度与整数值；HUGEINT / UBIGINT 超出安全
+    整数；LIST / STRUCT / MAP / UNION 是嵌套值，显示成 JSON 文本。
+  - 接入沿用 Oracle 那条路：后端 `services/duckdb.rs` 持有库（一个文件一份
+    `Connection`，会话与目录查询 `try_clone`），阻塞调用放 `spawn_blocking`，结果集过
+    通道；`PENDING_FEATURES` 分阶段登记。和别家不同的是没有网络：没有 SSH、TLS、端口，
+    表单和 SQLite 同一格（选文件）。
+  - 分阶段，每一阶段都能用、都提交：
+    1. 连接（测试 / 连上 / 断开，锁冲突说清楚）、编辑器执行（流式、上限、超时、取消走
+       interrupt、错误类别与位置）、对象树（schema 一层、表 / 视图 / 序列 / 宏）、表数据
+       只读浏览、结构页（`duckdb_*()` 目录函数，定义取 `sql` 列）、补全、ER 图、会话
+       位置、格式化（sql-formatter 的 `duckdb`）
+    2. 表格编辑、事务（语句推断，同 PostgreSQL）、风险判断
+    3. 执行计划（`EXPLAIN (FORMAT JSON)`）、改结构与建表、CSV 导入、整表导出
 - [ ] 为每个新数据库补齐连接、元数据、执行、分页、导入导出和测试
 - [ ] 新数据库达到核心验收标准后才能标记为“已支持”
 - [x] ~~前置重构：前端直连收进后端命令~~ **评估完成（2026-09-23）：当前版本不做，
