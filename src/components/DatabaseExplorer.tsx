@@ -114,6 +114,8 @@ export interface ObjectCatalogQueries {
   routine_definition: string;
   sequence_properties: string | null;
   object_parameter_count: number;
+  /** `routine_definition` 绑几个参数：1 是 `[object_id]`，2 另加库名 */
+  routine_parameter_count: number;
 }
 
 /**

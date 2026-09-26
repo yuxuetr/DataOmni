@@ -27,9 +27,11 @@ export function createTablePaginationOrder(
     return createOrder(keyColumns, dialect, 'primary-key', true);
   }
 
-  if (dialect === 'sqlite') {
+  // DuckDB 的表同样有 `rowid` 伪列（没有另外两个别名）。分析用的表大多没有主键，
+  // 退回按全部列排序的话，每翻一页都是一次整表排序
+  if (dialect === 'sqlite' || dialect === 'duckdb') {
     const columnNames = new Set(columns.map(column => column.name.toLowerCase()));
-    const rowIdentifier = ['rowid', '_rowid_', 'oid']
+    const rowIdentifier = (dialect === 'duckdb' ? ['rowid'] : ['rowid', '_rowid_', 'oid'])
       .find(candidate => !columnNames.has(candidate));
     if (!rowIdentifier) {
       return createOrder(

@@ -130,6 +130,7 @@ pub async fn execute_write_batch<'a>(
     PoolRef::Sqlx(pool) => pool,
     PoolRef::SqlServer(pool) => return pool.write_batch(statements).await,
     PoolRef::Oracle(pool) => return pool.write_batch(statements).await,
+    PoolRef::DuckDb(pool) => return pool.write_batch(statements).await,
   };
   match pool {
     DbPool::Sqlite(pool) => {

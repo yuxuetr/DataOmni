@@ -66,12 +66,7 @@ describe('数据库类型支持范围', () => {
   });
 
   it('没有驱动的类型一律不可用', () => {
-    for (const type of [
-      DatabaseType.DuckDB,
-      DatabaseType.ClickHouse
-    ]) {
-      expect(isDatabaseTypeSupported(type)).toBe(false);
-    }
+    expect(isDatabaseTypeSupported(DatabaseType.ClickHouse)).toBe(false);
   });
 });
 
@@ -79,7 +74,8 @@ describe('分阶段接入的类型', () => {
   const README = readFileSync(fileURLToPath(new URL('../../README.md', import.meta.url)), 'utf8');
   const MATRIX_NAMES: Partial<Record<DatabaseType, string>> = {
     [DatabaseType.SqlServer]: 'SQL Server',
-    [DatabaseType.Oracle]: 'Oracle'
+    [DatabaseType.Oracle]: 'Oracle',
+    [DatabaseType.DuckDB]: 'DuckDB'
   };
 
   it('README 兼容性矩阵把它们标成「有缺口」，全都做完之后就不再是', () => {
@@ -118,7 +114,7 @@ describe('走不走 SQL', () => {
       expect(speaksSql(type), type).toBe(!nonSql.has(type));
     }
     // 连不上的类型谈不上走不走
-    expect(speaksSql(DatabaseType.DuckDB)).toBe(false);
+    expect(speaksSql(DatabaseType.ClickHouse)).toBe(false);
   });
 
   it('查询编辑器：走 SQL 的都有，Neo4j 写 Cypher、Elasticsearch 写请求也有；MongoDB 与 Redis 没有', () => {

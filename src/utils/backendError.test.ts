@@ -123,6 +123,18 @@ describe('backendError', () => {
           i += 1;
           continue;
         }
+        // 原始字符串 `r#"…"#` 到 `"#` 才结束，中间的引号不是边界。目录查询全是这种写法，
+        // SQL 里 `'"'`、`'''` 这样的引号组合会让下面按字符配对的办法配错边界
+        if (character === 'r' && source[i + 1] === '#' && source[i + 2] === '"' && !/\w/.test(source[i - 1] ?? '')) {
+          const end = source.indexOf('"#', i + 3);
+          const literal = source.slice(i, end === -1 ? source.length : end + 2);
+          if (printAt === null && /[一-鿿]/.test(literal)) {
+            offenders.push(`${file}:${line} ${literal.slice(0, 50)}`);
+          }
+          line += (literal.match(/\n/g) ?? []).length;
+          i += literal.length - 1;
+          continue;
+        }
         // `'"'` 这类字符字面量里的引号不是字符串边界；`&'a str` 的撇号则不成对
         if (character === "'") {
           if (source[i + 1] === '\\') {

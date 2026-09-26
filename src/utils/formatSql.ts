@@ -26,6 +26,8 @@ export function sqlFormatterLanguage(dbType: DatabaseType): SqlLanguage | null {
       return 'transactsql';
     case DatabaseType.Oracle:
       return 'plsql';
+    case DatabaseType.DuckDB:
+      return 'duckdb';
     default:
       return null;
   }

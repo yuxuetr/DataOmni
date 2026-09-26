@@ -34,6 +34,7 @@ pub fn run() {
     .manage(services::redis::RedisRegistry::default())
     .manage(services::neo4j::Neo4jRegistry::default())
     .manage(services::elasticsearch::EsRegistry::default())
+    .manage(services::duckdb::DuckDbRegistry::default())
     .setup(|app| {
       // 启动日志留着：窗口起不来时，这一行是唯一能说明进程到底跑没跑的证据
       println!("🎯 DataOmni 启动");
@@ -61,6 +62,8 @@ pub fn run() {
       close_sql_server,
       oracle_select,
       close_oracle,
+      duckdb_select,
+      close_duckdb,
       mongodb_list_collections,
       mongodb_find,
       mongodb_count,

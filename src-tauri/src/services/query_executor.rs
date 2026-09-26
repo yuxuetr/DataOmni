@@ -189,6 +189,7 @@ pub enum PoolRef<'a> {
   Sqlx(&'a DbPool),
   SqlServer(&'a std::sync::Arc<crate::services::sql_server::SqlServerPool>),
   Oracle(&'a std::sync::Arc<crate::services::oracle::OraclePool>),
+  DuckDb(&'a std::sync::Arc<crate::services::duckdb::DuckDbPool>),
 }
 
 impl<'a> From<&'a DbPool> for PoolRef<'a> {
@@ -204,6 +205,7 @@ pub enum SessionConnection {
   /// 装箱：tiberius 的客户端比 sqlx 的池连接大得多，不装箱的话每个变体都按它付内存
   SqlServer(Box<crate::services::sql_server::SqlServerConnection>),
   Oracle(Box<crate::services::oracle::OracleConnection>),
+  DuckDb(crate::services::duckdb::DuckDbConnection),
 }
 
 impl SessionConnection {
@@ -224,6 +226,7 @@ impl SessionConnection {
       PoolRef::Oracle(pool) => {
         pool.acquire_for_session().await.map(|connection| Self::Oracle(Box::new(connection)))
       }
+      PoolRef::DuckDb(pool) => pool.acquire_for_session().map(Self::DuckDb),
     }
   }
 
@@ -264,6 +267,20 @@ impl SessionConnection {
           .await?;
         summary_with_rows(summary, rows)
       }
+      Self::DuckDb(connection) => {
+        let mut rows = Vec::new();
+        let summary = connection
+          .execute_streaming(
+            sql,
+            StreamOptions::limited(row_limit, DEFAULT_QUERY_BYTE_LIMIT, row_limit.max(1)),
+            &mut |batch| {
+              rows.extend(batch.rows);
+              Ok(())
+            },
+          )
+          .await?;
+        summary_with_rows(summary, rows)
+      }
     }
   }
 
@@ -281,6 +298,7 @@ impl SessionConnection {
       Self::Postgres(connection) => describe_postgres_columns(connection, sql).await,
       Self::SqlServer(connection) => connection.describe_columns(sql).await,
       Self::Oracle(connection) => connection.describe_columns(sql).await,
+      Self::DuckDb(connection) => connection.describe_columns(sql).await,
     }
   }
 
@@ -319,6 +337,7 @@ impl SessionConnection {
       Self::SqlServer(connection) => connection.execute_with_params(sql, params).await,
       // 数组 DML：`sql` 是单行的语句，`params` 是一行接一行的值
       Self::Oracle(connection) => connection.execute_with_params(sql, params).await,
+      Self::DuckDb(connection) => connection.execute_with_params(sql, params).await,
     }
   }
 
@@ -341,16 +360,18 @@ impl SessionConnection {
       }
       Self::SqlServer(connection) => connection.execute_batch(sql).await,
       Self::Oracle(connection) => connection.execute_batch(sql).await,
+      Self::DuckDb(connection) => connection.execute_batch(sql).await,
     }
   }
 
   /// 这个方言会不会因为一条语句出错就把整个事务废掉。
   ///
-  /// 只有 PostgreSQL 是：事务里任何一条语句报错之后，后续语句一律 25P02，
-  /// 只有回滚能出去。MySQL 与 SQLite 不是这样，在那两家标成「事务已失败」
+  /// PostgreSQL 是：事务里任何一条语句报错之后，后续语句一律 25P02，
+  /// 只有回滚能出去。DuckDB 同样（「Current transaction is aborted (please
+  /// ROLLBACK)」，实验过）。MySQL 与 SQLite 不是这样，在那两家标成「事务已失败」
   /// 是在说假话。
   pub fn aborts_transaction_on_error(&self) -> bool {
-    matches!(self, Self::Postgres(_))
+    matches!(self, Self::Postgres(_) | Self::DuckDb(_))
   }
 
   /// 这个方言的 DDL 会不会隐式提交当前事务。
@@ -375,7 +396,8 @@ impl SessionConnection {
       Self::Postgres(connection) => timeout(limit, connection.ping()).await,
       Self::SqlServer(connection) => return connection.ping(limit).await,
       Self::Oracle(connection) => return connection.ping(limit).await,
-      Self::Sqlite(_) => return true,
+      // 本机的库，没有会被网络悄悄丢掉的连接
+      Self::Sqlite(_) | Self::DuckDb(_) => return true,
     };
     matches!(ping, Ok(Ok(())))
   }
@@ -387,7 +409,7 @@ impl SessionConnection {
       Self::MySql(connection) => drop(connection.detach()),
       Self::Postgres(connection) => drop(connection.detach()),
       Self::Sqlite(connection) => drop(connection.detach()),
-      Self::SqlServer(_) | Self::Oracle(_) => {}
+      Self::SqlServer(_) | Self::Oracle(_) | Self::DuckDb(_) => {}
     }
   }
 
@@ -451,6 +473,7 @@ impl SessionConnection {
       }
       Self::SqlServer(connection) => connection.execute_streaming(sql, options, sink).await,
       Self::Oracle(connection) => connection.execute_streaming(sql, options, sink).await,
+      Self::DuckDb(connection) => connection.execute_streaming(sql, options, sink).await,
     }
   }
 }
@@ -1397,6 +1420,23 @@ pub(crate) fn display_error(error: impl std::fmt::Display) -> QueryError {
   QueryError::message(error.to_string())
 }
 
+/// 同名的列用编号区分：结果行按列名做键，`SELECT a.id, b.id` 的两个 `id` 会互相覆盖。
+/// Oracle 与 DuckDB 用它（SQL Server 的问题是**没有名字**的列，见那边的 `label_columns`）
+pub(crate) fn number_duplicate_columns<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
+  let mut seen = std::collections::HashMap::<String, usize>::new();
+  names
+    .map(|name| {
+      let count = seen.entry(name.to_string()).or_insert(0);
+      *count += 1;
+      if *count == 1 {
+        name.to_string()
+      } else {
+        format!("{name} {count}")
+      }
+    })
+    .collect()
+}
+
 pub(crate) fn tagged_value(value_type: &str, value: String) -> JsonValue {
   JsonValue::Object(Map::from_iter([
     ("type".to_string(), JsonValue::String(value_type.to_string())),
@@ -1409,6 +1449,11 @@ mod tests {
   use super::*;
   use sqlx::sqlite::SqlitePoolOptions;
   use std::future::pending;
+
+  #[test]
+  fn duplicate_column_names_get_numbered() {
+    assert_eq!(number_duplicate_columns(["A", "B", "A"].into_iter()), ["A", "B", "A 2"]);
+  }
 
   #[test]
   fn date_and_time_values_come_out_the_way_the_database_writes_them() {

@@ -44,6 +44,12 @@ describe('createTablePaginationOrder', () => {
       .toBe('ORDER BY ctid');
   });
 
+  it('DuckDB 的表同样按 rowid 翻页；只有这一个别名，被列名占了就退回全部列', () => {
+    expect(createTablePaginationOrder([column('value')], 'duckdb').clause).toBe('ORDER BY rowid');
+    expect(createTablePaginationOrder([column('rowid'), column('value')], 'duckdb').clause)
+      .toBe('ORDER BY "rowid", "value"');
+  });
+
   it('uses all MySQL columns as a deterministic fallback', () => {
     expect(createTablePaginationOrder([
       column('group'),

@@ -113,7 +113,7 @@ function App() {
   const t = useLanguageStore((state) => state.t);
   const setLanguagePreference = useLanguageStore((state) => state.setPreference);
   const setThemePreference = useThemeStore((state) => state.setPreference);
-  const { connect, openSqliteFile } = useProfileConnector();
+  const { connect, openDatabaseFile } = useProfileConnector();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -596,7 +596,7 @@ function App() {
             const badge = environmentBadge(connection.environment);
             return badge ? t(badge.labelKey) : '';
           })(),
-          connection.db_type === 'sqlite'
+          connection.db_type === 'sqlite' || connection.db_type === 'duckdb'
             ? connection.database ?? ''
             : `${connection.host}:${connection.port}`
         ].filter(Boolean).join(' · '),
@@ -651,9 +651,9 @@ function App() {
       },
       {
         id: 'action:open-sqlite',
-        title: t('palette.action.openSqlite'),
+        title: t('palette.action.openDatabaseFile'),
         group: t('palette.group.action'),
-        run: () => void openSqliteFile()
+        run: () => void openDatabaseFile()
       },
       {
         id: 'action:er-diagram',

@@ -41,6 +41,7 @@ import {
   sshTunnelProblems,
   supportsSshTunnel
 } from '../utils/sshTunnel';
+import { connectionNameFromFile, databaseFileExtensions, isFileDatabase } from '../utils/databaseFiles';
 import { isMongoSrv, isMongoX509, withMongoSrv, withMongoX509 } from '../utils/mongoConnection';
 import { clsx } from 'clsx';
 import { PLAIN_TEXT_INPUT } from './FormControls';
@@ -247,7 +248,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
       errors.name = t('form.error.name');
     }
 
-    if (formData.db_type !== DatabaseType.SQLite) {
+    if (!isFileDatabase(formData.db_type)) {
       if (!formData.host?.trim()) {
         errors.host = t('form.error.host');
       }
@@ -309,10 +310,14 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
 
   // 选择数据库文件。选完直接写回路径框，用户仍可手改。
   const handleBrowseDatabaseFile = async () => {
+    const type = isFileDatabase(formData.db_type) ? formData.db_type : DatabaseType.SQLite;
     const selected = await open({
       multiple: false,
       directory: false,
-      filters: [{ name: t('form.sqliteFilter'), extensions: ['db', 'sqlite', 'sqlite3', 'db3'] }]
+      filters: [{
+        name: t(type === DatabaseType.DuckDB ? 'form.duckdbFilter' : 'form.sqliteFilter'),
+        extensions: [...databaseFileExtensions(type)]
+      }]
     });
 
     if (typeof selected === 'string') {
@@ -320,9 +325,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         ...prev,
         database: selected,
         // 还没起过名字就用文件名，省掉一次输入
-        name: prev.name?.trim()
-          ? prev.name
-          : (selected.split(/[\\/]/).pop() ?? '').replace(/\.(db|sqlite|sqlite3|db3)$/i, '')
+        name: prev.name?.trim() ? prev.name : connectionNameFromFile(selected)
       }));
     }
   };
@@ -634,7 +637,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
           <div className="space-y-4">
             <h3 className="text-xs font-semibold tracking-wide text-fg-subtle">{t('form.section.connection')}</h3>
             
-            {formData.db_type === DatabaseType.SQLite || formData.db_type === DatabaseType.DuckDB ? (
+            {isFileDatabase(formData.db_type) ? (
               /* SQLite/DuckDB 配置 */
               <>
                 <div>
@@ -650,7 +653,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       name="database"
                       value={formData.database ?? ''}
                       onChange={(e) => setFormData(prev => ({ ...prev, database: e.target.value }))}
-                      placeholder={t('form.sqlitePlaceholder')}
+                      placeholder={t(formData.db_type === DatabaseType.DuckDB ? 'form.duckdbPlaceholder' : 'form.sqlitePlaceholder')}
                       className={clsx(
                         'min-w-0 flex-1 rounded-control border px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent',
                         validationErrors.database ? 'border-danger-line' : 'border-line-strong'

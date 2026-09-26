@@ -1,11 +1,11 @@
 import { useEffect } from 'react';
-import { DatabaseType } from '../contracts';
 import { X } from 'lucide-react';
 import type { ConnectionProfile } from '../contracts';
 import type { DatabaseSession } from '../contracts/session';
 import { useLanguageStore } from '../stores/languageStore';
 import { serverLabel } from '../utils/serverPresets';
 import { serverAddress } from '../utils/mongoConnection';
+import { isFileDatabase } from '../utils/databaseFiles';
 
 interface ConnectionInfoDialogProps {
   connection: ConnectionProfile;
@@ -75,7 +75,7 @@ export function ConnectionInfoDialog({ connection, session, onClose }: Connectio
           <div className="pb-2">
             <Row label={t('info.name')} value={connection.name} />
             <Row label={t('info.type')} value={serverLabel(connection)} />
-            {connection.db_type !== DatabaseType.SQLite && (
+            {!isFileDatabase(connection.db_type) && (
               <Row label={t('info.address')} value={serverAddress(connection)} />
             )}
             <Row label={t('info.database')} value={connection.database || t('info.unspecified')} />

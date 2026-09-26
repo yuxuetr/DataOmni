@@ -112,6 +112,7 @@ pub enum PlanDialect {
   Sqlite,
   SqlServer,
   Oracle,
+  DuckDb,
   /// 没有 EXPLAIN 的类型；带着类型名，报错时说得出是谁
   Unsupported(String),
 }
@@ -127,6 +128,7 @@ impl From<&DatabaseType> for PlanDialect {
       DatabaseType::SQLite => Self::Sqlite,
       DatabaseType::SqlServer => Self::SqlServer,
       DatabaseType::Oracle => Self::Oracle,
+      DatabaseType::DuckDB => Self::DuckDb,
       other => Self::Unsupported(format!("{other:?}")),
     }
   }
@@ -161,6 +163,7 @@ impl PlanDialect {
       Self::Sqlite => "SQLite",
       Self::SqlServer => "SqlServer",
       Self::Oracle => "Oracle",
+      Self::DuckDb => "DuckDB",
       Self::Unsupported(name) => name,
     }
   }
@@ -204,6 +207,7 @@ pub fn explain_statement(
     // 同样原样：`EXPLAIN PLAN` 要写进 PLAN_TABLE 再读出来、再撤掉，是执行那一侧的
     // 几步（见 `oracle::explain_plan`）
     PlanDialect::Oracle => Ok(sql.to_string()),
+    PlanDialect::DuckDb => Ok(format!("EXPLAIN (FORMAT JSON) {sql}")),
     PlanDialect::Unsupported(name) => {
       Err(QueryError::message(format!("{EXPLAIN_UNSUPPORTED}: {name}")))
     }
@@ -268,6 +272,7 @@ pub fn parse_plan(
     PlanDialect::Sqlite => Ok(parse_sqlite(rows)),
     PlanDialect::SqlServer => parse_sql_server(rows),
     PlanDialect::Oracle => parse_oracle(rows),
+    PlanDialect::DuckDb => parse_duckdb(rows),
     PlanDialect::Unsupported(name) => {
       Err(QueryError::message(format!("{EXPLAIN_UNSUPPORTED}: {name}")))
     }
@@ -723,6 +728,56 @@ fn oracle_node(step: &JsonValue) -> PlanNode {
   node
 }
 
+/// DuckDB：`EXPLAIN (FORMAT JSON)` 给两列 `explain_key` / `explain_value`，计划在后者，
+/// 是一个节点数组，每个节点 `name` / `children` / `extra_info`（实验过，1.5.5）。
+///
+/// 前一列是 `physical_plan` 这个词，所以不能照别家按「第一个非空的格子」取。
+/// `extra_info` 里的值都是文本，列表（投影的列）是字符串数组。
+fn parse_duckdb(rows: &[Map<String, JsonValue>]) -> Result<QueryPlan, QueryError> {
+  let text: String =
+    rows.iter().filter_map(|row| row.get("explain_value").map(cell_text)).collect();
+  if text.trim().is_empty() {
+    return Err(QueryError::message(EXPLAIN_EMPTY));
+  }
+  let payload: JsonValue = serde_json::from_str(&text)
+    .map_err(|error| QueryError::message(format!("{EXPLAIN_NOT_JSON}: {error}")))?;
+  let roots: Vec<PlanNode> =
+    payload.as_array().map(|nodes| nodes.iter().map(duckdb_node).collect()).unwrap_or_default();
+  if roots.is_empty() {
+    return Err(QueryError::message(EXPLAIN_EMPTY));
+  }
+  Ok(QueryPlan {
+    roots,
+    analyzed: false,
+    planning_ms: None,
+    execution_ms: None,
+    raw: serde_json::to_string_pretty(&payload).unwrap_or(text),
+  })
+}
+
+fn duckdb_node(node: &JsonValue) -> PlanNode {
+  let mut plan =
+    PlanNode::new(node.get("name").and_then(scalar_text).unwrap_or_else(|| "?".to_string()));
+  if let Some(JsonValue::Object(info)) = node.get("extra_info") {
+    for (key, value) in info {
+      let Some(value) = scalar_text(value).filter(|value| !value.is_empty()) else {
+        continue;
+      };
+      match key.as_str() {
+        "Table" => plan.target = Some(value),
+        "Estimated Cardinality" => plan.estimated_rows = value.parse().ok(),
+        _ => plan.detail.push(PlanDetail { key: key.clone(), value }),
+      }
+    }
+  }
+  plan.children = node
+    .get("children")
+    .and_then(JsonValue::as_array)
+    .map(|children| children.iter().map(duckdb_node).collect())
+    .unwrap_or_default();
+  plan
+}
+
 /// 按本地名比，不管命名空间：整份计划都在 showplan 的命名空间里
 fn is_element(node: &roxmltree::Node<'_, '_>, name: &str) -> bool {
   node.is_element() && node.tag_name().name() == name
@@ -1173,6 +1228,31 @@ mod tests {
     let error = parse_plan(&DatabaseType::Oracle, &json_row(r#"{"steps":[],"text":""}"#), false)
       .expect_err("empty");
     assert_eq!(error.message, EXPLAIN_EMPTY);
+  }
+
+  /// DuckDB 1.5.5 对一条带连接、过滤、排序与 LIMIT 的查询给的原文（CLI 上取的）
+  #[test]
+  fn duckdb_plans_nest_children_and_read_the_plan_column_not_the_key() {
+    let plan_json = r#"[{"name":"TOP_N","children":[{"name":"HASH_JOIN","children":[
+      {"name":"EMPTY_RESULT","children":[],"extra_info":{}},
+      {"name":"SEQ_SCAN","children":[],"extra_info":{"Table":"cat.sales.parent",
+        "Type":"Sequential Scan","Projections":["a","b"],"Estimated Cardinality":"0"}}],
+      "extra_info":{"Join Type":"INNER","Conditions":"pa = a","Estimated Cardinality":"1"}}],
+      "extra_info":{"Top":"5","Order By":"c.id ASC"}}]"#;
+    let mut row = Map::new();
+    row.insert("explain_key".to_string(), JsonValue::from("physical_plan"));
+    row.insert("explain_value".to_string(), JsonValue::from(plan_json));
+    let plan = parse_plan(&DatabaseType::DuckDB, &[row], false).expect("parses");
+
+    let [top] = plan.roots.as_slice() else { panic!("一个根: {:?}", plan.roots) };
+    assert_eq!(top.operation, "TOP_N");
+    assert!(top.detail.contains(&PlanDetail { key: "Order By".into(), value: "c.id ASC".into() }));
+    let [join] = top.children.as_slice() else { panic!("{:?}", top.children) };
+    assert_eq!((join.operation.as_str(), join.estimated_rows), ("HASH_JOIN", Some(1.0)));
+    let scan = &join.children[1];
+    assert_eq!(scan.target.as_deref(), Some("cat.sales.parent"));
+    assert!(scan.detail.contains(&PlanDetail { key: "Projections".into(), value: "a, b".into() }));
+    assert!(plan.raw.contains("\"HASH_JOIN\""), "文本那一页是计划原文");
   }
 
   #[test]

@@ -28,6 +28,7 @@ describe('sqlFormatterLanguage', () => {
     expect(sqlFormatterLanguage(DatabaseType.MySQL)).toBe('mysql');
     expect(sqlFormatterLanguage(DatabaseType.PostgreSQL)).toBe('postgresql');
     expect(sqlFormatterLanguage(DatabaseType.SQLite)).toBe('sqlite');
+    expect(sqlFormatterLanguage(DatabaseType.DuckDB)).toBe('duckdb');
   });
 
   it('认不出的类型返回 null，不退回某个默认方言', () => {

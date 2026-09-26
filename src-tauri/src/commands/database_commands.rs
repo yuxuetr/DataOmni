@@ -15,6 +15,7 @@ use tokio::time::Duration;
 
 pub const QUERY_CANCELLED_CODE: &str = "QUERY_CANCELLED";
 
+use crate::services::duckdb::{DuckDbRegistry, DUCKDB_SCHEME};
 use crate::services::oracle::{OracleRegistry, ORACLE_SCHEME};
 use crate::services::query_executor::PoolRef;
 use crate::services::{PlanDialect, SERVER_VERSION_QUERY};
@@ -52,6 +53,7 @@ enum ResolvedPool {
   Sqlx(Option<tauri_plugin_sql::DbPool>),
   SqlServer(std::sync::Arc<crate::services::SqlServerPool>),
   Oracle(std::sync::Arc<crate::services::oracle::OraclePool>),
+  DuckDb(std::sync::Arc<crate::services::duckdb::DuckDbPool>),
 }
 
 impl ResolvedPool {
@@ -60,7 +62,14 @@ impl ResolvedPool {
     database_instances: &DbInstances,
     sql_server: &SqlServerRegistry,
     oracle: &OracleRegistry,
+    duckdb: &DuckDbRegistry,
   ) -> Result<ResolvedPool, QueryError> {
+    if connection_string.starts_with(DUCKDB_SCHEME) {
+      return duckdb
+        .get(&connection_string)
+        .map(ResolvedPool::DuckDb)
+        .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED));
+    }
     if connection_string.starts_with(ORACLE_SCHEME) {
       return oracle
         .get(&connection_string)
@@ -86,6 +95,7 @@ impl ResolvedPool {
         .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED)),
       Self::SqlServer(pool) => Ok(PoolRef::SqlServer(pool)),
       Self::Oracle(pool) => Ok(PoolRef::Oracle(pool)),
+      Self::DuckDb(pool) => Ok(PoolRef::DuckDb(pool)),
     }
   }
 }
@@ -156,6 +166,7 @@ pub async fn execute_query(
   query_session_state: State<'_, QuerySessionState>,
   sql_server: State<'_, SqlServerRegistry>,
   oracle: State<'_, OracleRegistry>,
+  duckdb: State<'_, DuckDbRegistry>,
 ) -> Result<QueryExecutionSummary, QueryError> {
   if !(100..=3_600_000).contains(&request.timeout_ms) {
     return Err(QueryError::message(TIMEOUT_OUT_OF_RANGE));
@@ -180,9 +191,14 @@ pub async fn execute_query(
       .map_err(QueryError::message)?
   };
 
-  let resolved =
-    ResolvedPool::resolve(connection_string.clone(), &database_instances, &sql_server, &oracle)
-      .await?;
+  let resolved = ResolvedPool::resolve(
+    connection_string.clone(),
+    &database_instances,
+    &sql_server,
+    &oracle,
+    &duckdb,
+  )
+  .await?;
   let pool = resolved.pool_ref()?;
   let receiver =
     cancellation_state.register(&request.execution_id).await.map_err(QueryError::message)?;
@@ -216,6 +232,8 @@ pub async fn execute_query(
 /// 不走 `execute_query`：那条命令是流式读，按一条语句设计，而且是自动提交的。
 /// 网格里的一批变更必须共用一个事务，否则中途失败会把数据停在一个用户没打算
 /// 要的中间状态。
+// 参数都是 Tauri 注入的 State，由框架按类型逐个填，合不成一个结构
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn execute_write_batch(
   connection_id: String,
@@ -225,6 +243,7 @@ pub async fn execute_write_batch(
   database_instances: State<'_, DbInstances>,
   sql_server: State<'_, SqlServerRegistry>,
   oracle: State<'_, OracleRegistry>,
+  duckdb: State<'_, DuckDbRegistry>,
 ) -> Result<Vec<u64>, WriteBatchError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&connection_id).await;
@@ -238,7 +257,7 @@ pub async fn execute_write_batch(
   };
 
   let resolved =
-    ResolvedPool::resolve(connection_string, &database_instances, &sql_server, &oracle)
+    ResolvedPool::resolve(connection_string, &database_instances, &sql_server, &oracle, &duckdb)
       .await
       .map_err(|error| WriteBatchError { statement_index: 0, error })?;
   let pool = resolved.pool_ref().map_err(|error| WriteBatchError { statement_index: 0, error })?;
@@ -278,6 +297,7 @@ pub async fn export_query_to_file(
   cancellation_state: State<'_, QueryCancellationState>,
   sql_server: State<'_, SqlServerRegistry>,
   oracle: State<'_, OracleRegistry>,
+  duckdb: State<'_, DuckDbRegistry>,
 ) -> Result<ExportSummary, QueryError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&request.connection_id).await;
@@ -293,7 +313,8 @@ pub async fn export_query_to_file(
   };
 
   let resolved =
-    ResolvedPool::resolve(connection_string, &database_instances, &sql_server, &oracle).await?;
+    ResolvedPool::resolve(connection_string, &database_instances, &sql_server, &oracle, &duckdb)
+      .await?;
   let pool = resolved.pool_ref()?;
 
   // 取消与查询共用同一个登记表：取消的语义、重复 ID 的检查、结束时的清理
@@ -413,6 +434,7 @@ pub async fn import_csv_file(
   pause_state: State<'_, ImportPauseState>,
   sql_server: State<'_, SqlServerRegistry>,
   oracle: State<'_, OracleRegistry>,
+  duckdb: State<'_, DuckDbRegistry>,
 ) -> Result<ImportSummary, QueryError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&request.connection_id).await;
@@ -428,7 +450,8 @@ pub async fn import_csv_file(
   };
 
   let resolved =
-    ResolvedPool::resolve(connection_string, &database_instances, &sql_server, &oracle).await?;
+    ResolvedPool::resolve(connection_string, &database_instances, &sql_server, &oracle, &duckdb)
+      .await?;
   let pool = resolved.pool_ref()?;
 
   let mut receiver =
@@ -535,6 +558,8 @@ pub struct ExplainRequest {
 /// 与会话参数影响，另开一条连接算出来的是另一个环境下的计划。
 ///
 /// 超时用固定的一分钟：`EXPLAIN ANALYZE` 会真的跑，而它跑多久取决于那条语句。
+// 参数都是 Tauri 注入的 State，由框架按类型逐个填，合不成一个结构
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn explain_query(
   request: ExplainRequest,
@@ -544,6 +569,7 @@ pub async fn explain_query(
   query_session_state: State<'_, QuerySessionState>,
   sql_server: State<'_, SqlServerRegistry>,
   oracle: State<'_, OracleRegistry>,
+  duckdb: State<'_, DuckDbRegistry>,
 ) -> Result<crate::services::explain::QueryPlan, QueryError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&request.connection_id).await;
@@ -565,9 +591,14 @@ pub async fn explain_query(
     )
   };
 
-  let resolved =
-    ResolvedPool::resolve(connection_string.clone(), &database_instances, &sql_server, &oracle)
-      .await?;
+  let resolved = ResolvedPool::resolve(
+    connection_string.clone(),
+    &database_instances,
+    &sql_server,
+    &oracle,
+    &duckdb,
+  )
+  .await?;
   let pool = resolved.pool_ref()?;
 
   // TiDB 与 CockroachDB 走 MySQL / PostgreSQL 的连接类型，EXPLAIN 却各说各的。

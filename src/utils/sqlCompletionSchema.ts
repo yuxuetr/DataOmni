@@ -120,10 +120,11 @@ export function buildCompletionSchema(
   return {
     schema,
     // 不带前缀的名字落在哪个 schema：PostgreSQL 是 public，SQL Server 是 dbo，
-    // Oracle 是登录用户（目录里是大写）
+    // DuckDB 是 main，Oracle 是登录用户（目录里是大写）
     defaultSchema: [
       'public',
       'dbo',
+      ...(dbType === DatabaseType.DuckDB ? ['main'] : []),
       ...(dbType === DatabaseType.Oracle && username ? [username.toUpperCase()] : [])
     ].find((name) => bySchema.has(name))
   };
@@ -146,6 +147,10 @@ export function sqlDialectFor(dbType: DatabaseType): SQLDialect {
       return MSSQL;
     case DatabaseType.Oracle:
       return PLSQL;
+    // CodeMirror 没有 DuckDB 方言；它的语法照 PostgreSQL 来（`::` 转换、`$1` 参数、
+    // `RETURNING`、双引号标识符），关键字表也最接近
+    case DatabaseType.DuckDB:
+      return PostgreSQL;
     default:
       return StandardSQL;
   }

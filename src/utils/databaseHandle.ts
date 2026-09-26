@@ -7,7 +7,7 @@ import { invoke } from '@tauri-apps/api/core';
  * 只有 SQLite 还是插件的 `Database`。MySQL / PostgreSQL 的池子由后端开，目录
  * 查询和关池子也走后端命令：插件的 `select` / `close` 持着它那张池子表的锁等网络，
  * 一个库断了就把所有连接一起卡住（见 `sqlx_pool::shared`）。SQL Server / Oracle /
- * MongoDB 的池子本来就在后端。消费方只用得到这两个方法，不需要知道是哪一种。
+ * DuckDB / MongoDB 的池子本来就在后端。消费方只用得到这两个方法，不需要知道是哪一种。
  */
 export interface DatabaseHandle {
   select<T>(sql: string, params?: unknown[]): Promise<T>;
@@ -18,6 +18,8 @@ export interface DatabaseHandle {
 export const SQL_SERVER_SCHEME = 'sqlserver://';
 /** 与后端 `ORACLE_SCHEME` 一致 */
 export const ORACLE_SCHEME = 'oracle://';
+/** 与后端 `DUCKDB_SCHEME` 一致：后面跟的是文件路径 */
+export const DUCKDB_SCHEME = 'duckdb:';
 /** 与后端 `MONGODB_SCHEME` 一致 */
 export const MONGODB_SCHEME = 'mongodb://';
 /** 与后端 `REDIS_SCHEME` 一致 */
@@ -42,6 +44,9 @@ export async function openDatabase(connectionString: string): Promise<DatabaseHa
   }
   if (connectionString.startsWith(ORACLE_SCHEME)) {
     return backendHandle(connectionString, 'oracle_select', 'close_oracle');
+  }
+  if (connectionString.startsWith(DUCKDB_SCHEME)) {
+    return backendHandle(connectionString, 'duckdb_select', 'close_duckdb');
   }
   if (connectionString.startsWith(MONGODB_SCHEME) || connectionString.startsWith(MONGODB_SRV_SCHEME)) {
     return {

@@ -52,6 +52,11 @@ pub fn er_diagram_queries(db_type: &DatabaseType) -> Option<ErDiagramQueries> {
       foreign_keys: ORACLE_FOREIGN_KEYS,
       parameter_count: 0,
     }),
+    DatabaseType::DuckDB => Some(ErDiagramQueries {
+      columns: DUCKDB_COLUMNS,
+      foreign_keys: DUCKDB_FOREIGN_KEYS,
+      parameter_count: 0,
+    }),
     _ => None,
   }
 }
@@ -290,6 +295,42 @@ ORDER BY c.owner, c.table_name, c.constraint_name, cc.position
 "#
 );
 
+/// 只要表：`duckdb_columns()` 也给视图的列，和 `duckdb_tables()` 连一下就排掉了
+const DUCKDB_COLUMNS: &str = r#"
+SELECT
+  c.schema_name AS table_schema,
+  c.table_name AS table_name,
+  c.column_name AS column_name,
+  c.data_type AS data_type,
+  c.column_index AS ordinal,
+  EXISTS (
+    SELECT 1 FROM duckdb_constraints() k
+    WHERE k.table_oid = c.table_oid AND k.constraint_type = 'PRIMARY KEY'
+      AND list_contains(k.constraint_column_names, c.column_name)
+  ) AS is_primary_key,
+  c.is_nullable AS is_nullable
+FROM duckdb_columns() c
+JOIN duckdb_tables() t ON t.table_oid = c.table_oid
+WHERE c.database_name = current_database() AND NOT t.internal
+ORDER BY c.schema_name, c.table_name, c.column_index
+"#;
+
+/// 外键不跨 schema（DuckDB 拒绝建），被引用表的 schema 就是本表的
+const DUCKDB_FOREIGN_KEYS: &str = r#"
+SELECT
+  k.schema_name AS table_schema,
+  k.table_name AS table_name,
+  unnest(k.constraint_column_names) AS column_name,
+  k.schema_name AS referenced_schema,
+  k.referenced_table AS referenced_table,
+  unnest(k.referenced_column_names) AS referenced_column,
+  k.constraint_name AS constraint_name,
+  generate_subscripts(k.constraint_column_names, 1) AS ordinal
+FROM duckdb_constraints() k
+WHERE k.constraint_type = 'FOREIGN KEY' AND k.database_name = current_database()
+ORDER BY table_schema, table_name, constraint_name, ordinal
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -302,6 +343,7 @@ mod tests {
       DatabaseType::SQLite,
       DatabaseType::SqlServer,
       DatabaseType::Oracle,
+      DatabaseType::DuckDB,
     ] {
       let queries = er_diagram_queries(&db_type).expect("supported");
       for sql in [queries.columns, queries.foreign_keys] {

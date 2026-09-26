@@ -82,7 +82,7 @@
 | --- | --- |
 | 连接名称 | 只给自己看，列表和标签上显示它 |
 | 环境 | 开发 / 测试 / 预发 / 生产。见下面的[环境](#环境) |
-| 数据库类型 | MySQL、PostgreSQL、SQLite、SQL Server，以及 MariaDB、TiDB、CockroachDB。其余几种是计划中的，置灰选不了 |
+| 数据库类型 | MySQL、PostgreSQL、SQLite、SQL Server、Oracle、DuckDB、MongoDB、Redis、Neo4j、Elasticsearch，以及 MariaDB、TiDB、CockroachDB。ClickHouse 是计划中的，置灰选不了 |
 | 主机地址、端口 | 数据库服务器的地址。端口按类型自动填默认值 |
 | 数据库名称 | 连上之后默认进入的库。MySQL 必须填：对象树、补全和 ER 图都按这个库读 |
 | 用户名、密码 | 数据库账号 |
@@ -149,13 +149,32 @@ MySQL / PostgreSQL 协议，连上之后的用法和 MySQL / PostgreSQL 一样�
   `"orders"`，以后每次都要带引号写。一般照 Oracle 的习惯写大写。
 - CSV 导入时，日期按 `YYYY-MM-DD HH24:MI:SS` 读（只有日期也行），小数点是 `.`。
 
-### 打开 SQLite 文件
+**DuckDB** 正在分阶段接入，这一版能做的是：打开文件、在编辑器里执行、对象树（schema、
+表、视图、序列、宏）、表结构、只读的表数据、补全、ER 图。表格编辑、事务栏、执行计划、
+改结构与建表、CSV 导入、整表导出还没接上，那一格标着「有缺口」。与别家不同的几点：
 
-欢迎页或命令面板里的「打开 SQLite 文件…」直接选一个 `.db` / `.sqlite` /
-`.sqlite3` / `.db3` 文件，应用会自动建一个以文件名命名的连接并连上。同一个文件
-再打开不会重复建连接。
+- 库就是一个文件，表单里和 SQLite 一样选文件（`.duckdb` / `.ddb`），`:memory:` 是内存库。
+  文件不存在时会新建一个。
+- **连着的时候应用占着这个文件**：DuckDB 同一时间只让一个进程打开一个文件，别的程序
+  （命令行的 `duckdb`、Python）只读也打不开。要在别处用它，先在这里断开。反过来，
+  文件在别处开着时这里连不上，报错会说出是哪个程序、哪个进程号。
+- 可以直接查文件：`SELECT * FROM 'events.parquet'`、`FROM read_csv('a.csv')`。结果边读边取，
+  到了行数上限就停，不会把整个文件读进内存。parquet 与 json 扩展在应用里；别的扩展
+  （httpfs、excel、spatial……）第一次用到时 DuckDB 会自己从 extensions.duckdb.org 下载。
+- 带时区的时间（`TIMESTAMPTZ`）按 UTC 显示，后面带 `+00`；这一版没有时区扩展，
+  `AT TIME ZONE` 用不了。
+- 超时与「取消」会让那条语句真的停下，之后这条会话照常用，`SET`、临时表都还在。
+- 事务和 PostgreSQL 一样：事务里一条语句出错，之后的语句都会失败，只能回滚。
+- 没有主键的表按 `rowid` 翻页。
 
-也可以在表单里选 SQLite 手动填路径。路径留空或填 `:memory:` 是内存数据库，
+### 打开数据库文件
+
+欢迎页或命令面板里的「打开数据库文件…」直接选一个 SQLite（`.db` / `.sqlite` /
+`.sqlite3` / `.db3`）或 DuckDB（`.duckdb` / `.ddb`）文件，应用会按扩展名建一个以文件名
+命名的连接并连上。同一个文件再打开不会重复建连接。`.db` 两家都有人用，这里按 SQLite
+认；是 DuckDB 文件的话在表单里选 DuckDB 再选它。
+
+也可以在表单里选 SQLite 或 DuckDB 手动填路径。路径留空或填 `:memory:` 是内存数据库，
 关掉应用内容就没了。
 
 ### 密码存在哪里

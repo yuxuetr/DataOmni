@@ -28,6 +28,25 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(5);
 /// SQLite 文件头。见 https://www.sqlite.org/fileformat.html
 const SQLITE_MAGIC: &[u8] = b"SQLite format 3\0";
 
+/// DuckDB 文件头：前 8 个字节是校验和，接着是 `DUCK`
+const DUCKDB_MAGIC_OFFSET: usize = 8;
+const DUCKDB_MAGIC: &[u8] = b"DUCK";
+
+/// 一种「库就是一个文件」的格式：文件头里的魔数在哪、长什么样，对不上时报哪一步
+struct FileFormat {
+  magic_offset: usize,
+  magic: &'static [u8],
+  mismatch_step: &'static str,
+}
+
+const SQLITE_FILE: FileFormat =
+  FileFormat { magic_offset: 0, magic: SQLITE_MAGIC, mismatch_step: "sqliteMagic" };
+const DUCKDB_FILE: FileFormat = FileFormat {
+  magic_offset: DUCKDB_MAGIC_OFFSET,
+  magic: DUCKDB_MAGIC,
+  mismatch_step: "duckdbMagic",
+};
+
 /// 连上端口之后，愿意为「那头到底有没有服务」多等多久。
 ///
 /// PostgreSQL 这一侧每次都会等满这段时间（服务端沉默，等客户端先开口），
@@ -66,7 +85,8 @@ impl DiagnosisStep {
 /// `test_connection` 已经做的事，二是探测不该因为账号不对而失败。
 pub async fn diagnose(config: &ConnectionProfile) -> ConnectionDiagnosis {
   let steps = match config.db_type {
-    DatabaseType::SQLite => vec![inspect_sqlite_file(config.database.as_deref())],
+    DatabaseType::SQLite => vec![inspect_database_file(config.database.as_deref(), &SQLITE_FILE)],
+    DatabaseType::DuckDB => vec![inspect_database_file(config.database.as_deref(), &DUCKDB_FILE)],
     // 只剩 MySQL 与 PostgreSQL：两者都是「主机 + 端口」，走同一套探测。
     // 没有驱动的类型到不了这里，`test_connection` 在更早一步就拒绝了
     _ => probe_host(&config.host, config.port).await,
@@ -75,12 +95,14 @@ pub async fn diagnose(config: &ConnectionProfile) -> ConnectionDiagnosis {
   ConnectionDiagnosis { steps }
 }
 
-/// SQLite 的「连接」其实是打开一个文件，所以要问的是文件的问题。
+/// SQLite 与 DuckDB 的「连接」其实是打开一个文件，所以要问的是文件的问题。
 ///
 /// 三种失败长得都像「连不上」，但原因分别是路径错、权限不对、和
-/// 「这是个文件但不是 SQLite 库」——最后一种最容易卡住人：驱动只会说
+/// 「这是个文件但不是这种库」——最后一种最容易卡住人：驱动只会说
 /// 文件打不开或者不是数据库，看上去像是文件坏了。
-fn inspect_sqlite_file(database: Option<&str>) -> DiagnosisStep {
+///
+/// 除了最后一步，步骤名沿用 `sqlite*`：界面上它们说的都是「文件」，不分库。
+fn inspect_database_file(database: Option<&str>, format: &FileFormat) -> DiagnosisStep {
   let started = Instant::now();
 
   let Some(path) = database.filter(|path| !path.is_empty()) else {
@@ -108,13 +130,13 @@ fn inspect_sqlite_file(database: Option<&str>) -> DiagnosisStep {
     return DiagnosisStep::new("sqliteEmpty", true, path.to_string(), started);
   }
 
-  let mut header = [0u8; 16];
+  let mut header = vec![0u8; format.magic_offset + format.magic.len()];
   match read_header(path, &mut header) {
     Err(error) => DiagnosisStep::new("sqliteFile", false, format!("{path}：{error}"), started),
-    Ok(read) if read == header.len() && header == SQLITE_MAGIC => {
+    Ok(read) if read == header.len() && &header[format.magic_offset..] == format.magic => {
       DiagnosisStep::new("sqliteFile", true, format!("{path} · {} B", metadata.len()), started)
     }
-    Ok(_) => DiagnosisStep::new("sqliteMagic", false, path.to_string(), started),
+    Ok(_) => DiagnosisStep::new(format.mismatch_step, false, path.to_string(), started),
   }
 }
 
@@ -364,6 +386,32 @@ mod tests {
 
     std::fs::remove_file(real).expect("cleanup");
     std::fs::remove_file(wrong).expect("cleanup");
+  }
+
+  /// 同一套文件检查，文件头按 DuckDB 的认：把一个 SQLite 库选成 DuckDB 连接要能说出来
+  #[tokio::test]
+  async fn a_duckdb_connection_checks_for_the_duckdb_header() {
+    let mut header = vec![0u8; DUCKDB_MAGIC_OFFSET];
+    header.extend_from_slice(DUCKDB_MAGIC);
+    header.extend_from_slice(&[0u8; 32]);
+    let real = temporary_path(".duckdb");
+    std::fs::write(&real, &header).expect("write duckdb header");
+
+    let mut config = profile(DatabaseType::DuckDB);
+    config.database = Some(real.to_string_lossy().to_string());
+    let diagnosis = diagnose(&config).await;
+    assert_eq!((diagnosis.steps[0].name, diagnosis.steps[0].ok), ("sqliteFile", true));
+
+    let sqlite = temporary_path(".db");
+    let mut body = SQLITE_MAGIC.to_vec();
+    body.extend_from_slice(&[0u8; 32]);
+    std::fs::write(&sqlite, &body).expect("write sqlite header");
+    config.database = Some(sqlite.to_string_lossy().to_string());
+    let diagnosis = diagnose(&config).await;
+    assert_eq!((diagnosis.steps[0].name, diagnosis.steps[0].ok), ("duckdbMagic", false));
+
+    std::fs::remove_file(real).expect("cleanup");
+    std::fs::remove_file(sqlite).expect("cleanup");
   }
 
   /// 空文件是「新建一个库」的正常起点，不能报成选错文件

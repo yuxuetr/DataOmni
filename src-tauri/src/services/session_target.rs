@@ -25,6 +25,7 @@ pub fn session_target_query(db_type: &DatabaseType) -> Option<SessionTargetQuery
     DatabaseType::SQLite => Some(SessionTargetQuery { sql: SQLITE_TARGET }),
     DatabaseType::SqlServer => Some(SessionTargetQuery { sql: SQL_SERVER_TARGET }),
     DatabaseType::Oracle => Some(SessionTargetQuery { sql: ORACLE_TARGET }),
+    DatabaseType::DuckDB => Some(SessionTargetQuery { sql: DUCKDB_TARGET }),
     _ => None,
   }
 }
@@ -84,16 +85,26 @@ SELECT
 FROM dual
 "#;
 
+/// 「库」是 DuckDB 按文件名起的目录名，`USE other` 之后会变（`ATTACH` 进来的库也能
+/// `USE`）；schema 默认是 `main`。以只读方式打开的库 `readonly` 为真
+const DUCKDB_TARGET: &str = r#"
+SELECT
+  current_database() AS database_name,
+  current_schema() AS schema_name,
+  (SELECT d.readonly FROM duckdb_databases() d WHERE d.database_name = current_database()) AS read_only
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
 
-  const SUPPORTED: [DatabaseType; 5] = [
+  const SUPPORTED: [DatabaseType; 6] = [
     DatabaseType::MySQL,
     DatabaseType::PostgreSQL,
     DatabaseType::SQLite,
     DatabaseType::SqlServer,
     DatabaseType::Oracle,
+    DatabaseType::DuckDB,
   ];
 
   #[test]

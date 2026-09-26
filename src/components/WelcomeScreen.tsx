@@ -9,12 +9,13 @@ import { serverLabel } from '../utils/serverPresets';
 import { serverAddress } from '../utils/mongoConnection';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
+import { isFileDatabase } from '../utils/databaseFiles';
 
 interface WelcomeScreenProps {
   onConnect: () => void;
 }
 
-/** 连接行上显示的目标，SQLite 显示文件名，其余显示 host:port/database */
+/** 连接行上显示的目标，SQLite 与 DuckDB 显示文件名，其余显示 host:port/database */
 function describeTarget(profile: {
   db_type: DatabaseType;
   host: string;
@@ -22,7 +23,7 @@ function describeTarget(profile: {
   database?: string;
   options: Record<string, string>;
 }): string {
-  if (profile.db_type === DatabaseType.SQLite) {
+  if (isFileDatabase(profile.db_type)) {
     return profile.database || ':memory:';
   }
 
@@ -41,7 +42,7 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
   const t = useLanguageStore((state) => state.t);
   const connections = useConnectionStore((state) => state.connections);
   const loadConnections = useConnectionStore((state) => state.loadConnections);
-  const { connect, openSqliteFile, connectingProfileId, error, clearError } = useProfileConnector();
+  const { connect, openDatabaseFile, connectingProfileId, error, clearError } = useProfileConnector();
 
   useEffect(() => {
     loadConnections().catch((cause) => {
@@ -122,11 +123,11 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
           </button>
           <button
             type="button"
-            onClick={() => void openSqliteFile()}
+            onClick={() => void openDatabaseFile()}
             className="flex items-center gap-1.5 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg-muted hover:bg-surface-hover"
           >
             <FileUp size={14} />
-            <span>{t('welcome.openSqliteEllipsis')}</span>
+            <span>{t('welcome.openDatabaseFileEllipsis')}</span>
           </button>
         </div>
       </div>

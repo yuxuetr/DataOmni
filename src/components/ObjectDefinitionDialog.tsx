@@ -104,10 +104,8 @@ export function ObjectDefinitionDialog({
           return;
         }
 
-        // PostgreSQL 按 oid 绑一个参数；MySQL 要名字加库名两个
-        const params = connection.db_type === 'postgresql'
-          ? [object.id]
-          : [object.id, connection.database ?? null];
+        // 绑几个由后端说：MySQL 要名字加库名两个，其余只要对象的 id
+        const params = [object.id, connection.database ?? null].slice(0, queries.routine_parameter_count);
         const rows = await requireDatabase(database).select(queries.routine_definition, params);
         const row = Array.isArray(rows) ? rows[0] : undefined;
         const text = row ? String(Object.values(row)[0] ?? '') : '';

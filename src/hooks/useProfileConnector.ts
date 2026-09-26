@@ -9,6 +9,7 @@ import { useSessionManager } from '../utils/stateSync';
 import { recordConnectionUse } from '../utils/connectionRecency';
 import { withTimeout } from '../utils/withTimeout';
 import { describeError } from '../utils/describeError';
+import { connectionNameFromFile, databaseFileExtensions, databaseTypeOfFile } from '../utils/databaseFiles';
 import { useLanguageStore } from '../stores/languageStore';
 
 /**
@@ -39,8 +40,8 @@ export type ConnectResult = 'connected' | 'password-required' | 'failed';
 
 export interface ProfileConnector {
   connect: (profile: ConnectionProfile) => Promise<ConnectResult>;
-  /** 选一个 SQLite 文件并直接打开；已有指向同一文件的配置时复用它 */
-  openSqliteFile: () => Promise<void>;
+  /** 选一个 SQLite 或 DuckDB 文件并直接打开；已有指向同一文件的配置时复用它 */
+  openDatabaseFile: () => Promise<void>;
   /** 正在连接的配置 id，用于在列表行上显示进行中 */
   connectingProfileId: string | null;
   error: string | null;
@@ -88,25 +89,33 @@ export function useProfileConnector(): ProfileConnector {
     }
   }, [sessionManager, openConnectionForm, t]);
 
-  const openSqliteFile = useCallback(async () => {
+  const openDatabaseFile = useCallback(async () => {
     setError(null);
 
     const selected = await open({
       multiple: false,
       directory: false,
-      filters: [{ name: t('form.sqliteFilter'), extensions: ['db', 'sqlite', 'sqlite3', 'db3'] }]
+      filters: [
+        {
+          name: t('form.databaseFileFilter'),
+          extensions: [...databaseFileExtensions(DatabaseType.SQLite), ...databaseFileExtensions(DatabaseType.DuckDB)]
+        },
+        { name: t('form.sqliteFilter'), extensions: [...databaseFileExtensions(DatabaseType.SQLite)] },
+        { name: t('form.duckdbFilter'), extensions: [...databaseFileExtensions(DatabaseType.DuckDB)] }
+      ]
     });
 
     if (typeof selected !== 'string') {
       return;
     }
+    const type = databaseTypeOfFile(selected);
 
     try {
       const { connections, createConnection, loadConnections } = useConnectionStore.getState();
 
       // 同一个文件不重复建配置，否则每打开一次列表里就多一条
       const existing = connections.find(
-        (profile) => profile.db_type === DatabaseType.SQLite && profile.database === selected
+        (profile) => profile.db_type === type && profile.database === selected
       );
 
       if (existing) {
@@ -114,16 +123,15 @@ export function useProfileConnector(): ProfileConnector {
         return;
       }
 
-      const fileName = selected.split(/[\\/]/).pop() ?? selected;
       await createConnection({
-        ...createDefaultConfig(DatabaseType.SQLite),
-        name: fileName.replace(/\.(db|sqlite|sqlite3|db3)$/i, '') || fileName,
+        ...createDefaultConfig(type),
+        name: connectionNameFromFile(selected),
         database: selected
       });
 
       await loadConnections();
       const created = useConnectionStore.getState().connections.find(
-        (profile) => profile.db_type === DatabaseType.SQLite && profile.database === selected
+        (profile) => profile.db_type === type && profile.database === selected
       );
 
       if (!created) {
@@ -139,7 +147,7 @@ export function useProfileConnector(): ProfileConnector {
 
   return {
     connect,
-    openSqliteFile,
+    openDatabaseFile,
     connectingProfileId,
     error,
     clearError: useCallback(() => setError(null), [])

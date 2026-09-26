@@ -23,8 +23,9 @@ use crate::models::ConnectionProfile;
 use crate::services::query_error::QueryErrorDetails;
 use crate::services::query_error::{CONNECTION_LOST, CONNECTION_LOST_CODE};
 use crate::services::query_executor::{
-  admit_row_bytes, flush_full_batch, flush_remaining_batch, tagged_value, QueryColumnMetadata,
-  QueryExecutionSummary, QueryResultBatch, QueryRow, QueryTruncationReason, StreamOptions,
+  admit_row_bytes, flush_full_batch, flush_remaining_batch, number_duplicate_columns, tagged_value,
+  QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow, QueryTruncationReason,
+  StreamOptions,
 };
 use crate::services::transaction_state::{TransactionState, TransactionStatus};
 use crate::services::write_batch::{
@@ -973,7 +974,7 @@ fn execute_many(
 fn column_header(
   columns: &[(String, OracleType, bool)],
 ) -> (Vec<QueryColumnMetadata>, Vec<String>) {
-  let names = label_columns(columns.iter().map(|(name, _, _)| name.as_str()));
+  let names = number_duplicate_columns(columns.iter().map(|(name, _, _)| name.as_str()));
   let metadata = columns
     .iter()
     .zip(&names)
@@ -1039,22 +1040,6 @@ fn is_plsql(sql: &str) -> bool {
     }
     _ => false,
   }
-}
-
-/// 同名的列用编号区分，理由同 SQL Server：结果行按列名做键
-fn label_columns<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
-  let mut seen = std::collections::HashMap::<String, usize>::new();
-  names
-    .map(|name| {
-      let count = seen.entry(name.to_string()).or_insert(0);
-      *count += 1;
-      if *count == 1 {
-        name.to_string()
-      } else {
-        format!("{name} {count}")
-      }
-    })
-    .collect()
 }
 
 fn logical_type(oracle_type: &OracleType) -> &'static str {
@@ -1252,10 +1237,5 @@ mod tests {
       "CREATE OR REPLACE PROCEDURE p AS BEGIN NULL; END;"
     );
     assert_eq!(statement_text("CREATE TABLE t (id NUMBER);"), "CREATE TABLE t (id NUMBER)");
-  }
-
-  #[test]
-  fn duplicate_column_names_get_numbered() {
-    assert_eq!(label_columns(["A", "B", "A"].into_iter()), ["A", "B", "A 2"]);
   }
 }

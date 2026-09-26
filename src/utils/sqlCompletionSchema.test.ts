@@ -191,6 +191,12 @@ describe('buildCompletionSchema', () => {
     ).toBe('public');
   });
 
+  it('DuckDB 不带前缀的名字落在 main', () => {
+    expect(
+      buildCompletionSchema([{ ...orders, schema: 'main' }], DatabaseType.DuckDB, LABELS).defaultSchema
+    ).toBe('main');
+  });
+
   it('没有 public 就不指定默认 Schema，免得补出不存在的前缀', () => {
     expect(
       buildCompletionSchema(

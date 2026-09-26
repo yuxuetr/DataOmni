@@ -2,6 +2,7 @@ pub mod completion_catalog;
 pub mod connection_probe;
 pub mod connection_service;
 pub mod csv_import;
+pub mod duckdb;
 pub mod elasticsearch;
 pub mod er_diagram;
 pub mod explain;

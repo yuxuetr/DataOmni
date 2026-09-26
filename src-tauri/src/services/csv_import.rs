@@ -346,6 +346,7 @@ enum Dialect {
   Postgres,
   SqlServer,
   Oracle,
+  DuckDb,
 }
 
 impl Dialect {
@@ -356,6 +357,7 @@ impl Dialect {
       SessionConnection::Postgres(_) => Self::Postgres,
       SessionConnection::SqlServer(_) => Self::SqlServer,
       SessionConnection::Oracle(_) => Self::Oracle,
+      SessionConnection::DuckDb(_) => Self::DuckDb,
     }
   }
 

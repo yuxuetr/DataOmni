@@ -103,6 +103,16 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       triggers: ORACLE_TRIGGERS,
       parameter_count: 2,
     }),
+    // DuckDB 的建表语句是库自己存的原文（`duckdb_tables().sql`），表和视图都给
+    DatabaseType::DuckDB => Some(SchemaMetadataQueries {
+      columns: DUCKDB_COLUMNS,
+      indexes: DUCKDB_INDEXES,
+      foreign_keys: DUCKDB_FOREIGN_KEYS,
+      check_constraints: Some(DUCKDB_CHECK_CONSTRAINTS),
+      ddl: Some(DdlQuery::Bound { sql: DUCKDB_DDL }),
+      triggers: DUCKDB_TRIGGERS,
+      parameter_count: 2,
+    }),
     _ => None,
   }
 }
@@ -802,6 +812,162 @@ ORDER BY t.trigger_name
 "#
 );
 
+// DuckDB。目录来自 `duckdb_*()` 表函数（1.5.5 上逐段核对过），几处和别家不同：
+// - 只看当前库（`current_database()`）：`ATTACH` 进来的别的库也在这些表函数里。
+// - 计算列在目录里没有标记，`column_default` 里放的是它的表达式。只能从建表原文里认
+//   `<列名> <类型> GENERATED ALWAYS AS`，列名按需要带引号。
+// - 约束名是 DuckDB 自己起的（`child_price_check`），建表时写的 `CONSTRAINT x` 不保留。
+// - 外键不能跨 schema（DuckDB 拒绝建），被引用表就在同一个 schema 里；也只有
+//   NO ACTION 一种动作。
+// - DuckDB 没有触发器。
+
+const DUCKDB_COLUMNS: &str = r#"
+SELECT
+  c.column_name AS column_name,
+  c.data_type AS data_type,
+  c.is_nullable AS is_nullable,
+  CASE WHEN g.is_generated THEN NULL ELSE c.column_default END AS column_default,
+  (pk.ordinal IS NOT NULL) AS is_primary_key,
+  pk.ordinal AS primary_key_ordinal,
+  COALESCE(g.is_generated, false) AS is_generated,
+  NULL::VARCHAR AS collation,
+  c.comment AS comment,
+  NULL::VARCHAR AS column_extra
+FROM duckdb_columns() c
+LEFT JOIN LATERAL (
+  SELECT regexp_matches(t.sql, '[(,] ?"?' || regexp_escape(replace(c.column_name, '"', '""'))
+    || '"? ' || regexp_escape(c.data_type) || ' GENERATED ALWAYS AS') AS is_generated
+  FROM duckdb_tables() t WHERE t.table_oid = c.table_oid
+) g ON true
+LEFT JOIN LATERAL (
+  SELECT list_position(k.constraint_column_names, c.column_name) AS ordinal
+  FROM duckdb_constraints() k
+  WHERE k.table_oid = c.table_oid AND k.constraint_type = 'PRIMARY KEY'
+    AND list_contains(k.constraint_column_names, c.column_name)
+) pk ON true
+WHERE c.table_name = $1
+  AND c.schema_name = COALESCE($2, current_schema())
+  AND c.database_name = current_database()
+ORDER BY c.column_index
+"#;
+
+/// 主键与 UNIQUE 约束在 `duckdb_constraints()` 里、不在 `duckdb_indexes()` 里；后者只有
+/// `CREATE INDEX` 建的。它的 `expressions` 是一段文本（`[note, pa]`，带引号的名字写成
+/// `'"my col"'`），不是列表：按 `, ` 拆开、去掉两层引号。带括号的是表达式索引，里面
+/// 可能本来就有逗号，整段作一项。DuckDB 没有部分索引，也没有建到一半的索引。
+const DUCKDB_INDEXES: &str = r#"
+SELECT index_name, column_name, ordinal, is_unique, is_primary, is_partial, is_valid, method
+FROM (
+  SELECT
+    k.constraint_name AS index_name,
+    unnest(k.constraint_column_names) AS column_name,
+    generate_subscripts(k.constraint_column_names, 1) AS ordinal,
+    true AS is_unique,
+    (k.constraint_type = 'PRIMARY KEY') AS is_primary,
+    false AS is_partial,
+    true AS is_valid,
+    'ART' AS method
+  FROM duckdb_constraints() k
+  WHERE k.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
+    AND k.table_name = $1
+    AND k.schema_name = COALESCE($2, current_schema())
+    AND k.database_name = current_database()
+  UNION ALL
+  SELECT
+    i.index_name,
+    unnest(e.parts),
+    generate_subscripts(e.parts, 1),
+    i.is_unique,
+    i.is_primary,
+    false,
+    true,
+    'ART'
+  FROM duckdb_indexes() i,
+    LATERAL (SELECT list_transform(
+      CASE
+        WHEN i.expressions LIKE '%(%' THEN [trim(i.expressions, '[]')]
+        ELSE string_split(trim(i.expressions, '[]'), ', ')
+      END,
+      lambda part: CASE
+        WHEN regexp_full_match(part, '''"([^"]|"")*"''') THEN replace(part[3:-3], '""', '"')
+        WHEN regexp_full_match(part, '''.*''') THEN replace(part[2:-2], '''''', '''')
+        ELSE part
+      END
+    ) AS parts) e
+  WHERE i.table_name = $1
+    AND i.schema_name = COALESCE($2, current_schema())
+    AND i.database_name = current_database()
+)
+ORDER BY index_name, ordinal
+"#;
+
+const DUCKDB_FOREIGN_KEYS: &str = r#"
+SELECT
+  k.constraint_name AS constraint_name,
+  generate_subscripts(k.constraint_column_names, 1) AS ordinal,
+  unnest(k.constraint_column_names) AS column_name,
+  k.schema_name AS referenced_schema,
+  k.referenced_table AS referenced_table,
+  unnest(k.referenced_column_names) AS referenced_column,
+  'NO ACTION' AS on_update,
+  'NO ACTION' AS on_delete
+FROM duckdb_constraints() k
+WHERE k.constraint_type = 'FOREIGN KEY'
+  AND k.table_name = $1
+  AND k.schema_name = COALESCE($2, current_schema())
+  AND k.database_name = current_database()
+ORDER BY constraint_name, ordinal
+"#;
+
+const DUCKDB_CHECK_CONSTRAINTS: &str = r#"
+SELECT
+  k.constraint_name AS constraint_name,
+  k.expression AS expression
+FROM duckdb_constraints() k
+WHERE k.constraint_type = 'CHECK'
+  AND k.table_name = $1
+  AND k.schema_name = COALESCE($2, current_schema())
+  AND k.database_name = current_database()
+ORDER BY k.constraint_index
+"#;
+
+/// 表或视图的原文，外加这张表上 `CREATE INDEX` 建的索引——和 SQLite 那一段同一个理由：
+/// 照着重建出来的表不该少掉显式索引
+const DUCKDB_DDL: &str = r#"
+SELECT sql FROM (
+  SELECT 0 AS part, t.table_name AS name, t.sql
+  FROM duckdb_tables() t
+  WHERE t.table_name = $1
+    AND t.schema_name = COALESCE($2, current_schema())
+    AND t.database_name = current_database()
+  UNION ALL
+  SELECT 0, v.view_name, v.sql
+  FROM duckdb_views() v
+  WHERE v.view_name = $1
+    AND v.schema_name = COALESCE($2, current_schema())
+    AND v.database_name = current_database()
+    AND NOT v.internal
+  UNION ALL
+  SELECT 1, i.index_name, i.sql
+  FROM duckdb_indexes() i
+  WHERE i.table_name = $1
+    AND i.schema_name = COALESCE($2, current_schema())
+    AND i.database_name = current_database()
+    AND i.sql IS NOT NULL
+)
+ORDER BY part, name
+"#;
+
+/// 没有触发器可列；照样收两个参数，前端对每一段都发同一份参数
+const DUCKDB_TRIGGERS: &str = r#"
+SELECT
+  NULL::VARCHAR AS trigger_name,
+  NULL::VARCHAR AS timing,
+  NULL::VARCHAR AS event,
+  NULL::VARCHAR AS definition
+WHERE $1::VARCHAR IS NULL AND $2::VARCHAR IS NULL AND false
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -863,6 +1029,7 @@ mod tests {
       DatabaseType::SQLite,
       DatabaseType::SqlServer,
       DatabaseType::Oracle,
+      DatabaseType::DuckDB,
     ] {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       let expected = usize::from(queries.parameter_count);
@@ -966,6 +1133,7 @@ mod tests {
       DatabaseType::SQLite,
       DatabaseType::SqlServer,
       DatabaseType::Oracle,
+      DatabaseType::DuckDB,
     ] {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       for column in ["is_unique", "is_primary", "is_partial", "is_valid"] {
@@ -993,6 +1161,7 @@ mod tests {
       DatabaseType::SQLite,
       DatabaseType::SqlServer,
       DatabaseType::Oracle,
+      DatabaseType::DuckDB,
     ] {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       for alias in [
@@ -1052,6 +1221,7 @@ mod tests {
       DatabaseType::SQLite,
       DatabaseType::SqlServer,
       DatabaseType::Oracle,
+      DatabaseType::DuckDB,
     ] {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       for sql in [

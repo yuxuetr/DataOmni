@@ -17,6 +17,7 @@ const STEP_TITLES: Readonly<Record<string, TranslationKey>> = {
   sqliteMemory: 'diagnosis.step.file',
   sqliteEmpty: 'diagnosis.step.file',
   sqliteMagic: 'diagnosis.step.file',
+  duckdbMagic: 'diagnosis.step.file',
   // 后端把「要区分的情况」做成了新的步骤名而不是新写一句中文，所以这里跟着长
   sqliteMissingPath: 'diagnosis.step.file',
   sqliteDirectory: 'diagnosis.step.file',
@@ -44,6 +45,7 @@ const CONCLUSIONS: Readonly<Record<string, TranslationKey>> = {
   'sqliteMemory:true': 'diagnosis.conclusion.memory',
   'sqliteEmpty:true': 'diagnosis.conclusion.emptyFile',
   'sqliteMagic:false': 'diagnosis.conclusion.notSqlite',
+  'duckdbMagic:false': 'diagnosis.conclusion.notDuckdb',
   'sqliteMissingPath:false': 'diagnosis.conclusion.missingPath',
   'sqliteDirectory:false': 'diagnosis.conclusion.notAFile',
   'hostMissing:false': 'diagnosis.conclusion.hostMissing',

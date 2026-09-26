@@ -1,5 +1,4 @@
 import { identifierDialectFor } from '../utils/sqlIdentifiers';
-import { DatabaseType } from '../contracts';
 import { firstRowsQuery } from '../utils/tablePagination';
 import React, { useEffect, useState } from 'react';
 import { 
@@ -26,6 +25,7 @@ import {
   type ConnectionHealth
 } from '../utils/connectionHealth';
 import { serverLabel } from '../utils/serverPresets';
+import { isFileDatabase } from '../utils/databaseFiles';
 
 interface SqlWorkbenchProps {
   connection: ConnectionConfig;
@@ -189,8 +189,8 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
             </span>
           )}
           <span className="truncate text-fg-muted">
-            {/* SQLite 没有主机和端口，照印会是「sqlite · :0 / 路径」 */}
-            {connection.db_type === DatabaseType.SQLite
+            {/* SQLite 与 DuckDB 没有主机和端口，照印会是「sqlite · :0 / 路径」 */}
+            {isFileDatabase(connection.db_type)
               ? `${serverLabel(connection)} · ${targetDatabase || connection.database}`
               : `${serverLabel(connection)} · ${connection.host}:${connection.port}`
                 // 库名优先用服务端报的，问不出来才退回配置里那个

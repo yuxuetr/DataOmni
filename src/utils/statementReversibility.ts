@@ -65,6 +65,10 @@ const NON_TRANSACTIONAL: Record<SqlDialect, readonly KeywordPrefix[]> = {
   ],
   // SQLite 的 DDL 也是事务性的
   sqlite: [['VACUUM'], ['ATTACH'], ['DETACH']],
+  // DuckDB 的 DDL 也是事务性的，而且下面这些进得了事务、只是撤不回来（1.5.5 上试过）：
+  // 回滚之后 `SET` 的值还在，`COPY … TO` 与 `EXPORT` 的文件已经写出去了，`INSTALL`
+  // 已经下载了扩展。`COPY … FROM` 其实能回滚——往撤不回来的方向猜，理由见上
+  duckdb: [['SET'], ['RESET'], ['COPY'], ['EXPORT'], ['INSTALL'], ['CHECKPOINT'], ['FORCE', 'CHECKPOINT'], ['VACUUM']],
   // SQL Server 的 DDL 同样能回滚；库级与备份类的语句不许进用户事务，
   // 全文目录的增删也不行
   // Oracle 和 MySQL 一样：每条 DDL 前后各隐式提交一次，事务包不住

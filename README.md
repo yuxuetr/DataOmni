@@ -29,12 +29,12 @@
 
 ### 🔗 数据库支持
 
-- **可连接并执行查询**: MySQL, PostgreSQL, SQLite, SQL Server, Oracle（见兼容性矩阵）
+- **可连接并执行查询**: MySQL, PostgreSQL, SQLite, SQL Server, Oracle, DuckDB（见兼容性矩阵）
 - **可连接、浏览与改文档**: MongoDB（库、集合、文档；条件、排序与编辑都用 mongosh 写法）
 - **可连接、浏览键值与跑命令**: Redis（逻辑库、按模式翻键、六种类型的值、redis-cli 写法的命令行）
 - **可连接并执行 Cypher**: Neo4j（库、标签与关系类型；结果里的节点、关系、路径按 Cypher 字面量显示）
 - **可连接并发请求**: Elasticsearch（索引、别名、数据流；Kibana Dev Tools 写法的控制台）
-- **计划中，当前版本连不上**: DuckDB, ClickHouse
+- **计划中，当前版本连不上**: ClickHouse
 
   不是「能连上但不能查」——这些库的驱动都没有编进来，建连这一步就认不出来。
   连接表单里它们可见但置灰，选中不了；后端 `test_connection` 也会直接拒绝，
@@ -57,6 +57,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 | CockroachDB | 25.2 | PostgreSQL | ⚠️ 可用，有缺口 | 22 / 22（缺口由用例钉住） |
 | SQL Server | 2022 | SQL Server | ✅ 支持 | 17 / 17（独立用例，`sql_server_smoke.rs`，含改结构语料） |
 | Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 14 / 14（独立用例，`oracle_smoke.rs`，含改结构语料） |
+| DuckDB | 1.5.5（编进应用） | DuckDB（libduckdb） | ⚠️ 可用，有缺口 | 9 / 9（独立用例，`duckdb_smoke.rs`，每次都跑） |
 | MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 31 / 31（独立用例，`mongodb_smoke.rs`） |
 | Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机，不含集群 | 10 / 10（独立用例，`redis_smoke.rs`） |
 | Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例，不含集群路由 | 8 / 8（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |
@@ -100,6 +101,18 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
     其余（改列名、删列、改表名）各自一条，预览里会说明；中途有一条失败时前面的已经
     生效。
   - Oracle 把空字符串存成 NULL，在表格里填一个空值得到的是 NULL。
+- **DuckDB**：分阶段在接，第一阶段已接上：打开文件（或 `:memory:`）、编辑器执行、对象树
+  （schema、表、视图、序列、宏）、结构页、只读的表数据、补全、ER 图。表格编辑、事务栏、
+  执行计划、改结构与建表、CSV 导入、整表导出还没接上。与另外几家不同、值得知道的几处：
+  - 库就是一个文件，连着的时候应用占着它：DuckDB 同一时间只让一个进程打开一个文件
+    （只读也不行），在命令行或 Python 里用同一个文件之前先断开这条连接。
+  - 结果边读边取，到了行数上限就停，`SELECT * FROM 'big.parquet'` 不会把整个文件读进内存；
+    parquet 与 json 扩展编在应用里，其余扩展（httpfs、excel、spatial……）照 DuckDB 自己的
+    规矩在第一次用到时从 extensions.duckdb.org 下载。
+  - 没编时区扩展（ICU）：`TIMESTAMPTZ` 按 UTC 显示（带 `+00`），`AT TIME ZONE` 不可用。
+  - 超时与取消会让那条语句真的停下，会话还是那条连接（事务、`SET` 都还在）；错误带类别
+    （Catalog Error、Binder Error……）与出错位置。
+  - 约束名是 DuckDB 自己起的，建表时写的 `CONSTRAINT x` 不保留；外键不能跨 schema。
 - **MongoDB**：连接（认证库、TLS 与 CA、SSH 隧道、`mongodb+srv://` 即 Atlas、客户端证书与 X.509 登录）、对象树按库列出集合与视图（可新建集合、删除集合与视图）、集合页
   （条件、排序、分页、总数、执行计划）、按 `_id` 改、增、删单个文档、按条件批量改与删、只读的
   聚合管道、结构页（索引、校验规则、视图定义；可建与删索引）、按条件导出与导入

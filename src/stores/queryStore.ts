@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import {
   openDatabase,
   ORACLE_SCHEME,
+  DUCKDB_SCHEME,
   SQL_SERVER_SCHEME,
   type DatabaseHandle
 } from '../utils/databaseHandle';
@@ -186,6 +187,9 @@ const getSqlDialect = (connectionString: string | null): SqlDialect => {
   }
   if (connectionString?.startsWith(ORACLE_SCHEME)) {
     return 'oracle';
+  }
+  if (connectionString?.startsWith(DUCKDB_SCHEME)) {
+    return 'duckdb';
   }
   return 'sqlite';
 };

@@ -352,10 +352,10 @@ impl ConnectionService {
       }
     }
 
-    // 基本验证。过了上面那道门只剩三种类型，真正的差别只有一个：
-    // SQLite 的「库」是一个文件路径，另两种要主机、端口、账号和库名
+    // 基本验证。真正的差别只有一个：SQLite 与 DuckDB 的「库」是一个文件路径，
+    // 其余的要主机、端口、账号和库名
     let database_is_blank = config.database.as_deref().unwrap_or("").is_empty();
-    if matches!(config.db_type, DatabaseType::SQLite) {
+    if matches!(config.db_type, DatabaseType::SQLite | DatabaseType::DuckDB) {
       if database_is_blank {
         return Err(SQLITE_PATH_REQUIRED.to_string());
       }
@@ -1121,14 +1121,12 @@ mod tests {
     let service =
       ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()).unwrap();
 
-    for db_type in [DatabaseType::DuckDB, DatabaseType::ClickHouse] {
-      let mut config = profile("profile-1", "secret");
-      config.db_type = db_type.clone();
+    let mut config = profile("profile-1", "secret");
+    config.db_type = DatabaseType::ClickHouse;
 
-      let error = service.test_connection(&config).expect_err("没有驱动就不该通过");
-      // 理由要说清是哪个类型：码点明「为什么」，冒号后面的数据点明「哪一个」
-      assert_eq!(error, format!("{UNSUPPORTED_DATABASE}: {db_type:?}"));
-    }
+    let error = service.test_connection(&config).expect_err("没有驱动就不该通过");
+    // 理由要说清是哪个类型：码点明「为什么」，冒号后面的数据点明「哪一个」
+    assert_eq!(error, format!("{UNSUPPORTED_DATABASE}: {:?}", DatabaseType::ClickHouse));
   }
 
   /// 反向：三种有驱动的类型必须仍然走完原来的校验，而不是被这道门顺手挡掉
@@ -1145,6 +1143,13 @@ mod tests {
       service.test_connection(&sqlite),
       Err(SQLITE_PATH_REQUIRED.to_string()),
       "SQLite 缺文件路径要报路径，不能报成「没有驱动」"
+    );
+    let mut duckdb = sqlite.clone();
+    duckdb.db_type = DatabaseType::DuckDB;
+    assert_eq!(
+      service.test_connection(&duckdb),
+      Err(SQLITE_PATH_REQUIRED.to_string()),
+      "DuckDB 同样是一个文件，缺路径要报路径，不能报成「缺主机」"
     );
 
     let mut mysql = profile("profile-1", "secret");

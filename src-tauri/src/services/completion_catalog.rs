@@ -41,6 +41,9 @@ pub fn completion_catalog_query(db_type: &DatabaseType) -> Option<CompletionCata
     DatabaseType::Oracle => {
       Some(CompletionCatalogQuery { relations: ORACLE_RELATIONS, parameter_count: 0 })
     }
+    DatabaseType::DuckDB => {
+      Some(CompletionCatalogQuery { relations: DUCKDB_RELATIONS, parameter_count: 0 })
+    }
     _ => None,
   }
 }
@@ -143,16 +146,31 @@ ORDER BY c.owner, c.table_name, c.column_id
 "#
 );
 
+/// `duckdb_columns()` 连视图的列一起给；认视图靠它在 `duckdb_views()` 里
+const DUCKDB_RELATIONS: &str = r#"
+SELECT
+  c.schema_name AS relation_schema,
+  c.table_name AS relation_name,
+  CASE WHEN v.view_oid IS NULL THEN 'table' ELSE 'view' END AS relation_kind,
+  c.column_name AS column_name,
+  c.data_type AS data_type
+FROM duckdb_columns() c
+LEFT JOIN duckdb_views() v ON v.view_oid = c.table_oid
+WHERE c.database_name = current_database() AND NOT c.internal
+ORDER BY c.schema_name, c.table_name, c.column_index
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
 
-  const SUPPORTED: [DatabaseType; 5] = [
+  const SUPPORTED: [DatabaseType; 6] = [
     DatabaseType::MySQL,
     DatabaseType::PostgreSQL,
     DatabaseType::SQLite,
     DatabaseType::SqlServer,
     DatabaseType::Oracle,
+    DatabaseType::DuckDB,
   ];
 
   #[test]

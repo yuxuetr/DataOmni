@@ -1,4 +1,5 @@
 use crate::models::{ConnectionProfile, DatabaseType};
+use crate::services::duckdb::DuckDbRegistry;
 use crate::services::mongodb::{MongoRegistry, MongoTarget};
 use crate::services::oracle::{self, OraclePool, OracleRegistry, OracleTarget};
 use crate::services::{
@@ -113,6 +114,7 @@ pub async fn test_connection(
   redis_registry: State<'_, crate::services::redis::RedisRegistry>,
   neo4j_registry: State<'_, crate::services::neo4j::Neo4jRegistry>,
   es_registry: State<'_, crate::services::elasticsearch::EsRegistry>,
+  duckdb_registry: State<'_, DuckDbRegistry>,
 ) -> Result<String, String> {
   println!("🧪 测试数据库连接: {}", config.name);
 
@@ -183,6 +185,14 @@ pub async fn test_connection(
     let target = crate::services::neo4j::Neo4jTarget::from_profile(&reachable);
     let pool = crate::services::neo4j::connect(target).await?;
     neo4j_registry.insert(connection_string.clone(), std::sync::Arc::new(pool));
+  } else if resolved.db_type == DatabaseType::DuckDB {
+    // 已经开着就接着用：同一个文件在进程里只开一份，另开一份的话，两份各持一把锁、
+    // 各有一份缓存，谁的写入先落盘说不清
+    if duckdb_registry.get(&connection_string).is_none() {
+      let path = duckdb_file_path(&app_handle, resolved.database.as_deref().unwrap_or(":memory:"))?;
+      let pool = crate::services::duckdb::open(&path).await.map_err(|error| error.message)?;
+      duckdb_registry.insert(connection_string.clone(), pool);
+    }
   } else if resolved.db_type == DatabaseType::Elasticsearch {
     // 不换主机：经隧道的 HTTPS 仍按原来的主机名校验证书（见 `EsTarget::from_profile`）
     let target = crate::services::elasticsearch::EsTarget::from_profile(&resolved, local_port);
@@ -267,6 +277,41 @@ pub async fn oracle_select(
 #[tauri::command]
 pub fn close_oracle(connection_string: String, oracle_registry: State<'_, OracleRegistry>) -> bool {
   oracle_registry.remove(&connection_string)
+}
+
+/// 相对路径落在应用的配置目录下，和插件对 SQLite 的处理一样——同一格表单，两种库
+/// 不该一个落在这里、一个落在进程的当前目录（从 Finder 打开时是 `/`）
+fn duckdb_file_path(app_handle: &AppHandle, path: &str) -> Result<String, String> {
+  if path == ":memory:" || std::path::Path::new(path).is_absolute() {
+    return Ok(path.to_string());
+  }
+  use tauri::Manager;
+  let base = app_handle.path().app_config_dir().map_err(|error| error.to_string())?;
+  std::fs::create_dir_all(&base).map_err(|error| error.to_string())?;
+  Ok(base.join(path).to_string_lossy().into_owned())
+}
+
+/// DuckDB 连接上的目录查询。与 `sql_server_select` 同一个角色、同一种返回形状
+#[tauri::command]
+pub async fn duckdb_select(
+  connection_string: String,
+  sql: String,
+  params: Vec<serde_json::Value>,
+  duckdb_registry: State<'_, DuckDbRegistry>,
+) -> Result<Vec<crate::services::QueryRow>, crate::services::QueryError> {
+  let pool = duckdb_registry.get(&connection_string).ok_or_else(|| {
+    crate::services::QueryError::message(
+      crate::commands::database_commands::DB_SESSION_NOT_CONNECTED,
+    )
+  })?;
+  pool.select(&sql, &params).await
+}
+
+/// 断开：去掉登记的库。会话连接由 `release_database_session` 另行释放，两边都放掉之后
+/// 库才真的关上、文件锁才还回去
+#[tauri::command]
+pub fn close_duckdb(connection_string: String, duckdb_registry: State<'_, DuckDbRegistry>) -> bool {
+  duckdb_registry.remove(&connection_string)
 }
 
 /// 断开时把登记的池子去掉。池子里的空闲连接随之关闭；会话连接由

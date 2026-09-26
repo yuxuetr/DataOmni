@@ -82,10 +82,12 @@ export interface ObjectTreeNode {
 export function showsSchemaLevel(dbType: DatabaseType): boolean {
   // SQL Server 与 PostgreSQL 一样：一个库里有 dbo 和业务 schema，schema 是真实维度
   // Oracle 的 schema 就是用户：一个连接能看到别的用户授给它的表
+  // DuckDB 一个文件里有 main 和用户建的 schema，和 PostgreSQL 一样是真实维度
   // MongoDB 的一个连接横跨所有库，库就是这一层；Neo4j 同样（企业版一台服务端多个库）
   return dbType === DatabaseType.PostgreSQL
     || dbType === DatabaseType.SqlServer
     || dbType === DatabaseType.Oracle
+    || dbType === DatabaseType.DuckDB
     || dbType === DatabaseType.MongoDB
     || dbType === DatabaseType.Neo4j;
 }

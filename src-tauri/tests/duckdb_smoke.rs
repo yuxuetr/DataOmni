@@ -1,0 +1,555 @@
+//! DuckDB 的真库用例。
+//!
+//! 和另外几家不同，这些用例**每次都跑**：DuckDB 是编进来的，库就是临时目录里的
+//! 一个文件，不需要服务器、不需要连接串。每条用例用自己的文件，互不干扰。
+
+use dataomni_lib::services::duckdb::{self, DuckDbPool};
+use dataomni_lib::services::{
+  PoolRef, QueryError, QueryExecutionResult, QueryExecutionSummary, QueryRow, QuerySessionState,
+  QueryTruncationReason, SessionConnection, StreamOptions, StreamingQueryOptions,
+  TransactionStatus, QUERY_TIMEOUT_CODE,
+};
+use serde_json::{json, Value as JsonValue};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+/// 这条用例自己的库文件。先删掉上一次留下的（连同 WAL）
+fn database_file(name: &str) -> PathBuf {
+  let path =
+    std::env::temp_dir().join(format!("dataomni-duckdb-{name}-{}.duckdb", std::process::id()));
+  let _ = std::fs::remove_file(&path);
+  let _ = std::fs::remove_file(path.with_extension("duckdb.wal"));
+  path
+}
+
+async fn pool(name: &str) -> Arc<DuckDbPool> {
+  let path = database_file(name);
+  duckdb::open(&path.to_string_lossy()).await.expect("open DuckDB file")
+}
+
+async fn session(pool: &Arc<DuckDbPool>) -> SessionConnection {
+  SessionConnection::acquire(PoolRef::DuckDb(pool)).await.expect("session connection")
+}
+
+fn rows_of(result: QueryExecutionResult) -> Vec<QueryRow> {
+  match result {
+    QueryExecutionResult::Rows { rows, .. } => rows,
+    QueryExecutionResult::Affected { rows_affected } => {
+      panic!("expected rows, got {rows_affected} affected")
+    }
+  }
+}
+
+/// 带类型标签的值的文本；裸值原样
+fn text(value: &JsonValue) -> String {
+  match value {
+    JsonValue::Object(map) => {
+      map.get("value").and_then(JsonValue::as_str).unwrap_or("").to_string()
+    }
+    JsonValue::String(text) => text.clone(),
+    other => other.to_string(),
+  }
+}
+
+fn kind(value: &JsonValue) -> &str {
+  value.get("type").and_then(JsonValue::as_str).unwrap_or("")
+}
+
+async fn run_all(pool: &Arc<DuckDbPool>, statements: &[&str]) {
+  let mut connection = session(pool).await;
+  for statement in statements {
+    connection
+      .execute(statement, 10)
+      .await
+      .unwrap_or_else(|error| panic!("{statement}: {error:?}"));
+  }
+}
+
+#[tokio::test]
+async fn duckdb_decodes_values_the_way_the_other_dialects_do() {
+  let pool = pool("types").await;
+  let mut connection = session(&pool).await;
+  let rows = rows_of(
+    connection
+      .execute(
+        "SELECT 1::TINYINT AS tiny, 9007199254740993::BIGINT AS big, \
+          170141183460469231731687303715884105727::HUGEINT AS huge, 10.50::DECIMAL(10,2) AS money, \
+          1.5::DOUBLE AS dbl, 'nan'::DOUBLE AS nan, DATE '2026-09-26' AS d, \
+          TIME '07:04:05.120' AS t, TIMESTAMP '2026-09-26 07:04:05.123456' AS ts, \
+          TIMESTAMPTZ '2026-09-26 07:04:05+08' AS tstz, INTERVAL '1 year 2 days 03:04:05' AS iv, \
+          '\\xAA\\x01'::BLOB AS b, '中文' AS s, true AS flag, NULL::INTEGER AS nothing, \
+          [1, 2, NULL] AS list, {'a': 1, 'b': 'x'} AS st, MAP {'k': 1} AS m, \
+          'ok'::ENUM('ok', 'no') AS e, '00000000-0000-0000-0000-000000000001'::UUID AS u, \
+          '{\"a\":1}'::JSON AS j, BITSTRING '0101' AS bits, 'infinity'::DATE AS forever",
+        10,
+      )
+      .await
+      .expect("select"),
+  );
+  let row = &rows[0];
+  assert_eq!(row["tiny"], json!(1));
+  assert_eq!((kind(&row["big"]), text(&row["big"]).as_str()), ("bigint", "9007199254740993"));
+  assert_eq!(text(&row["huge"]), "170141183460469231731687303715884105727");
+  assert_eq!((kind(&row["money"]), text(&row["money"]).as_str()), ("decimal", "10.50"));
+  assert_eq!(row["dbl"], json!(1.5));
+  assert_eq!(row["nan"], json!("NaN"));
+  assert_eq!((kind(&row["d"]), text(&row["d"]).as_str()), ("date", "2026-09-26"));
+  assert_eq!(text(&row["t"]), "07:04:05.12");
+  assert_eq!(text(&row["ts"]), "2026-09-26 07:04:05.123456");
+  assert_eq!(text(&row["tstz"]), "2026-09-25 23:04:05+00", "不编 ICU，带时区的按 UTC 显示");
+  assert_eq!(text(&row["iv"]), "1 year 2 days 03:04:05");
+  assert_eq!((kind(&row["b"]), text(&row["b"]).as_str()), ("binary", "aa01"));
+  assert_eq!(row["s"], json!("中文"));
+  assert_eq!(row["flag"], json!(true));
+  assert_eq!(row["nothing"], JsonValue::Null);
+  assert_eq!((kind(&row["list"]), text(&row["list"]).as_str()), ("json", "[1,2,null]"));
+  assert_eq!(text(&row["st"]), r#"{"a":1,"b":"x"}"#);
+  assert_eq!(text(&row["m"]), r#"{"k":1}"#);
+  assert_eq!(row["e"], json!("ok"));
+  assert_eq!(row["u"], json!("00000000-0000-0000-0000-000000000001"));
+  assert_eq!(row["j"], json!(r#"{"a":1}"#));
+  assert_eq!(row["bits"], json!("0101"));
+  assert_eq!(text(&row["forever"]), "infinity");
+}
+
+#[tokio::test]
+async fn duckdb_errors_carry_the_category_and_position_and_the_session_survives() {
+  let pool = pool("errors").await;
+  let mut connection = session(&pool).await;
+
+  let error =
+    connection.execute("SELECT * FROM no_such_table", 10).await.expect_err("missing table");
+  assert_eq!(error.code.as_deref(), Some("Catalog Error"), "{error:?}");
+  assert_eq!(error.details.as_ref().and_then(|details| details.position), Some(15));
+
+  let error = connection
+    .execute("SELECT 1,\n  2,\n  nosuch\nFROM range(1)", 10)
+    .await
+    .expect_err("missing column");
+  assert_eq!(error.code.as_deref(), Some("Binder Error"));
+  assert_eq!(error.details.as_ref().and_then(|details| details.position), Some(18), "第三行的 n");
+
+  // 编辑器给每条语句补了分号
+  let rows = rows_of(connection.execute("SELECT 'alive' AS s;", 10).await.expect("alive"));
+  assert_eq!(rows[0]["s"], json!("alive"));
+}
+
+#[tokio::test]
+async fn duckdb_streams_and_stops_at_the_row_limit_without_computing_the_rest() {
+  let pool = pool("limit").await;
+  let mut connection = session(&pool).await;
+  let mut rows = Vec::new();
+  let started = Instant::now();
+  // 十亿行：客户端物化的话这一条要跑很久、吃掉几个 GB
+  let summary = connection
+    .execute_streaming(
+      "SELECT i, i * 2 AS d FROM range(1000000000) t(i)",
+      StreamOptions::limited(100, 16 * 1024 * 1024, 40),
+      &mut |batch| {
+        rows.extend(batch.rows);
+        Ok(())
+      },
+    )
+    .await
+    .expect("stream");
+  assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+  assert_eq!(rows.len(), 100);
+  match summary {
+    QueryExecutionSummary::Rows { truncation_reason, .. } => {
+      assert_eq!(truncation_reason, Some(QueryTruncationReason::RowLimit))
+    }
+    other => panic!("expected rows: {other:?}"),
+  }
+  let again = rows_of(connection.execute("SELECT 1 AS one", 10).await.expect("again"));
+  assert_eq!(again[0]["one"], json!(1));
+}
+
+#[tokio::test]
+async fn duckdb_tells_statements_that_change_things_from_queries() {
+  let pool = pool("kinds").await;
+  let mut connection = session(&pool).await;
+  let affected = |result: QueryExecutionResult| match result {
+    QueryExecutionResult::Affected { rows_affected } => rows_affected,
+    QueryExecutionResult::Rows { columns, .. } => panic!("expected affected, got rows {columns:?}"),
+  };
+  assert_eq!(affected(connection.execute("CREATE TABLE t (x INTEGER)", 10).await.expect("ddl")), 0);
+  assert_eq!(
+    affected(connection.execute("INSERT INTO t VALUES (1), (2)", 10).await.expect("insert")),
+    2
+  );
+  assert_eq!(affected(connection.execute("UPDATE t SET x = x + 1", 10).await.expect("update")), 2);
+  assert_eq!(affected(connection.execute("SET threads = 2", 10).await.expect("set")), 0);
+  // 带 RETURNING 的是查询；SHOW、DESCRIBE、省掉 SELECT 的 FROM 也是
+  let returned = rows_of(
+    connection.execute("INSERT INTO t VALUES (9) RETURNING x", 10).await.expect("returning"),
+  );
+  assert_eq!(returned[0]["x"], json!(9));
+  assert_eq!(
+    rows_of(connection.execute("SHOW TABLES", 10).await.expect("show"))[0]["name"],
+    json!("t")
+  );
+  assert_eq!(rows_of(connection.execute("FROM t ORDER BY x", 10).await.expect("from")).len(), 3);
+  assert_eq!(
+    affected(connection.execute("DELETE FROM t WHERE x > 2", 10).await.expect("delete")),
+    2
+  );
+}
+
+/// 超时要让那条语句真的停下，而且会话还是那条连接：事务、`SET` 都还在
+#[tokio::test]
+async fn duckdb_timeout_interrupts_the_statement_and_keeps_the_session() {
+  let pool = pool("timeout").await;
+  let sessions = QuerySessionState::default();
+  let options = |sql, timeout| StreamingQueryOptions {
+    session_id: "duckdb-timeout",
+    pool_key: "duckdb:smoke",
+    pool: PoolRef::DuckDb(&pool),
+    sql,
+    autocommit: true,
+    explain_plan: false,
+    row_limit: 10,
+    byte_limit: 16 * 1024 * 1024,
+    batch_size: 10,
+    timeout_duration: timeout,
+  };
+  let run = |sql: &'static str| {
+    let sessions = &sessions;
+    let options = &options;
+    async move {
+      let mut rows = Vec::new();
+      sessions
+        .execute_streaming(options(sql, Duration::from_secs(20)), &mut |batch| {
+          rows.extend(batch.rows);
+          Ok(())
+        })
+        .await
+        .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+      rows
+    }
+  };
+
+  run("SET VARIABLE marker = 'still here'").await;
+  let started = Instant::now();
+  let error = sessions
+    .execute_streaming(
+      options(
+        "SELECT count(*) FROM range(1000000000) a(x) WHERE x % 7 = 3",
+        Duration::from_millis(800),
+      ),
+      &mut |_| Ok(()),
+    )
+    .await
+    .expect_err("times out");
+  assert_eq!(error.code.as_deref(), Some(QUERY_TIMEOUT_CODE));
+
+  // 被打断的那条要让出连接：下一条不该等它把十亿行数完
+  // 设上限而不是干等：不打断的话它会一直等下去，用例卡住而不是变红
+  let rows =
+    tokio::time::timeout(Duration::from_secs(5), run("SELECT getvariable('marker') AS marker"))
+      .await
+      .unwrap_or_else(|_| panic!("被打断的那条没有让出连接（{:?}）", started.elapsed()));
+  assert_eq!(rows[0]["marker"], json!("still here"), "还是同一条连接");
+}
+
+async fn run_in(
+  sessions: &QuerySessionState,
+  pool: &Arc<DuckDbPool>,
+  session_id: &str,
+  sql: &str,
+  autocommit: bool,
+) -> Result<(), QueryError> {
+  let options = StreamingQueryOptions {
+    session_id,
+    pool_key: "duckdb:smoke",
+    pool: PoolRef::DuckDb(pool),
+    sql,
+    autocommit,
+    explain_plan: false,
+    row_limit: 100,
+    byte_limit: 16 * 1024 * 1024,
+    batch_size: 100,
+    timeout_duration: Duration::from_secs(20),
+  };
+  sessions.execute_streaming(options, &mut |_| Ok(())).await.map(|_| ())
+}
+
+/// 事务语义和 PostgreSQL 一样：一条出错，整个事务废了，只能回滚
+#[tokio::test]
+async fn duckdb_session_transactions_abort_on_error_like_postgres() {
+  let pool = pool("transactions").await;
+  run_all(
+    &pool,
+    &["CREATE TABLE w (id INTEGER PRIMARY KEY, note VARCHAR)", "INSERT INTO w VALUES (1, 'a')"],
+  )
+  .await;
+  let sessions = QuerySessionState::default();
+  let id = "duckdb-transaction";
+  let run = |sql, autocommit| run_in(&sessions, &pool, id, sql, autocommit);
+
+  run("UPDATE w SET note = 'b' WHERE id = 1", false).await.expect("update in a transaction");
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Active);
+  run("INSERT INTO w VALUES (1, 'dup')", false).await.expect_err("duplicate key");
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Failed);
+  let error = run("SELECT 1", false).await.expect_err("aborted transaction");
+  assert!(error.message.contains("ROLLBACK"), "{error:?}");
+  run("ROLLBACK", true).await.expect("rollback");
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Idle);
+
+  let notes = pool.select("SELECT note FROM w", &[]).await.expect("notes");
+  assert_eq!(notes[0]["note"], json!("a"), "回滚把那条 UPDATE 也撤掉了");
+
+  // DDL 在事务里，能回滚
+  run("DROP TABLE w", false).await.expect("drop in a transaction");
+  run("ROLLBACK", true).await.expect("rollback drop");
+  assert_eq!(
+    pool.select("SELECT count(*) AS n FROM w", &[]).await.expect("still there")[0]["n"],
+    json!(1)
+  );
+}
+
+#[tokio::test]
+async fn duckdb_write_batches_check_row_counts_and_roll_back_as_a_whole() {
+  use dataomni_lib::services::{WriteStatement, ROW_COUNT_MISMATCH_CODE};
+  let pool = pool("writes").await;
+  run_all(
+    &pool,
+    &[
+      "CREATE TABLE w (id INTEGER PRIMARY KEY, note VARCHAR)",
+      "INSERT INTO w VALUES (1, 'a'), (2, 'b')",
+    ],
+  )
+  .await;
+  let write = |sql: &str, params: Vec<JsonValue>, expect_rows: Option<u64>| {
+    serde_json::from_value::<WriteStatement>(
+      json!({ "sql": sql, "params": params, "expectRows": expect_rows }),
+    )
+    .expect("statement")
+  };
+
+  let affected = pool
+    .write_batch(&[
+      write("UPDATE w SET note = $1 WHERE id = $2", vec![json!("x"), json!(1)], Some(1)),
+      write("DELETE FROM w WHERE id = $1", vec![json!(2)], Some(1)),
+    ])
+    .await
+    .expect("batch");
+  assert_eq!(affected, vec![1, 1]);
+
+  // 第二条对不上行数：第一条也要撤掉
+  let error = pool
+    .write_batch(&[
+      write("UPDATE w SET note = $1 WHERE id = $2", vec![json!("y"), json!(1)], Some(1)),
+      write("DELETE FROM w WHERE id = $1", vec![json!(99)], Some(1)),
+    ])
+    .await
+    .expect_err("row count mismatch");
+  assert_eq!(error.statement_index, 1);
+  assert_eq!(error.error.code.as_deref(), Some(ROW_COUNT_MISMATCH_CODE));
+  let notes = pool.select("SELECT id, note FROM w ORDER BY id", &[]).await.expect("notes");
+  assert_eq!(notes.len(), 1);
+  assert_eq!(notes[0]["note"], json!("x"));
+}
+
+// ---------------------------------------------------------------------------
+// 目录查询。夹具里放的是会咬人的那几样：复合主键、复合外键、表达式索引、带空格与
+// 关键字的名字、计算列、带注释的列、视图、序列、宏（含表宏）。
+// ---------------------------------------------------------------------------
+
+const FIXTURE: &[&str] = &[
+  "CREATE SCHEMA sales",
+  "CREATE TYPE mood AS ENUM ('ok', 'sad')",
+  "CREATE SEQUENCE seq_id START 10 INCREMENT BY 3",
+  "CREATE TABLE sales.parent (a INTEGER, b VARCHAR, PRIMARY KEY (a, b))",
+  "CREATE TABLE sales.child (id INTEGER PRIMARY KEY DEFAULT nextval('seq_id'), \
+    pa INTEGER NOT NULL, pb VARCHAR, email VARCHAR UNIQUE, \
+    price DECIMAL(10,2) DEFAULT 0 CHECK (price >= 0), m mood, \
+    twice INTEGER GENERATED ALWAYS AS (pa * 2) VIRTUAL, note VARCHAR, \
+    FOREIGN KEY (pa, pb) REFERENCES sales.parent (a, b))",
+  "COMMENT ON COLUMN sales.child.note IS '备注'",
+  "CREATE INDEX child_note ON sales.child (note, pa)",
+  "CREATE UNIQUE INDEX child_expr ON sales.child ((lower(email)))",
+  "CREATE TABLE sales.\"odd name\" (\"my col\" INTEGER, \"x y\" INTEGER GENERATED ALWAYS AS (\"my col\" + 1), \"select\" VARCHAR)",
+  "CREATE INDEX odd_idx ON sales.\"odd name\" (\"my col\", \"select\")",
+  "CREATE VIEW sales.v AS SELECT id, price FROM sales.child",
+  "CREATE MACRO add1(x) AS x + 1",
+  "CREATE MACRO tbl(n) AS TABLE SELECT * FROM range(n)",
+];
+
+fn find<'a>(rows: &'a [QueryRow], column: &str, value: &str) -> Vec<&'a QueryRow> {
+  rows.iter().filter(|row| text(&row[column]) == value).collect()
+}
+
+#[tokio::test]
+async fn duckdb_catalog_queries_describe_the_fixture() {
+  use dataomni_lib::models::DatabaseType;
+  use dataomni_lib::services::{
+    completion_catalog_query, er_diagram_queries, object_catalog_queries, schema_metadata_queries,
+    session_target_query, DdlQuery,
+  };
+  let pool = pool("catalog").await;
+  run_all(&pool, FIXTURE).await;
+  let queries = schema_metadata_queries(&DatabaseType::DuckDB).expect("DuckDB catalog");
+  let params = |table: &str| vec![json!(table), json!("sales")];
+
+  let columns = pool.select(queries.columns, &params("child")).await.expect("columns");
+  let names: Vec<String> = columns.iter().map(|row| text(&row["column_name"])).collect();
+  assert_eq!(names, ["id", "pa", "pb", "email", "price", "m", "twice", "note"]);
+  let by_name = |name: &str| find(&columns, "column_name", name)[0].clone();
+  assert_eq!(by_name("id")["is_primary_key"], json!(true));
+  assert_eq!(by_name("id")["primary_key_ordinal"], json!(1));
+  assert_eq!(text(&by_name("id")["column_default"]), "nextval('seq_id')");
+  assert_eq!(by_name("twice")["is_generated"], json!(true), "计算列");
+  assert_eq!(by_name("twice")["column_default"], JsonValue::Null, "计算列的表达式不是默认值");
+  assert_eq!(by_name("pa")["is_generated"], json!(false));
+  assert_eq!(by_name("pa")["is_nullable"], json!(false));
+  assert_eq!(text(&by_name("price")["data_type"]), "DECIMAL(10,2)");
+  assert_eq!(text(&by_name("m")["data_type"]), "ENUM('ok', 'sad')");
+  assert_eq!(text(&by_name("note")["comment"]), "备注");
+
+  let odd = pool.select(queries.columns, &params("odd name")).await.expect("odd columns");
+  let generated: Vec<(String, JsonValue)> =
+    odd.iter().map(|row| (text(&row["column_name"]), row["is_generated"].clone())).collect();
+  assert_eq!(
+    generated,
+    [("my col".into(), json!(false)), ("x y".into(), json!(true)), ("select".into(), json!(false))],
+    "带空格、带引号的列名也认得出计算列"
+  );
+  // 不给 schema 就是当前 schema（main），sales 里的表查不到
+  assert!(pool
+    .select(queries.columns, &[json!("child"), JsonValue::Null])
+    .await
+    .expect("main")
+    .is_empty());
+
+  let parent = pool.select(queries.columns, &params("parent")).await.expect("parent columns");
+  let keys: Vec<(String, JsonValue)> = parent
+    .iter()
+    .map(|row| (text(&row["column_name"]), row["primary_key_ordinal"].clone()))
+    .collect();
+  assert_eq!(keys, [("a".to_string(), json!(1)), ("b".to_string(), json!(2))]);
+
+  let indexes = pool.select(queries.indexes, &params("child")).await.expect("indexes");
+  let pairs: Vec<(String, String, JsonValue)> = indexes
+    .iter()
+    .map(|row| (text(&row["index_name"]), text(&row["column_name"]), row["is_unique"].clone()))
+    .collect();
+  assert_eq!(
+    pairs,
+    [
+      ("child_email_key".into(), "email".into(), json!(true)),
+      ("child_expr".into(), "(lower(email))".into(), json!(true)),
+      ("child_id_pkey".into(), "id".into(), json!(true)),
+      ("child_note".into(), "note".into(), json!(false)),
+      ("child_note".into(), "pa".into(), json!(false)),
+    ]
+  );
+  assert_eq!(find(&indexes, "index_name", "child_id_pkey")[0]["is_primary"], json!(true));
+  let odd_index = pool.select(queries.indexes, &params("odd name")).await.expect("odd index");
+  let odd_columns: Vec<String> = odd_index.iter().map(|row| text(&row["column_name"])).collect();
+  assert_eq!(odd_columns, ["my col", "select"], "带引号的名字去掉两层引号");
+
+  let foreign_keys = pool.select(queries.foreign_keys, &params("child")).await.expect("fks");
+  let pairs: Vec<(String, String, String)> = foreign_keys
+    .iter()
+    .map(|row| {
+      (text(&row["column_name"]), text(&row["referenced_table"]), text(&row["referenced_column"]))
+    })
+    .collect();
+  assert_eq!(
+    pairs,
+    [("pa".into(), "parent".into(), "a".into()), ("pb".into(), "parent".into(), "b".into())]
+  );
+  assert_eq!(text(&foreign_keys[0]["referenced_schema"]), "sales");
+
+  let checks = pool
+    .select(queries.check_constraints.expect("checks"), &params("child"))
+    .await
+    .expect("checks");
+  assert_eq!(checks.len(), 1);
+  assert_eq!(text(&checks[0]["expression"]), "(price >= 0)");
+
+  let Some(DdlQuery::Bound { sql: ddl }) = queries.ddl else {
+    panic!("DuckDB 的定义走绑定参数")
+  };
+  let ddl_rows = pool.select(ddl, &params("child")).await.expect("ddl");
+  let statements: Vec<String> = ddl_rows.iter().map(|row| text(&row["sql"])).collect();
+  assert!(statements[0].starts_with("CREATE TABLE sales.child("), "{statements:?}");
+  assert_eq!(statements.len(), 3, "建表之后是两条 CREATE INDEX: {statements:?}");
+  let view = pool.select(ddl, &params("v")).await.expect("view ddl");
+  assert!(text(&view[0]["sql"]).starts_with("CREATE VIEW sales.v AS"));
+  assert!(pool.select(queries.triggers, &params("child")).await.expect("triggers").is_empty());
+
+  let objects = object_catalog_queries(&DatabaseType::DuckDB).expect("objects");
+  let listed = pool.select(objects.objects, &[]).await.expect("object list");
+  let kind_of =
+    |name: &str| find(&listed, "object_name", name).first().map(|row| text(&row["object_kind"]));
+  assert_eq!(kind_of("child").as_deref(), Some("table"));
+  assert_eq!(kind_of("odd name").as_deref(), Some("table"));
+  assert_eq!(kind_of("v").as_deref(), Some("view"));
+  assert_eq!(kind_of("seq_id").as_deref(), Some("sequence"));
+  assert_eq!(kind_of("add1").as_deref(), Some("function"));
+  assert_eq!(kind_of("tbl").as_deref(), Some("function"));
+  assert!(find(&listed, "object_schema", "information_schema").is_empty(), "系统 schema 不列");
+  let routine =
+    pool.select(objects.routine_definition, &[json!("main.tbl")]).await.expect("routine");
+  assert_eq!(
+    text(&routine[0]["definition"]),
+    "CREATE MACRO main.tbl(n) AS TABLE SELECT * FROM \"range\"(n)"
+  );
+  let sequence = pool
+    .select(objects.sequence_properties.expect("sequences"), &[json!("main.seq_id")])
+    .await
+    .expect("sequence");
+  assert_eq!(
+    (text(&sequence[0]["start_value"]), text(&sequence[0]["increment_by"])),
+    ("10".into(), "3".into())
+  );
+
+  let er = er_diagram_queries(&DatabaseType::DuckDB).expect("er");
+  let er_columns = pool.select(er.columns, &[]).await.expect("er columns");
+  assert!(!find(&er_columns, "table_name", "child").is_empty());
+  assert!(find(&er_columns, "table_name", "v").is_empty(), "ER 图不画视图");
+  let er_keys = pool.select(er.foreign_keys, &[]).await.expect("er fks");
+  assert_eq!(er_keys.len(), 2);
+
+  let completion = completion_catalog_query(&DatabaseType::DuckDB).expect("completion");
+  let relations = pool.select(completion.relations, &[]).await.expect("relations");
+  assert_eq!(text(&find(&relations, "relation_name", "v")[0]["relation_kind"]), "view");
+  assert_eq!(text(&find(&relations, "relation_name", "child")[0]["relation_kind"]), "table");
+
+  let target = session_target_query(&DatabaseType::DuckDB).expect("target");
+  let where_am_i = pool.select(target.sql, &[]).await.expect("target");
+  assert_eq!(text(&where_am_i[0]["schema_name"]), "main");
+  assert_eq!(where_am_i[0]["read_only"], json!(false));
+}
+
+#[tokio::test]
+async fn duckdb_explain_reads_the_json_plan() {
+  use dataomni_lib::models::DatabaseType;
+  use dataomni_lib::services::{explain_statement, parse_plan};
+  let pool = pool("explain").await;
+  run_all(&pool, FIXTURE).await;
+  let statement = explain_statement(
+    &DatabaseType::DuckDB,
+    "SELECT c.id FROM sales.child c JOIN sales.parent p ON p.a = c.pa ORDER BY c.id LIMIT 5",
+    false,
+  )
+  .expect("statement");
+  let mut connection = session(&pool).await;
+  let mut rows = Vec::new();
+  connection
+    .execute_streaming(
+      &statement,
+      StreamOptions::limited(100, 16 * 1024 * 1024, 100).for_explain(),
+      &mut |batch| {
+        rows.extend(batch.rows);
+        Ok(())
+      },
+    )
+    .await
+    .expect("explain");
+  let plan = parse_plan(&DatabaseType::DuckDB, &rows, false).expect("plan");
+  assert_eq!(plan.roots[0].operation, "TOP_N");
+  assert!(!plan.roots[0].children.is_empty());
+}

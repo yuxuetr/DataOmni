@@ -16,6 +16,12 @@ pub struct ObjectCatalogQueries {
   pub sequence_properties: Option<&'static str>,
   /// `objects` 需要绑定几个参数（MySQL 的 UNION 两边各要一次库名）
   pub object_parameter_count: u8,
+  /// `routine_definition` 绑几个参数：`[object_id]`，MySQL 另要库名 `[object_id, 库名]`。
+  ///
+  /// 写成数据而不是让前端按方言猜：前端原先写的是「PostgreSQL 一个，其余两个」，
+  /// SQL Server 与 Oracle 的驱动不计较多给的那一个，DuckDB 计较——「Wrong number of
+  /// parameters passed to query. Got 2, needed 1」，宏的定义打不开
+  pub routine_parameter_count: u8,
 }
 
 pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQueries> {
@@ -25,6 +31,7 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
       routine_definition: POSTGRES_ROUTINE_DEFINITION,
       sequence_properties: Some(POSTGRES_SEQUENCE_PROPERTIES),
       object_parameter_count: 0,
+      routine_parameter_count: 1,
     }),
     DatabaseType::MySQL => Some(ObjectCatalogQueries {
       objects: MYSQL_OBJECTS,
@@ -32,6 +39,7 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
       // MySQL 没有序列，AUTO_INCREMENT 是列属性不是独立对象
       sequence_properties: None,
       object_parameter_count: 2,
+      routine_parameter_count: 2,
     }),
     DatabaseType::SQLite => Some(ObjectCatalogQueries {
       objects: SQLITE_OBJECTS,
@@ -40,18 +48,28 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
       routine_definition: SQLITE_NO_ROUTINES,
       sequence_properties: None,
       object_parameter_count: 0,
+      routine_parameter_count: 0,
     }),
     DatabaseType::SqlServer => Some(ObjectCatalogQueries {
       objects: SQL_SERVER_OBJECTS,
       routine_definition: SQL_SERVER_ROUTINE_DEFINITION,
       sequence_properties: Some(SQL_SERVER_SEQUENCE_PROPERTIES),
       object_parameter_count: 0,
+      routine_parameter_count: 1,
     }),
     DatabaseType::Oracle => Some(ObjectCatalogQueries {
       objects: ORACLE_OBJECTS,
       routine_definition: ORACLE_ROUTINE_DEFINITION,
       sequence_properties: Some(ORACLE_SEQUENCE_PROPERTIES),
       object_parameter_count: 0,
+      routine_parameter_count: 1,
+    }),
+    DatabaseType::DuckDB => Some(ObjectCatalogQueries {
+      objects: DUCKDB_OBJECTS,
+      routine_definition: DUCKDB_ROUTINE_DEFINITION,
+      sequence_properties: Some(DUCKDB_SEQUENCE_PROPERTIES),
+      object_parameter_count: 0,
+      routine_parameter_count: 1,
     }),
     _ => None,
   }
@@ -263,6 +281,64 @@ FROM all_sequences s
 WHERE s.sequence_owner || '.' || s.sequence_name = :1
 "#;
 
+/// DuckDB：表、视图、序列与宏（`CREATE MACRO`，它唯一的「用户函数」）。只看当前库，
+/// `ATTACH` 进来的库也在这些表函数里。`object_id` 是 `schema.name`，和 Oracle 一样；
+/// 同名的宏可以有几个重载，树里算一个，定义里全列出来
+const DUCKDB_OBJECTS: &str = r#"
+SELECT object_schema, object_name, object_kind, object_id FROM (
+  SELECT t.schema_name AS object_schema, t.table_name AS object_name, 'table' AS object_kind,
+    t.schema_name || '.' || t.table_name AS object_id
+  FROM duckdb_tables() t
+  WHERE t.database_name = current_database() AND NOT t.internal
+  UNION ALL
+  SELECT v.schema_name, v.view_name, 'view', v.schema_name || '.' || v.view_name
+  FROM duckdb_views() v
+  WHERE v.database_name = current_database() AND NOT v.internal
+  UNION ALL
+  SELECT s.schema_name, s.sequence_name, 'sequence', s.schema_name || '.' || s.sequence_name
+  FROM duckdb_sequences() s
+  WHERE s.database_name = current_database()
+  UNION ALL
+  SELECT DISTINCT f.schema_name, f.function_name, 'function', f.schema_name || '.' || f.function_name
+  FROM duckdb_functions() f
+  WHERE f.database_name = current_database() AND NOT f.internal
+    AND f.function_type IN ('macro', 'table_macro')
+)
+ORDER BY 1, 3, 2
+"#;
+
+/// 宏没有存原文，由参数与定义拼回 `CREATE MACRO`——这两样都是 DuckDB 自己给的，
+/// 不是猜的；重载的几个用空行隔开
+const DUCKDB_ROUTINE_DEFINITION: &str = r#"
+SELECT string_agg(
+  'CREATE MACRO ' || f.schema_name || '.' || f.function_name
+    || '(' || array_to_string(f.parameters, ', ') || ') AS '
+    || CASE f.function_type WHEN 'table_macro' THEN 'TABLE ' ELSE '' END
+    || f.macro_definition,
+  ';' || chr(10) || chr(10)
+) AS definition
+FROM duckdb_functions() f
+WHERE f.schema_name || '.' || f.function_name = $1
+  AND f.database_name = current_database()
+  AND f.function_type IN ('macro', 'table_macro')
+"#;
+
+/// 序列都是 BIGINT；没有缓存这一项
+const DUCKDB_SEQUENCE_PROPERTIES: &str = r#"
+SELECT
+  s.start_value::VARCHAR AS start_value,
+  s.increment_by::VARCHAR AS increment_by,
+  s.min_value::VARCHAR AS min_value,
+  s.max_value::VARCHAR AS max_value,
+  NULL::VARCHAR AS cache_size,
+  s.cycle::VARCHAR AS cycles,
+  'BIGINT' AS data_type,
+  s.last_value::VARCHAR AS last_value
+FROM duckdb_sequences() s
+WHERE s.schema_name || '.' || s.sequence_name = $1
+  AND s.database_name = current_database()
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -275,6 +351,45 @@ mod tests {
       usize::from(queries.object_parameter_count),
       "声明的参数个数必须和语句里的占位符个数一致，否则绑定会错位或报错"
     );
+  }
+
+  /// 前端按 `routine_parameter_count` 造参数：多一个少一个都是错。SQL Server 与 Oracle 的
+  /// 驱动对多给的参数不计较，所以这条门之前那一个多给的参数一直没人发现
+  #[test]
+  fn routine_definitions_declare_how_many_values_they_bind() {
+    let count = |sql: &str| {
+      let numbered = ["$", "@P", ":"]
+        .iter()
+        .flat_map(|marker| {
+          sql.match_indices(marker).filter_map(|(at, _)| {
+            sql[at + marker.len()..]
+              .chars()
+              .take_while(char::is_ascii_digit)
+              .collect::<String>()
+              .parse::<usize>()
+              .ok()
+          })
+        })
+        .max()
+        .unwrap_or(0);
+      numbered.max(sql.matches('?').count())
+    };
+    for db_type in [
+      DatabaseType::PostgreSQL,
+      DatabaseType::MySQL,
+      DatabaseType::SQLite,
+      DatabaseType::SqlServer,
+      DatabaseType::Oracle,
+      DatabaseType::DuckDB,
+    ] {
+      let queries = object_catalog_queries(&db_type).expect("supported");
+      assert_eq!(
+        count(queries.routine_definition),
+        usize::from(queries.routine_parameter_count),
+        "{db_type:?}: {}",
+        queries.routine_definition
+      );
+    }
   }
 
   #[test]
