@@ -87,6 +87,8 @@ export function isDatabaseTypeSupported(type: DatabaseType): boolean {
  */
 export type PendingFeature =
   | 'dataEditing'
+  /** 在查询结果里直接改（表数据页照样能改） */
+  | 'resultEditing'
   | 'transactions'
   | 'explain'
   | 'structureEditing'
@@ -96,12 +98,12 @@ export type PendingFeature =
 /**
  * 分阶段接入的库还没接上的功能。SQL Server、Oracle、DuckDB 的各个阶段都已接上（TODOs 4.2）。
  *
- * ClickHouse 这四项不是「还没做完」，是这一版有意不做：没有通用事务，`UPDATE` / `DELETE` 是
- * 异步的 mutation、回不了可信的影响行数，表格写入「恰好改这一行」无从保证；CSV 导入做不到
- * 「中途失败什么都不留」；建表要选引擎、写排序键，表单做不通用。写库在编辑器里写 SQL
+ * ClickHouse 这四项不是「还没做完」，是这一版有意不做：没有通用事务；CSV 导入做不到
+ * 「中途失败什么都不留」；建表要选引擎、写排序键，表单做不通用。表数据页能改，一次一项、
+ * 执行前后各数一遍（`pendingChanges` 的 ClickHouse 那一段）；查询结果里不开这套，到表数据页改
  */
 export const PENDING_FEATURES: Readonly<Partial<Record<DatabaseType, readonly PendingFeature[]>>> = {
-  [DatabaseType.ClickHouse]: ['dataEditing', 'transactions', 'structureEditing', 'import']
+  [DatabaseType.ClickHouse]: ['resultEditing', 'transactions', 'structureEditing', 'import']
 };
 
 /**

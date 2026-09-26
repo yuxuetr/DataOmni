@@ -150,6 +150,8 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_CLICKHOUSE_TLS_FILE_INVALID: 'error.backend.clickhouseTlsFileInvalid',
   DATAOMNI_CLICKHOUSE_WRITE_UNSUPPORTED: 'error.backend.clickhouseWriteUnsupported',
   DATAOMNI_CLICKHOUSE_MALFORMED_RESULT: 'error.backend.clickhouseMalformedResult',
+  DATAOMNI_CLICKHOUSE_ROW_AMBIGUOUS: 'error.backend.clickhouseRowAmbiguous',
+  DATAOMNI_CLICKHOUSE_WRITE_UNVERIFIED: 'error.backend.clickhouseWriteUnverified',
   DATAOMNI_REDIS_AUTH_FAILED: 'error.backend.redisAuthFailed',
   DATAOMNI_REDIS_AUTH_REQUIRED: 'error.backend.redisAuthRequired',
   DATAOMNI_REDIS_NO_PERMISSION: 'error.backend.redisNoPermission',

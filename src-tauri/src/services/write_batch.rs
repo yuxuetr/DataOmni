@@ -131,10 +131,8 @@ pub async fn execute_write_batch<'a>(
     PoolRef::SqlServer(pool) => return pool.write_batch(statements).await,
     PoolRef::Oracle(pool) => return pool.write_batch(statements).await,
     PoolRef::DuckDb(pool) => return pool.write_batch(statements).await,
-    // 没有事务，也回不了可信的影响行数：「恰好这一行」无从保证，表格在界面上是只读的
-    PoolRef::ClickHouse(_) => {
-      return Err(WriteBatchError::at(0, crate::services::clickhouse::CLICKHOUSE_WRITE_UNSUPPORTED))
-    }
+    // 没有事务：一项改动是「数一遍 → 执行 → 核对」三条，照顺序跑、逐条核对
+    PoolRef::ClickHouse(pool) => return pool.write_batch(statements).await,
   };
   match pool {
     DbPool::Sqlite(pool) => {

@@ -20,7 +20,8 @@
 //! - **不压缩**：开着 lz4 时，流到一半的异常把之前收到的数据全裹进了消息里。
 //! - 一次一条语句（服务端拒绝多条），错误位置是从 1 数的**字节**。
 //!
-//! 没有事务：表格写入、按参数执行（CSV 导入）都不开，见 [`CLICKHOUSE_WRITE_UNSUPPORTED`]。
+//! 没有事务：表格一次只改一项，按「数一遍 → 执行 → 核对」走（[`ClickHousePool::write_batch`]）；
+//! 按参数执行（CSV 导入）不开，见 [`CLICKHOUSE_WRITE_UNSUPPORTED`]。
 
 use crate::models::ConnectionProfile;
 use crate::services::http_endpoint::{error_chain, EndpointError, HttpEndpoint};
@@ -29,6 +30,9 @@ use crate::services::query_executor::{
   admit_row_bytes, flush_full_batch, flush_remaining_batch, number_duplicate_columns, tagged_value,
   NonQueryHandling, QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow,
   QueryTruncationReason, StreamOptions, NON_QUERY_MESSAGE,
+};
+use crate::services::write_batch::{
+  WriteBatchError, WriteStatement, ROW_COUNT_MISMATCH, ROW_COUNT_MISMATCH_CODE,
 };
 use crate::services::QueryError;
 use reqwest::{Client, Response, Url};
@@ -48,12 +52,22 @@ pub const CLICKHOUSE_UNREACHABLE: &str = "DATAOMNI_CLICKHOUSE_UNREACHABLE";
 pub const CLICKHOUSE_NOT_CLICKHOUSE: &str = "DATAOMNI_CLICKHOUSE_NOT_CLICKHOUSE";
 /// CA 证书文件读不了或不是证书。冒号后面带着路径
 pub const CLICKHOUSE_TLS_FILE_INVALID: &str = "DATAOMNI_CLICKHOUSE_TLS_FILE_INVALID";
-/// 表格写入、CSV 导入：没有事务，改不到「恰好这一行」，也做不到「中途失败什么都不留」
+/// CSV 导入：没有事务，做不到「中途失败什么都不留」
 pub const CLICKHOUSE_WRITE_UNSUPPORTED: &str = "DATAOMNI_CLICKHOUSE_WRITE_UNSUPPORTED";
+/// 执行前数到不止一行和它一模一样（按比得准的列），分不出改哪一行；没有执行。冒号后面是行数
+pub const CLICKHOUSE_ROW_AMBIGUOUS: &str = "DATAOMNI_CLICKHOUSE_ROW_AMBIGUOUS";
+/// 已经执行了，但事后核对对不上——没有事务，撤不回来。冒号后面是「期望 · 实际」或核对时的错误
+pub const CLICKHOUSE_WRITE_UNVERIFIED: &str = "DATAOMNI_CLICKHOUSE_WRITE_UNVERIFIED";
 /// 回答的一行和表头对不上。冒号后面是「行号: 字段数/表头的列数」
 pub const CLICKHOUSE_MALFORMED_RESULT: &str = "DATAOMNI_CLICKHOUSE_MALFORMED_RESULT";
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// 池子里的空闲连接留多久。服务端只留 10 秒（`Keep-Alive: timeout=10`，老版本是 3 秒），
+/// reqwest 默认留 90 秒：留得比服务端久，就可能在服务端关连接的那一刻拿它去发请求，得到
+/// 「connection closed before message completed」，而 POST 不会被自动重试。这是预防：
+/// 真库用例里见过这句报错，但当时测试容器正内存不足（后台合并报 241），没法断定是这个原因，
+/// 也没能稳定复现。官方 crate 取 2 秒，同一个理由
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
 /// KILL 本身也可能卡住（服务端忙）；等不到就不等了，下一条语句自己会报「会话锁着」
 const KILL_TIMEOUT: Duration = Duration::from_secs(10);
 const RESULT_FORMAT: &str = "TabSeparatedWithNamesAndTypes";
@@ -105,17 +119,24 @@ pub struct ClickHousePool {
 }
 
 /// 一次请求要带的东西
+#[derive(Clone, Copy)]
 struct RequestParams<'a> {
   session_id: Option<&'a str>,
   query_id: &'a str,
   /// 服务端参数，按序号叫 `p1`、`p2`……（语句里写 `{p1:String}`）
   params: &'a [JsonValue],
+  /// `ALTER TABLE … UPDATE / DELETE` 默认交给后台就返回；带上 `mutations_sync = 2` 等它
+  /// 做完（25.8 上试过）。只在表格写入那条路上用：只读账号改不了设置，而它本来也写不了
+  wait_for_mutation: bool,
 }
 
 /// 连上并 `SELECT version()`：口令错、端口不对都在这一步报出来
 pub async fn connect(target: ClickHouseTarget) -> Result<Arc<ClickHousePool>, String> {
   let pool = Arc::new(ClickHousePool {
-    client: target.endpoint.client(CONNECT_TIMEOUT).map_err(endpoint_error)?,
+    client: target
+      .endpoint
+      .client(CONNECT_TIMEOUT, Some(POOL_IDLE_TIMEOUT))
+      .map_err(endpoint_error)?,
     base: target.endpoint.base_url().map_err(endpoint_error)?,
     username: target.username,
     password: target.password,
@@ -164,6 +185,9 @@ impl ClickHousePool {
       for (index, value) in request.params.iter().enumerate() {
         query.append_pair(&format!("param_p{}", index + 1), &param_text(value));
       }
+      if request.wait_for_mutation {
+        query.append_pair("mutations_sync", "2");
+      }
     }
     let mut builder = self.client.post(url).body(sql.to_string());
     // 用户名空着就是 `default` 用户，由服务端自己认
@@ -176,9 +200,19 @@ impl ClickHousePool {
     builder
   }
 
-  /// 发出去，拿到状态码不是 200 的就读出错误
+  /// 发出去，拿到状态码不是 200 的就读出错误。
+  ///
+  /// 查询碰上「connection closed before message completed」重发一次：会话里读完一个大结果
+  /// （10 万行）之后，下一个请求拿到的那条池里的连接偶尔已经被服务端关了（实测 40 次里
+  /// 2～3 次；不带会话、或者结果很小都是 0 次，响应头里也没有 `Connection: close`，机制没查清）。
+  /// 写语句不重发：请求可能已经到了服务端，重发就是写两遍
   async fn send(&self, sql: &str, request: RequestParams<'_>) -> Result<Response, QueryError> {
-    let response = self.request(sql, request).send().await.map_err(network_error)?;
+    let response = match self.request(sql, request).send().await {
+      Err(error) if is_stale_connection(&error) && is_query(sql) => {
+        self.request(sql, request).send().await.map_err(network_error)?
+      }
+      other => other.map_err(network_error)?,
+    };
     if response.status().is_success() {
       return Ok(response);
     }
@@ -193,8 +227,12 @@ impl ClickHousePool {
     params: &[JsonValue],
   ) -> Result<Vec<QueryRow>, QueryError> {
     let query_id = uuid::Uuid::new_v4().to_string();
-    let response =
-      self.send(sql, RequestParams { session_id: None, query_id: &query_id, params }).await?;
+    let response = self
+      .send(
+        sql,
+        RequestParams { session_id: None, query_id: &query_id, params, wait_for_mutation: false },
+      )
+      .await?;
     let mut rows = Vec::new();
     let options = StreamOptions::limited(usize::MAX, SELECT_BYTE_LIMIT, usize::MAX);
     read_result(response, options, &mut |batch| {
@@ -210,6 +248,61 @@ impl ClickHousePool {
     )
   }
 
+  /// 表格里的一项改动，按顺序一条条执行。**没有事务**：前端把一项改动展开成
+  /// 「执行前数一遍 → 执行 → 执行后核对」三条，这里照 `expect_rows` 逐条核对。
+  ///
+  /// - 查询比它返回的那个数（`SELECT count() …`），写语句比服务端报的写入行数
+  ///   （`X-ClickHouse-Summary`；只有 `INSERT` 报得出，`ALTER … UPDATE` 与 `DELETE` 报 0，
+  ///   所以前端不给它们期望值）。
+  /// - `ALTER` 带 `mutations_sync = 2`，改完才返回：否则紧跟着的核对读到的是改之前的样子。
+  /// - 对不上时分两种说：还没写过（什么都没变，和别家的「没有恰好影响一行」同一个码；
+  ///   数到不止一行另给一个码），写过了（撤不回来，[`CLICKHOUSE_WRITE_UNVERIFIED`]）。
+  ///
+  /// 仍然存在、界面上写明的：数完到执行之间别处写进来一行一模一样的，会一起被改
+  pub async fn write_batch(
+    self: &Arc<Self>,
+    statements: &[WriteStatement],
+  ) -> Result<Vec<u64>, WriteBatchError> {
+    let mut results = Vec::with_capacity(statements.len());
+    let mut written = false;
+    for (index, statement) in statements.iter().enumerate() {
+      let sql = statement.sql.trim();
+      let query = is_query(sql);
+      let failed = |error: QueryError| WriteBatchError::at(index, after_write(error, written));
+      let query_id = uuid::Uuid::new_v4().to_string();
+      let request = RequestParams {
+        session_id: None,
+        query_id: &query_id,
+        params: &statement.params,
+        wait_for_mutation: !query
+          && crate::services::transaction_state::leading_keywords(sql).0 == "ALTER",
+      };
+      let response = self.send(sql, request).await.map_err(failed)?;
+      let mut rows = Vec::new();
+      let options = StreamOptions::limited(usize::MAX, SELECT_BYTE_LIMIT, usize::MAX);
+      let (summary, _) = read_result(response, options, &mut |batch| {
+        rows.extend(batch.rows);
+        Ok(())
+      })
+      .await
+      .map_err(failed)?;
+      let count = match summary {
+        QueryExecutionSummary::Affected { rows_affected } => rows_affected,
+        QueryExecutionSummary::Rows { .. } => first_count(&rows),
+      };
+      if !query {
+        written = true;
+      }
+      if let Some(expected) = statement.expect_rows {
+        if count != expected {
+          return Err(WriteBatchError::at(index, count_mismatch(expected, count, written)));
+        }
+      }
+      results.push(count);
+    }
+    Ok(results)
+  }
+
   /// 停下一条查询。用自己的请求、不带会话：那个会话正被这条查询锁着
   async fn kill(&self, query_id: &str) {
     let kill_id = uuid::Uuid::new_v4().to_string();
@@ -217,6 +310,7 @@ impl ClickHousePool {
       session_id: None,
       query_id: &kill_id,
       params: &[JsonValue::String(query_id.to_string())],
+      wait_for_mutation: false,
     };
     let sent = self.send("KILL QUERY WHERE query_id = {p1:String} SYNC", request);
     // 停不下来也不是这条语句的错：它已经报过取消或超时了
@@ -302,8 +396,12 @@ impl ClickHouseConnection {
       pending: Arc::clone(&self.pending_kill),
       finished: false,
     };
-    let request =
-      RequestParams { session_id: Some(&self.session_id), query_id: &query_id, params: &[] };
+    let request = RequestParams {
+      session_id: Some(&self.session_id),
+      query_id: &query_id,
+      params: &[],
+      wait_for_mutation: false,
+    };
     let response = match self.pool.send(statement, request).await {
       Ok(response) => response,
       Err(error) => {
@@ -340,8 +438,12 @@ impl ClickHouseConnection {
     self.settle().await;
     let query_id = uuid::Uuid::new_v4().to_string();
     let describe = format!("DESCRIBE TABLE (\n{statement}\n)");
-    let request =
-      RequestParams { session_id: Some(&self.session_id), query_id: &query_id, params: &[] };
+    let request = RequestParams {
+      session_id: Some(&self.session_id),
+      query_id: &query_id,
+      params: &[],
+      wait_for_mutation: false,
+    };
     let response = self.pool.send(&describe, request).await?;
     let mut rows = Vec::new();
     let options = StreamOptions::limited(usize::MAX, SELECT_BYTE_LIMIT, usize::MAX);
@@ -379,6 +481,40 @@ impl ClickHouseConnection {
   }
 }
 
+/// 核对查询（`SELECT count() …`）的那一个数
+fn first_count(rows: &[QueryRow]) -> u64 {
+  let Some(value) = rows.first().and_then(|row| row.values().next()) else {
+    return 0;
+  };
+  match untagged(value.clone()) {
+    JsonValue::Number(number) => number.as_u64().unwrap_or(0),
+    JsonValue::String(text) => text.parse().unwrap_or(0),
+    JsonValue::Bool(flag) => u64::from(flag),
+    _ => 0,
+  }
+}
+
+fn count_mismatch(expected: u64, actual: u64, written: bool) -> QueryError {
+  if written {
+    return QueryError::message(format!("{CLICKHOUSE_WRITE_UNVERIFIED}: {expected} · {actual}"));
+  }
+  if actual > expected {
+    return QueryError::message(format!("{CLICKHOUSE_ROW_AMBIGUOUS}: {actual}"));
+  }
+  QueryError::with_code(
+    ROW_COUNT_MISMATCH_CODE,
+    format!("{ROW_COUNT_MISMATCH}: {expected} · {actual}"),
+  )
+}
+
+/// 写过之后的任何错误（核对查询自己失败了）都要说「已经执行」：否则用户会以为什么都没变
+fn after_write(error: QueryError, written: bool) -> QueryError {
+  if !written {
+    return error;
+  }
+  QueryError::message(format!("{CLICKHOUSE_WRITE_UNVERIFIED}: {}", error.message))
+}
+
 /// 导出前拒绝非查询时用：这些关键字开头的返回行。不在这里的都当写——导出只是拒跑，
 /// 认错了的代价是一句「这不是查询」
 fn is_query(sql: &str) -> bool {
@@ -394,6 +530,11 @@ fn param_text(value: &JsonValue) -> String {
     JsonValue::String(text) => text.clone(),
     other => other.to_string(),
   }
+}
+
+/// 池里拿到一条服务端已经关掉的连接。hyper 的原话，reqwest 不另给判断方法
+fn is_stale_connection(error: &reqwest::Error) -> bool {
+  error.is_request() && error_chain(error).contains("connection closed before message completed")
 }
 
 fn network_error(error: reqwest::Error) -> QueryError {

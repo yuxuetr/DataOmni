@@ -2,6 +2,8 @@ import { Loader2, Undo2 } from 'lucide-react';
 import { useLanguageStore } from '../stores/languageStore';
 
 interface PendingChangesBarProps {
+  /** 这类连接提交时特有的那一句（ClickHouse：一次一项、不在事务里） */
+  note?: string | null;
   count: number;
   committing: boolean;
   /** 上一次提交失败时留下的那句话；变更仍然都在 */
@@ -18,6 +20,7 @@ interface PendingChangesBarProps {
  * 没有它，关掉标签页就等于悄悄丢掉一批改动。
  */
 export function PendingChangesBar({
+  note = null,
   count,
   committing,
   error,
@@ -35,6 +38,9 @@ export function PendingChangesBar({
       <span className="text-xs font-medium text-accent">
         {t('changes.pending', { count })}
       </span>
+      {note && !error && (
+        <span className="min-w-0 flex-1 text-xs text-fg-muted">{note}</span>
+      )}
       {error && (
         // 失败之后变更原样还在，这里说的是「上次为什么没成」，不是「没了」
         <span className="min-w-0 flex-1 truncate text-xs text-danger" title={error}>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { columnTypeToken, isNumericColumnType } from './columnTypes';
+import { columnTypeToken, isConcurrencyComparable, isNumericColumnType } from './columnTypes';
 
 describe('列类型', () => {
   it('ClickHouse 的数值类型，套了 Nullable / LowCardinality 也认得出', () => {
@@ -15,5 +15,16 @@ describe('列类型', () => {
     expect(columnTypeToken('bigint unsigned')).toBe('bigint');
     expect(columnTypeToken('numeric(10,2)')).toBe('numeric');
     expect(columnTypeToken('Nullable(Decimal(10, 2))')).toBe('decimal');
+  });
+});
+
+describe('ClickHouse 的整行比较', () => {
+  it('文本、整数、定点、时间比得准；浮点、数组、Map 不比', () => {
+    for (const type of ['UInt64', 'LowCardinality(String)', 'Nullable(Decimal(10, 2))', "DateTime64(3, 'UTC')", 'Enum8(\'a\' = 1)', 'UUID']) {
+      expect(isConcurrencyComparable(type, 'clickhouse'), type).toBe(true);
+    }
+    for (const type of ['Float64', 'Nullable(Float32)', 'Array(String)', 'Map(String, UInt8)', 'JSON']) {
+      expect(isConcurrencyComparable(type, 'clickhouse'), type).toBe(false);
+    }
   });
 });

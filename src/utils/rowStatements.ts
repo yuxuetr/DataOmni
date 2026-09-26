@@ -43,12 +43,21 @@ export interface RowKey {
 
 /**
  * 按方言发占位符。PostgreSQL 的 `$n` 是按出现次序编号的，不能各自为政；
- * SQL Server 的 `@Pn` 是 tiberius 给参数起的名字，同样按次序编号
+ * SQL Server 的 `@Pn` 是 tiberius 给参数起的名字，同样按次序编号。
+ *
+ * ClickHouse 的服务端参数要写类型：`{p1:UInt64}`。类型就用列的声明类型（`LowCardinality(String)`、
+ * `DateTime64(3, 'UTC')`、`Nullable(…)` 都收，25.8 上试过），值按文本传、由服务端按类型解析——
+ * 和显示出来的写法是同一种，原样传回去就是原值
  */
-function createPlaceholderAllocator(dialect: SqlIdentifierDialect): () => string {
+type PlaceholderAllocator = (column?: ColumnInfo) => string;
+
+function createPlaceholderAllocator(dialect: SqlIdentifierDialect): PlaceholderAllocator {
   let index = 0;
-  return () => {
+  return (column) => {
     index += 1;
+    if (dialect === 'clickhouse') {
+      return `{p${index}:${column?.data_type || 'String'}}`;
+    }
     if (dialect === 'postgresql') {
       return `$${index}`;
     }
@@ -112,7 +121,7 @@ function inlineComparisonLiteral(
 function keyCondition(
   target: TableTarget,
   key: RowKey,
-  placeholder: () => string,
+  placeholder: PlaceholderAllocator,
   params: BoundValue[]
 ): string {
   if (key.columns.length === 0) {
@@ -124,16 +133,20 @@ function keyCondition(
   return key.columns
     .map((name) => {
       const value = key.values[name];
+      const quoted = quoteSqlIdentifier(name, target.dialect);
       if (value === null || value === undefined) {
+        // ClickHouse 按整行定位（`wholeRowIdentity`），整行里的 NULL 是真实的值
+        if (target.dialect === 'clickhouse') {
+          return `${quoted} IS NULL`;
+        }
         throw new Error(translateNow('write.nullKeyValue', { column: name }));
       }
-      const quoted = quoteSqlIdentifier(name, target.dialect);
       const literal = inlineComparisonLiteral(byName.get(name), value);
       if (literal !== null) {
         return `${quoted} = ${literal}`;
       }
       params.push(value);
-      return `${quoted} = ${placeholder()}${parameterCast(byName.get(name), target.dialect)}`;
+      return `${quoted} = ${placeholder(byName.get(name))}${parameterCast(byName.get(name), target.dialect)}`;
     })
     .join(' AND ');
 }
@@ -157,6 +170,10 @@ function assignmentTerm(
       if (dialect === 'sqlite') {
         throw new Error(translateNow('write.sqliteNoUpdateDefault'));
       }
+      // `ALTER TABLE … UPDATE` 的右手边是表达式，没有 DEFAULT 这个写法
+      if (dialect === 'clickhouse') {
+        throw new Error(translateNow('write.clickhouseNoUpdateDefault'));
+      }
       return 'DEFAULT';
     case 'expression':
       // 用户明确选择「表达式」时才走到这里，原样写进语句正是它的意思
@@ -164,7 +181,8 @@ function assignmentTerm(
     case 'null':
       // SQL Server 的空参数也带类型（绑成 nvarchar），而 nvarchar 不能隐式
       // 转成 varbinary：把二进制列置空会报 257。字面的 NULL 没有类型
-      if (dialect === 'sqlserver') {
+      // ClickHouse 同样：字面的 NULL 不用管参数类型写不写 Nullable
+      if (dialect === 'sqlserver' || dialect === 'clickhouse') {
         return 'NULL';
       }
       params.push(null);
@@ -198,10 +216,11 @@ function guardConditions(
   target: TableTarget,
   key: RowKey,
   guard: RowGuard | undefined,
-  placeholder: () => string,
+  placeholder: PlaceholderAllocator,
   params: BoundValue[]
 ): string[] {
-  if (!guard) {
+  // ClickHouse 的键已经是整行，再比一遍只是重复
+  if (!guard || target.dialect === 'clickhouse') {
     return [];
   }
   const byName = new Map(target.columns.map((column) => [column.name, column]));
@@ -228,7 +247,7 @@ function guardConditions(
       return [`${quoted} = ${literal}`];
     }
     params.push(value);
-    return [`${quoted} = ${placeholder()}${parameterCast(column, target.dialect)}`];
+    return [`${quoted} = ${placeholder(column)}${parameterCast(column, target.dialect)}`];
   });
 }
 
@@ -254,7 +273,7 @@ export function buildUpdateStatement(
       const right = assignmentTerm(
         assignments[name],
         target.dialect,
-        placeholder,
+        () => placeholder(byName.get(name)),
         params,
         parameterCast(byName.get(name), target.dialect)
       );
@@ -269,10 +288,11 @@ export function buildUpdateStatement(
     keyCondition(target, key, placeholder, params),
     ...guardConditions(target, key, guard && { ...guard, columns }, placeholder, params)
   ];
-  return {
-    sql: `UPDATE ${tableReference(target)} SET ${setClause} WHERE ${conditions.join(' AND ')}`,
-    params
-  };
+  // ClickHouse 的改是 mutation：`ALTER TABLE … UPDATE`，没有 `SET`
+  const sql = target.dialect === 'clickhouse'
+    ? `ALTER TABLE ${tableReference(target)} UPDATE ${setClause} WHERE ${conditions.join(' AND ')}`
+    : `UPDATE ${tableReference(target)} SET ${setClause} WHERE ${conditions.join(' AND ')}`;
+  return { sql, params };
 }
 
 /**
@@ -296,7 +316,13 @@ export function buildInsertStatement(
   const params: BoundValue[] = [];
   const byName = new Map(target.columns.map((column) => [column.name, column]));
   const terms = columns.map((name) =>
-    assignmentTerm(values[name], target.dialect, placeholder, params, parameterCast(byName.get(name), target.dialect))
+    assignmentTerm(
+      values[name],
+      target.dialect,
+      () => placeholder(byName.get(name)),
+      params,
+      parameterCast(byName.get(name), target.dialect)
+    )
   );
 
   return {
@@ -332,6 +358,21 @@ export function buildDeleteStatement(
 }
 
 /**
+ * 数一数有几行是这一行：`SELECT count() FROM t WHERE <整行>`。
+ *
+ * ClickHouse 没有事务、写语句也报不出影响行数，「恰好一行」只能在执行前后各数一次
+ * （见 `pendingChanges`）。`atLeastOne` 时问的是「至少有一行」，回答 1 或 0：改完之后
+ * 新值那一行可能恰好和另一行一模一样，那不算没改成
+ */
+export function buildRowCountStatement(target: TableTarget, key: RowKey, atLeastOne = false): BoundStatement {
+  const placeholder = createPlaceholderAllocator(target.dialect);
+  const params: BoundValue[] = [];
+  const condition = keyCondition(target, key, placeholder, params);
+  const projection = atLeastOne ? 'toUInt64(count() >= 1)' : 'count()';
+  return { sql: `SELECT ${projection} FROM ${tableReference(target)} WHERE ${condition}`, params };
+}
+
+/**
  * 把绑定参数填回语句，得到一条可以直接读、直接跑的 SQL。
  *
  * 只用于**展示**（差异预览、错误信息里的原句）。执行仍然走绑定参数——
@@ -342,7 +383,11 @@ export function renderStatementForDisplay(
   dialect: SqlIdentifierDialect
 ): string {
   let index = 0;
-  const placeholder = dialect === 'oracle' ? /:\d+/g : /\$\d+|@P\d+|\?/g;
+  const placeholder = dialect === 'oracle'
+    ? /:\d+/g
+    : dialect === 'clickhouse'
+      ? /\{p\d+:[^}]*\}/g
+      : /\$\d+|@P\d+|\?/g;
   return statement.sql.replace(placeholder, () => {
     const value = statement.params[index];
     index += 1;

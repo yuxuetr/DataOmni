@@ -59,10 +59,19 @@ impl HttpEndpoint {
       .map_err(|error| EndpointError::Unreachable(format!("{}: {error}", self.host)))
   }
 
-  pub fn client(&self, connect_timeout: Duration) -> Result<Client, EndpointError> {
+  /// `idle_timeout`：空闲连接在池子里留多久，`None` 是 reqwest 的默认（90 秒）。要比服务端
+  /// 关空闲连接的时限短，否则会拿一条服务端正好关掉的连接去发请求（见 ClickHouse 那边）
+  pub fn client(
+    &self,
+    connect_timeout: Duration,
+    idle_timeout: Option<Duration>,
+  ) -> Result<Client, EndpointError> {
     // 不走系统代理：数据库连接是直连的，另外几家的驱动都不认代理；经隧道时连的是 127.0.0.1，
     // 被代理接走就连不到了
     let mut builder = Client::builder().no_proxy().connect_timeout(connect_timeout);
+    if let Some(idle) = idle_timeout {
+      builder = builder.pool_idle_timeout(idle);
+    }
     if let (Some(local), Err(_)) = (self.tunnel_port, self.host.parse::<IpAddr>()) {
       builder = builder.resolve(&self.host, SocketAddr::from(([127, 0, 0, 1], local)));
     }

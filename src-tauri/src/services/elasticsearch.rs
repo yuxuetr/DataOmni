@@ -144,7 +144,7 @@ impl EsPool {
 /// 认证已经过了，照样算连上
 pub async fn connect(target: EsTarget) -> Result<EsPool, String> {
   let pool = EsPool {
-    client: target.endpoint.client(CONNECT_TIMEOUT).map_err(endpoint_error)?,
+    client: target.endpoint.client(CONNECT_TIMEOUT, None).map_err(endpoint_error)?,
     base: target.endpoint.base_url().map_err(endpoint_error)?,
     credentials: (!target.username.is_empty())
       .then(|| (target.username.clone(), target.password.clone())),

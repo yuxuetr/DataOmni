@@ -1,5 +1,6 @@
 import type { ColumnInfo } from '../contracts';
 import type { IndexInfo } from './schemaObjects';
+import { isConcurrencyComparable } from './columnTypes';
 
 /**
  * 「靠哪几列能定位到唯一一行」。
@@ -10,7 +11,7 @@ import type { IndexInfo } from './schemaObjects';
  * 会指向完全错误的行，而拼出的 UPDATE 语法正确、执行成功、不报任何错。
  */
 
-export type RowIdentitySource = 'primary-key' | 'unique-index';
+export type RowIdentitySource = 'primary-key' | 'unique-index' | 'whole-row';
 
 export interface RowIdentity {
   /** 键列，按键内次序 */
@@ -125,4 +126,26 @@ function isUsableIdentityIndex(index: IndexInfo, columns: readonly ColumnInfo[])
     // 是 NULL。`= NULL` 一行都匹配不到，`IS NULL` 又可能匹配一批
     return !column.is_nullable;
   });
+}
+
+/**
+ * ClickHouse 的行标识：**整行**里比得准的那些列。
+ *
+ * 它的主键不约束唯一（两行一模一样也收），目录里的键定位不到「这一行」。整行去比，
+ * 比得准的列都相等才算同一行；而「恰好一行」不靠这里保证——提交时先数一遍，不是 1 就不执行
+ * （见 `pendingChanges` 的 ClickHouse 那一段）。少比几列（浮点、数组）只会让计数更容易不成立，
+ * 不会改错行。EPHEMERAL 列不存值，不比
+ */
+export function wholeRowIdentity(columns: readonly ColumnInfo[]): RowIdentityResult {
+  if (columns.length === 0) {
+    return { identity: null, absence: 'metadata-pending' };
+  }
+  const comparable = columns
+    .filter((column) => !(column.column_extra ?? '').startsWith('EPHEMERAL'))
+    .filter((column) => isConcurrencyComparable(column.data_type, 'clickhouse'))
+    .map((column) => column.name);
+  if (comparable.length === 0) {
+    return { identity: null, absence: 'no-unique-key' };
+  }
+  return { identity: { columns: comparable, source: 'whole-row', indexName: null }, absence: null };
 }

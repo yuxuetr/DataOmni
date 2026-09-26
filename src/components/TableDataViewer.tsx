@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { hasGapsByDesign, supportsFeature } from '../contracts/databaseSupport';
+import { supportsFeature } from '../contracts/databaseSupport';
 import { useLanguageStore } from '../stores/languageStore';
 import { runReadQuery, useQueryStore } from '../stores/queryStore';
 import { isTaggedResultValue, unwrapResultValue } from '../utils/resultValues';
@@ -83,7 +83,7 @@ import {
   type DdlQuery,
   type SchemaMetadataQueries
 } from '../utils/catalogQueries';
-import { describeRowIdentity, type IndexMetadata } from '../utils/rowIdentity';
+import { describeRowIdentity, primaryKeyColumns, wholeRowIdentity, type IndexMetadata } from '../utils/rowIdentity';
 import type { RowKey, TableTarget } from '../utils/rowStatements';
 import {
   cellInputFromValue,
@@ -97,6 +97,7 @@ import { ChangeDiffDialog, type CommitFailure } from './ChangeDiffDialog';
 import {
   pendingForRow,
   pendingStatements,
+  canStageAnother,
   revertChange,
   rowIdOf,
   stageDelete,
@@ -576,22 +577,24 @@ export default function TableDataViewer({
     }
     return { status: 'loaded', indexes: schemaObjects.indexes };
   }, [schemaObjects]);
+  // ClickHouse 的主键不唯一，按整行定位；「恰好一行」由提交时先数一遍来保证
   const rowIdentity = React.useMemo(
-    () => describeRowIdentity(tableSchema?.columns ?? [], indexMetadata),
-    [tableSchema, indexMetadata]
+    () => dialect === 'clickhouse'
+      ? wholeRowIdentity(tableSchema?.columns ?? [])
+      : describeRowIdentity(tableSchema?.columns ?? [], indexMetadata),
+    [tableSchema, indexMetadata, dialect]
   );
-  // 键列不可改：改它等于换一行的身份，那是删一行加一行，不是更新
+  // 键列不可改：改它等于换一行的身份，那是删一行加一行，不是更新。ClickHouse 按整行定位，
+  // 不可改的是主键那几列（`ALTER … UPDATE` 改键列会被拒：420）
   const keyColumnSet = React.useMemo(
-    () => new Set(rowIdentity.identity?.columns ?? []),
-    [rowIdentity]
+    () => new Set(dialect === 'clickhouse'
+      ? primaryKeyColumns(tableSchema?.columns ?? [])
+      : rowIdentity.identity?.columns ?? []),
+    [rowIdentity, dialect, tableSchema]
   );
   // 能定位到行是必要条件；SQL Server 这一阶段还没接上写入，同样只读
   const editable = rowIdentity.identity !== null && supportsFeature(dialect, 'dataEditing');
   const readOnlyMessage = (() => {
-    // 有意不做的（ClickHouse 没有事务）：不管有没有主键都是这一句，说「没有唯一键」会让人去建一个
-    if (hasGapsByDesign(dialect) && !supportsFeature(dialect, 'dataEditing')) {
-      return t('table.readOnly.noTransactions');
-    }
     // 定位得到行、只是这个类型还没接上写入：说清楚是哪一种，免得有人去查主键
     if (rowIdentity.identity !== null && !supportsFeature(dialect, 'dataEditing')) {
       return t('table.readOnly.pendingFeature');
@@ -896,9 +899,11 @@ export default function TableDataViewer({
       setCommitNotice(t('changes.committed', { count: committed }));
     } catch (error) {
       const failure = toQueryExecutionError(error);
-      const index = typeof (error as { statement_index?: unknown })?.statement_index === 'number'
+      const statementIndex = typeof (error as { statement_index?: unknown })?.statement_index === 'number'
         ? (error as { statement_index: number }).statement_index
         : 0;
+      // ClickHouse 一次只有一项，那几条语句（数一遍、执行、核对）都属于它
+      const index = dialect === 'clickhouse' ? 0 : statementIndex;
       setCommitFailure({ index, error: failure });
       setEditingError(
         failure.code === ROW_COUNT_MISMATCH_CODE
@@ -954,14 +959,21 @@ export default function TableDataViewer({
           return;
         }
         const values = editState.editedData;
+        if (!canStageAnother(changes, null, dialect)) {
+          setEditingError(t('changes.oneAtATime'));
+          return;
+        }
         setChanges((current) => stageInsert(current, values));
       } else if (editState.mode === 'edit' && editState.originalData) {
         const original = editState.originalData;
         const key = rowKeyFrom(original);
-        const keySet = new Set(key.columns);
+        if (!canStageAnother(changes, rowIdOf(key), dialect)) {
+          setEditingError(t('changes.oneAtATime'));
+          return;
+        }
         // 键列不进 SET：改键等于换一行的身份，那是删一行加一行，不是更新
         const assignments = Object.fromEntries(
-          Object.entries(editState.editedData).filter(([column]) => !keySet.has(column))
+          Object.entries(editState.editedData).filter(([column]) => !keyColumnSet.has(column))
         );
         setChanges((current) => stageUpdate(current, key, original, assignments));
       }
@@ -983,7 +995,12 @@ export default function TableDataViewer({
       ])
     );
     try {
-      setChanges((current) => stageDelete(current, rowKeyFrom(original), original));
+      const key = rowKeyFrom(original);
+      if (!canStageAnother(changes, rowIdOf(key), dialect)) {
+        setEditingError(t('changes.oneAtATime'));
+        return;
+      }
+      setChanges((current) => stageDelete(current, key, original));
     } catch (error) {
       setEditingError(describeError(error, t('table.deleteFailed')));
     }
@@ -1430,6 +1447,7 @@ export default function TableDataViewer({
             )}
 
             <PendingChangesBar
+              note={dialect === 'clickhouse' ? t('changes.clickhouseNote') : null}
               count={changes.length}
               committing={editingLoading}
               error={editingError}

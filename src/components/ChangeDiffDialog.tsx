@@ -6,7 +6,7 @@ import type { TranslationKey } from '../i18n/translate';
 import type { QueryExecutionError } from '../contracts/queryExecution';
 import { describeBoundValue, describeCellInput } from '../utils/cellInput';
 import { renderStatementForDisplay, type TableTarget } from '../utils/rowStatements';
-import { pendingStatements, type PendingChange } from '../utils/pendingChanges';
+import { changeStatements, type PendingChange } from '../utils/pendingChanges';
 
 export interface CommitFailure {
   /** 出错的是第几条，与 `changes` 同序 */
@@ -54,8 +54,12 @@ export function ChangeDiffDialog({
   // 让整个预览变成空白——那时用户既看不到问题在哪，也撤不掉那一条
   const rendered = useMemo(() => changes.map((change) => {
     try {
-      const [statement] = pendingStatements([change], target);
-      return { sql: renderStatementForDisplay(statement, target.dialect), error: null };
+      // ClickHouse 一项是三条（数一遍、执行、核对），都列出来：用户该看到真正会发什么
+      const statements = changeStatements(change, target);
+      return {
+        sql: statements.map((statement) => renderStatementForDisplay(statement, target.dialect)).join(';\n'),
+        error: null
+      };
     } catch (error) {
       return { sql: null, error: error instanceof Error ? error.message : String(error) };
     }
@@ -175,7 +179,10 @@ export function ChangeDiffDialog({
 
         <div className="flex shrink-0 items-center gap-2 border-t border-line px-4 py-3">
           {/* 整批一个事务：失败时数据库里什么都没变，这几条原样还在 */}
-          <p className="min-w-0 flex-1 text-xs text-fg-subtle">{t('changes.atomicNote')}</p>
+          {/* ClickHouse 没有事务，说「整批在一个事务里」是假话 */}
+          <p className="min-w-0 flex-1 text-xs text-fg-subtle">
+            {t(target.dialect === 'clickhouse' ? 'changes.clickhouseNote' : 'changes.atomicNote')}
+          </p>
           <button
             type="button"
             onClick={onRevertAll}

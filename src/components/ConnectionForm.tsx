@@ -74,6 +74,7 @@ interface ConnectionFormProps {
 /** 还没接上的功能的名字，列在「有缺口」说明里 */
 const PENDING_FEATURE_KEYS: Record<PendingFeature, TranslationKey> = {
   dataEditing: 'feature.dataEditing',
+  resultEditing: 'feature.resultEditing',
   transactions: 'feature.transactions',
   explain: 'feature.explain',
   structureEditing: 'feature.structureEditing',

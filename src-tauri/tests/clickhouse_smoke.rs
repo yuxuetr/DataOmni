@@ -9,14 +9,15 @@
 
 use dataomni_lib::models::{ConnectionProfile, DatabaseType};
 use dataomni_lib::services::clickhouse::{
-  self, ClickHousePool, ClickHouseTarget, CLICKHOUSE_AUTH_FAILED, CLICKHOUSE_WRITE_UNSUPPORTED,
+  self, ClickHousePool, ClickHouseTarget, CLICKHOUSE_AUTH_FAILED, CLICKHOUSE_ROW_AMBIGUOUS,
+  CLICKHOUSE_WRITE_UNVERIFIED,
 };
 use dataomni_lib::services::{
   completion_catalog_query, er_diagram_queries, execute_write_batch, explain_statement,
   object_catalog_queries, parse_plan, schema_metadata_queries, session_target_query, DdlQuery,
   PoolRef, QueryExecutionResult, QueryExecutionSummary, QueryRow, QuerySessionState,
   QueryTruncationReason, SessionConnection, StreamOptions, StreamingQueryOptions, WriteStatement,
-  QUERY_TIMEOUT_CODE,
+  QUERY_TIMEOUT_CODE, ROW_COUNT_MISMATCH_CODE,
 };
 use serde_json::{json, Value as JsonValue};
 use std::sync::Arc;
@@ -25,6 +26,11 @@ use std::time::{Duration, Instant};
 const URL_ENV: &str = "DATAOMNI_CLICKHOUSE_TEST_URL";
 const REQUIRE_ENV: &str = "DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS";
 const DATABASE: &str = "dataomni_smoke";
+
+/// 会压满服务端（停不下来、要靠 KILL 的查询）或者对时间敏感（DESCRIBE 要在几秒内回来）的
+/// 用例排队跑：并行时它们互相挤，cu 负载高的时候时红时绿（停查询从 0.1 秒拖到超过 10 秒）。
+/// 其余用例照样并行
+static HEAVY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// `http://user:password@host:port` → 一份连接配置。口令里可能有 `@`，所以从右边切
 fn profile_from_env() -> Option<ConnectionProfile> {
@@ -225,11 +231,13 @@ async fn clickhouse_reports_an_exception_that_arrives_after_the_data() {
 /// 一行也不再写，服务端发现不了连接断了——不 KILL 它就一直跑，会话也一直锁着
 #[tokio::test]
 async fn clickhouse_truncates_at_the_row_limit_and_stops_the_server_side_query() {
+  let _heavy = HEAVY.lock().await;
   let Some(pool) = pool().await else { return };
   let mut connection = session(&pool);
   let marker = "smoke_truncate_marker";
   let sql = format!(
-    "SELECT number AS {marker} FROM numbers(1000000000000) WHERE number < 300000 OR sipHash64(number) = 0"
+    "SELECT number AS {marker} FROM numbers(1000000000000) WHERE number < 300000 OR sipHash64(number) = 0 \
+     SETTINGS max_threads = 1"
   );
   let summary = tokio::time::timeout(
     Duration::from_secs(60),
@@ -253,9 +261,12 @@ async fn clickhouse_truncates_at_the_row_limit_and_stops_the_server_side_query()
   assert_eq!(rows_of(run(&mut connection, "SELECT 1 AS one").await)[0]["one"], json!(1));
 }
 
-/// 超时之后服务端那条被 KILL；同一个会话的下一条不撞「会话锁着」
+/// 超时之后服务端那条被 KILL；同一个会话的下一条不撞「会话锁着」。
+/// 这几条停不下来的查询都限一个线程：不限的话它们各自占满所有核，并行跑的别的用例
+/// （DESCRIBE 要在几秒内回来）会被挤得超时（试过，cu 负载高的时候时红时绿）
 #[tokio::test]
 async fn clickhouse_timeout_kills_the_query_and_the_session_stays_usable() {
+  let _heavy = HEAVY.lock().await;
   let Some(pool) = pool().await else { return };
   let sessions = QuerySessionState::default();
   let marker = "smoke_timeout_marker";
@@ -275,7 +286,8 @@ async fn clickhouse_timeout_kills_the_query_and_the_session_stays_usable() {
   let error = sessions
     .execute_streaming(
       options(
-        "SELECT sum(sipHash64(number)) AS smoke_timeout_marker FROM numbers(1000000000000)",
+        "SELECT sum(sipHash64(number)) AS smoke_timeout_marker FROM numbers(1000000000000) \
+         SETTINGS max_threads = 1",
         Duration::from_millis(1500),
       ),
       &mut |_| Ok(()),
@@ -326,7 +338,7 @@ async fn clickhouse_sessions_keep_settings_and_temporary_tables() {
 async fn clickhouse_non_queries_report_written_rows() {
   let Some(pool) = pool().await else { return };
   let mut connection = session(&pool);
-  run(&mut connection, "DROP TABLE IF EXISTS smoke_written").await;
+  run(&mut connection, "DROP TABLE IF EXISTS smoke_written SYNC").await;
   let created =
     run(&mut connection, "CREATE TABLE smoke_written (a UInt8) ENGINE = MergeTree ORDER BY a")
       .await;
@@ -344,11 +356,12 @@ async fn clickhouse_non_queries_report_written_rows() {
     run(&mut connection, "SELECT a FROM smoke_written ORDER BY a FORMAT JSONEachRow").await,
   );
   assert_eq!(raw[0]["result"], json!("{\"a\":1}"));
-  run(&mut connection, "DROP TABLE smoke_written").await;
+  run(&mut connection, "DROP TABLE smoke_written SYNC").await;
 }
 
 #[tokio::test]
 async fn clickhouse_describes_columns_without_running_the_query() {
+  let _heavy = HEAVY.lock().await;
   let Some(pool) = pool().await else { return };
   let mut connection = session(&pool);
   let started = Instant::now();
@@ -358,7 +371,8 @@ async fn clickhouse_describes_columns_without_running_the_query() {
     )
     .await
     .expect("describe");
-  assert!(started.elapsed() < Duration::from_secs(5), "DESCRIBE 不该真的去算");
+  // 真算一万亿行要几个小时；20 秒而不是更紧，是因为 cu 负载高时一次往返也会拖到好几秒
+  assert!(started.elapsed() < Duration::from_secs(20), "DESCRIBE 不该真的去算");
   let shape: Vec<(&str, &str, &str)> = columns
     .iter()
     .map(|column| {
@@ -378,11 +392,11 @@ async fn clickhouse_catalog_queries_describe_the_fixture() {
   let Some(pool) = pool().await else { return };
   let mut connection = session(&pool);
   for sql in [
-    "DROP VIEW IF EXISTS smoke_catalog_mv",
-    "DROP VIEW IF EXISTS smoke_catalog_view",
-    "DROP DICTIONARY IF EXISTS smoke_catalog_dict",
-    "DROP TABLE IF EXISTS smoke_catalog_totals",
-    "DROP TABLE IF EXISTS smoke_catalog_events",
+    "DROP VIEW IF EXISTS smoke_catalog_mv SYNC",
+    "DROP VIEW IF EXISTS smoke_catalog_view SYNC",
+    "DROP DICTIONARY IF EXISTS smoke_catalog_dict SYNC",
+    "DROP TABLE IF EXISTS smoke_catalog_totals SYNC",
+    "DROP TABLE IF EXISTS smoke_catalog_events SYNC",
     "CREATE TABLE smoke_catalog_events (
        id UInt64,
        ts DateTime,
@@ -523,11 +537,11 @@ async fn clickhouse_catalog_queries_describe_the_fixture() {
   assert!(primary.value.contains("granules"), "{primary:?}");
 
   for sql in [
-    "DROP DICTIONARY smoke_catalog_dict",
-    "DROP VIEW smoke_catalog_mv",
-    "DROP VIEW smoke_catalog_view",
-    "DROP TABLE smoke_catalog_totals",
-    "DROP TABLE smoke_catalog_events",
+    "DROP DICTIONARY smoke_catalog_dict SYNC",
+    "DROP VIEW smoke_catalog_mv SYNC",
+    "DROP VIEW smoke_catalog_view SYNC",
+    "DROP TABLE smoke_catalog_totals SYNC",
+    "DROP TABLE smoke_catalog_events SYNC",
   ] {
     run(&mut connection, sql).await;
   }
@@ -537,6 +551,7 @@ async fn clickhouse_catalog_queries_describe_the_fixture() {
 /// 超时也停得下自己的查询
 #[tokio::test]
 async fn clickhouse_read_only_accounts_query_and_kill_their_own_queries() {
+  let _heavy = HEAVY.lock().await;
   let Some(pool) = pool().await else { return };
   let Some(mut profile) = profile_from_env() else { return };
   let password = uuid::Uuid::new_v4().simple().to_string();
@@ -601,20 +616,160 @@ async fn clickhouse_read_only_accounts_query_and_kill_their_own_queries() {
   pool.select("DROP USER smoke_reader", &[]).await.expect("drop user");
 }
 
+fn write(sql: &str, params: Vec<JsonValue>, expect_rows: Option<u64>) -> WriteStatement {
+  WriteStatement { sql: sql.to_string(), params, expect_rows }
+}
+
+async fn values_of(pool: &Arc<ClickHousePool>, table: &str) -> Vec<(u64, String)> {
+  pool
+    .select(&format!("SELECT id, v FROM {table} ORDER BY id, v"), &[])
+    .await
+    .expect("read back")
+    .iter()
+    .map(|row| (row["id"].as_u64().unwrap_or(0), row["v"].as_str().unwrap_or("").to_string()))
+    .collect()
+}
+
+/// 表格的一项改动：前端展开成「数一遍 → 执行 → 核对」，这里逐条核对。
+/// 新增、改、删三种都走一遍，外加三种对不上：一模一样的两行、读完之后别处改了、写完核对不上
 #[tokio::test]
-async fn clickhouse_refuses_grid_writes() {
+async fn clickhouse_grid_writes_count_before_and_verify_after() {
   let Some(pool) = pool().await else { return };
-  let error = execute_write_batch(
-    PoolRef::ClickHouse(&pool),
-    &[WriteStatement {
-      sql: "ALTER TABLE t DELETE WHERE 1".into(),
-      params: vec![],
-      expect_rows: Some(1),
-    }],
-  )
+  let mut connection = session(&pool);
+  for sql in [
+    "DROP TABLE IF EXISTS smoke_grid SYNC",
+    "CREATE TABLE smoke_grid (id UInt64, v String) ENGINE = MergeTree ORDER BY id",
+    "INSERT INTO smoke_grid VALUES (1, 'a'), (2, 'b'), (2, 'b')",
+  ] {
+    run(&mut connection, sql).await;
+  }
+  let batch = |statements: Vec<WriteStatement>| {
+    let pool = Arc::clone(&pool);
+    async move { execute_write_batch(PoolRef::ClickHouse(&pool), &statements).await }
+  };
+
+  // 新增：服务端报的写入行数就是核对
+  let inserted = batch(vec![write(
+    "INSERT INTO smoke_grid (id, v) VALUES ({p1:UInt64}, {p2:String})",
+    vec![json!(3), json!("c")],
+    Some(1),
+  )])
   .await
-  .expect_err("no transactions");
-  assert_eq!(error.error.message, CLICKHOUSE_WRITE_UNSUPPORTED);
+  .expect("insert");
+  assert_eq!(inserted, [1]);
+
+  // 改：执行前恰好一行，改完新值至少一行
+  let row = "id = {p1:UInt64} AND v = {p2:String}";
+  batch(vec![
+    write(
+      &format!("SELECT count() FROM smoke_grid WHERE {row}"),
+      vec![json!(1), json!("a")],
+      Some(1),
+    ),
+    write(
+      &format!("ALTER TABLE smoke_grid UPDATE v = {{p3:String}} WHERE {row}"),
+      vec![json!(1), json!("a"), json!("A")],
+      None,
+    ),
+    write(
+      &format!("SELECT toUInt64(count() >= 1) FROM smoke_grid WHERE {row}"),
+      vec![json!(1), json!("A")],
+      Some(1),
+    ),
+  ])
+  .await
+  .expect("update");
+
+  // 删：执行前恰好一行，删完零行
+  batch(vec![
+    write(
+      &format!("SELECT count() FROM smoke_grid WHERE {row}"),
+      vec![json!(3), json!("c")],
+      Some(1),
+    ),
+    write(&format!("DELETE FROM smoke_grid WHERE {row}"), vec![json!(3), json!("c")], None),
+    write(
+      &format!("SELECT count() FROM smoke_grid WHERE {row}"),
+      vec![json!(3), json!("c")],
+      Some(0),
+    ),
+  ])
+  .await
+  .expect("delete");
+  assert_eq!(
+    values_of(&pool, "smoke_grid").await,
+    [(1, "A".into()), (2, "b".into()), (2, "b".into())]
+  );
+
+  // 一模一样的两行：分不出改哪一行，一条都不执行
+  let error = batch(vec![
+    write(
+      &format!("SELECT count() FROM smoke_grid WHERE {row}"),
+      vec![json!(2), json!("b")],
+      Some(1),
+    ),
+    write(&format!("DELETE FROM smoke_grid WHERE {row}"), vec![json!(2), json!("b")], None),
+  ])
+  .await
+  .expect_err("ambiguous");
+  assert_eq!(error.statement_index, 0);
+  assert_eq!(error.error.message, format!("{CLICKHOUSE_ROW_AMBIGUOUS}: 2"));
+
+  // 读完之后别处改了：数到零行，和别家「没有恰好影响一行」同一个码
+  let error = batch(vec![
+    write(
+      &format!("SELECT count() FROM smoke_grid WHERE {row}"),
+      vec![json!(1), json!("a")],
+      Some(1),
+    ),
+    write(&format!("DELETE FROM smoke_grid WHERE {row}"), vec![json!(1), json!("a")], None),
+  ])
+  .await
+  .expect_err("stale");
+  assert_eq!(error.error.code.as_deref(), Some(ROW_COUNT_MISMATCH_CODE));
+  assert_eq!(values_of(&pool, "smoke_grid").await.len(), 3, "什么都没删");
+
+  // 改键列：服务端拒绝（420），没写过，不说「已经执行」
+  let error = batch(vec![
+    write(
+      &format!("SELECT count() FROM smoke_grid WHERE {row}"),
+      vec![json!(1), json!("A")],
+      Some(1),
+    ),
+    write(
+      &format!("ALTER TABLE smoke_grid UPDATE id = {{p3:UInt64}} WHERE {row}"),
+      vec![json!(1), json!("A"), json!(9)],
+      None,
+    ),
+  ])
+  .await
+  .expect_err("key column");
+  assert_eq!((error.statement_index, error.error.code.as_deref()), (1, Some("420")));
+
+  // 写完核对对不上：已经生效，撤不回来，如实说
+  let error = batch(vec![
+    write(
+      &format!("SELECT count() FROM smoke_grid WHERE {row}"),
+      vec![json!(1), json!("A")],
+      Some(1),
+    ),
+    write(
+      &format!("ALTER TABLE smoke_grid UPDATE v = {{p3:String}} WHERE {row}"),
+      vec![json!(1), json!("A"), json!("Z")],
+      None,
+    ),
+    write(
+      &format!("SELECT count() FROM smoke_grid WHERE {row}"),
+      vec![json!(1), json!("Z")],
+      Some(5),
+    ),
+  ])
+  .await
+  .expect_err("unverified");
+  assert_eq!(error.statement_index, 2);
+  assert_eq!(error.error.message, format!("{CLICKHOUSE_WRITE_UNVERIFIED}: 5 · 1"));
+  assert_eq!(values_of(&pool, "smoke_grid").await[0], (1, "Z".into()), "确实已经改了");
+  run(&mut connection, "DROP TABLE smoke_grid SYNC").await;
 }
 
 /// 导出走会话连接：先 DESCRIBE 拿表头（不执行），再流式写完全部行。
@@ -624,7 +779,7 @@ async fn clickhouse_exports_stream_to_a_file_and_refuse_non_queries() {
   let Some(pool) = pool().await else { return };
   let mut connection = session(&pool);
   for sql in [
-    "DROP TABLE IF EXISTS smoke_export",
+    "DROP TABLE IF EXISTS smoke_export SYNC",
     "CREATE TABLE smoke_export (
        id UInt64,
        big UInt64,
@@ -687,7 +842,7 @@ async fn clickhouse_exports_stream_to_a_file_and_refuse_non_queries() {
   let error = export("SELECT * FROM smoke_no_such_table").await.expect_err("bad sql");
   assert_eq!(error.code.as_deref(), Some("60"), "{error:?}");
   std::fs::remove_dir_all(&dir).ok();
-  run(&mut connection, "DROP TABLE smoke_export").await;
+  run(&mut connection, "DROP TABLE smoke_export SYNC").await;
 }
 
 /// 经 SSH 隧道：和 Elasticsearch 同一段 `http_endpoint`，地址是 IP 时直接改写成本地端口，

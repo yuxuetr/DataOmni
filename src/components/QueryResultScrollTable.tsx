@@ -47,7 +47,7 @@ import { ColumnSortButton } from './ColumnSortButton';
 import { nextColumnSort, sortRowsByColumn, type ColumnSort } from '../utils/resultSorting';
 import { useCellSelection } from '../hooks/useCellSelection';
 import { selectionSubset } from '../utils/cellSelection';
-import { hasGapsByDesign, supportsFeature } from '../contracts/databaseSupport';
+import { supportsFeature } from '../contracts/databaseSupport';
 import { useLanguageStore } from '../stores/languageStore';
 import { ExportResultDialog, type ExportScope } from './ExportResultDialog';
 import { ResultChartDialog } from './ResultChartDialog';
@@ -165,7 +165,9 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   // 能不能改由 `describeResultEditability` 证明过：认得出是单表 SELECT，
   // 键来自目录，且键列在投影里。这里只读结论，不再自己拼条件判断
   const editability = result.editability;
-  const canEdit = editability?.editable === true && supportsFeature(dialect, 'dataEditing');
+  const canEdit = editability?.editable === true
+    && supportsFeature(dialect, 'dataEditing')
+    && supportsFeature(dialect, 'resultEditing');
   const keyColumns = React.useMemo(
     () => new Set(editability?.editable ? editability.keyColumns : []),
     [editability]
@@ -178,7 +180,11 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   const readOnlyReason = (() => {
     // 这类连接还没接上表格编辑：说这个，而不是去猜索引读没读到
     if (editability && !supportsFeature(dialect, 'dataEditing')) {
-      return t(hasGapsByDesign(dialect) ? 'table.readOnly.noTransactions' : 'table.readOnly.pendingFeature');
+      return t('table.readOnly.pendingFeature');
+    }
+    // ClickHouse 的结果只能到表数据页改：一次一项、执行前后各数一遍的那套流程在那里
+    if (editability && !supportsFeature(dialect, 'resultEditing')) {
+      return t('result.readOnly.editInTable');
     }
     if (!editability || editability.editable) {
       return null;

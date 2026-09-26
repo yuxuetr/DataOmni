@@ -79,8 +79,25 @@ const ORACLE_COMPARABLE = new Set([
   'varchar2', 'nvarchar2', 'char', 'nchar', 'number', 'integer', 'date', 'timestamp'
 ]);
 
+/**
+ * ClickHouse：整数、定点小数、文本、日期时间、UUID、IP、枚举、布尔都能按显示出来的文本
+ * 原样当参数传回去比（参数类型就是列的类型，25.8 上逐类试过）。浮点、数组、Map、JSON
+ * 不比：它们的文本写法与存储值未必一一对应；少比几列只会让「恰好一行」的计数更容易不成立，
+ * 不会改错行
+ */
+const CLICKHOUSE_COMPARABLE = new Set([
+  'int8', 'int16', 'int32', 'int64', 'int128', 'int256',
+  'uint8', 'uint16', 'uint32', 'uint64', 'uint128', 'uint256',
+  'decimal', 'decimal32', 'decimal64', 'decimal128', 'decimal256',
+  'string', 'fixedstring', 'uuid', 'ipv4', 'ipv6', 'enum8', 'enum16', 'bool',
+  'date', 'date32', 'datetime', 'datetime64'
+]);
+
 export function isConcurrencyComparable(dataType: string, dialect?: SqlDialect): boolean {
   const token = columnTypeToken(dataType);
+  if (dialect === 'clickhouse') {
+    return CLICKHOUSE_COMPARABLE.has(token);
+  }
   if (dialect === 'sqlserver') {
     return SQL_SERVER_COMPARABLE.has(token)
       || (COMPARABLE_TYPE_TOKENS.has(token) && !SQL_SERVER_INCOMPARABLE.has(token));

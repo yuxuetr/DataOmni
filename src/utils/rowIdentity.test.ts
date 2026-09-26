@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ColumnInfo } from '../contracts';
 import type { IndexInfo } from './schemaObjects';
-import { describeRowIdentity, primaryKeyColumns, type IndexMetadata } from './rowIdentity';
+import { describeRowIdentity, primaryKeyColumns, wholeRowIdentity, type IndexMetadata } from './rowIdentity';
 
 function column(name: string, overrides: Partial<ColumnInfo> = {}): ColumnInfo {
   return {
@@ -149,5 +149,21 @@ describe('describeRowIdentity', () => {
 
   it('表结构本身还没到时也是「还不知道」', () => {
     expect(describeRowIdentity([], NONE).absence).toBe('metadata-pending');
+  });
+});
+
+describe('wholeRowIdentity（ClickHouse）', () => {
+  it('整行里比得准的列都进来，浮点与 EPHEMERAL 不进', () => {
+    const result = wholeRowIdentity([
+      column('id', { data_type: 'UInt64', is_primary_key: true }),
+      column('name', { data_type: 'LowCardinality(String)' }),
+      column('score', { data_type: 'Float64' }),
+      column('raw', { data_type: 'String', is_generated: true, column_extra: 'EPHEMERAL ' })
+    ]);
+    expect(result.identity).toEqual({ columns: ['id', 'name'], source: 'whole-row', indexName: null });
+  });
+
+  it('一列都比不了就定位不了', () => {
+    expect(wholeRowIdentity([column('score', { data_type: 'Float64' })]).absence).toBe('no-unique-key');
   });
 });

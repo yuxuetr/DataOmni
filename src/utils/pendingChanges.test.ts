@@ -3,6 +3,7 @@ import type { ColumnInfo } from '../contracts';
 import type { CellInput } from './cellInput';
 import type { RowKey, TableTarget } from './rowStatements';
 import {
+  canStageAnother,
   changedColumns,
   pendingForRow,
   pendingStatements,
@@ -140,5 +141,61 @@ describe('pendingStatements', () => {
     // 比错了等于没比：拿新值去比，条件永远成立，丢失更新照样发生
     const changes = stageUpdate([], key(1), ORIGINAL, { name: value('b') }, 'c1');
     expect(pendingStatements(changes, TARGET)[0].params).toEqual(['b', 'a']);
+  });
+});
+
+describe('ClickHouse：一项改动是「数一遍 → 执行 → 核对」', () => {
+  const CH_COLUMNS: ColumnInfo[] = [
+    { name: 'id', data_type: 'UInt64', is_nullable: false, is_primary_key: true },
+    { name: 'name', data_type: 'LowCardinality(String)', is_nullable: false, is_primary_key: false },
+    { name: 'note', data_type: 'Nullable(String)', is_nullable: true, is_primary_key: false }
+  ];
+  const CH: TableTarget = { schema: 'db', table: 't', columns: CH_COLUMNS, dialect: 'clickhouse' };
+  // 整行定位：键就是比得准的那几列
+  const row = (values: Record<string, string | number | null>): RowKey => ({ columns: ['id', 'name', 'note'], values });
+
+  it('改：执行前恰好一行，ALTER … UPDATE，改完按新值至少一行；执行那条不给期望值', () => {
+    const changes = stageUpdate([], row({ id: 1, name: 'a', note: null }), { id: 1, name: 'a', note: null }, { name: value('b') }, 'c1');
+    const statements = pendingStatements(changes, CH);
+    expect(statements.map((statement) => [statement.sql, statement.expectRows])).toEqual([
+      ['SELECT count() FROM `db`.`t` WHERE `id` = 1 AND `name` = {p1:LowCardinality(String)} AND `note` IS NULL', 1],
+      ['ALTER TABLE `db`.`t` UPDATE `name` = {p1:LowCardinality(String)} WHERE `id` = 1 AND `name` = {p2:LowCardinality(String)} AND `note` IS NULL', undefined],
+      ['SELECT toUInt64(count() >= 1) FROM `db`.`t` WHERE `id` = 1 AND `name` = {p1:LowCardinality(String)} AND `note` IS NULL', 1]
+    ]);
+    expect(statements.map((statement) => statement.params)).toEqual([['a'], ['b', 'a'], ['b']]);
+  });
+
+  it('删：执行前恰好一行，DELETE，删完零行', () => {
+    const changes = stageDelete([], row({ id: 2, name: 'z', note: 'n' }), { id: 2, name: 'z', note: 'n' }, 'd1');
+    expect(pendingStatements(changes, CH).map((statement) => [statement.sql.split(' WHERE')[0], statement.expectRows])).toEqual([
+      ['SELECT count() FROM `db`.`t`', 1],
+      ['DELETE FROM `db`.`t`', undefined],
+      ['SELECT count() FROM `db`.`t`', 0]
+    ]);
+  });
+
+  it('新增：一条 INSERT，比写入行数', () => {
+    const statements = pendingStatements(stageInsert([], { id: value(3), name: value('c') }, 'i1'), CH);
+    expect(statements).toEqual([{
+      sql: 'INSERT INTO `db`.`t` (`id`, `name`) VALUES ({p1:UInt64}, {p2:LowCardinality(String)})',
+      params: [3, 'c'],
+      expectRows: 1
+    }]);
+  });
+
+  it('写成表达式的列新值算不出来，不进改完之后的那次核对', () => {
+    const changes = stageUpdate([], row({ id: 1, name: 'a', note: 'x' }), { id: 1, name: 'a', note: 'x' }, { note: { kind: 'expression', sql: "concat(note, '!')" } }, 'c1');
+    expect(pendingStatements(changes, CH)[2].sql)
+      .toBe('SELECT toUInt64(count() >= 1) FROM `db`.`t` WHERE `id` = 1 AND `name` = {p1:LowCardinality(String)}');
+  });
+
+  it('一次只排一项：同一行接着改算同一项，别的行和新增都要先提交', () => {
+    const one = stageUpdate([], row({ id: 1, name: 'a', note: null }), { id: 1, name: 'a', note: null }, { name: value('b') }, 'c1');
+    const sameRow = rowIdOf(row({ id: 1, name: 'a', note: null }));
+    expect(canStageAnother(one, sameRow, 'clickhouse')).toBe(true);
+    expect(canStageAnother(one, rowIdOf(row({ id: 2, name: 'z', note: null })), 'clickhouse')).toBe(false);
+    expect(canStageAnother(one, null, 'clickhouse')).toBe(false);
+    expect(canStageAnother([], null, 'clickhouse')).toBe(true);
+    expect(canStageAnother(one, null, 'mysql')).toBe(true);
   });
 });
