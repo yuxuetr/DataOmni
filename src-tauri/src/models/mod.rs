@@ -143,6 +143,7 @@ impl DatabaseType {
         | DatabaseType::SqlServer
         | DatabaseType::Oracle
         | DatabaseType::DuckDB
+        | DatabaseType::ClickHouse
     )
   }
 
@@ -155,9 +156,10 @@ impl DatabaseType {
       DatabaseType::Oracle => 1521,
       DatabaseType::MongoDB => 27017,
       DatabaseType::Redis => 6379,
-      DatabaseType::Neo4j => 7687,      // Neo4j Bolt 端口
-      DatabaseType::DuckDB => 0,        // DuckDB 不需要端口
-      DatabaseType::ClickHouse => 9000, // ClickHouse 默认端口
+      DatabaseType::Neo4j => 7687, // Neo4j Bolt 端口
+      DatabaseType::DuckDB => 0,   // DuckDB 不需要端口
+      // HTTP 接口。9000 是原生 TCP 协议，这里不用它（见 `services/clickhouse.rs`）
+      DatabaseType::ClickHouse => 8123,
       DatabaseType::Elasticsearch => 9200,
     }
   }
@@ -311,16 +313,16 @@ impl DatabaseType {
         crate::services::duckdb::DUCKDB_SCHEME,
         config.database.as_deref().unwrap_or(":memory:")
       ),
-      DatabaseType::ClickHouse => {
-        format!(
-          "clickhouse://{}:{}@{}:{}/{}",
-          encode(&config.username),
-          encode(&config.password),
-          config.host,
-          config.port,
-          config.database.as_ref().unwrap_or(&"default".to_string())
-        )
-      }
+      // 和 SQL Server 同一个理由：是 `ClickHouseRegistry` 里的键，不带口令。最后一段是库，
+      // 空着就是这个用户的默认库
+      DatabaseType::ClickHouse => format!(
+        "{}{}@{}:{}/{}",
+        crate::services::clickhouse::CLICKHOUSE_SCHEME,
+        encode(&config.username),
+        config.host,
+        config.port,
+        encode(config.database.as_deref().map(str::trim).unwrap_or(""))
+      ),
       // 同样是 `EsRegistry` 里的键，不带口令
       DatabaseType::Elasticsearch => format!(
         "{}{}@{}:{}",

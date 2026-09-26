@@ -113,6 +113,7 @@ pub enum PlanDialect {
   SqlServer,
   Oracle,
   DuckDb,
+  ClickHouse,
   /// 没有 EXPLAIN 的类型；带着类型名，报错时说得出是谁
   Unsupported(String),
 }
@@ -129,6 +130,7 @@ impl From<&DatabaseType> for PlanDialect {
       DatabaseType::SqlServer => Self::SqlServer,
       DatabaseType::Oracle => Self::Oracle,
       DatabaseType::DuckDB => Self::DuckDb,
+      DatabaseType::ClickHouse => Self::ClickHouse,
       other => Self::Unsupported(format!("{other:?}")),
     }
   }
@@ -164,6 +166,7 @@ impl PlanDialect {
       Self::SqlServer => "SqlServer",
       Self::Oracle => "Oracle",
       Self::DuckDb => "DuckDB",
+      Self::ClickHouse => "ClickHouse",
       Self::Unsupported(name) => name,
     }
   }
@@ -208,6 +211,9 @@ pub fn explain_statement(
     // 几步（见 `oracle::explain_plan`）
     PlanDialect::Oracle => Ok(sql.to_string()),
     PlanDialect::DuckDb => Ok(format!("EXPLAIN (FORMAT JSON) {sql}")),
+    // `indexes = 1` 给出每个读表步骤上主键、分区、跳数索引各筛掉了多少 granule——
+    // 「用上索引没有」看的就是这个。它不估行数（那是另一条 `EXPLAIN ESTIMATE`）
+    PlanDialect::ClickHouse => Ok(format!("EXPLAIN json = 1, indexes = 1, description = 1 {sql}")),
     PlanDialect::Unsupported(name) => {
       Err(QueryError::message(format!("{EXPLAIN_UNSUPPORTED}: {name}")))
     }
@@ -273,6 +279,7 @@ pub fn parse_plan(
     PlanDialect::SqlServer => parse_sql_server(rows),
     PlanDialect::Oracle => parse_oracle(rows),
     PlanDialect::DuckDb => parse_duckdb(rows),
+    PlanDialect::ClickHouse => parse_clickhouse(rows),
     PlanDialect::Unsupported(name) => {
       Err(QueryError::message(format!("{EXPLAIN_UNSUPPORTED}: {name}")))
     }
@@ -535,6 +542,66 @@ fn parse_cockroach(
     return Err(QueryError::message(EXPLAIN_EMPTY));
   }
   Ok(plan)
+}
+
+/// ClickHouse：`[{"Plan": {"Node Type", "Description", "Indexes", "Plans"}}]`，形状像 PostgreSQL。
+/// 读表那一步的 `Description` 是表名；其余步骤的是它在做什么（「Before GROUP BY」）
+fn parse_clickhouse(rows: &[Map<String, JsonValue>]) -> Result<QueryPlan, QueryError> {
+  let (parsed, raw) = parse_json_payload(rows)?;
+  let roots: Vec<PlanNode> = parsed
+    .as_array()
+    .map(|entries| {
+      entries.iter().filter_map(|entry| entry.get("Plan")).map(clickhouse_node).collect()
+    })
+    .unwrap_or_default();
+  if roots.is_empty() {
+    return Err(QueryError::message(EXPLAIN_EMPTY));
+  }
+  Ok(QueryPlan { roots, analyzed: false, planning_ms: None, execution_ms: None, raw })
+}
+
+fn clickhouse_node(value: &JsonValue) -> PlanNode {
+  let text = |key: &str| value.get(key).and_then(scalar_text);
+  let operation = text("Node Type").unwrap_or_default();
+  let mut node = PlanNode::new(operation.clone());
+  if let Some(description) = text("Description") {
+    if operation.starts_with("ReadFrom") {
+      node.target = Some(description);
+    } else {
+      node.detail.push(PlanDetail { key: "Description".to_string(), value: description });
+    }
+  }
+  for index in value.get("Indexes").and_then(JsonValue::as_array).into_iter().flatten() {
+    node.detail.push(clickhouse_index(index));
+  }
+  node.children = value
+    .get("Plans")
+    .and_then(JsonValue::as_array)
+    .map(|children| children.iter().map(clickhouse_node).collect())
+    .unwrap_or_default();
+  node
+}
+
+/// 一个索引筛了多少：`PrimaryKey (id)` → `1 / 23 granules · 1 / 5 parts · <条件>`
+fn clickhouse_index(index: &JsonValue) -> PlanDetail {
+  let text = |key: &str| index.get(key).and_then(scalar_text);
+  let mut key = text("Type").unwrap_or_else(|| "Index".to_string());
+  if let Some(name) = text("Name").or_else(|| text("Keys")) {
+    key = format!("{key} ({name})");
+  }
+  let ratio = |selected: &str, initial: &str, unit: &str| match (text(selected), text(initial)) {
+    (Some(selected), Some(initial)) => Some(format!("{selected} / {initial} {unit}")),
+    _ => None,
+  };
+  let parts: Vec<String> = [
+    ratio("Selected Granules", "Initial Granules", "granules"),
+    ratio("Selected Parts", "Initial Parts", "parts"),
+    text("Condition").filter(|condition| condition != "true"),
+  ]
+  .into_iter()
+  .flatten()
+  .collect();
+  PlanDetail { key, value: parts.join(" · ") }
 }
 
 /// 把栈里深度 ≥ `depth` 的节点收起来，挂到各自的父节点上（栈底的挂成根）
@@ -1400,6 +1467,49 @@ mod tests {
     assert_eq!(
       explain_statement(PlanDialect::CockroachDb, "SELECT 1", true).expect("crdb"),
       "EXPLAIN ANALYZE (VERBOSE) SELECT 1"
+    );
+  }
+
+  /// 25.8 对一条带主键范围与跳数索引的查询给的原文（删掉了中间几层 Expression）
+  #[test]
+  fn clickhouse_plans_nest_and_report_what_each_index_filtered() {
+    let text = r#"[{"Plan": {"Node Type": "Aggregating", "Node Id": "Aggregating_4", "Plans": [
+      {"Node Type": "Expression", "Description": "Before GROUP BY", "Plans": [
+        {"Node Type": "ReadFromMergeTree", "Node Id": "ReadFromMergeTree_0",
+         "Description": "dataomni_test.events",
+         "Indexes": [
+           {"Type": "MinMax", "Condition": "true", "Initial Parts": 5, "Selected Parts": 5,
+            "Initial Granules": 23, "Selected Granules": 23},
+           {"Type": "PrimaryKey", "Keys": ["id"],
+            "Condition": "and((id in (-Inf, 5000]), (id in [100, +Inf)))",
+            "Search Algorithm": "binary search", "Initial Parts": 5, "Selected Parts": 1,
+            "Initial Granules": 23, "Selected Granules": 1},
+           {"Type": "Skip", "Name": "idx_name", "Description": "bloom_filter GRANULARITY 4",
+            "Initial Parts": 1, "Selected Parts": 1, "Initial Granules": 1, "Selected Granules": 1}
+         ]}]}]}}]"#;
+    let row = Map::from_iter([("explain".to_string(), JsonValue::String(text.to_string()))]);
+    let plan = parse_plan(&DatabaseType::ClickHouse, &[row], false).expect("parses");
+    let root = &plan.roots[0];
+    assert_eq!(root.operation, "Aggregating");
+    let read = &root.children[0].children[0];
+    assert_eq!(read.operation, "ReadFromMergeTree");
+    assert_eq!(read.target.as_deref(), Some("dataomni_test.events"));
+    let details: Vec<(&str, &str)> =
+      read.detail.iter().map(|detail| (detail.key.as_str(), detail.value.as_str())).collect();
+    assert_eq!(
+      details,
+      [
+        ("MinMax", "23 / 23 granules · 5 / 5 parts"),
+        (
+          "PrimaryKey (id)",
+          "1 / 23 granules · 1 / 5 parts · and((id in (-Inf, 5000]), (id in [100, +Inf)))"
+        ),
+        ("Skip (idx_name)", "1 / 1 granules · 1 / 1 parts"),
+      ]
+    );
+    assert_eq!(
+      root.children[0].detail,
+      [PlanDetail { key: "Description".into(), value: "Before GROUP BY".into() }]
     );
   }
 }

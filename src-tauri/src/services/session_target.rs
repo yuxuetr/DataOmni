@@ -26,6 +26,7 @@ pub fn session_target_query(db_type: &DatabaseType) -> Option<SessionTargetQuery
     DatabaseType::SqlServer => Some(SessionTargetQuery { sql: SQL_SERVER_TARGET }),
     DatabaseType::Oracle => Some(SessionTargetQuery { sql: ORACLE_TARGET }),
     DatabaseType::DuckDB => Some(SessionTargetQuery { sql: DUCKDB_TARGET }),
+    DatabaseType::ClickHouse => Some(SessionTargetQuery { sql: CLICKHOUSE_TARGET }),
     _ => None,
   }
 }
@@ -94,17 +95,27 @@ SELECT
   (SELECT d.readonly FROM duckdb_databases() d WHERE d.database_name = current_database()) AS read_only
 "#;
 
+/// 库会被会话里的 `USE` 改掉；没有 schema 这一层。`readonly` 是账号的设置（副本照样能写，
+/// ClickHouse 的只读说的是这个账号）：非 0 时写入与改设置都被拒
+const CLICKHOUSE_TARGET: &str = r#"
+SELECT
+  currentDatabase() AS database_name,
+  CAST(NULL AS Nullable(String)) AS schema_name,
+  toBool(getSetting('readonly') != 0) AS read_only
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
 
-  const SUPPORTED: [DatabaseType; 6] = [
+  const SUPPORTED: [DatabaseType; 7] = [
     DatabaseType::MySQL,
     DatabaseType::PostgreSQL,
     DatabaseType::SQLite,
     DatabaseType::SqlServer,
     DatabaseType::Oracle,
     DatabaseType::DuckDB,
+    DatabaseType::ClickHouse,
   ];
 
   #[test]

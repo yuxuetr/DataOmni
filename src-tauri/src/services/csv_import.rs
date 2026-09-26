@@ -352,15 +352,19 @@ enum Dialect {
 }
 
 impl Dialect {
-  fn of(connection: &SessionConnection) -> Self {
-    match connection {
+  /// ClickHouse 没有事务，做不到「中途失败什么都不留」，不导（界面上也没有这个入口）
+  fn of(connection: &SessionConnection) -> Result<Self, QueryError> {
+    Ok(match connection {
       SessionConnection::Sqlite(_) => Self::Sqlite,
       SessionConnection::MySql(_) => Self::MySql,
       SessionConnection::Postgres(_) => Self::Postgres,
       SessionConnection::SqlServer(_) => Self::SqlServer,
       SessionConnection::Oracle(_) => Self::Oracle,
       SessionConnection::DuckDb(_) => Self::DuckDb,
-    }
+      SessionConnection::ClickHouse(_) => {
+        return Err(QueryError::message(crate::services::clickhouse::CLICKHOUSE_WRITE_UNSUPPORTED))
+      }
+    })
   }
 
   fn quote(&self, identifier: &str) -> String {
@@ -424,17 +428,17 @@ impl Dialect {
 }
 
 async fn savepoint(connection: &mut SessionConnection, name: &str) -> Result<(), QueryError> {
-  let sql = Dialect::of(connection).savepoint(name);
+  let sql = Dialect::of(connection)?.savepoint(name);
   connection.execute_unprepared(&sql).await.map(|_| ())
 }
 
 async fn rollback_to(connection: &mut SessionConnection, name: &str) -> Result<(), QueryError> {
-  let sql = Dialect::of(connection).rollback_to(name);
+  let sql = Dialect::of(connection)?.rollback_to(name);
   connection.execute_unprepared(&sql).await.map(|_| ())
 }
 
 async fn release(connection: &mut SessionConnection, name: &str) -> Result<(), QueryError> {
-  match Dialect::of(connection).release(name) {
+  match Dialect::of(connection)?.release(name) {
     Some(sql) => connection.execute_unprepared(&sql).await.map(|_| ()),
     None => Ok(()),
   }
@@ -640,7 +644,7 @@ pub async fn import_csv<'a>(
     })?;
 
   let mut connection = SessionConnection::acquire(pool).await?;
-  let dialect = Dialect::of(&connection);
+  let dialect = Dialect::of(&connection)?;
   if !dialect.has_savepoints()
     && request.strategy == TransactionStrategy::SingleTransaction
     && request.on_error == ErrorPolicy::Skip
@@ -844,7 +848,7 @@ async fn flush(
   batch: &mut Batch,
   state: &mut ImportState,
 ) -> Result<Flushed, QueryError> {
-  let dialect = Dialect::of(connection);
+  let dialect = Dialect::of(connection)?;
   if dialect == Dialect::SqlServer
     && !drop_unconvertible_rows(connection, request, batch, state).await?
   {
@@ -937,7 +941,7 @@ async fn flush_without_savepoints(
   batch: &mut Batch,
   state: &mut ImportState,
 ) -> Result<Flushed, QueryError> {
-  let dialect = Dialect::of(connection);
+  let dialect = Dialect::of(connection)?;
   let rows = batch.records.len();
   let per_batch = request.strategy == TransactionStrategy::PerBatch;
   let tail_sql;

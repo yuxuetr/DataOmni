@@ -190,6 +190,7 @@ pub enum PoolRef<'a> {
   SqlServer(&'a std::sync::Arc<crate::services::sql_server::SqlServerPool>),
   Oracle(&'a std::sync::Arc<crate::services::oracle::OraclePool>),
   DuckDb(&'a std::sync::Arc<crate::services::duckdb::DuckDbPool>),
+  ClickHouse(&'a std::sync::Arc<crate::services::clickhouse::ClickHousePool>),
 }
 
 impl<'a> From<&'a DbPool> for PoolRef<'a> {
@@ -206,6 +207,7 @@ pub enum SessionConnection {
   SqlServer(Box<crate::services::sql_server::SqlServerConnection>),
   Oracle(Box<crate::services::oracle::OracleConnection>),
   DuckDb(crate::services::duckdb::DuckDbConnection),
+  ClickHouse(crate::services::clickhouse::ClickHouseConnection),
 }
 
 impl SessionConnection {
@@ -227,6 +229,7 @@ impl SessionConnection {
         pool.acquire_for_session().await.map(|connection| Self::Oracle(Box::new(connection)))
       }
       PoolRef::DuckDb(pool) => pool.acquire_for_session().map(Self::DuckDb),
+      PoolRef::ClickHouse(pool) => Ok(Self::ClickHouse(pool.acquire_for_session())),
     }
   }
 
@@ -281,6 +284,20 @@ impl SessionConnection {
           .await?;
         summary_with_rows(summary, rows)
       }
+      Self::ClickHouse(connection) => {
+        let mut rows = Vec::new();
+        let summary = connection
+          .execute_streaming(
+            sql,
+            StreamOptions::limited(row_limit, DEFAULT_QUERY_BYTE_LIMIT, row_limit.max(1)),
+            &mut |batch| {
+              rows.extend(batch.rows);
+              Ok(())
+            },
+          )
+          .await?;
+        summary_with_rows(summary, rows)
+      }
     }
   }
 
@@ -299,6 +316,7 @@ impl SessionConnection {
       Self::SqlServer(connection) => connection.describe_columns(sql).await,
       Self::Oracle(connection) => connection.describe_columns(sql).await,
       Self::DuckDb(connection) => connection.describe_columns(sql).await,
+      Self::ClickHouse(connection) => connection.describe_columns(sql).await,
     }
   }
 
@@ -338,6 +356,10 @@ impl SessionConnection {
       // 数组 DML：`sql` 是单行的语句，`params` 是一行接一行的值
       Self::Oracle(connection) => connection.execute_with_params(sql, params).await,
       Self::DuckDb(connection) => connection.execute_with_params(sql, params).await,
+      // 没有事务：导入做不到「中途失败什么都不留」，界面上本来就没有这个入口
+      Self::ClickHouse(_) => {
+        Err(QueryError::message(crate::services::clickhouse::CLICKHOUSE_WRITE_UNSUPPORTED))
+      }
     }
   }
 
@@ -361,6 +383,7 @@ impl SessionConnection {
       Self::SqlServer(connection) => connection.execute_batch(sql).await,
       Self::Oracle(connection) => connection.execute_batch(sql).await,
       Self::DuckDb(connection) => connection.execute_batch(sql).await,
+      Self::ClickHouse(connection) => connection.execute_batch(sql).await,
     }
   }
 
@@ -396,8 +419,8 @@ impl SessionConnection {
       Self::Postgres(connection) => timeout(limit, connection.ping()).await,
       Self::SqlServer(connection) => return connection.ping(limit).await,
       Self::Oracle(connection) => return connection.ping(limit).await,
-      // 本机的库，没有会被网络悄悄丢掉的连接
-      Self::Sqlite(_) | Self::DuckDb(_) => return true,
+      // 本机的库，没有会被网络悄悄丢掉的连接。ClickHouse 走 HTTP，每次请求自己连
+      Self::Sqlite(_) | Self::DuckDb(_) | Self::ClickHouse(_) => return true,
     };
     matches!(ping, Ok(Ok(())))
   }
@@ -409,7 +432,7 @@ impl SessionConnection {
       Self::MySql(connection) => drop(connection.detach()),
       Self::Postgres(connection) => drop(connection.detach()),
       Self::Sqlite(connection) => drop(connection.detach()),
-      Self::SqlServer(_) | Self::Oracle(_) | Self::DuckDb(_) => {}
+      Self::SqlServer(_) | Self::Oracle(_) | Self::DuckDb(_) | Self::ClickHouse(_) => {}
     }
   }
 
@@ -420,7 +443,8 @@ impl SessionConnection {
   pub fn begin_statement(&self) -> Option<&'static str> {
     match self {
       Self::SqlServer(_) => Some("BEGIN TRANSACTION"),
-      Self::Oracle(_) => None,
+      // ClickHouse 没有通用事务，自动提交的开关在界面上不出现
+      Self::Oracle(_) | Self::ClickHouse(_) => None,
       _ => Some("BEGIN"),
     }
   }
@@ -474,6 +498,7 @@ impl SessionConnection {
       Self::SqlServer(connection) => connection.execute_streaming(sql, options, sink).await,
       Self::Oracle(connection) => connection.execute_streaming(sql, options, sink).await,
       Self::DuckDb(connection) => connection.execute_streaming(sql, options, sink).await,
+      Self::ClickHouse(connection) => connection.execute_streaming(sql, options, sink).await,
     }
   }
 }

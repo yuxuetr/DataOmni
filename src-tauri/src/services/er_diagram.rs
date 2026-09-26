@@ -57,6 +57,13 @@ pub fn er_diagram_queries(db_type: &DatabaseType) -> Option<ErDiagramQueries> {
       foreign_keys: DUCKDB_FOREIGN_KEYS,
       parameter_count: 0,
     }),
+    // ClickHouse 没有外键：图上只有表和列、没有连线。仍然给出来，是因为「一眼看全库的表和
+    // 字段」本身有用，而不给它就得在「走 SQL 的都有 ER 图」这条约定上开例外
+    DatabaseType::ClickHouse => Some(ErDiagramQueries {
+      columns: CLICKHOUSE_COLUMNS,
+      foreign_keys: CLICKHOUSE_FOREIGN_KEYS,
+      parameter_count: 0,
+    }),
     _ => None,
   }
 }
@@ -331,6 +338,37 @@ WHERE k.constraint_type = 'FOREIGN KEY' AND k.database_name = current_database()
 ORDER BY table_schema, table_name, constraint_name, ordinal
 "#;
 
+/// 只要表（和字典）：视图、物化视图没有外键可连，混进来只是多一堆框
+const CLICKHOUSE_COLUMNS: &str = r#"
+SELECT
+  c.database AS table_schema,
+  c.table AS table_name,
+  c.name AS column_name,
+  c.type AS data_type,
+  toInt64(c.position) AS ordinal,
+  toBool(c.is_in_primary_key) AS is_primary_key,
+  toBool(startsWith(c.type, 'Nullable(') OR startsWith(c.type, 'LowCardinality(Nullable(')) AS is_nullable
+FROM system.columns c
+JOIN system.tables t ON t.database = c.database AND t.name = c.table
+WHERE c.database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')
+  AND t.engine NOT IN ('View', 'MaterializedView')
+  AND NOT startsWith(c.table, '.inner')
+ORDER BY c.database, c.table, c.position
+"#;
+
+const CLICKHOUSE_FOREIGN_KEYS: &str = r#"
+SELECT
+  '' AS table_schema,
+  '' AS table_name,
+  '' AS column_name,
+  '' AS referenced_schema,
+  '' AS referenced_table,
+  '' AS referenced_column,
+  '' AS constraint_name,
+  toInt64(0) AS ordinal
+WHERE 0
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -344,6 +382,7 @@ mod tests {
       DatabaseType::SqlServer,
       DatabaseType::Oracle,
       DatabaseType::DuckDB,
+      DatabaseType::ClickHouse,
     ] {
       let queries = er_diagram_queries(&db_type).expect("supported");
       for sql in [queries.columns, queries.foreign_keys] {

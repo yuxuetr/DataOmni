@@ -44,6 +44,9 @@ pub fn completion_catalog_query(db_type: &DatabaseType) -> Option<CompletionCata
     DatabaseType::DuckDB => {
       Some(CompletionCatalogQuery { relations: DUCKDB_RELATIONS, parameter_count: 0 })
     }
+    DatabaseType::ClickHouse => {
+      Some(CompletionCatalogQuery { relations: CLICKHOUSE_RELATIONS, parameter_count: 0 })
+    }
     _ => None,
   }
 }
@@ -160,17 +163,34 @@ WHERE c.database_name = current_database() AND NOT c.internal
 ORDER BY c.schema_name, c.table_name, c.column_index
 "#;
 
+/// 系统库不进补全：`system` 一个库就有上百张表、几千列，而写 `system.` 时它自己会被补出来的
+/// 那几张表用得最多的人也记得名字。字典能 `SELECT`，算表
+const CLICKHOUSE_RELATIONS: &str = r#"
+SELECT
+  c.database AS relation_schema,
+  c.table AS relation_name,
+  if(t.engine IN ('View', 'MaterializedView'), 'view', 'table') AS relation_kind,
+  c.name AS column_name,
+  c.type AS data_type
+FROM system.columns c
+JOIN system.tables t ON t.database = c.database AND t.name = c.table
+WHERE c.database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')
+  AND NOT startsWith(c.table, '.inner')
+ORDER BY c.database, c.table, c.position
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
 
-  const SUPPORTED: [DatabaseType; 6] = [
+  const SUPPORTED: [DatabaseType; 7] = [
     DatabaseType::MySQL,
     DatabaseType::PostgreSQL,
     DatabaseType::SQLite,
     DatabaseType::SqlServer,
     DatabaseType::Oracle,
     DatabaseType::DuckDB,
+    DatabaseType::ClickHouse,
   ];
 
   #[test]

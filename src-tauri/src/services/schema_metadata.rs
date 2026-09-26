@@ -113,6 +113,17 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       triggers: DUCKDB_TRIGGERS,
       parameter_count: 2,
     }),
+    // ClickHouse 的建表原文在 `system.tables` 里；没有外键、没有触发器，检查约束
+    // 只写在建表语句里（没有目录可查，照 SQLite 的做法说 None）
+    DatabaseType::ClickHouse => Some(SchemaMetadataQueries {
+      columns: CLICKHOUSE_COLUMNS,
+      indexes: CLICKHOUSE_INDEXES,
+      foreign_keys: CLICKHOUSE_FOREIGN_KEYS,
+      check_constraints: None,
+      ddl: Some(DdlQuery::Bound { sql: CLICKHOUSE_DDL }),
+      triggers: CLICKHOUSE_TRIGGERS,
+      parameter_count: 2,
+    }),
     _ => None,
   }
 }
@@ -971,6 +982,109 @@ SELECT
 WHERE $1::VARCHAR IS NULL AND $2::VARCHAR IS NULL AND false
 "#;
 
+// ClickHouse。目录是 `system.columns` / `system.tables` / `system.data_skipping_indices`
+// （25.8 上逐段核对过），几处和别家不同：
+// - 参数是服务端参数 `{p1:String}`；schema 那一格就是库，空着是当前库。
+// - 比较的结果是 UInt8，要 `toBool` 才和别家一样是布尔。
+// - **主键不唯一**：它是稀疏索引的排序前缀，不约束唯一性。`is_unique` 恒为 false——
+//   说成唯一，前端会拿它当行标识（表格在这一版本来就是只读的，但这条不该说谎）。
+// - 主键是一串表达式（`id, toDate(ts)`），`primary_key` 那一栏是原文。按 `, ` 拆开取序号，
+//   表达式里本身带 `, ` 的会拆错，那一列就只是「在主键里」、没有序号。
+// - MATERIALIZED / ALIAS 列的值由表达式算出，是计算列；EPHEMERAL 列不存值，也算。
+
+const CLICKHOUSE_COLUMNS: &str = r#"
+SELECT
+  c.name AS column_name,
+  c.type AS data_type,
+  toBool(startsWith(c.type, 'Nullable(') OR startsWith(c.type, 'LowCardinality(Nullable(')) AS is_nullable,
+  if(c.default_kind = 'DEFAULT', c.default_expression, NULL) AS column_default,
+  toBool(c.is_in_primary_key) AS is_primary_key,
+  nullIf(indexOf(splitByString(', ', t.primary_key), c.name), 0) AS primary_key_ordinal,
+  toBool(c.default_kind IN ('MATERIALIZED', 'ALIAS', 'EPHEMERAL')) AS is_generated,
+  CAST(NULL AS Nullable(String)) AS collation,
+  nullIf(c.comment, '') AS comment,
+  nullIf(arrayStringConcat(arrayFilter(part -> part != '', [
+    if(c.default_kind IN ('MATERIALIZED', 'ALIAS', 'EPHEMERAL'),
+      concat(c.default_kind, ' ', c.default_expression), ''),
+    c.compression_codec
+  ]), ' '), '') AS column_extra
+FROM system.columns c
+JOIN system.tables t ON t.database = c.database AND t.name = c.table
+WHERE c.table = {p1:String}
+  AND c.database = coalesce({p2:Nullable(String)}, currentDatabase())
+ORDER BY c.position
+"#;
+
+/// 主键（稀疏索引）拆成一列一行，再加上跳数索引。跳数索引的「列」是它的表达式，
+/// 方法写成建表时的写法（`bloom_filter GRANULARITY 4`）
+const CLICKHOUSE_INDEXES: &str = r#"
+SELECT index_name, column_name, ordinal, is_unique, is_primary, is_partial, is_valid, method
+FROM (
+  SELECT
+    'PRIMARY KEY' AS index_name,
+    part AS column_name,
+    toInt64(position) AS ordinal,
+    toBool(false) AS is_unique,
+    toBool(true) AS is_primary,
+    toBool(false) AS is_partial,
+    toBool(true) AS is_valid,
+    'primary' AS method
+  FROM system.tables t
+  ARRAY JOIN
+    splitByString(', ', t.primary_key) AS part,
+    arrayEnumerate(splitByString(', ', t.primary_key)) AS position
+  WHERE t.name = {p1:String}
+    AND t.database = coalesce({p2:Nullable(String)}, currentDatabase())
+    AND part != ''
+  UNION ALL
+  SELECT
+    i.name,
+    i.expr,
+    toInt64(1),
+    toBool(false),
+    toBool(false),
+    toBool(false),
+    toBool(true),
+    concat(i.type_full, ' GRANULARITY ', toString(i.granularity))
+  FROM system.data_skipping_indices i
+  WHERE i.table = {p1:String}
+    AND i.database = coalesce({p2:Nullable(String)}, currentDatabase())
+)
+ORDER BY is_primary DESC, index_name, ordinal
+"#;
+
+/// 没有外键可列；照样收两个参数，前端对每一段都发同一份参数
+const CLICKHOUSE_FOREIGN_KEYS: &str = r#"
+SELECT
+  '' AS constraint_name,
+  toInt64(0) AS ordinal,
+  '' AS column_name,
+  '' AS referenced_schema,
+  '' AS referenced_table,
+  '' AS referenced_column,
+  '' AS on_update,
+  '' AS on_delete
+WHERE {p1:String} = '' AND isNull({p2:Nullable(String)}) AND 0
+"#;
+
+/// 建表原文排好版。`formatQueryOrNull` 解析不了的（很少见）照原样给
+const CLICKHOUSE_DDL: &str = r#"
+SELECT coalesce(formatQueryOrNull(t.create_table_query), t.create_table_query) AS sql
+FROM system.tables t
+WHERE t.name = {p1:String}
+  AND t.database = coalesce({p2:Nullable(String)}, currentDatabase())
+"#;
+
+/// 没有触发器可列
+const CLICKHOUSE_TRIGGERS: &str = r#"
+SELECT
+  '' AS trigger_name,
+  '' AS timing,
+  '' AS event,
+  '' AS definition
+WHERE {p1:String} = '' AND isNull({p2:Nullable(String)}) AND 0
+"#;
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1004,6 +1118,17 @@ mod tests {
     if dollars > 0 {
       return dollars;
     }
+    // ClickHouse 的服务端参数 `{p1:String}`
+    let braces = sql
+      .match_indices("{p")
+      .filter_map(|(at, _)| {
+        sql[at + 2..].chars().take_while(char::is_ascii_digit).collect::<String>().parse().ok()
+      })
+      .max()
+      .unwrap_or(0);
+    if braces > 0 {
+      return braces;
+    }
     // Oracle 的 `:1`、`:2`
     let colons = numbered(':');
     if colons > 0 {
@@ -1033,6 +1158,7 @@ mod tests {
       DatabaseType::SqlServer,
       DatabaseType::Oracle,
       DatabaseType::DuckDB,
+      DatabaseType::ClickHouse,
     ] {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       let expected = usize::from(queries.parameter_count);
@@ -1137,6 +1263,7 @@ mod tests {
       DatabaseType::SqlServer,
       DatabaseType::Oracle,
       DatabaseType::DuckDB,
+      DatabaseType::ClickHouse,
     ] {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       for column in ["is_unique", "is_primary", "is_partial", "is_valid"] {
@@ -1165,6 +1292,7 @@ mod tests {
       DatabaseType::SqlServer,
       DatabaseType::Oracle,
       DatabaseType::DuckDB,
+      DatabaseType::ClickHouse,
     ] {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       for alias in [
@@ -1211,7 +1339,7 @@ mod tests {
   #[test]
   fn unsupported_databases_get_no_queries() {
     // 这些类型连查询执行层都没有，给出 SQL 只会让前端拿去执行然后失败
-    for db_type in [DatabaseType::MongoDB, DatabaseType::Redis, DatabaseType::ClickHouse] {
+    for db_type in [DatabaseType::MongoDB, DatabaseType::Redis, DatabaseType::Elasticsearch] {
       assert!(schema_metadata_queries(&db_type).is_none(), "{:?} 不该有目录查询", db_type);
     }
   }
@@ -1225,6 +1353,7 @@ mod tests {
       DatabaseType::SqlServer,
       DatabaseType::Oracle,
       DatabaseType::DuckDB,
+      DatabaseType::ClickHouse,
     ] {
       let queries = schema_metadata_queries(&db_type).expect("supported");
       for sql in [
@@ -1238,7 +1367,11 @@ mod tests {
       .flatten()
       {
         assert!(
-          sql.contains('?') || sql.contains('$') || sql.contains("@P1") || sql.contains(":1"),
+          sql.contains('?')
+            || sql.contains('$')
+            || sql.contains("@P1")
+            || sql.contains(":1")
+            || sql.contains("{p1:"),
           "{:?} 的目录查询必须带占位符，不能把表名拼进字符串: {}",
           db_type,
           sql

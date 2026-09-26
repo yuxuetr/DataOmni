@@ -1,3 +1,4 @@
+pub mod clickhouse;
 pub mod completion_catalog;
 pub mod connection_probe;
 pub mod connection_service;
@@ -7,6 +8,7 @@ pub mod elasticsearch;
 pub mod er_diagram;
 pub mod explain;
 pub mod export_writer;
+pub mod http_endpoint;
 pub mod mongo_command;
 pub mod mongo_shell;
 pub mod mongodb;

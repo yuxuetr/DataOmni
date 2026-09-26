@@ -12,11 +12,11 @@
 //!   认证失败这些才是命令的错误。
 //! - **时限只在客户端**：ES 在连接断开时取消正在跑的搜索（TODOs 4.3 有实测）。
 
-use crate::models::{ConnectionProfile, TlsMode};
+use crate::models::ConnectionProfile;
+use crate::services::http_endpoint::{error_chain, EndpointError, HttpEndpoint};
 use crate::services::pool_registry::PoolRegistry;
-use reqwest::{Certificate, Client, Method, StatusCode, Url};
+use reqwest::{Client, Method, StatusCode, Url};
 use serde::{Deserialize, Serialize};
-use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -56,83 +56,27 @@ pub type EsRegistry = PoolRegistry<EsPool>;
 
 #[derive(Clone)]
 pub struct EsTarget {
-  host: String,
-  port: u16,
+  endpoint: HttpEndpoint,
   username: String,
   password: String,
-  tls: TlsMode,
-  ca_certificate_path: Option<String>,
-  /// 经 SSH 隧道时本地转发的端口
-  tunnel_port: Option<u16>,
 }
 
 impl EsTarget {
-  /// 隧道端口单独传，不像另外几家那样把主机换成 127.0.0.1：HTTPS 要按原来的主机名校验证书
+  /// 隧道端口单独传：HTTPS 要按原来的主机名校验证书（见 `HttpEndpoint::from_profile`）
   pub fn from_profile(profile: &ConnectionProfile, tunnel_port: Option<u16>) -> Self {
     Self {
-      host: profile.host.trim().to_string(),
-      port: profile.port,
+      endpoint: HttpEndpoint::from_profile(profile, tunnel_port),
       username: profile.username.clone(),
       password: profile.password.clone(),
-      tls: profile.effective_tls_mode(),
-      ca_certificate_path: profile.ca_certificate_path.clone().filter(|path| !path.is_empty()),
-      tunnel_port,
     }
-  }
-
-  /// 请求发往的根地址。经隧道、主机是 IP 时只能写 127.0.0.1（`resolve` 只管域名），
-  /// 这时证书按 127.0.0.1 校验，校验不过就是那句 TLS 错误
-  fn base_url(&self) -> Result<Url, String> {
-    let scheme = if self.tls == TlsMode::Disabled { "http" } else { "https" };
-    let host = match (self.tunnel_port, self.host.parse::<IpAddr>()) {
-      (Some(_), Ok(_)) => "127.0.0.1".to_string(),
-      (_, Ok(IpAddr::V6(address))) => format!("[{address}]"),
-      _ => self.host.clone(),
-    };
-    let port = match (self.tunnel_port, self.host.parse::<IpAddr>()) {
-      (Some(local), Ok(_)) => local,
-      _ => self.port,
-    };
-    Url::parse(&format!("{scheme}://{host}:{port}"))
-      .map_err(|error| format!("{ES_UNREACHABLE}: {}: {error}", self.host))
-  }
-
-  fn client(&self) -> Result<Client, String> {
-    // 不走系统代理：数据库连接是直连的，另外几家的驱动都不认代理；经隧道时连的是 127.0.0.1，
-    // 被代理接走就连不到了
-    let mut builder = Client::builder().no_proxy().connect_timeout(CONNECT_TIMEOUT);
-    if let (Some(local), Err(_)) = (self.tunnel_port, self.host.parse::<IpAddr>()) {
-      builder = builder.resolve(&self.host, SocketAddr::from(([127, 0, 0, 1], local)));
-    }
-    let certificates = match (&self.ca_certificate_path, self.tls) {
-      (Some(path), TlsMode::VerifyCa | TlsMode::VerifyFull) => Some(read_certificates(path)?),
-      _ => None,
-    };
-    // `Preferred` / `Required` 只加密不校验，与另外几家一致。`VerifyCa` 校验证书链、不管主机名——
-    // rustls 只在「只信这份 CA」时才肯不管主机名；没给 CA 就按完整校验，往严里走
-    builder = match (self.tls, certificates) {
-      (TlsMode::Disabled, _) => builder,
-      (TlsMode::Preferred | TlsMode::Required, _) => builder.tls_danger_accept_invalid_certs(true),
-      (TlsMode::VerifyCa, Some(certificates)) => {
-        builder.tls_certs_only(certificates).tls_danger_accept_invalid_hostnames(true)
-      }
-      (_, Some(certificates)) => builder.tls_certs_merge(certificates),
-      (_, None) => builder,
-    };
-    builder.build().map_err(|error| format!("{ES_UNREACHABLE}: {}", error_chain(&error)))
   }
 }
 
-/// PEM 里的全部证书（CA 文件常常是一条链）
-fn read_certificates(path: &str) -> Result<Vec<Certificate>, String> {
-  let pem =
-    std::fs::read(path).map_err(|error| format!("{ES_TLS_FILE_INVALID}: {path}: {error}"))?;
-  let certificates = Certificate::from_pem_bundle(&pem)
-    .map_err(|error| format!("{ES_TLS_FILE_INVALID}: {path}: {error}"))?;
-  if certificates.is_empty() {
-    return Err(format!("{ES_TLS_FILE_INVALID}: {path}"));
+fn endpoint_error(error: EndpointError) -> String {
+  match error {
+    EndpointError::Unreachable(reason) => format!("{ES_UNREACHABLE}: {reason}"),
+    EndpointError::CertificateFile(reason) => format!("{ES_TLS_FILE_INVALID}: {reason}"),
   }
-  Ok(certificates)
 }
 
 /// 一个连接配置在后端的全部：reqwest 的客户端（它自己管着连接池）、根地址与凭据
@@ -200,8 +144,8 @@ impl EsPool {
 /// 认证已经过了，照样算连上
 pub async fn connect(target: EsTarget) -> Result<EsPool, String> {
   let pool = EsPool {
-    client: target.client()?,
-    base: target.base_url()?,
+    client: target.endpoint.client(CONNECT_TIMEOUT).map_err(endpoint_error)?,
+    base: target.endpoint.base_url().map_err(endpoint_error)?,
     credentials: (!target.username.is_empty())
       .then(|| (target.username.clone(), target.password.clone())),
   };
@@ -240,17 +184,6 @@ fn describe_error(error: &reqwest::Error, timeout: Duration) -> String {
     return format!("{ES_TIMEOUT}: {}ms", timeout.as_millis());
   }
   format!("{ES_UNREACHABLE}: {}", error_chain(error))
-}
-
-/// reqwest 的 Display 只说「error sending request」「builder error」，原因在 source 链上
-fn error_chain(error: &reqwest::Error) -> String {
-  let mut message = error.to_string();
-  let mut source = std::error::Error::source(error);
-  while let Some(cause) = source {
-    message = format!("{message}: {cause}");
-    source = cause.source();
-  }
-  message
 }
 
 /// 对象树的一行，形状与关系库的对象目录一致。没有库这一层，`object_schema` 空着
@@ -410,29 +343,6 @@ mod tests {
       let error = pool.url(escape).unwrap_err();
       assert!(error.starts_with(ES_REQUEST_INVALID), "{escape}: {error}");
     }
-  }
-
-  #[test]
-  fn tunnels_keep_the_host_name_for_certificates() {
-    let mut target = EsTarget {
-      host: "es.internal".to_string(),
-      port: 9200,
-      username: String::new(),
-      password: String::new(),
-      tls: TlsMode::VerifyFull,
-      ca_certificate_path: None,
-      tunnel_port: Some(40001),
-    };
-    // 域名：地址不变，连接经 `resolve` 落到本地端口
-    assert_eq!(target.base_url().unwrap().as_str(), "https://es.internal:9200/");
-    // IP：`resolve` 管不到，只能直接写本地端口
-    target.host = "10.0.0.5".to_string();
-    assert_eq!(target.base_url().unwrap().as_str(), "https://127.0.0.1:40001/");
-    target.tunnel_port = None;
-    target.tls = TlsMode::Disabled;
-    assert_eq!(target.base_url().unwrap().as_str(), "http://10.0.0.5:9200/");
-    target.host = "::1".to_string();
-    assert_eq!(target.base_url().unwrap().as_str(), "http://[::1]:9200/");
   }
 
   #[test]

@@ -35,6 +35,7 @@ pub fn run() {
     .manage(services::neo4j::Neo4jRegistry::default())
     .manage(services::elasticsearch::EsRegistry::default())
     .manage(services::duckdb::DuckDbRegistry::default())
+    .manage(services::clickhouse::ClickHouseRegistry::default())
     .setup(|app| {
       // 启动日志留着：窗口起不来时，这一行是唯一能说明进程到底跑没跑的证据
       println!("🎯 DataOmni 启动");
@@ -64,6 +65,8 @@ pub fn run() {
       close_oracle,
       duckdb_select,
       close_duckdb,
+      clickhouse_select,
+      close_clickhouse,
       mongodb_list_collections,
       mongodb_find,
       mongodb_count,

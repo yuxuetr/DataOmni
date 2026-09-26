@@ -15,6 +15,7 @@ use tokio::time::Duration;
 
 pub const QUERY_CANCELLED_CODE: &str = "QUERY_CANCELLED";
 
+use crate::services::clickhouse::{ClickHouseRegistry, CLICKHOUSE_SCHEME};
 use crate::services::duckdb::{DuckDbRegistry, DUCKDB_SCHEME};
 use crate::services::oracle::{OracleRegistry, ORACLE_SCHEME};
 use crate::services::query_executor::PoolRef;
@@ -54,6 +55,7 @@ enum ResolvedPool {
   SqlServer(std::sync::Arc<crate::services::SqlServerPool>),
   Oracle(std::sync::Arc<crate::services::oracle::OraclePool>),
   DuckDb(std::sync::Arc<crate::services::duckdb::DuckDbPool>),
+  ClickHouse(std::sync::Arc<crate::services::clickhouse::ClickHousePool>),
 }
 
 impl ResolvedPool {
@@ -63,7 +65,14 @@ impl ResolvedPool {
     sql_server: &SqlServerRegistry,
     oracle: &OracleRegistry,
     duckdb: &DuckDbRegistry,
+    clickhouse: &ClickHouseRegistry,
   ) -> Result<ResolvedPool, QueryError> {
+    if connection_string.starts_with(CLICKHOUSE_SCHEME) {
+      return clickhouse
+        .get(&connection_string)
+        .map(ResolvedPool::ClickHouse)
+        .ok_or_else(|| QueryError::message(DB_SESSION_NOT_CONNECTED));
+    }
     if connection_string.starts_with(DUCKDB_SCHEME) {
       return duckdb
         .get(&connection_string)
@@ -96,6 +105,7 @@ impl ResolvedPool {
       Self::SqlServer(pool) => Ok(PoolRef::SqlServer(pool)),
       Self::Oracle(pool) => Ok(PoolRef::Oracle(pool)),
       Self::DuckDb(pool) => Ok(PoolRef::DuckDb(pool)),
+      Self::ClickHouse(pool) => Ok(PoolRef::ClickHouse(pool)),
     }
   }
 }
@@ -167,6 +177,7 @@ pub async fn execute_query(
   sql_server: State<'_, SqlServerRegistry>,
   oracle: State<'_, OracleRegistry>,
   duckdb: State<'_, DuckDbRegistry>,
+  clickhouse: State<'_, ClickHouseRegistry>,
 ) -> Result<QueryExecutionSummary, QueryError> {
   if !(100..=3_600_000).contains(&request.timeout_ms) {
     return Err(QueryError::message(TIMEOUT_OUT_OF_RANGE));
@@ -197,6 +208,7 @@ pub async fn execute_query(
     &sql_server,
     &oracle,
     &duckdb,
+    &clickhouse,
   )
   .await?;
   let pool = resolved.pool_ref()?;
@@ -244,6 +256,7 @@ pub async fn execute_write_batch(
   sql_server: State<'_, SqlServerRegistry>,
   oracle: State<'_, OracleRegistry>,
   duckdb: State<'_, DuckDbRegistry>,
+  clickhouse: State<'_, ClickHouseRegistry>,
 ) -> Result<Vec<u64>, WriteBatchError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&connection_id).await;
@@ -256,10 +269,16 @@ pub async fn execute_write_batch(
     service.resolve_connection_string(&connection_id, tunnel_port).map_err(batch_error)?
   };
 
-  let resolved =
-    ResolvedPool::resolve(connection_string, &database_instances, &sql_server, &oracle, &duckdb)
-      .await
-      .map_err(|error| WriteBatchError { statement_index: 0, error })?;
+  let resolved = ResolvedPool::resolve(
+    connection_string,
+    &database_instances,
+    &sql_server,
+    &oracle,
+    &duckdb,
+    &clickhouse,
+  )
+  .await
+  .map_err(|error| WriteBatchError { statement_index: 0, error })?;
   let pool = resolved.pool_ref().map_err(|error| WriteBatchError { statement_index: 0, error })?;
   write_batch::execute_write_batch(pool, &statements).await
 }
@@ -298,6 +317,7 @@ pub async fn export_query_to_file(
   sql_server: State<'_, SqlServerRegistry>,
   oracle: State<'_, OracleRegistry>,
   duckdb: State<'_, DuckDbRegistry>,
+  clickhouse: State<'_, ClickHouseRegistry>,
 ) -> Result<ExportSummary, QueryError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&request.connection_id).await;
@@ -312,9 +332,15 @@ pub async fn export_query_to_file(
       .map_err(QueryError::message)?
   };
 
-  let resolved =
-    ResolvedPool::resolve(connection_string, &database_instances, &sql_server, &oracle, &duckdb)
-      .await?;
+  let resolved = ResolvedPool::resolve(
+    connection_string,
+    &database_instances,
+    &sql_server,
+    &oracle,
+    &duckdb,
+    &clickhouse,
+  )
+  .await?;
   let pool = resolved.pool_ref()?;
 
   // 取消与查询共用同一个登记表：取消的语义、重复 ID 的检查、结束时的清理
@@ -435,6 +461,7 @@ pub async fn import_csv_file(
   sql_server: State<'_, SqlServerRegistry>,
   oracle: State<'_, OracleRegistry>,
   duckdb: State<'_, DuckDbRegistry>,
+  clickhouse: State<'_, ClickHouseRegistry>,
 ) -> Result<ImportSummary, QueryError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&request.connection_id).await;
@@ -449,9 +476,15 @@ pub async fn import_csv_file(
       .map_err(QueryError::message)?
   };
 
-  let resolved =
-    ResolvedPool::resolve(connection_string, &database_instances, &sql_server, &oracle, &duckdb)
-      .await?;
+  let resolved = ResolvedPool::resolve(
+    connection_string,
+    &database_instances,
+    &sql_server,
+    &oracle,
+    &duckdb,
+    &clickhouse,
+  )
+  .await?;
   let pool = resolved.pool_ref()?;
 
   let mut receiver =
@@ -570,6 +603,7 @@ pub async fn explain_query(
   sql_server: State<'_, SqlServerRegistry>,
   oracle: State<'_, OracleRegistry>,
   duckdb: State<'_, DuckDbRegistry>,
+  clickhouse: State<'_, ClickHouseRegistry>,
 ) -> Result<crate::services::explain::QueryPlan, QueryError> {
   // 隧道端口先查出来：下面那个块里拿着 std 的锁，不能 await
   let tunnel_port = tunnels.local_port(&request.connection_id).await;
@@ -597,6 +631,7 @@ pub async fn explain_query(
     &sql_server,
     &oracle,
     &duckdb,
+    &clickhouse,
   )
   .await?;
   let pool = resolved.pool_ref()?;

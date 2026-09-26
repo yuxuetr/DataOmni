@@ -115,6 +115,7 @@ pub async fn test_connection(
   neo4j_registry: State<'_, crate::services::neo4j::Neo4jRegistry>,
   es_registry: State<'_, crate::services::elasticsearch::EsRegistry>,
   duckdb_registry: State<'_, DuckDbRegistry>,
+  clickhouse_registry: State<'_, crate::services::clickhouse::ClickHouseRegistry>,
 ) -> Result<String, String> {
   println!("🧪 测试数据库连接: {}", config.name);
 
@@ -198,6 +199,11 @@ pub async fn test_connection(
     let target = crate::services::elasticsearch::EsTarget::from_profile(&resolved, local_port);
     let pool = crate::services::elasticsearch::connect(target).await?;
     es_registry.insert(connection_string.clone(), std::sync::Arc::new(pool));
+  } else if resolved.db_type == DatabaseType::ClickHouse {
+    // 同 Elasticsearch：不换主机，经隧道的 HTTPS 仍按原来的主机名校验证书
+    let target = crate::services::clickhouse::ClickHouseTarget::from_profile(&resolved, local_port);
+    let pool = crate::services::clickhouse::connect(target).await?;
+    clickhouse_registry.insert(connection_string.clone(), pool);
   }
   Ok(connection_string)
 }
@@ -305,6 +311,32 @@ pub async fn duckdb_select(
     )
   })?;
   pool.select(&sql, &params).await
+}
+
+/// ClickHouse 连接上的目录查询。与 `sql_server_select` 同一个角色、同一种返回形状；
+/// 参数按序号绑成服务端参数 `{p1:String}`、`{p2:…}`
+#[tauri::command]
+pub async fn clickhouse_select(
+  connection_string: String,
+  sql: String,
+  params: Vec<serde_json::Value>,
+  clickhouse_registry: State<'_, crate::services::clickhouse::ClickHouseRegistry>,
+) -> Result<Vec<crate::services::QueryRow>, crate::services::QueryError> {
+  let pool = clickhouse_registry.get(&connection_string).ok_or_else(|| {
+    crate::services::QueryError::message(
+      crate::commands::database_commands::DB_SESSION_NOT_CONNECTED,
+    )
+  })?;
+  pool.select(&sql, &params).await
+}
+
+/// 断开时去掉登记的客户端。会话连接由 `release_database_session` 另行释放
+#[tauri::command]
+pub fn close_clickhouse(
+  connection_string: String,
+  clickhouse_registry: State<'_, crate::services::clickhouse::ClickHouseRegistry>,
+) -> bool {
+  clickhouse_registry.remove(&connection_string)
 }
 
 /// 断开：去掉登记的库。会话连接由 `release_database_session` 另行释放，两边都放掉之后

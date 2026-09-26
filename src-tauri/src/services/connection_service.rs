@@ -365,13 +365,15 @@ impl ConnectionService {
       }
       // MongoDB 可以不开认证，而「库」那一格是认证库，空着就是 `admin`；
       // Redis 大多只有口令（或干脆没有），用户名是 6.0 的 ACL 才有的，库号空着就是 0；
-      // Neo4j 可以关着认证，库空着就是这个用户的主库；Elasticsearch 同样可以关着认证
+      // Neo4j 可以关着认证，库空着就是这个用户的主库；Elasticsearch 同样可以关着认证；
+      // ClickHouse 用户名空着是 `default` 用户，库空着是这个用户的默认库
       let optional_login = matches!(
         config.db_type,
         DatabaseType::MongoDB
           | DatabaseType::Redis
           | DatabaseType::Neo4j
           | DatabaseType::Elasticsearch
+          | DatabaseType::ClickHouse
       );
       if config.username.is_empty() && !optional_login {
         return Err(USERNAME_REQUIRED.to_string());
@@ -553,12 +555,13 @@ fn validate_tls_configuration(config: &ConnectionProfile) -> Result<(), String> 
         | DatabaseType::Redis
         | DatabaseType::Neo4j
         | DatabaseType::Elasticsearch
+        | DatabaseType::ClickHouse
     )
   {
     return Err(TLS_CERTIFICATES_UNSUPPORTED.to_string());
   }
   // tiberius 能按 CA 校验服务端，但不带客户端证书登录——填了也不会生效，
-  // 而用户会以为双向认证已经开着。Redis、Neo4j、Elasticsearch 这一版同样只收 CA
+  // 而用户会以为双向认证已经开着。Redis、Neo4j、Elasticsearch、ClickHouse 这一版同样只收 CA
   if has_client_certificate
     && matches!(
       config.db_type,
@@ -566,6 +569,7 @@ fn validate_tls_configuration(config: &ConnectionProfile) -> Result<(), String> 
         | DatabaseType::Redis
         | DatabaseType::Neo4j
         | DatabaseType::Elasticsearch
+        | DatabaseType::ClickHouse
     )
   {
     return Err(TLS_CERTIFICATES_UNSUPPORTED.to_string());
@@ -1113,20 +1117,27 @@ mod tests {
     );
   }
 
-  /// 界面已经把这些类型的按钮置灰了，但存档里可能留着更早版本存下的配置，
-  /// 而配置文件是纯文本、用户改得动。这条断言的是「界面不是唯一的门」
+  /// 「没有驱动就拒绝」那道门（`unsupported_database_message`）是给存档里的老配置、
+  /// 手改的配置留的。ClickHouse 接上之后（2026-09-26）枚举里的每一种都有驱动了，这道门
+  /// 暂时没有能挡的类型。以后往枚举里加一种还没接的类型时，把它加进这张单子——它会红，
+  /// 那时换回「拒绝没有驱动的类型」的用例（git 里 `refuses_database_types_that_have_no_driver`）
   #[test]
-  fn refuses_database_types_that_have_no_driver() {
-    let config_path = temporary_config_path();
-    let service =
-      ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()).unwrap();
-
-    let mut config = profile("profile-1", "secret");
-    config.db_type = DatabaseType::ClickHouse;
-
-    let error = service.test_connection(&config).expect_err("没有驱动就不该通过");
-    // 理由要说清是哪个类型：码点明「为什么」，冒号后面的数据点明「哪一个」
-    assert_eq!(error, format!("{UNSUPPORTED_DATABASE}: {:?}", DatabaseType::ClickHouse));
+  fn every_database_type_has_a_driver_for_now() {
+    for db_type in [
+      DatabaseType::MySQL,
+      DatabaseType::PostgreSQL,
+      DatabaseType::SQLite,
+      DatabaseType::SqlServer,
+      DatabaseType::Oracle,
+      DatabaseType::MongoDB,
+      DatabaseType::Redis,
+      DatabaseType::Neo4j,
+      DatabaseType::DuckDB,
+      DatabaseType::ClickHouse,
+      DatabaseType::Elasticsearch,
+    ] {
+      assert!(db_type.has_driver(), "{db_type:?}");
+    }
   }
 
   /// 反向：三种有驱动的类型必须仍然走完原来的校验，而不是被这道门顺手挡掉

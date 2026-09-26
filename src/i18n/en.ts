@@ -1549,6 +1549,12 @@ export const en: Translations = {
   'error.backend.esResponseTooLarge': 'The response is over the 32 MB limit and was not read: lower size, or use _source to fetch only the fields you need',
   'error.backend.esRequestInvalid': 'This request cannot be sent ({detail}): the method must be GET, POST, PUT, DELETE or HEAD, and the path must start with / and name no host',
   'error.backend.esServerError': 'Could not read the Elasticsearch response: {detail}',
+  'error.backend.clickhouseAuthFailed': 'ClickHouse refused the login: wrong username or password. Details: {detail}',
+  'error.backend.clickhouseUnreachable': 'Could not reach ClickHouse: check the host, the port and TLS. This uses the HTTP interface, 8123 by default and 8443 for HTTPS; 9000 is the native protocol port and will not work. Details: {detail}',
+  'error.backend.clickhouseNotClickhouse': 'That is not the ClickHouse HTTP interface ({detail}): check the port. HTTP defaults to 8123, HTTPS to 8443',
+  'error.backend.clickhouseTlsFileInvalid': 'The CA certificate file cannot be used: {detail}',
+  'error.backend.clickhouseWriteUnsupported': 'ClickHouse has no transactions, so single-row grid edits and CSV import are not available: write INSERT / ALTER TABLE … UPDATE in the editor',
+  'error.backend.clickhouseMalformedResult': 'A row in the ClickHouse response does not match its header (row: fields/columns = {detail}); most likely the server failed midway and it was not recognised. Run it again; if it keeps happening, please report the statement',
   'error.backend.esNoPermission': 'This account may not list indices, so the object tree is empty ({detail}). On OpenSearch, read does not include indices:admin/resolve/index — grant it as well; the console still works for the indices it can read',
   'error.backend.mongoUpdateNotOperators': 'The update must use operators such as $set, or a pipeline. A whole document is a replacement, which an update of matching documents cannot do'
 };

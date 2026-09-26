@@ -1560,6 +1560,12 @@ export const zh = {
   'error.backend.esResponseTooLarge': '回答超过了 32 MB 的上限，没有读完：把 size 调小，或用 _source 只取要的字段',
   'error.backend.esRequestInvalid': '这条请求发不了（{detail}）：方法只能是 GET、POST、PUT、DELETE、HEAD，路径要以 / 开头、不能写主机',
   'error.backend.esServerError': 'Elasticsearch 的回答读不懂：{detail}',
+  'error.backend.clickhouseAuthFailed': 'ClickHouse 拒绝了登录：用户名或口令不对。详情：{detail}',
+  'error.backend.clickhouseUnreachable': '没连上 ClickHouse：检查地址、端口和 TLS。这里走 HTTP 接口，默认 8123，HTTPS 是 8443；9000 是原生协议的端口，连不上。详情：{detail}',
+  'error.backend.clickhouseNotClickhouse': '连上的不是 ClickHouse 的 HTTP 接口（{detail}）：检查端口，HTTP 默认 8123、HTTPS 8443',
+  'error.backend.clickhouseTlsFileInvalid': 'CA 证书文件用不了：{detail}',
+  'error.backend.clickhouseWriteUnsupported': 'ClickHouse 没有事务，表格改不了单行、也不能导入 CSV：在编辑器里写 INSERT / ALTER TABLE … UPDATE',
+  'error.backend.clickhouseMalformedResult': 'ClickHouse 的回答有一行和表头对不上（行号: 字段数/列数 = {detail}），多半是服务端中途出了错而这里没认出来。重跑一次；还是这样，请把这条语句报给我们',
   'error.backend.esNoPermission': '这个账号没有列索引的权限，对象树列不出来（{detail}）。OpenSearch 的 read 不含 indices:admin/resolve/index，要再授予它；控制台里照样能查有权限的索引',
   'error.backend.mongoUpdateNotOperators': '「怎么改」要用 $set 这类操作符或者一条管道；写成一整个文档是替换，按条件修改不能这样用'
 } as const;
