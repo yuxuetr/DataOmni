@@ -154,9 +154,9 @@ function App() {
     axis: 'x'
   });
   const activeProfileId = activeConnection?.config.id ?? null;
-  // 当前连接能不能跑 SQL。不能的（MongoDB）上，一切「开一个 SQL 标签」的入口都不给
+  // 当前连接能不能跑 SQL。不能的（非关系型库）上，ER 图、建表这些只属于 SQL 的入口都不给
   const activeSpeaksSql = activeConnection ? speaksSql(activeConnection.config.db_type) : false;
-  // 能不能开查询标签：走 SQL 的，加上写 Cypher 的 Neo4j、写请求的 Elasticsearch
+  // 能不能开查询标签：走 SQL 的，加上 Neo4j（Cypher）、Elasticsearch（请求）、MongoDB（命令台）
   const activeHasQueryEditor = activeConnection ? hasQueryEditor(activeConnection.config.db_type) : false;
   const environmentByProfileId = useMemo(
     () => Object.fromEntries(

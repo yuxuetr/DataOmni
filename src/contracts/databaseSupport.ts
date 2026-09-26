@@ -60,10 +60,11 @@ const NON_SQL_TYPES: ReadonlySet<DatabaseType> = new Set([
 ]);
 
 /**
- * 有查询编辑器的：走 SQL 的那一族，加上写 Cypher 的 Neo4j、写 Dev Tools 请求的 Elasticsearch。
+ * 有查询编辑器的：走 SQL 的那一族，加上写 Cypher 的 Neo4j、写 Dev Tools 请求的 Elasticsearch、
+ * 写 `db.runCommand` 命令文档的 MongoDB。
  * 查询标签、新建查询、打开脚本文件都问这一句；ER 图、建表这些仍然只问 `speaksSql`。
  *
- * 两家复用的是查询**标签**（草稿、去重、持久化都现成），标签里画的是各自的编辑器
+ * 三家复用的是查询**标签**（草稿、去重、持久化都现成），标签里画的是各自的编辑器
  */
 export function hasQueryEditor(type: string): boolean {
   return speaksSql(type)

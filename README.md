@@ -30,7 +30,7 @@
 ### 🔗 数据库支持
 
 - **可连接并执行查询**: MySQL, PostgreSQL, SQLite, SQL Server, Oracle, DuckDB（见兼容性矩阵）
-- **可连接、浏览与改文档**: MongoDB（库、集合、文档；条件、排序与编辑都用 mongosh 写法）
+- **可连接、浏览与改文档**: MongoDB（库、集合、文档；条件、排序与编辑都用 mongosh 写法；`db.runCommand` 命令台）
 - **可连接、浏览键值与跑命令**: Redis（逻辑库、按模式翻键、六种类型的值、redis-cli 写法的命令行）
 - **可连接并执行 Cypher**: Neo4j（库、标签与关系类型；结果里的节点、关系、路径按 Cypher 字面量显示）
 - **可连接并发请求**: Elasticsearch（索引、别名、数据流；Kibana Dev Tools 写法的控制台）
@@ -58,8 +58,8 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 | SQL Server | 2022 | SQL Server | ✅ 支持 | 17 / 17（独立用例，`sql_server_smoke.rs`，含改结构语料） |
 | Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 14 / 14（独立用例，`oracle_smoke.rs`，含改结构语料） |
 | DuckDB | 1.5.5（编进应用） | DuckDB（libduckdb） | ✅ 支持 | 16 / 16（独立用例，`duckdb_smoke.rs`，每次都跑，含改结构语料） |
-| MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 31 / 31（独立用例，`mongodb_smoke.rs`） |
-| Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机，不含集群 | 10 / 10（独立用例，`redis_smoke.rs`） |
+| MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 32 / 32（独立用例，`mongodb_smoke.rs`） |
+| Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机，不含集群 | 11 / 11（独立用例，`redis_smoke.rs`） |
 | Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例，不含集群路由 | 8 / 8（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |
 | Elasticsearch | 8.19、9.5 | HTTP（reqwest） | ⚠️ 单节点直连，不含 API Key 认证 | 6 / 6（独立用例，`elasticsearch_smoke.rs`，两个版本各跑一遍） |
 | OpenSearch | 3.8 | Elasticsearch（同一个连接类型） | ⚠️ 同上；只读账号列不出对象树 | 6 / 6（同一份用例，按服务端分支） |
@@ -127,7 +127,9 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
   聚合管道、结构页（索引、校验规则、视图定义；可建与删索引）、按条件导出与导入
   （mongoexport 格式，可选保留全部类型；导入可按 `_id` 覆盖）。值的写法用 mongosh 的，
   显示出来的原样粘回条件框就能用，改一个字段不会换掉别的字段的类型；改文档时别处
-  改过它就不覆盖。还没有的：mongosh 命令。
+  改过它就不覆盖。命令台标签跑一条 `db.runCommand({...})`（`distinct`、`serverStatus`、用户管理……），
+  写法同筛选框；删除类与无条件的批量写按「危险语句确认」先问，认不出的命令按写算，改连接登录
+  状态的（`logout` 等）拒跑，`find` 只回第一批。还没有的：`db.coll.find()` 这种 JS 写法（要 JS 引擎）。
   详见 [用户手册](docs/user-manual.md#mongodb)。
 - **Redis**：连接（口令与 ACL 用户、库号、TLS 与 CA、SSH 隧道）、对象树列出有键的逻辑库、
   键浏览页（按模式与类型用 `SCAN` 逐页翻，每个键带类型与剩余时间；string、hash、list、set、
@@ -135,7 +137,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
   的写法转义并标出）、命令行（写法与回答都同 redis-cli；会阻塞或改连接状态的命令拒跑，
   清库、`KEYS`、改服务端的先确认）；界面上删键、改名（不覆盖已有的）、设或去过期、改字符串
   （别处改过就不覆盖，剩余时间不变）、改 hash / list / set / zset 的元素（同样先比对再写）、
-  新建键。还没有的：stream 的写入（命令行里能做）、集群与 Sentinel。
+  新建键、stream 加条目与按 ID 删条目。还没有的：集群与 Sentinel。
   详见 [用户手册](docs/user-manual.md#redis)。
 - **Neo4j**：连接（用户名口令或不认证；库空着就是用户的主库；TLS 与 CA；SSH 隧道）、对象树按库
   列出标签与关系类型（点开是一条 `MATCH` 查询，开出来就跑）、Cypher 查询标签（多条按分号依次
@@ -179,13 +181,14 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 - 查询失败时显示数据库原话：SQLSTATE、出错行列（PostgreSQL 可一键跳过去）、
   DETAIL、HINT、约束与表名，可一键复制完整详情
 - 危险语句执行前确认，门槛按环境可配（设置 → 危险语句确认）；确认不代替数据库权限
-- 把当前标签存成 `.sql` 文件（⌘S），或打开一个 `.sql` 到新标签（标签栏 📂）
+- 把当前标签存成 `.sql` 文件（⌘S），或打开一个 `.sql` 到新标签（标签栏 📂）；从文件打开或存过的
+  标签 ⌘S 写回原文件（文件在别处被改过或删了先问），⇧⌘S 另存为
 - SQL 草稿随工作区恢复；执行历史是独立的一份，记录时间、连接、数据库、语句、
   耗时、状态与影响行数（失败 / 取消 / 超时一样记），可按文本、连接、日期与状态
   搜索，可收藏、命名和打标签，保留周期与条数上限可配（设置 → 查询历史保留）
 - 历史里**不存任何结果行**；语句里的口令在写入前就被替换成 `'***'`，
   `IDENTIFIED BY`、`PASSWORD =`、敏感列名赋值与 `INSERT` 的对应列都覆盖到
-- Cypher、Elasticsearch 的请求与 Redis 的命令同样进历史（带语言标记、按各自的写法脱敏），
+- Cypher、Elasticsearch 的请求、Redis 与 MongoDB 的命令同样进历史（带语言标记、按各自的写法脱敏），
   从历史里打开只给同一种语言的连接
 
 ### 📊 数据浏览与编辑
@@ -466,7 +469,7 @@ v0.3 只差 Windows 安装验证，所以这一版**不提供 Windows 安装包*
 
 - 🔗 MySQL、PostgreSQL、SQLite、SQL Server、Oracle；MariaDB、TiDB、CockroachDB
   走对应的连接类型，每一格都有真库用例（见兼容性矩阵）
-- 🍃 MongoDB：库与集合、文档的条件 / 排序 / 分页、增删改、集合的建与删、执行计划；
+- 🍃 MongoDB：库与集合、文档的条件 / 排序 / 分页、增删改、集合的建与删、执行计划、命令台；
   认证库、TLS、客户端证书与 X.509 登录、`mongodb+srv://`、SSH 隧道
 - 🔑 Redis：逻辑库、按模式翻键、六种类型的值、redis-cli 写法的命令行，
   键与元素的增删改；口令 / ACL 用户、TLS、SSH 隧道。不含集群与 Sentinel
