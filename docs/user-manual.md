@@ -82,7 +82,7 @@
 | --- | --- |
 | 连接名称 | 只给自己看，列表和标签上显示它 |
 | 环境 | 开发 / 测试 / 预发 / 生产。见下面的[环境](#环境) |
-| 数据库类型 | MySQL、PostgreSQL、SQLite、SQL Server、Oracle、DuckDB、MongoDB、Redis、Neo4j、Elasticsearch，以及 MariaDB、TiDB、CockroachDB。ClickHouse 是计划中的，置灰选不了 |
+| 数据库类型 | MySQL、PostgreSQL、SQLite、SQL Server、Oracle、DuckDB、ClickHouse、MongoDB、Redis、Neo4j、Elasticsearch，以及 MariaDB、TiDB、CockroachDB |
 | 主机地址、端口 | 数据库服务器的地址。端口按类型自动填默认值 |
 | 数据库名称 | 连上之后默认进入的库。MySQL 必须填：对象树、补全和 ER 图都按这个库读 |
 | 用户名、密码 | 数据库账号 |
@@ -177,6 +177,32 @@ MySQL / PostgreSQL 协议，连上之后的用法和 MySQL / PostgreSQL 一样�
   `nextval('序列名')`。
 - CSV 导入选「跳过坏行」时，事务策略固定成「每批一个事务」：DuckDB 没有保存点，
   没法在一个事务里只撤掉坏行。
+
+**ClickHouse** 连的是它的 HTTP 接口：端口默认 8123，加密是 8443；9000 是原生协议的端口，
+这里连不上。用户名空着是 `default` 用户，库空着是这个用户的默认库。TLS 只收 CA 证书。
+能做的：执行、对象树（按库列出表、视图、物化视图、字典）、表结构、补全、ER 图、表数据浏览、
+执行计划、导出。与别家不同的几点：
+
+- **表格只读，没有事务，也没有 CSV 导入**。ClickHouse 没有通用事务，`UPDATE` / `DELETE` 在
+  它那里是后台异步执行的 mutation，报不出可信的影响行数——表格保证不了「改的恰好是这一行」。
+  表格上方写着这个原因。要写库，在编辑器里写 `INSERT`、`ALTER TABLE … UPDATE … WHERE …`、
+  `ALTER TABLE … DELETE WHERE …`，照常过危险语句确认；确认框会写明这条语句「在 ClickHouse 上
+  不受事务保护」，执行即落库。
+- 超时、「取消」、结果到了行数上限，都会在服务端停下那条查询，不只是这边不再读。
+- 每个查询标签是一个会话：`SET` 过的设置、建的临时表在这个标签里一直有效（空闲一小时后
+  服务端会收回）。别的标签看不到。
+- 只读账号（`readonly = 1`）照样能用：这里不改任何服务端设置。
+- 值按 ClickHouse 自己的写法显示：数组 `[1,2]`、Map `{'k':1}`、元组 `(1,'a')`，原样粘回 SQL
+  就能用。`UInt64`、`Int128`、`Decimal` 精确到每一位，`Decimal(10, 2)` 的 10.5 显示成 `10.50`。
+  `nan`、`inf` 原样显示；不是 UTF-8 的字符串按二进制（十六进制）显示。
+- 主键不唯一（它是排序用的稀疏索引，不约束重复），所以翻页按主键列加其余全部列排序。
+  结构页的「主键」一栏照 ClickHouse 的主键表达式标出用到的列。
+- `SELECT *` 不带 MATERIALIZED 与 ALIAS 列；表数据页把列名一个个写出来，这些列照样有值。
+  EPHEMERAL 列不存值，那一列是空的。
+- 执行计划是 `EXPLAIN indexes = 1`：展开读表那一步，能看到主键、分区、跳数索引各把
+  granule 筛到了多少（`1 / 23 granules`）。没有行数估算，也没有「真的执行一遍」。
+- ER 图只有表和列：ClickHouse 没有外键。用户自定义函数（`CREATE FUNCTION`）不在对象树里。
+- 筛选的「包含 / 开头是 / 结尾是」用 `LIKE`，`%`、`_` 与反斜杠会被转义成字面字符。
 
 ### 打开数据库文件
 

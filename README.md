@@ -30,15 +30,14 @@
 ### 🔗 数据库支持
 
 - **可连接并执行查询**: MySQL, PostgreSQL, SQLite, SQL Server, Oracle, DuckDB（见兼容性矩阵）
+- **可连接并执行查询，表格只读**: ClickHouse（HTTP 接口；没有通用事务，写库在编辑器里写 SQL）
 - **可连接、浏览与改文档**: MongoDB（库、集合、文档；条件、排序与编辑都用 mongosh 写法；`db.runCommand` 命令台）
 - **可连接、浏览键值与跑命令**: Redis（逻辑库、按模式翻键、六种类型的值、redis-cli 写法的命令行）
 - **可连接并执行 Cypher**: Neo4j（库、标签与关系类型；结果里的节点、关系、路径按 Cypher 字面量显示）
 - **可连接并发请求**: Elasticsearch（索引、别名、数据流；Kibana Dev Tools 写法的控制台）
-- **计划中，当前版本连不上**: ClickHouse
 
-  不是「能连上但不能查」——这些库的驱动都没有编进来，建连这一步就认不出来。
-  连接表单里它们可见但置灰，选中不了；后端 `test_connection` 也会直接拒绝，
-  免得手改过的存档绕过界面去撞一句驱动层的报错。
+连接表单里列出的每一种类型现在都能连。后端 `test_connection` 仍然留着「没有驱动就拒绝」
+那道门，给以后新增、还没接上的类型用。
 
 #### 兼容性矩阵
 
@@ -58,7 +57,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 | SQL Server | 2022 | SQL Server | ✅ 支持 | 17 / 17（独立用例，`sql_server_smoke.rs`，含改结构语料） |
 | Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 14 / 14（独立用例，`oracle_smoke.rs`，含改结构语料） |
 | DuckDB | 1.5.5（编进应用） | DuckDB（libduckdb） | ✅ 支持 | 16 / 16（独立用例，`duckdb_smoke.rs`，每次都跑，含改结构语料） |
-| ClickHouse | 25.8 | ClickHouse（HTTP 接口，reqwest） | ⚠️ 表格只读，没有事务 | 11 / 11（独立用例，`clickhouse_smoke.rs`） |
+| ClickHouse | 25.8 | ClickHouse（HTTP 接口，reqwest） | ⚠️ 表格只读，没有事务 | 12 / 12（独立用例，`clickhouse_smoke.rs`） |
 | MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 32 / 32（独立用例，`mongodb_smoke.rs`） |
 | Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机，不含集群 | 11 / 11（独立用例，`redis_smoke.rs`） |
 | Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例，不含集群路由 | 8 / 8（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |
@@ -123,6 +122,24 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
     改默认值可以），要先删索引或外键。没有自增列：要自增
     先建序列，主键的默认值写 `nextval('序列名')`。
   - 没有保存点：CSV 导入时「跳过坏行」只能每批一个事务（坏的那一批整批撤掉、逐行重写）。
+- **ClickHouse**：走 HTTP 接口（8123，加密 8443；不用 9000 的原生协议）。连接（用户名口令，
+  空着是 `default` 用户；库空着是这个用户的默认库；TLS 与 CA；SSH 隧道）、编辑器（结果上限、超时、
+  取消、错误码与出错位置；`SET` 与临时表留在这个标签的会话里）、对象树按库列出表、视图、物化视图
+  与字典、结构页（列、主键与跳数索引、建表原文）、表数据（分页、排序、筛选）、补全、ER 图、
+  执行计划、导出。与别家不同的几点：
+  - **表格只读，也没有事务与 CSV 导入**：ClickHouse 没有通用事务，`UPDATE` / `DELETE` 是后台异步
+    的 mutation、回不了可信的影响行数，保证不了「改的恰好是这一行」。写库在编辑器里写 `INSERT`、
+    `ALTER TABLE … UPDATE / DELETE`，照常过危险语句确认，确认框写明「事务包不住它」。
+  - 取消、超时、到了行数上限，都会在服务端停下那条查询（`KILL QUERY`），不只是这边不读了。
+  - 不改任何服务端设置，`readonly = 1` 的只读账号照样能用。
+  - 值按 ClickHouse 自己的写法显示：数组 `[1,2]`、Map `{'k':1}`、元组 `(1,'a')`，粘回 SQL 就能用；
+    `UInt64` / `Int128` 与 `Decimal` 精确到每一位，`Decimal(10, 2)` 的 10.5 显示成 `10.50`；
+    `nan`、`inf` 原样；不是 UTF-8 的字符串按二进制显示。
+  - 主键不唯一（它是稀疏索引的排序键），所以表数据按主键列加其余列翻页；MATERIALIZED 与
+    ALIAS 列照样显示（`SELECT *` 不带它们，这里把列名写出来）。
+  - 执行计划是 `EXPLAIN indexes = 1`：读表那一步写出主键、分区、跳数索引各把 granule 筛到了多少；
+    没有「真的执行一遍」。ER 图只有表和列：ClickHouse 没有外键。
+  - 筛选里的「包含」这类走 `LIKE`，ClickHouse 没有 `ESCAPE`，这里用反斜杠转义 `%` 与 `_`。
 - **MongoDB**：连接（认证库、TLS 与 CA、SSH 隧道、`mongodb+srv://` 即 Atlas、客户端证书与 X.509 登录）、对象树按库列出集合与视图（可新建集合、删除集合与视图）、集合页
   （条件、排序、分页、总数、执行计划）、按 `_id` 改、增、删单个文档、按条件批量改与删、只读的
   聚合管道、结构页（索引、校验规则、视图定义；可建与删索引）、按条件导出与导入
@@ -468,8 +485,9 @@ bun install
 版本号对应 [TODOs.md](TODOs.md)「发布里程碑」：v0.2、v0.4 的条件已满足；
 v0.3 只差 Windows 安装验证，所以这一版**不提供 Windows 安装包**。
 
-- 🔗 MySQL、PostgreSQL、SQLite、SQL Server、Oracle；MariaDB、TiDB、CockroachDB
+- 🔗 MySQL、PostgreSQL、SQLite、SQL Server、Oracle、DuckDB；MariaDB、TiDB、CockroachDB
   走对应的连接类型，每一格都有真库用例（见兼容性矩阵）
+- 📈 ClickHouse：查询、对象与结构浏览、只读表数据、执行计划、导出；取消即在服务端停下
 - 🍃 MongoDB：库与集合、文档的条件 / 排序 / 分页、增删改、集合的建与删、执行计划、命令台；
   认证库、TLS、客户端证书与 X.509 登录、`mongodb+srv://`、SSH 隧道
 - 🔑 Redis：逻辑库、按模式翻键、六种类型的值、redis-cli 写法的命令行，
