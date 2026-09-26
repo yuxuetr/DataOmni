@@ -35,7 +35,7 @@ export interface ResizableColumns {
 export function useResizableColumns(
   columns: readonly string[],
   rows: readonly (readonly SerializedResultValue[])[],
-  /** 各列表头徽标的宽度，见 `headerBadgeWidth`；查询结果的表头没有徽标 */
+  /** 各列表头徽标的宽度，见 `headerBadgeWidth` */
   headerBadges: readonly number[] = NO_BADGES
 ): ResizableColumns {
   const [overrides, setOverrides] = useState<Record<string, number>>({});

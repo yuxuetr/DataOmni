@@ -40,6 +40,7 @@ import { CellInputEditor } from './CellInputEditor';
 import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
+import { headerBadgeWidth } from '../utils/columnWidths';
 import { GridCellValue } from './GridCellValue';
 import { GridContextMenu, type GridContextTarget } from './GridContextMenu';
 import { ColumnSortButton } from './ColumnSortButton';
@@ -205,8 +206,13 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
 
   const ACTION_COLUMN_WIDTH = 72;
   // 列宽按当前页的内容估算，可拖动覆盖
+  // 与表头里画钥匙的条件是同一组：没算进去的话，`id` 这种短列名被钥匙挤成「i…」
+  const headerBadges = React.useMemo(
+    () => result.columns.map((column) => headerBadgeWidth({ isPrimaryKey: keyColumns.has(column), isRequired: false })),
+    [result.columns, keyColumns]
+  );
   const { widths, alignments, totalWidth, startResize, autoFitColumn, resizingIndex } =
-    useResizableColumns(result.columns, currentRows);
+    useResizableColumns(result.columns, currentRows, headerBadges);
   const tableWidth = totalWidth + (canEdit ? ACTION_COLUMN_WIDTH : 0);
   
   // 编辑相关函数
