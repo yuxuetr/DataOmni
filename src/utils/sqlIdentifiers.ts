@@ -11,6 +11,10 @@ export const quoteSqlIdentifier = (
   if (dialect === 'sqlserver') {
     return `[${identifier.split(']').join(']]')}]`;
   }
+  // ClickHouse 的反引号里反斜杠也是转义符：`e\\f` 是名字 `e\f`。先转义反斜杠，再转义反引号
+  if (dialect === 'clickhouse') {
+    return `\`${identifier.split('\\').join('\\\\').split('`').join('``')}\``;
+  }
   const quote = dialect === 'mysql' ? '`' : '"';
   return `${quote}${identifier.split(quote).join(quote + quote)}${quote}`;
 };
@@ -27,7 +31,13 @@ export const quoteQualifiedSqlIdentifier = (
  * 而不是抛错——这条路径上真正重要的是「别让一个陌生类型把界面整个打掉」。
  */
 export function identifierDialectFor(dbType: string): SqlIdentifierDialect {
-  if (dbType === 'mysql' || dbType === 'sqlserver' || dbType === 'oracle' || dbType === 'duckdb') {
+  if (
+    dbType === 'mysql'
+    || dbType === 'sqlserver'
+    || dbType === 'oracle'
+    || dbType === 'duckdb'
+    || dbType === 'clickhouse'
+  ) {
     return dbType;
   }
   return dbType === 'postgresql' ? 'postgresql' : 'sqlite';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { suggestIndexName } from './objectDdl';
+import { dropObjectSql, suggestIndexName, truncateTableSql } from './objectDdl';
 
 describe('起手的索引名', () => {
   it('普通索引 idx_，唯一索引 uq_', () => {
@@ -19,5 +19,15 @@ describe('起手的索引名', () => {
     expect(name.startsWith('idx_订单明细表_')).toBe(true);
     // 截在字的边界上：没有被劈开的半个字
     expect(name).not.toContain('�');
+  });
+});
+
+describe('ClickHouse 的删除与清空', () => {
+  it('物化视图照视图删：它不认 DROP MATERIALIZED VIEW（25.8 上试过）', () => {
+    expect(dropObjectSql({ schema: 'db', name: 'mv', kind: 'materialized-view' }, 'clickhouse'))
+      .toBe('DROP VIEW `db`.`mv`');
+    expect(dropObjectSql({ schema: 'db', name: 'mv', kind: 'materialized-view' }, 'postgresql'))
+      .toBe('DROP MATERIALIZED VIEW "db"."mv"');
+    expect(truncateTableSql({ schema: 'db', name: 't' }, 'clickhouse')).toBe('TRUNCATE TABLE `db`.`t`');
   });
 });

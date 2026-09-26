@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { supportsFeature } from '../contracts/databaseSupport';
+import { hasGapsByDesign, supportsFeature } from '../contracts/databaseSupport';
 import { useLanguageStore } from '../stores/languageStore';
 import { runReadQuery, useQueryStore } from '../stores/queryStore';
 import { isTaggedResultValue, unwrapResultValue } from '../utils/resultValues';
@@ -42,7 +42,8 @@ import {
   createSortedOrderClause,
   createTablePaginationOrder,
   type TablePaginationOrder,
-  pageClause
+  pageClause,
+  tableProjection
 } from '../utils/tablePagination';
 import { buildTableExportQuery } from '../utils/tableExportQuery';
 import { nextColumnSort, type ColumnSort } from '../utils/resultSorting';
@@ -474,7 +475,7 @@ export default function TableDataViewer({
       // 用户排序列拼在前，分页排序列追加在后作决胜条件——按不唯一的列排序时，
       // 没有决胜条件翻页会重复或漏行
       const orderClause = createSortedOrderClause(order, sortRef.current, dialect);
-      const dataQuery = `SELECT * FROM ${tableReference} ${whereClause} `
+      const dataQuery = `SELECT ${tableProjection(loadedSchema.columns, dialect)} FROM ${tableReference} ${whereClause} `
         + pageClause(orderClause, limitValue, offsetValue, dialect);
 
       const dataResult = await runReadQuery(dataQuery);
@@ -587,6 +588,10 @@ export default function TableDataViewer({
   // 能定位到行是必要条件；SQL Server 这一阶段还没接上写入，同样只读
   const editable = rowIdentity.identity !== null && supportsFeature(dialect, 'dataEditing');
   const readOnlyMessage = (() => {
+    // 有意不做的（ClickHouse 没有事务）：不管有没有主键都是这一句，说「没有唯一键」会让人去建一个
+    if (hasGapsByDesign(dialect) && !supportsFeature(dialect, 'dataEditing')) {
+      return t('table.readOnly.noTransactions');
+    }
     // 定位得到行、只是这个类型还没接上写入：说清楚是哪一种，免得有人去查主键
     if (rowIdentity.identity !== null && !supportsFeature(dialect, 'dataEditing')) {
       return t('table.readOnly.pendingFeature');

@@ -19,6 +19,7 @@ export const KIND_LABEL_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
   'data-stream': 'objectKind.data-stream',
   view: 'objectKind.view',
   'materialized-view': 'objectKind.materialized-view',
+  dictionary: 'objectKind.dictionary',
   function: 'objectKind.function',
   procedure: 'objectKind.procedure',
   sequence: 'objectKind.sequence'
@@ -42,6 +43,7 @@ export const KIND_BADGE_KEYS: Record<DatabaseObjectKind, TranslationKey> = {
   'data-stream': 'objectKindOne.data-stream',
   view: 'objectKindOne.view',
   'materialized-view': 'objectKindOne.materialized-view',
+  dictionary: 'objectKindOne.dictionary',
   function: 'objectKindOne.function',
   procedure: 'objectKindOne.procedure',
   sequence: 'objectKindOne.sequence'
@@ -59,6 +61,7 @@ const KIND_ORDER: DatabaseObjectKind[] = [
   'alias',
   'view',
   'materialized-view',
+  'dictionary',
   'function',
   'procedure',
   'sequence'
@@ -83,8 +86,10 @@ export function showsSchemaLevel(dbType: DatabaseType): boolean {
   // SQL Server 与 PostgreSQL 一样：一个库里有 dbo 和业务 schema，schema 是真实维度
   // Oracle 的 schema 就是用户：一个连接能看到别的用户授给它的表
   // DuckDB 一个文件里有 main 和用户建的 schema，和 PostgreSQL 一样是真实维度
-  // MongoDB 的一个连接横跨所有库，库就是这一层；Neo4j 同样（企业版一台服务端多个库）
+  // MongoDB 的一个连接横跨所有库，库就是这一层；Neo4j 同样（企业版一台服务端多个库）；
+  // ClickHouse 也是：一个连接看得到所有库
   return dbType === DatabaseType.PostgreSQL
+    || dbType === DatabaseType.ClickHouse
     || dbType === DatabaseType.SqlServer
     || dbType === DatabaseType.Oracle
     || dbType === DatabaseType.DuckDB
@@ -96,7 +101,7 @@ export function showsSchemaLevel(dbType: DatabaseType): boolean {
 export function isBrowsableKind(kind: DatabaseObjectKind): boolean {
   return kind === 'table' || kind === 'collection' || kind === 'keyspace' || kind === 'label'
     || kind === 'relationship-type' || kind === 'index' || kind === 'alias' || kind === 'data-stream'
-    || kind === 'view' || kind === 'materialized-view';
+    || kind === 'view' || kind === 'materialized-view' || kind === 'dictionary';
 }
 
 export function normalizeObjectRows(

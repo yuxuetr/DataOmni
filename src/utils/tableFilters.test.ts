@@ -113,6 +113,20 @@ describe('buildFilterClause', () => {
     ).toBe('');
   });
 
+  it('ClickHouse 的 LIKE 没有 ESCAPE，用反斜杠转义，字面量层再写一遍', () => {
+    // 25.8 上跑过：这一句对 '100%_C:\\x' 为真，对 '100a_C:\\x'、'100%bC:\\x' 为假
+    expect(
+      buildFilterClause(
+        [filter({ column: 'note', operator: 'contains', value: '100%_C:\\x' })],
+        COLUMNS,
+        'clickhouse'
+      )
+    ).toBe("WHERE `note` LIKE '%100\\\\%\\\\_C:\\\\\\\\x%'");
+    expect(
+      buildFilterClause([filter({ column: 'name', operator: 'eq', value: "O'Brien\\" })], COLUMNS, 'clickhouse')
+    ).toBe("WHERE `name` = 'O''Brien\\\\'");
+  });
+
   it('MySQL 的反斜杠在 LIKE 模式里也只转义一层', () => {
     // 转义符选 `!` 而不是 `\` 就是为了避开字面量层与 LIKE 层的双重转义
     expect(

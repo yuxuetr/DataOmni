@@ -58,6 +58,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 | SQL Server | 2022 | SQL Server | ✅ 支持 | 17 / 17（独立用例，`sql_server_smoke.rs`，含改结构语料） |
 | Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 14 / 14（独立用例，`oracle_smoke.rs`，含改结构语料） |
 | DuckDB | 1.5.5（编进应用） | DuckDB（libduckdb） | ✅ 支持 | 16 / 16（独立用例，`duckdb_smoke.rs`，每次都跑，含改结构语料） |
+| ClickHouse | 25.8 | ClickHouse（HTTP 接口，reqwest） | ⚠️ 表格只读，没有事务 | 11 / 11（独立用例，`clickhouse_smoke.rs`） |
 | MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 32 / 32（独立用例，`mongodb_smoke.rs`） |
 | Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机，不含集群 | 11 / 11（独立用例，`redis_smoke.rs`） |
 | Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例，不含集群路由 | 8 / 8（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |

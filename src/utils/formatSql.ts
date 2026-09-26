@@ -28,6 +28,8 @@ export function sqlFormatterLanguage(dbType: DatabaseType): SqlLanguage | null {
       return 'plsql';
     case DatabaseType.DuckDB:
       return 'duckdb';
+    case DatabaseType.ClickHouse:
+      return 'clickhouse';
     default:
       return null;
   }

@@ -24,7 +24,7 @@ export interface SqlStatementRange {
  *
  * `dialect` 不给时按最宽的规则切（`#` 也算注释），给了就按那一家的写法：
  *
- * - `#` 只有 MySQL 是注释。PostgreSQL 里它是按位异或，SQL Server 里 `#t` 是
+ * - `#` 只有 MySQL 与 ClickHouse 是注释。PostgreSQL 里它是按位异或，SQL Server 里 `#t` 是
  *   临时表——当成注释的话 `SELECT 1 INTO #t;` 那一行的分号就被吞了。
  * - SQL Server 的 `[...]` 是标识符，里面的 `'` 与 `;` 不算数。
  * - SQL Server 的脚本常用单独一行的 `GO` 分批（SSMS 的约定，不是 T-SQL 语法）。
@@ -80,7 +80,7 @@ function scanStatements(
   let state: LexerState = NORMAL_STATE;
   let index = 0;
   let sawBatchSeparator = false;
-  const hashComments = dialect === undefined || dialect === 'mysql';
+  const hashComments = dialect === undefined || dialect === 'mysql' || dialect === 'clickhouse';
 
   const flush = () => {
     const statement = buffer.trim();

@@ -28,7 +28,7 @@ interface ObjectDefinitionDialogProps {
  *
  * 三类各有各的来源，都是数据库自己吐出来的原文，不是我们从目录拼的：
  * - 例程：`pg_get_functiondef` / `INFORMATION_SCHEMA.ROUTINES`
- * - 视图与物化视图：`pg_get_viewdef` / `SHOW CREATE TABLE` / `sqlite_master`，
+ * - 视图、物化视图与 ClickHouse 的字典：`pg_get_viewdef` / `SHOW CREATE TABLE` / `sqlite_master`，
  *   和结构页里那段「对象定义」走的是同一条查询
  * - 序列没有 `CREATE SEQUENCE` 的反解函数，但 `pg_sequences` 直接给出定义它的
  *   全部属性——如实列属性，不去拼一条可能不等价的 CREATE SEQUENCE
@@ -66,7 +66,8 @@ export function ObjectDefinitionDialog({
 
     const load = async () => {
       try {
-        if (object.kind === 'view' || object.kind === 'materialized-view') {
+        // ClickHouse 的字典同样：`system.tables` 里存着它的 `CREATE DICTIONARY` 原文
+        if (object.kind === 'view' || object.kind === 'materialized-view' || object.kind === 'dictionary') {
           const metadata = await invoke<SchemaMetadataQueries>('get_schema_metadata_queries', {
             dbType: connection.db_type
           });

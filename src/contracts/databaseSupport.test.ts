@@ -9,6 +9,7 @@ import {
   supportsFeature,
   SUPPORTED_DATABASE_TYPES,
   isDatabaseTypeSupported,
+  hasGapsByDesign,
   hasQueryEditor,
   speaksSql
 } from './databaseSupport';
@@ -46,7 +47,7 @@ function sqlxDriverFeatures(): Set<string> {
 function standaloneDrivers(): DatabaseType[] {
   return Object.entries(STANDALONE_DRIVER_CRATES)
     .filter(([crate]) => CARGO_TOML.split('\n').some((line) => line.startsWith(`${crate} =`)))
-    .map(([, type]) => type);
+    .flatMap(([, types]) => types);
 }
 
 describe('数据库类型支持范围', () => {
@@ -65,8 +66,12 @@ describe('数据库类型支持范围', () => {
     expect(isDatabaseTypeSupported(DatabaseType.PostgreSQL)).toBe(true);
   });
 
-  it('没有驱动的类型一律不可用', () => {
-    expect(isDatabaseTypeSupported(DatabaseType.ClickHouse)).toBe(false);
+  // ClickHouse 接上之后（2026-09-26）每一种类型都有驱动了。以后加一种还没接的类型，
+  // 在这里断言它不可用
+  it('枚举里的每一种都能连', () => {
+    for (const type of Object.values(DatabaseType)) {
+      expect(isDatabaseTypeSupported(type), type).toBe(true);
+    }
   });
 });
 
@@ -75,7 +80,8 @@ describe('分阶段接入的类型', () => {
   const MATRIX_NAMES: Partial<Record<DatabaseType, string>> = {
     [DatabaseType.SqlServer]: 'SQL Server',
     [DatabaseType.Oracle]: 'Oracle',
-    [DatabaseType.DuckDB]: 'DuckDB'
+    [DatabaseType.DuckDB]: 'DuckDB',
+    [DatabaseType.ClickHouse]: 'ClickHouse'
   };
 
   it('README 兼容性矩阵把它们标成「有缺口」，全都做完之后就不再是', () => {
@@ -87,6 +93,16 @@ describe('分阶段接入的类型', () => {
       expect(verdict.startsWith('⚠️'), `${name}: 还缺 ${pending} 项，矩阵写的是「${verdict}」`)
         .toBe(pending > 0);
     }
+  });
+
+  it('「有意不做」只说给真有缺口的类型', () => {
+    for (const type of Object.values(DatabaseType)) {
+      if (hasGapsByDesign(type)) {
+        expect(PENDING_FEATURES[type]?.length ?? 0, type).toBeGreaterThan(0);
+      }
+    }
+    expect(hasGapsByDesign(DatabaseType.ClickHouse)).toBe(true);
+    expect(hasGapsByDesign(DatabaseType.SqlServer)).toBe(false);
   });
 
   it('只有列在清单里的功能才被挡住', () => {
@@ -113,8 +129,6 @@ describe('走不走 SQL', () => {
     for (const type of SUPPORTED_DATABASE_TYPES) {
       expect(speaksSql(type), type).toBe(!nonSql.has(type));
     }
-    // 连不上的类型谈不上走不走
-    expect(speaksSql(DatabaseType.ClickHouse)).toBe(false);
   });
 
   it('查询编辑器：走 SQL 的都有，Neo4j 写 Cypher、Elasticsearch 写请求、MongoDB 写命令文档也有；Redis 没有', () => {

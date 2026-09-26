@@ -46,7 +46,7 @@ import { ColumnSortButton } from './ColumnSortButton';
 import { nextColumnSort, sortRowsByColumn, type ColumnSort } from '../utils/resultSorting';
 import { useCellSelection } from '../hooks/useCellSelection';
 import { selectionSubset } from '../utils/cellSelection';
-import { supportsFeature } from '../contracts/databaseSupport';
+import { hasGapsByDesign, supportsFeature } from '../contracts/databaseSupport';
 import { useLanguageStore } from '../stores/languageStore';
 import { ExportResultDialog, type ExportScope } from './ExportResultDialog';
 import { ResultChartDialog } from './ResultChartDialog';
@@ -177,7 +177,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   const readOnlyReason = (() => {
     // 这类连接还没接上表格编辑：说这个，而不是去猜索引读没读到
     if (editability && !supportsFeature(dialect, 'dataEditing')) {
-      return t('table.readOnly.pendingFeature');
+      return t(hasGapsByDesign(dialect) ? 'table.readOnly.noTransactions' : 'table.readOnly.pendingFeature');
     }
     if (!editability || editability.editable) {
       return null;

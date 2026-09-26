@@ -348,24 +348,21 @@ WHERE s.schema_name || '.' || s.sequence_name = $1
 
 /// ClickHouse：一个「库」就是 schema 那一层。种类按引擎分：视图、物化视图、字典，其余是表。
 /// 物化视图背后的存储表（`.inner.…`、`.inner_id.…`）是它的内部细节，不进树。
-/// 用户函数（`CREATE FUNCTION`）不属于哪个库，schema 那一格空着
+///
+/// 用户函数（`CREATE FUNCTION`）这一版不进树：它不属于哪个库，而树的第一层就是库，放进来是
+/// 一个没有名字的分组。重估条件：有人要在树里看它（那时给它一个自己的顶层分组）。
+/// `routine_definition` 照样给着——结构体要它，也不妨碍以后接上
 const CLICKHOUSE_OBJECTS: &str = r#"
-SELECT object_schema, object_name, object_kind, object_id FROM (
-  SELECT
-    t.database AS object_schema,
-    t.name AS object_name,
-    multiIf(t.engine = 'View', 'view', t.engine = 'MaterializedView', 'materialized-view',
-      t.engine = 'Dictionary', 'dictionary', 'table') AS object_kind,
-    concat(t.database, '.', t.name) AS object_id
-  FROM system.tables t
-  WHERE t.database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')
-    AND NOT t.is_temporary
-    AND NOT startsWith(t.name, '.inner')
-  UNION ALL
-  SELECT '', f.name, 'function', f.name
-  FROM system.functions f
-  WHERE f.origin = 'SQLUserDefined'
-)
+SELECT
+  t.database AS object_schema,
+  t.name AS object_name,
+  multiIf(t.engine = 'View', 'view', t.engine = 'MaterializedView', 'materialized-view',
+    t.engine = 'Dictionary', 'dictionary', 'table') AS object_kind,
+  concat(t.database, '.', t.name) AS object_id
+FROM system.tables t
+WHERE t.database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')
+  AND NOT t.is_temporary
+  AND NOT startsWith(t.name, '.inner')
 ORDER BY object_schema, object_kind, object_name
 "#;
 

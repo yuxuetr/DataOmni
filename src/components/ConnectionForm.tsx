@@ -23,6 +23,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
   isDatabaseTypeSupported,
+  hasGapsByDesign,
   PENDING_FEATURES,
   type PendingFeature
 } from '../contracts/databaseSupport';
@@ -255,8 +256,10 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
       // MongoDB 可以不开认证：本机和内网的库大多如此，空着就是不带凭据连
       // Redis 大多只有口令，用户名是 6.0 起 ACL 的
       // Neo4j 可以关着认证（`dbms.security.auth_enabled=false`），Elasticsearch 同样（8.0 之前默认就是关着的）
+      // ClickHouse 用户名空着就是 `default` 用户
       if (!formData.username?.trim() && formData.db_type !== DatabaseType.MongoDB && formData.db_type !== DatabaseType.Redis
-        && formData.db_type !== DatabaseType.Neo4j && formData.db_type !== DatabaseType.Elasticsearch) {
+        && formData.db_type !== DatabaseType.Neo4j && formData.db_type !== DatabaseType.Elasticsearch
+        && formData.db_type !== DatabaseType.ClickHouse) {
         errors.username = t('form.error.username');
       }
       // SRV 的端口在 DNS 里，这一格藏起来了
@@ -617,7 +620,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
               {/* 分阶段接入的类型：列出这一版还用不了的功能，清单和按钮的显隐是同一份 */}
               {!selectedPreset && formData.db_type && (PENDING_FEATURES[formData.db_type]?.length ?? 0) > 0 && (
                 <p className="mt-2 rounded-control border border-warning-line bg-warning-soft px-3 py-2 text-xs text-warning">
-                  {t('form.db.pendingFeatures', {
+                  {t(hasGapsByDesign(formData.db_type) ? 'form.db.gapsByDesign' : 'form.db.pendingFeatures', {
                     database: databaseTypes.find((entry) => entry.type === formData.db_type)?.name ?? '',
                     features: (PENDING_FEATURES[formData.db_type] ?? [])
                       .map((feature) => t(PENDING_FEATURE_KEYS[feature]))
@@ -817,6 +820,9 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                     {formData.db_type === DatabaseType.Neo4j && (
                       <p className="text-xs text-fg-muted mt-1">{t('form.neo4jDatabaseHint')}</p>
                     )}
+                    {formData.db_type === DatabaseType.ClickHouse && (
+                      <p className="text-xs text-fg-muted mt-1">{t('form.clickhouseDatabaseHint')}</p>
+                    )}
                   </div>
                 )}
 
@@ -851,7 +857,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-fg mb-1">
-                        {t('form.username')} {formData.db_type === DatabaseType.Elasticsearch || formData.db_type === DatabaseType.MongoDB || formData.db_type === DatabaseType.Redis || formData.db_type === DatabaseType.Neo4j ? '' : '*'}
+                        {t('form.username')} {formData.db_type === DatabaseType.Elasticsearch || formData.db_type === DatabaseType.MongoDB || formData.db_type === DatabaseType.Redis || formData.db_type === DatabaseType.Neo4j || formData.db_type === DatabaseType.ClickHouse ? '' : '*'}
                       </label>
                       <input
                         type="text"
@@ -1120,6 +1126,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   formData.db_type === DatabaseType.MongoDB ||
                   formData.db_type === DatabaseType.Redis ||
                   formData.db_type === DatabaseType.Neo4j ||
+                  formData.db_type === DatabaseType.ClickHouse ||
                   formData.db_type === DatabaseType.Elasticsearch) && (
                   <div className="space-y-4">
                     <div>
@@ -1153,6 +1160,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       || formData.db_type === DatabaseType.MongoDB
                       || formData.db_type === DatabaseType.Redis
                       || formData.db_type === DatabaseType.Neo4j
+                      || formData.db_type === DatabaseType.ClickHouse
                       || formData.db_type === DatabaseType.Elasticsearch)
                       && (formData.tls_mode ?? (formData.ssl ? 'required' : 'disabled')) !== 'disabled' && (
                       <div className="space-y-3 rounded-control border border-line bg-surface-sunken p-3">
@@ -1199,10 +1207,12 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                             <p className="text-xs text-fg-muted mt-1">{t('form.mongoClientCertHint')}</p>
                           </div>
                         )}
-                        {/* tiberius 只能校验服务端证书，不带客户端证书登录；Redis、Neo4j、Elasticsearch 这一版同样只收 CA */}
+                        {/* tiberius 只能校验服务端证书，不带客户端证书登录；Redis、Neo4j、Elasticsearch、ClickHouse
+                            这一版同样只收 CA */}
                         {formData.db_type !== DatabaseType.SqlServer && formData.db_type !== DatabaseType.MongoDB
                           && formData.db_type !== DatabaseType.Redis && formData.db_type !== DatabaseType.Neo4j
-                          && formData.db_type !== DatabaseType.Elasticsearch && (
+                          && formData.db_type !== DatabaseType.Elasticsearch
+                          && formData.db_type !== DatabaseType.ClickHouse && (
                         <>
                         <div>
                           <label htmlFor="client-certificate" className="block text-sm font-medium text-fg mb-1">

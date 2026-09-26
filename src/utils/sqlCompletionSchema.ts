@@ -91,7 +91,9 @@ export function buildCompletionSchema(
   dbType: DatabaseType,
   labels: CompletionLabels,
   /** 登录用户。Oracle 不带前缀的名字落在用户自己的 schema 里（名字大写） */
-  username?: string
+  username?: string,
+  /** 连接上填的库。ClickHouse 不带前缀的名字落在当前库里，空着是 `default` */
+  database?: string | null
 ): CompletionSchemaResult {
   if (!showsSchemaLevel(dbType)) {
     const flat: Record<string, SQLNamespace> = {};
@@ -120,8 +122,9 @@ export function buildCompletionSchema(
   return {
     schema,
     // 不带前缀的名字落在哪个 schema：PostgreSQL 是 public，SQL Server 是 dbo，
-    // DuckDB 是 main，Oracle 是登录用户（目录里是大写）
+    // DuckDB 是 main，Oracle 是登录用户（目录里是大写），ClickHouse 是连上的库
     defaultSchema: [
+      ...(dbType === DatabaseType.ClickHouse ? [database?.trim() || 'default'] : []),
       'public',
       'dbo',
       ...(dbType === DatabaseType.DuckDB ? ['main'] : []),
@@ -151,6 +154,9 @@ export function sqlDialectFor(dbType: DatabaseType): SQLDialect {
     // `RETURNING`、双引号标识符），关键字表也最接近
     case DatabaseType.DuckDB:
       return PostgreSQL;
+    // 也没有 ClickHouse 方言；它的标识符用反引号、`#` 是注释、字符串里反斜杠转义，都和 MySQL 一样
+    case DatabaseType.ClickHouse:
+      return MySQL;
     default:
       return StandardSQL;
   }

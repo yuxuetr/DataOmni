@@ -60,9 +60,9 @@ function scanStringLiterals(sql: string, dialect: SqlDialect): Span[] {
   while (index < sql.length) {
     const character = sql[index];
 
-    // `#` 只在 MySQL 里是注释。SQL Server 的临时表就叫 `#tmp`，当成注释会把
+    // `#` 只在 MySQL 与 ClickHouse 里是注释。SQL Server 的临时表就叫 `#tmp`，当成注释会把
     // 同一行后面的字面量整个跳过
-    if (sql.startsWith('--', index) || (character === '#' && dialect === 'mysql')) {
+    if (sql.startsWith('--', index) || (character === '#' && (dialect === 'mysql' || dialect === 'clickhouse'))) {
       const lineEnd = sql.indexOf('\n', index);
       index = lineEnd === -1 ? sql.length : lineEnd + 1;
       continue;
@@ -104,13 +104,13 @@ function scanStringLiterals(sql: string, dialect: SqlDialect): Span[] {
 /**
  * `start` 处的单引号字面量里反斜杠是不是转义符。
  *
- * 只有 MySQL 默认如此；PostgreSQL 与 DuckDB 只在 `E'…'` 里才是，其余几家从来不是。
+ * MySQL 与 ClickHouse 默认如此；PostgreSQL 与 DuckDB 只在 `E'…'` 里才是，其余几家从来不是。
  * 认错一边，字面量边界就错位：PostgreSQL 的 `'C:\'` 按 MySQL 算会一路吞到下一个
  * 字面量的开引号，后面的口令落到「字面量外面」而漏打；反过来 MySQL 的 `'it\'s'`
  * 按标准算也一样
  */
 function backslashEscapes(sql: string, start: number, dialect: SqlDialect): boolean {
-  if (dialect === 'mysql') {
+  if (dialect === 'mysql' || dialect === 'clickhouse') {
     return true;
   }
   return (dialect === 'postgresql' || dialect === 'duckdb')

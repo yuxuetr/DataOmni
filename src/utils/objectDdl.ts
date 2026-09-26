@@ -37,7 +37,11 @@ export function dropObjectSql(
   object: Pick<DatabaseObject, 'schema' | 'name'> & { kind: DroppableKind },
   dialect: SqlIdentifierDialect
 ): string {
-  return `DROP ${DROP_KEYWORDS[object.kind]} ${qualified(object, dialect)}`;
+  // ClickHouse 不认 `DROP MATERIALIZED VIEW`（25.8 上是语法错误），物化视图照视图删
+  const keyword = dialect === 'clickhouse' && object.kind === 'materialized-view'
+    ? 'VIEW'
+    : DROP_KEYWORDS[object.kind];
+  return `DROP ${keyword} ${qualified(object, dialect)}`;
 }
 
 /**

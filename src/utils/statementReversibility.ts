@@ -85,6 +85,28 @@ const NON_TRANSACTIONAL: Record<SqlDialect, readonly KeywordPrefix[]> = {
     ['PURGE'],
     ['FLASHBACK']
   ],
+  // ClickHouse 没有通用事务：写什么都是执行即落库，改在「事务里」跑也撤不回来。
+  // 列出会写的顶层动词，确认框据此说「事务包不住它」，而不是「改成在事务里跑就能回滚」
+  clickhouse: [
+    ['INSERT'],
+    ['ALTER'],
+    ['DELETE'],
+    ['UPDATE'],
+    ['CREATE'],
+    ['DROP'],
+    ['TRUNCATE'],
+    ['RENAME'],
+    ['EXCHANGE'],
+    ['OPTIMIZE'],
+    ['ATTACH'],
+    ['DETACH'],
+    ['UNDROP'],
+    ['MOVE'],
+    ['GRANT'],
+    ['REVOKE'],
+    ['SYSTEM'],
+    ['KILL']
+  ],
   sqlserver: [
     ['CREATE', 'DATABASE'],
     ['ALTER', 'DATABASE'],

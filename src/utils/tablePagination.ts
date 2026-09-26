@@ -23,6 +23,13 @@ export function createTablePaginationOrder(
   dialect: SqlIdentifierDialect
 ): TablePaginationOrder {
   const keyColumns = primaryKeyColumns(columns);
+  // ClickHouse 的主键不唯一（它是稀疏索引的排序前缀），按它排序时同键的行每页次序不定，
+  // 翻页会重复或漏掉。主键列在前、其余列跟在后面：顺序是确定的（只有整行相同的才分不出，
+  // 而那些本来就分不出），服务端按排序键顺序读、只给同键的那一截补排，不是每页整表排序
+  if (dialect === 'clickhouse') {
+    const rest = columns.map(column => column.name).filter(name => !keyColumns.includes(name));
+    return createOrder([...keyColumns, ...rest], dialect, 'all-columns', false);
+  }
   if (keyColumns.length > 0) {
     return createOrder(keyColumns, dialect, 'primary-key', true);
   }
@@ -143,6 +150,24 @@ export function pageClause(
     return `${orderClause} OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`.trim();
   }
   return `${orderClause} LIMIT ${limit} OFFSET ${offset}`;
+}
+
+/**
+ * 取表数据时 SELECT 后面那一段。
+ *
+ * 多数方言是 `*`。ClickHouse 的 `*` 不含 MATERIALIZED 与 ALIAS 列（网格里那几列会整列是 NULL），
+ * 要一个个点名；打开 `asterisk_include_materialized_columns` 也行，但那是个设置，`readonly = 1`
+ * 的账号改不了。EPHEMERAL 列不点：它不存值，点名去查报「There is no column」（25.8 上试过）；
+ * 网格上那一列是空的，本来也没有值
+ */
+export function tableProjection(columns: readonly ColumnInfo[], dialect: SqlIdentifierDialect): string {
+  if (dialect !== 'clickhouse' || !columns.some(column => column.is_generated)) {
+    return '*';
+  }
+  return columns
+    .filter(column => !(column.column_extra ?? '').startsWith('EPHEMERAL'))
+    .map(column => quoteSqlIdentifier(column.name, dialect))
+    .join(', ');
 }
 
 /** 「先看前几行」的那条查询。名字要引用：带空格或保留字的表名此前直接语法错误 */

@@ -4,7 +4,8 @@ import {
   createSortedOrderClause,
   createTablePaginationOrder,
   firstRowsQuery,
-  pageClause
+  pageClause,
+  tableProjection
 } from './tablePagination';
 
 const column = (
@@ -157,5 +158,33 @@ describe('firstRowsQuery', () => {
       .toBe('SELECT * FROM "sales"."order items" LIMIT 100;');
     expect(firstRowsQuery('order', undefined, 100, 'mysql')).toBe('SELECT * FROM `order` LIMIT 100;');
     expect(firstRowsQuery('order]x', 'dbo', 100, 'sqlserver')).toBe('SELECT TOP 100 * FROM [dbo].[order]]x];');
+  });
+});
+
+describe('ClickHouse 的分页排序', () => {
+  it('主键不唯一：主键列在前，其余列跟上，不说「翻页稳定」', () => {
+    const columns = [
+      { name: 'name', data_type: 'String', is_nullable: false, is_primary_key: false },
+      { name: 'ts', data_type: 'DateTime', is_nullable: false, is_primary_key: true, primary_key_ordinal: 2 },
+      { name: 'id', data_type: 'UInt64', is_nullable: false, is_primary_key: true, primary_key_ordinal: 1 }
+    ];
+    const order = createTablePaginationOrder(columns, 'clickhouse');
+    expect(order.clause).toBe('ORDER BY `id`, `ts`, `name`');
+    expect(order.strategy).toBe('all-columns');
+    expect(order.stableAcrossChanges).toBe(false);
+  });
+});
+
+describe('取表数据的投影', () => {
+  const column = (name: string, extra: string | null = null) => ({
+    name, data_type: 'UInt64', is_nullable: false, is_primary_key: false,
+    is_generated: extra !== null, column_extra: extra
+  });
+
+  it('ClickHouse 的 * 不含 MATERIALIZED / ALIAS：有这种列就点名，EPHEMERAL 不点', () => {
+    expect(tableProjection([column('id'), column('m', 'MATERIALIZED id * 2'), column('raw', 'EPHEMERAL ')], 'clickhouse'))
+      .toBe('`id`, `m`');
+    expect(tableProjection([column('id'), column('v')], 'clickhouse')).toBe('*');
+    expect(tableProjection([column('id'), column('g', 'STORED GENERATED')], 'mysql')).toBe('*');
   });
 });

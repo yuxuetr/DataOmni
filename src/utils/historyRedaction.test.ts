@@ -101,9 +101,11 @@ describe('redactSqlForHistory', () => {
     for (const dialect of ['postgresql', 'sqlite', 'sqlserver', 'oracle', 'duckdb'] as const) {
       expect(redact(sql, dialect).sql, dialect).toBe("UPDATE users SET home = 'C:\\', password = '***'");
     }
-    expect(redact("UPDATE t SET note = 'it\\'s', password = 'hunter2'", 'mysql').sql).toBe(
-      "UPDATE t SET note = 'it\\'s', password = '***'"
-    );
+    for (const dialect of ['mysql', 'clickhouse'] as const) {
+      expect(redact("UPDATE t SET note = 'it\\'s', password = 'hunter2'", dialect).sql, dialect).toBe(
+        "UPDATE t SET note = 'it\\'s', password = '***'"
+      );
+    }
   });
 
   it("PostgreSQL 与 DuckDB 的 E'…' 里反斜杠照样转义", () => {
@@ -121,6 +123,8 @@ describe('redactSqlForHistory', () => {
     );
     const commented = "# UPDATE t SET password = 'old'\nSELECT 1";
     expect(redact(commented, 'mysql').sql).toBe(commented);
+    // ClickHouse 也认 `#` 注释（25.8 上试过）
+    expect(redact(commented, 'clickhouse').sql).toBe(commented);
   });
 });
 

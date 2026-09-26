@@ -7,7 +7,7 @@ import { invoke } from '@tauri-apps/api/core';
  * 只有 SQLite 还是插件的 `Database`。MySQL / PostgreSQL 的池子由后端开，目录
  * 查询和关池子也走后端命令：插件的 `select` / `close` 持着它那张池子表的锁等网络，
  * 一个库断了就把所有连接一起卡住（见 `sqlx_pool::shared`）。SQL Server / Oracle /
- * DuckDB / MongoDB 的池子本来就在后端。消费方只用得到这两个方法，不需要知道是哪一种。
+ * DuckDB / ClickHouse / MongoDB 的池子本来就在后端。消费方只用得到这两个方法，不需要知道是哪一种。
  */
 export interface DatabaseHandle {
   select<T>(sql: string, params?: unknown[]): Promise<T>;
@@ -26,6 +26,8 @@ export const MONGODB_SCHEME = 'mongodb://';
 export const REDIS_SCHEME = 'redis://';
 /** 与后端 `NEO4J_SCHEME` 一致 */
 export const NEO4J_SCHEME = 'bolt://';
+/** 与后端 `CLICKHOUSE_SCHEME` 一致 */
+export const CLICKHOUSE_SCHEME = 'clickhouse://';
 /** 与后端 `ELASTICSEARCH_SCHEME` 一致 */
 export const ELASTICSEARCH_SCHEME = 'elasticsearch://';
 /** 与后端 `MONGODB_SRV_SCHEME` 一致：按 SRV 记录连的那种 */
@@ -47,6 +49,9 @@ export async function openDatabase(connectionString: string): Promise<DatabaseHa
   }
   if (connectionString.startsWith(DUCKDB_SCHEME)) {
     return backendHandle(connectionString, 'duckdb_select', 'close_duckdb');
+  }
+  if (connectionString.startsWith(CLICKHOUSE_SCHEME)) {
+    return backendHandle(connectionString, 'clickhouse_select', 'close_clickhouse');
   }
   if (connectionString.startsWith(MONGODB_SCHEME) || connectionString.startsWith(MONGODB_SRV_SCHEME)) {
     return {

@@ -167,6 +167,11 @@ describe('按方言切语句', () => {
       .toEqual(['SELECT 5 # 3', 'SELECT 2']);
     expect(splitSqlStatements('SELECT 1 # note; still comment\nSELECT 2;', 'mysql'))
       .toEqual(['SELECT 1 # note; still comment\nSELECT 2']);
+    expect(splitSqlStatements('SELECT 1 # note; still comment\nSELECT 2;', 'clickhouse'))
+      .toEqual(['SELECT 1 # note; still comment\nSELECT 2']);
+    // ClickHouse 字符串里 `\'` 是转义的撇号，后面的分号仍在字面量里
+    expect(splitSqlStatements("SELECT 'it\\'s; odd'; SELECT 2;", 'clickhouse'))
+      .toEqual(["SELECT 'it\\'s; odd'", 'SELECT 2']);
   });
 
   it('SQL Server 的方括号标识符里的引号与分号不算数', () => {

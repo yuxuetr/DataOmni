@@ -94,6 +94,8 @@ export type DatabaseObjectKind =
   | 'data-stream'
   | 'view'
   | 'materialized-view'
+  /** ClickHouse 的字典：能 `SELECT`，按表打开（只读） */
+  | 'dictionary'
   | 'function'
   | 'procedure'
   | 'sequence';

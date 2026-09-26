@@ -17,7 +17,7 @@ export const QUERY_EXECUTION_STATUSES = [
 
 export type QueryExecutionStatus = (typeof QUERY_EXECUTION_STATUSES)[number];
 
-export type SqlDialect = 'mysql' | 'postgresql' | 'sqlite' | 'sqlserver' | 'oracle' | 'duckdb';
+export type SqlDialect = 'mysql' | 'postgresql' | 'sqlite' | 'sqlserver' | 'oracle' | 'duckdb' | 'clickhouse';
 
 export interface QueryExecutionSessionSnapshot {
   readonly profileId: string;

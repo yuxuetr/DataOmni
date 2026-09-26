@@ -144,11 +144,13 @@ export const createDefaultConfig = (
         database: ':memory:',
         username: '',
       };
+    // HTTP 接口：8123，加密是 8443。9000 是原生协议，这里不用。装好就有的是 `default` 用户与库
     case DatabaseType.ClickHouse:
       return {
         ...baseConfig,
-        port: 9000,
+        port: 8123,
         database: 'default',
+        username: 'default',
       };
     case DatabaseType.Elasticsearch:
       return {
@@ -184,7 +186,7 @@ export const getDefaultPort = (type: DatabaseType): number => {
     case DatabaseType.DuckDB:
       return 0;
     case DatabaseType.ClickHouse:
-      return 9000;
+      return 8123;
     case DatabaseType.Elasticsearch:
       return 9200;
     default:

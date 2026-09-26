@@ -3,6 +3,7 @@ import {
   openDatabase,
   ORACLE_SCHEME,
   DUCKDB_SCHEME,
+  CLICKHOUSE_SCHEME,
   SQL_SERVER_SCHEME,
   type DatabaseHandle
 } from '../utils/databaseHandle';
@@ -190,6 +191,9 @@ const getSqlDialect = (connectionString: string | null): SqlDialect => {
   }
   if (connectionString?.startsWith(DUCKDB_SCHEME)) {
     return 'duckdb';
+  }
+  if (connectionString?.startsWith(CLICKHOUSE_SCHEME)) {
+    return 'clickhouse';
   }
   return 'sqlite';
 };

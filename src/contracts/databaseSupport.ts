@@ -15,6 +15,7 @@ export const SUPPORTED_DATABASE_TYPES: ReadonlySet<DatabaseType> = new Set([
   DatabaseType.SqlServer,
   DatabaseType.Oracle,
   DatabaseType.DuckDB,
+  DatabaseType.ClickHouse,
   DatabaseType.MongoDB,
   DatabaseType.Redis,
   DatabaseType.Neo4j,
@@ -29,15 +30,15 @@ export const SQLX_DRIVER_FEATURES: Readonly<Record<string, DatabaseType>> = {
 };
 
 /** 不走 sqlx 的驱动：`Cargo.toml` 里有这个依赖，对应的类型就连得上 */
-export const STANDALONE_DRIVER_CRATES: Readonly<Record<string, DatabaseType>> = {
-  tiberius: DatabaseType.SqlServer,
-  oracle: DatabaseType.Oracle,
-  duckdb: DatabaseType.DuckDB,
-  mongodb: DatabaseType.MongoDB,
-  redis: DatabaseType.Redis,
-  neo4j: DatabaseType.Neo4j,
-  // Elasticsearch 没有驱动，就是 HTTP：有 reqwest 才连得上
-  reqwest: DatabaseType.Elasticsearch
+export const STANDALONE_DRIVER_CRATES: Readonly<Record<string, readonly DatabaseType[]>> = {
+  tiberius: [DatabaseType.SqlServer],
+  oracle: [DatabaseType.Oracle],
+  duckdb: [DatabaseType.DuckDB],
+  mongodb: [DatabaseType.MongoDB],
+  redis: [DatabaseType.Redis],
+  neo4j: [DatabaseType.Neo4j],
+  // 这两家没有驱动，就是 HTTP：有 reqwest 才连得上
+  reqwest: [DatabaseType.Elasticsearch, DatabaseType.ClickHouse]
 };
 
 /**
@@ -93,10 +94,26 @@ export type PendingFeature =
   | 'streamingExport';
 
 /**
- * 分阶段接入的库还没接上的功能。SQL Server 与 Oracle 的各个阶段都已接上
- * （TODOs 4.2）。DuckDB 的三个阶段也都接上了，清单是空的；下一个分阶段接入的库在这里登记
+ * 分阶段接入的库还没接上的功能。SQL Server、Oracle、DuckDB 的各个阶段都已接上（TODOs 4.2）。
+ *
+ * ClickHouse 这四项不是「还没做完」，是这一版有意不做：没有通用事务，`UPDATE` / `DELETE` 是
+ * 异步的 mutation、回不了可信的影响行数，表格写入「恰好改这一行」无从保证；CSV 导入做不到
+ * 「中途失败什么都不留」；建表要选引擎、写排序键，表单做不通用。写库在编辑器里写 SQL
  */
-export const PENDING_FEATURES: Readonly<Partial<Record<DatabaseType, readonly PendingFeature[]>>> = {};
+export const PENDING_FEATURES: Readonly<Partial<Record<DatabaseType, readonly PendingFeature[]>>> = {
+  [DatabaseType.ClickHouse]: ['dataEditing', 'transactions', 'structureEditing', 'import']
+};
+
+/**
+ * 清单里的功能是**有意不做**、不是「还没接完」的类型。界面上的三处说法（连接表单那一格、
+ * 表数据页与结果网格的只读说明）据此换一句：说「分阶段接入」会让人等一个不会来的功能
+ */
+const GAPS_BY_DESIGN: ReadonlySet<string> = new Set([DatabaseType.ClickHouse]);
+
+/** 收字符串，理由同 `supportsFeature` */
+export function hasGapsByDesign(dbType: string): boolean {
+  return GAPS_BY_DESIGN.has(dbType);
+}
 
 /** `dbType` 收字符串：调用方手里常常只有方言名（`'sqlserver'`），它与类型值同形 */
 export function supportsFeature(dbType: string, feature: PendingFeature): boolean {

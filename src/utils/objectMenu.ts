@@ -48,6 +48,9 @@ export const OBJECT_MENU_ACTIONS: Record<DatabaseObjectKind, readonly ObjectMenu
   'data-stream': ['open-data', 'copy-name', 'drop'],
   view: ['open-data', 'view-definition', 'copy-name', 'drop'],
   'materialized-view': ['open-data', 'view-definition', 'copy-name', 'drop'],
+  // ClickHouse 的字典：能查；看它是什么走定义（`CREATE DICTIONARY` 原文，和视图同一条查询）。
+  // 删除是 `DROP DICTIONARY`，还没有人要过
+  dictionary: ['open-data', 'view-definition', 'copy-name'],
   function: ['view-definition', 'copy-name'],
   procedure: ['view-definition', 'copy-name'],
   sequence: ['view-definition', 'copy-name']

@@ -11,12 +11,20 @@ const NUMERIC_TYPE_TOKENS = new Set([
   'tinyint', 'smallint', 'mediumint', 'int', 'integer', 'int2', 'int4', 'int8', 'bigint',
   'serial', 'serial2', 'serial4', 'serial8', 'smallserial', 'bigserial',
   'decimal', 'dec', 'numeric', 'fixed', 'real', 'double', 'float', 'float4', 'float8',
-  'money', 'number'
+  'money', 'number',
+  // ClickHouse 的写法
+  'int16', 'int32', 'int64', 'int128', 'int256',
+  'uint8', 'uint16', 'uint32', 'uint64', 'uint128', 'uint256',
+  'float32', 'float64', 'bfloat16', 'decimal32', 'decimal64', 'decimal128', 'decimal256'
 ]);
 
-/** `numeric(10,2)` 取 numeric，`double precision` 取 double，`bigint unsigned` 取 bigint */
+/**
+ * `numeric(10,2)` 取 numeric，`double precision` 取 double，`bigint unsigned` 取 bigint。
+ * ClickHouse 的 `Nullable(…)`、`LowCardinality(…)` 只是外壳，取里面那个
+ */
 export function columnTypeToken(dataType: string): string {
-  return dataType.toLowerCase().replace(/\(.*$/, '').trim().split(/\s+/)[0] ?? '';
+  const unwrapped = dataType.trim().replace(/^(?:(?:nullable|lowcardinality)\()+/i, '');
+  return unwrapped.toLowerCase().split(/[\s(),]/)[0] ?? '';
 }
 
 export function isNumericColumnType(dataType: string): boolean {

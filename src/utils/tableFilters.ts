@@ -1,6 +1,11 @@
 import type { ColumnInfo } from '../contracts';
 import { quoteSqlIdentifier, type SqlIdentifierDialect } from './sqlIdentifiers';
-import { escapeLikePattern, LIKE_ESCAPE_CHAR, quoteSqlStringLiteral } from './sqlLiterals';
+import {
+  escapeClickHouseLikePattern,
+  escapeLikePattern,
+  LIKE_ESCAPE_CHAR,
+  quoteSqlStringLiteral
+} from './sqlLiterals';
 import { isNumericColumnType, NUMERIC_LITERAL } from './columnTypes';
 
 export type FilterOperator =
@@ -67,8 +72,18 @@ function comparisonLiteral(
   return quoteSqlStringLiteral(filter.value, dialect);
 }
 
-function likeTerm(quotedColumn: string, pattern: string, dialect: SqlIdentifierDialect): string {
-  const literal = quoteSqlStringLiteral(pattern, dialect);
+/** `pattern` 里 `{}` 是用户的文字要放的位置，其余是通配符 */
+function likeTerm(
+  quotedColumn: string,
+  pattern: string,
+  text: string,
+  dialect: SqlIdentifierDialect
+): string {
+  if (dialect === 'clickhouse') {
+    const literal = quoteSqlStringLiteral(pattern.replace('{}', escapeClickHouseLikePattern(text)), dialect);
+    return `${quotedColumn} LIKE ${literal}`;
+  }
+  const literal = quoteSqlStringLiteral(pattern.replace('{}', escapeLikePattern(text)), dialect);
   return `${quotedColumn} LIKE ${literal} ESCAPE ${quoteSqlStringLiteral(LIKE_ESCAPE_CHAR, dialect)}`;
 }
 
@@ -85,11 +100,11 @@ function filterTerm(
     case 'is-not-null':
       return `${quoted} IS NOT NULL`;
     case 'contains':
-      return likeTerm(quoted, `%${escapeLikePattern(filter.value)}%`, dialect);
+      return likeTerm(quoted, '%{}%', filter.value, dialect);
     case 'starts-with':
-      return likeTerm(quoted, `${escapeLikePattern(filter.value)}%`, dialect);
+      return likeTerm(quoted, '{}%', filter.value, dialect);
     case 'ends-with':
-      return likeTerm(quoted, `%${escapeLikePattern(filter.value)}`, dialect);
+      return likeTerm(quoted, '%{}', filter.value, dialect);
     default:
       return `${quoted} ${COMPARISON_SYMBOL[filter.operator]} ${comparisonLiteral(filter, column, dialect)}`;
   }

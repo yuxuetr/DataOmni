@@ -14,7 +14,8 @@ export function quoteSqlStringLiteral(value: string, dialect: SqlIdentifierDiale
   // 单引号写两遍是三种方言共同的规则
   let escaped = value.split("'").join("''");
 
-  if (dialect === 'mysql') {
+  // ClickHouse 与 MySQL 一样，字面量里的反斜杠是转义符
+  if (dialect === 'mysql' || dialect === 'clickhouse') {
     // MySQL 默认开着反斜杠转义（NO_BACKSLASH_ESCAPES 关闭），字面量里的
     // `\` 必须写两遍，否则 `C:\temp` 里的 `\t` 会变成制表符。
     // PostgreSQL（standard_conforming_strings 默认开）与 SQLite 则相反：
@@ -40,6 +41,14 @@ export function quoteSqlStringLiteral(value: string, dialect: SqlIdentifierDiale
  * 都没有特殊含义，只需转义一层。
  */
 export const LIKE_ESCAPE_CHAR = '!';
+
+/**
+ * ClickHouse 的 LIKE 没有 `ESCAPE` 子句（25.8 上是语法错误），模式里只认反斜杠：
+ * `\%`、`\_`、`\\`。这一层之外，字符串字面量那一层还会再把反斜杠写两遍
+ */
+export function escapeClickHouseLikePattern(text: string): string {
+  return text.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
 
 /**
  * 把用户输入的文本变成 LIKE 模式里的**字面**片段。

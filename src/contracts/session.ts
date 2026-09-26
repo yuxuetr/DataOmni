@@ -33,7 +33,8 @@ export function createDatabaseSession(
     DatabaseType.SQLite,
     DatabaseType.SqlServer,
     DatabaseType.Oracle,
-    DatabaseType.DuckDB
+    DatabaseType.DuckDB,
+    DatabaseType.ClickHouse
   ].includes(profile.db_type);
   const has = (feature: Parameters<typeof supportsFeature>[1]) =>
     isSupportedRelationalDatabase && supportsFeature(profile.db_type, feature);
@@ -48,7 +49,8 @@ export function createDatabaseSession(
         || profile.db_type === DatabaseType.PostgreSQL
         || profile.db_type === DatabaseType.SqlServer
         || profile.db_type === DatabaseType.Oracle
-        || profile.db_type === DatabaseType.DuckDB,
+        || profile.db_type === DatabaseType.DuckDB
+        || profile.db_type === DatabaseType.ClickHouse,
       transactions: has('transactions'),
       cancellation: false,
       explain: has('explain'),
