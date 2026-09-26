@@ -30,7 +30,7 @@
 ### 🔗 数据库支持
 
 - **可连接并执行查询**: MySQL, PostgreSQL, SQLite, SQL Server, Oracle, DuckDB（见兼容性矩阵）
-- **可连接并执行查询，表格只读**: ClickHouse（HTTP 接口；没有通用事务，写库在编辑器里写 SQL）
+- **可连接并执行查询，表格一次改一行**: ClickHouse（HTTP 接口；没有通用事务，改之前与之后各核对一次）
 - **可连接、浏览与改文档**: MongoDB（库、集合、文档；条件、排序与编辑都用 mongosh 写法；`db.runCommand` 命令台）
 - **可连接、浏览键值与跑命令**: Redis（逻辑库、按模式翻键、六种类型的值、redis-cli 写法的命令行）
 - **可连接并执行 Cypher**: Neo4j（库、标签与关系类型；结果里的节点、关系、路径按 Cypher 字面量显示）
@@ -57,7 +57,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 | SQL Server | 2022 | SQL Server | ✅ 支持 | 17 / 17（独立用例，`sql_server_smoke.rs`，含改结构语料） |
 | Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 14 / 14（独立用例，`oracle_smoke.rs`，含改结构语料） |
 | DuckDB | 1.5.5（编进应用） | DuckDB（libduckdb） | ✅ 支持 | 16 / 16（独立用例，`duckdb_smoke.rs`，每次都跑，含改结构语料） |
-| ClickHouse | 25.8 | ClickHouse（HTTP 接口，reqwest） | ⚠️ 表格只读，没有事务 | 13 / 13（独立用例，`clickhouse_smoke.rs`；经 SSH 隧道那一条另要隧道的环境变量） |
+| ClickHouse | 25.8 | ClickHouse（HTTP 接口，reqwest） | ⚠️ 表格一次改一行，没有事务 | 14 / 14（独立用例，`clickhouse_smoke.rs` 与最重的一条 `clickhouse_mutation_smoke.rs`；经 SSH 隧道那一条另要隧道的环境变量） |
 | MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 32 / 32（独立用例，`mongodb_smoke.rs`） |
 | Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机，不含集群 | 11 / 11（独立用例，`redis_smoke.rs`） |
 | Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例，不含集群路由 | 8 / 8（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |
@@ -127,9 +127,12 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
   取消、错误码与出错位置；`SET` 与临时表留在这个标签的会话里）、对象树按库列出表、视图、物化视图
   与字典、结构页（列、主键与跳数索引、建表原文）、表数据（分页、排序、筛选）、补全、ER 图、
   执行计划、导出。与别家不同的几点：
-  - **表格只读，也没有事务与 CSV 导入**：ClickHouse 没有通用事务，`UPDATE` / `DELETE` 是后台异步
-    的 mutation、回不了可信的影响行数，保证不了「改的恰好是这一行」。写库在编辑器里写 `INSERT`、
-    `ALTER TABLE … UPDATE / DELETE`，照常过危险语句确认，确认框写明「事务包不住它」。
+  - **表格一次改一行，没有事务**：ClickHouse 没有通用事务，`UPDATE` / `DELETE` 是 mutation、
+    报不出影响行数，主键也不唯一。所以表数据页一次只提交一项：按整行（比得准的列）先数一遍，
+    恰好一行才执行；改和删等服务端做完（`mutations_sync = 2`）再核对一次；对不上时分清
+    「没有执行」和「已经执行、撤不回来」。改和删会重写这一行所在的整块数据（2000 万行的表上
+    实测改一行 4 秒多）。主键列不能改；查询结果里不能直接改，到表数据页改；没有事务与 CSV 导入。
+    数完到执行之间别处写进一行一模一样的，会被一起改——没有事务就消除不了，界面上写明。
   - 取消、超时、到了行数上限，都会在服务端停下那条查询（`KILL QUERY`），不只是这边不读了。
   - 不改任何服务端设置，`readonly = 1` 的只读账号照样能用。
   - 值按 ClickHouse 自己的写法显示：数组 `[1,2]`、Map `{'k':1}`、元组 `(1,'a')`，粘回 SQL 就能用；
@@ -487,7 +490,7 @@ v0.3 只差 Windows 安装验证，所以这一版**不提供 Windows 安装包*
 
 - 🔗 MySQL、PostgreSQL、SQLite、SQL Server、Oracle、DuckDB；MariaDB、TiDB、CockroachDB
   走对应的连接类型，每一格都有真库用例（见兼容性矩阵）
-- 📈 ClickHouse：查询、对象与结构浏览、只读表数据、执行计划、导出；取消即在服务端停下
+- 📈 ClickHouse：查询、对象与结构浏览、表数据（一次改一行，前后各核对一次）、执行计划、导出；取消即在服务端停下
 - 🍃 MongoDB：库与集合、文档的条件 / 排序 / 分页、增删改、集合的建与删、执行计划、命令台；
   认证库、TLS、客户端证书与 X.509 登录、`mongodb+srv://`、SSH 隧道
 - 🔑 Redis：逻辑库、按模式翻键、六种类型的值、redis-cli 写法的命令行，
