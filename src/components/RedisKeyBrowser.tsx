@@ -457,7 +457,7 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
                         {t('redis.action.edit')}
                       </button>
                     )}
-                    {value && (value.kind === 'hash' || value.kind === 'list' || value.kind === 'set' || value.kind === 'zset') ? (
+                    {value && (value.kind === 'hash' || value.kind === 'list' || value.kind === 'set' || value.kind === 'zset' || value.kind === 'stream') ? (
                       <RedisValueTable
                         value={value}
                         encode={encodeText}
@@ -569,10 +569,8 @@ function Bytes({ bytes }: { bytes: RedisBytes }) {
   );
 }
 
-const cellClass = 'border-b border-line px-2 py-1 align-baseline leading-5';
-const headClass = 'border-b border-line px-2 py-1 text-left text-xs font-medium text-fg';
-
-function ValueView({ value, t }: { value: RedisValue; t: Translate }) {
+/** 表格之外的两种：字符串与认不出的类型。集合类的都走可编辑的 `RedisValueTable` */
+function ValueView({ value, t }: { value: Extract<RedisValue, { kind: 'string' | 'unsupported' }>; t: Translate }) {
   switch (value.kind) {
     case 'string':
       return (
@@ -585,96 +583,6 @@ function ValueView({ value, t }: { value: RedisValue; t: Translate }) {
             <Bytes bytes={value.value} />
           </pre>
         </div>
-      );
-    case 'hash':
-      return (
-        <table className="w-full table-auto border-collapse">
-          <thead className="bg-surface-sunken">
-            <tr><th className={headClass}>{t('redis.column.field')}</th><th className={headClass}>{t('redis.column.value')}</th></tr>
-          </thead>
-          <tbody>
-            {value.entries.map(([field, item], index) => (
-              <tr key={`${field.raw}-${index}`}>
-                <td className={cellClass}><Bytes bytes={field} /></td>
-                <td className={cellClass}><Bytes bytes={item} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      );
-    case 'list':
-      return (
-        <table className="w-full table-auto border-collapse">
-          <thead className="bg-surface-sunken">
-            <tr><th className={clsx(headClass, 'w-16')}>{t('redis.column.index')}</th><th className={headClass}>{t('redis.column.value')}</th></tr>
-          </thead>
-          <tbody>
-            {value.items.map((item, index) => (
-              <tr key={index}>
-                <td className={clsx(cellClass, 'font-mono text-xs text-fg-subtle')}>{value.offset + index}</td>
-                <td className={cellClass}><Bytes bytes={item} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      );
-    case 'set':
-      return (
-        <table className="w-full table-auto border-collapse">
-          <thead className="bg-surface-sunken">
-            <tr><th className={headClass}>{t('redis.column.member')}</th></tr>
-          </thead>
-          <tbody>
-            {value.members.map((member, index) => (
-              <tr key={`${member.raw}-${index}`}><td className={cellClass}><Bytes bytes={member} /></td></tr>
-            ))}
-          </tbody>
-        </table>
-      );
-    case 'zset':
-      return (
-        <table className="w-full table-auto border-collapse">
-          <thead className="bg-surface-sunken">
-            <tr>
-              <th className={clsx(headClass, 'w-16')}>{t('redis.column.rank')}</th>
-              <th className={headClass}>{t('redis.column.member')}</th>
-              <th className={clsx(headClass, 'text-right')}>{t('redis.column.score')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {value.entries.map(([member, score], index) => (
-              <tr key={`${member.raw}-${index}`}>
-                <td className={clsx(cellClass, 'font-mono text-xs text-fg-subtle')}>{value.offset + index}</td>
-                <td className={cellClass}><Bytes bytes={member} /></td>
-                <td className={clsx(cellClass, 'text-right font-mono text-[13px] tabular-nums text-fg')}>{score}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      );
-    case 'stream':
-      return (
-        <table className="w-full table-auto border-collapse">
-          <thead className="bg-surface-sunken">
-            <tr><th className={clsx(headClass, 'w-48')}>{t('redis.column.id')}</th><th className={headClass}>{t('redis.column.fields')}</th></tr>
-          </thead>
-          <tbody>
-            {value.entries.map((entry) => (
-              <tr key={entry.id}>
-                <td className={clsx(cellClass, 'whitespace-nowrap font-mono text-xs text-fg-muted')}>{entry.id}</td>
-                <td className={cellClass}>
-                  {entry.fields.map(([field, item], index) => (
-                    <div key={index}>
-                      <span className="font-mono text-[13px] text-fg-muted">{field.text}</span>
-                      <span className="text-fg-subtle"> = </span>
-                      <Bytes bytes={item} />
-                    </div>
-                  ))}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       );
     case 'unsupported':
       return <p className="text-sm text-fg-muted">{t('redis.value.unsupported', { type: value.redisType })}</p>;

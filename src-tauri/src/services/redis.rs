@@ -774,6 +774,13 @@ pub enum ElementChange {
   ZsetDelete {
     member: Vec<u8>,
   },
+  /// 加一条，ID 由服务端按时间生成（`*`）；字段按给的次序
+  StreamAdd {
+    fields: Vec<(Vec<u8>, Vec<u8>)>,
+  },
+  StreamDelete {
+    id: String,
+  },
 }
 
 /// 每段脚本的回答：1 写了；-1 值变了；-2 键没了；-3 元素已经在；-4 元素没了。
@@ -792,7 +799,7 @@ redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 return 1
 ";
 
-/// `HDEL` / `SREM` / `ZREM` 共用：命令名在 ARGV[1]
+/// `HDEL` / `SREM` / `ZREM` / `XDEL` 共用：命令名在 ARGV[1]
 const MEMBER_DELETE: &str = r"
 if redis.call('EXISTS', KEYS[1]) == 0 then return -2 end
 if redis.call(ARGV[1], KEYS[1], ARGV[2]) == 0 then return -4 end
@@ -823,6 +830,13 @@ return 1
 const SET_ADD: &str = r"
 if redis.call('EXISTS', KEYS[1]) == 0 then return -2 end
 if redis.call('SADD', KEYS[1], ARGV[1]) == 0 then return -3 end
+return 1
+";
+
+/// 字段与值依次在 ARGV 里。`XADD` 对不在的键同样会建出一个新的
+const STREAM_ADD: &str = r"
+if redis.call('EXISTS', KEYS[1]) == 0 then return -2 end
+redis.call('XADD', KEYS[1], '*', unpack(ARGV))
 return 1
 ";
 
@@ -888,6 +902,10 @@ pub async fn change_element(
       (ZSET_SET, vec![member, score.into_bytes(), b"edit".to_vec(), expected.into_bytes()])
     }
     ElementChange::ZsetDelete { member } => (MEMBER_DELETE, vec![b"ZREM".to_vec(), member]),
+    ElementChange::StreamAdd { fields } => {
+      (STREAM_ADD, fields.into_iter().flat_map(|(field, value)| [field, value]).collect())
+    }
+    ElementChange::StreamDelete { id } => (MEMBER_DELETE, vec![b"XDEL".to_vec(), id.into_bytes()]),
   };
   let work = async {
     let script = redis::Script::new(script);

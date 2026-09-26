@@ -153,6 +153,8 @@ pub enum ElementChangeRequest {
   SetDelete { member: String },
   ZsetSet { member: String, expected: Option<String>, score: String },
   ZsetDelete { member: String },
+  StreamAdd { fields: Vec<(String, String)> },
+  StreamDelete { id: String },
 }
 
 impl ElementChangeRequest {
@@ -178,6 +180,13 @@ impl ElementChangeRequest {
         ElementChange::ZsetSet { member: bytes(&member)?, expected, score }
       }
       Self::ZsetDelete { member } => ElementChange::ZsetDelete { member: bytes(&member)? },
+      Self::StreamAdd { fields } => ElementChange::StreamAdd {
+        fields: fields
+          .into_iter()
+          .map(|(field, value)| Ok((bytes(&field)?, bytes(&value)?)))
+          .collect::<Result<_, String>>()?,
+      },
+      Self::StreamDelete { id } => ElementChange::StreamDelete { id },
     })
   }
 }
@@ -232,4 +241,28 @@ pub async fn redis_create_key(
 #[tauri::command]
 pub fn close_redis(connection_string: String, registry: State<'_, RedisRegistry>) -> bool {
   registry.remove(&connection_string)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// 前端 `RedisValueTable` 发的就是这个形状：字段与值成对、都是 base64
+  #[test]
+  fn stream_changes_decode_from_the_frontend_shape() {
+    let request: ElementChangeRequest = serde_json::from_value(serde_json::json!({
+      "kind": "streamAdd",
+      "fields": [["dXNlcg==", "YW5u"], ["cmF3", "/wA="]]
+    }))
+    .expect("streamAdd");
+    let Ok(ElementChange::StreamAdd { fields }) = request.decode() else {
+      panic!("not a stream add");
+    };
+    assert_eq!(fields, [(b"user".to_vec(), b"ann".to_vec()), (b"raw".to_vec(), vec![0xff, 0x00])]);
+
+    let request: ElementChangeRequest =
+      serde_json::from_value(serde_json::json!({ "kind": "streamDelete", "id": "1-1" }))
+        .expect("streamDelete");
+    assert!(matches!(request.decode(), Ok(ElementChange::StreamDelete { id }) if id == "1-1"));
+  }
 }

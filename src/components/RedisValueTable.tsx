@@ -17,9 +17,11 @@ export type ElementChange =
   | { kind: 'setAdd'; member: string }
   | { kind: 'setDelete'; member: string }
   | { kind: 'zsetSet'; member: string; expected: string | null; score: string }
-  | { kind: 'zsetDelete'; member: string };
+  | { kind: 'zsetDelete'; member: string }
+  | { kind: 'streamAdd'; fields: [string, string][] }
+  | { kind: 'streamDelete'; id: string };
 
-type Collection = Extract<RedisValue, { kind: 'hash' | 'list' | 'set' | 'zset' }>;
+type Collection = Extract<RedisValue, { kind: 'hash' | 'list' | 'set' | 'zset' | 'stream' }>;
 
 interface RedisValueTableProps {
   value: Collection;
@@ -46,7 +48,7 @@ function Bytes({ bytes }: { bytes: RedisBytes }) {
 }
 
 /**
- * hash / list / set / zset 的表，可以改。改的是一格：点铅笔变成输入框，回车或对勾提交。
+ * hash / list / set / zset / stream 的表，可以改。改的是一格：点铅笔变成输入框，回车或对勾提交。
  * 二进制的元素只给删不给改——框里是转义过的文字，写回去就不是原来的字节了
  */
 export function RedisValueTable({ value, encode, onChange }: RedisValueTableProps) {
@@ -247,7 +249,129 @@ export function RedisValueTable({ value, encode, onChange }: RedisValueTableProp
           />
         </>
       );
+    case 'stream':
+      // 条目只有加和删：stream 本来就是只追加的日志，Redis 也没有改一条的命令
+      return (
+        <>
+          <table className="w-full table-auto border-collapse">
+            <thead className="bg-surface-sunken">
+              <tr><th className={clsx(headClass, 'w-48')}>{t('redis.column.id')}</th><th className={headClass}>{t('redis.column.fields')}</th><th className="w-16 border-b border-line" /></tr>
+            </thead>
+            <tbody>
+              {value.entries.map((entry) => (
+                <tr key={entry.id} className="group">
+                  <td className={clsx(cellClass, 'whitespace-nowrap font-mono text-xs text-fg-muted')}>{entry.id}</td>
+                  <td className={cellClass}>
+                    {entry.fields.map(([field, item], index) => (
+                      <div key={index}>
+                        <span className="font-mono text-[13px] text-fg-muted">{field.text}</span>
+                        <span className="text-fg-subtle"> = </span>
+                        <Bytes bytes={item} />
+                      </div>
+                    ))}
+                  </td>
+                  <td className={clsx(cellClass, 'w-16 text-right')}>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void submit({ kind: 'streamDelete', id: entry.id }, t('redis.element.deleteEntry', { id: entry.id }))}
+                      className={clsx(iconButton, 'opacity-0 group-hover:opacity-100 hover:text-danger focus:opacity-100')}
+                      aria-label={t('redis.action.delete')}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <StreamAddRow
+            t={t}
+            busy={busy}
+            onAdd={(pairs) => submit({ kind: 'streamAdd', fields: pairs.map(([field, item]) => [encode(field), encode(item)]) })}
+          />
+        </>
+      );
   }
+}
+
+/**
+ * 加一条 stream 条目：一条里常常有好几个字段，所以字段数可增可减。
+ * 字段名不能空，值可以是空串（那也是一个值）
+ */
+function StreamAddRow({ t, busy, onAdd }: { t: Translate; busy: boolean; onAdd: (pairs: [string, string][]) => Promise<boolean> }) {
+  const empty = (): [string, string][] => [['', '']];
+  const [pairs, setPairs] = useState<[string, string][]>(empty);
+  const ready = pairs.every(([field]) => field !== '');
+  const update = (row: number, column: 0 | 1, text: string) =>
+    setPairs((current) => current.map((pair, index) => {
+      if (index !== row) return pair;
+      const next: [string, string] = [...pair];
+      next[column] = text;
+      return next;
+    }));
+
+  const add = async () => {
+    if (!ready || busy) return;
+    const before = pairs;
+    if (await onAdd(pairs)) {
+      setPairs((current) => (current === before ? empty() : current));
+    }
+  };
+
+  return (
+    <div className="mt-2 space-y-1">
+      {pairs.map(([field, item], row) => (
+        <div key={row} className="flex items-center gap-2">
+          {([[field, t('redis.column.field')], [item, t('redis.column.value')]] as const).map(([text, label], column) => (
+            <input
+              key={label}
+              value={text}
+              onChange={(event) => update(row, column as 0 | 1, event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  void add();
+                }
+              }}
+              placeholder={label}
+              aria-label={label}
+              className={clsx(inputClass, inputState(true))}
+              {...PLAIN_TEXT_INPUT}
+            />
+          ))}
+          <button
+            type="button"
+            disabled={pairs.length === 1}
+            onClick={() => setPairs((current) => current.filter((_, index) => index !== row))}
+            className={iconButton}
+            aria-label={t('redis.element.removeField')}
+          >
+            <X size={13} />
+          </button>
+        </div>
+      ))}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setPairs((current) => [...current, ['', '']])}
+          className="flex items-center gap-1 rounded-control px-2 py-0.5 text-sm text-fg-muted hover:bg-surface-hover"
+        >
+          <Plus size={13} />
+          {t('redis.element.addField')}
+        </button>
+        <button
+          type="button"
+          disabled={!ready || busy}
+          onClick={() => void add()}
+          className="flex shrink-0 items-center gap-1 rounded-control border border-line-strong px-2 py-0.5 text-sm text-fg hover:bg-surface-hover disabled:opacity-50"
+        >
+          <Plus size={13} />
+          {t('redis.element.addEntry')}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 interface AddRowProps {

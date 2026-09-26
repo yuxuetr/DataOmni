@@ -9,7 +9,7 @@
 //! TLS 那一条另设 `DATAOMNI_REDIS_TLS_TEST_URL`（一台只开 TLS 端口的服务端）与
 //! `DATAOMNI_REDIS_TLS_TEST_CA`（签它证书的 CA 文件路径；证书上写着 127.0.0.1）。
 //!
-//! 用例各占一个库号（7–15，并行跑时互不干扰），开头 `FLUSHDB` 清掉残留——那几个库号只给这里用。
+//! 用例各占一个库号（6–15，并行跑时互不干扰），开头 `FLUSHDB` 清掉残留——那几个库号只给这里用。
 
 use dataomni_lib::models::ConnectionProfile;
 use dataomni_lib::models::TlsMode;
@@ -686,4 +686,63 @@ async fn element_changes_compare_first_and_never_create_a_vanished_key() {
     store::create_key(&pool, 7, b("new:hash"), again, TIMEOUT).await,
     Err(format!("{REDIS_KEY_EXISTS}: new:hash"))
   );
+}
+
+#[tokio::test]
+async fn stream_entries_are_added_with_every_field_and_deleted_by_id() {
+  let Some(profile) = profile(6) else { return };
+  let mut seed = seed_connection(&profile).await;
+  redis::pipe()
+    .cmd("XADD")
+    .arg("st")
+    .arg("1-1")
+    .arg("a")
+    .arg("1")
+    .ignore()
+    .cmd("XADD")
+    .arg("st")
+    .arg("2-1")
+    .arg("b")
+    .arg("2")
+    .ignore()
+    .query_async::<()>(&mut seed)
+    .await
+    .expect("seed");
+  let pool = pool(&profile).await;
+  let change =
+    |key: &str, change| store::change_element(&pool, 6, key.as_bytes().to_vec(), change, TIMEOUT);
+  let b = |text: &str| text.as_bytes().to_vec();
+
+  // 一条里几个字段都进去，次序不变；二进制的值原样
+  change(
+    "st",
+    ElementChange::StreamAdd { fields: vec![(b("user"), b("ann")), (b("raw"), vec![0xff, 0x00])] },
+  )
+  .await
+  .expect("xadd");
+  let entries: Vec<(String, Vec<Vec<u8>>)> =
+    redis::cmd("XRANGE").arg("st").arg("-").arg("+").query_async(&mut seed).await.expect("XRANGE");
+  assert_eq!(entries.len(), 3);
+  assert_eq!(entries[2].1, [b("user"), b("ann"), b("raw"), vec![0xff, 0x00]]);
+
+  change("st", ElementChange::StreamDelete { id: "1-1".into() }).await.expect("xdel");
+  assert_eq!(
+    change("st", ElementChange::StreamDelete { id: "1-1".into() }).await,
+    Err(REDIS_ELEMENT_GONE.to_string())
+  );
+  let length: i64 = redis::cmd("XLEN").arg("st").query_async(&mut seed).await.expect("XLEN");
+  assert_eq!(length, 2);
+
+  // 键没了：XADD 不能顺手建出一个新的
+  assert_eq!(
+    change("vanished", ElementChange::StreamAdd { fields: vec![(b("f"), b("v"))] }).await,
+    Err(REDIS_KEY_GONE.to_string())
+  );
+  assert_eq!(
+    change("vanished", ElementChange::StreamDelete { id: "1-1".into() }).await,
+    Err(REDIS_KEY_GONE.to_string())
+  );
+  let exists: i64 =
+    redis::cmd("EXISTS").arg("vanished").query_async(&mut seed).await.expect("EXISTS");
+  assert_eq!(exists, 0);
 }
