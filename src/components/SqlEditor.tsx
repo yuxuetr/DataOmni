@@ -272,6 +272,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
    */
   const saveSqlToFile = async (saveAs = false) => {
     setFileError(null);
+    // 上一次的「已保存」留着，问「要不要覆盖」时底下还写着存好了的路径，像是已经存了
+    setSavedPath(null);
     const documentId = activeDocumentId;
     const contents = sqlInput;
     try {

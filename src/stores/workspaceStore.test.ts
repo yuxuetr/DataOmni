@@ -16,6 +16,19 @@ describe('workspace store', () => {
     });
   });
 
+  it('a SQL tab saved to a file takes the file name as its title and stops counting as dirty', () => {
+    const tab = { ...createSqlWorkspaceTab('profile-a', { id: 'sql-1', sql: 'SELECT 1' }), dirty: true };
+    useWorkspaceStore.getState().registerTab(tab);
+    useWorkspaceStore.getState().linkSqlTabFile('sql-1', { path: '/work/monthly report.sql', contentHash: 'h' });
+
+    const linked = useWorkspaceStore.getState().tabs[0];
+    expect(linked.title).toBe('monthly report');
+    // 「查询 N」的文案键得去掉，否则渲染时照旧按键翻译，文件名显示不出来
+    expect(linked.titleKey).toBeUndefined();
+    expect(linked.dirty).toBe(false);
+    expect(linked.kind === 'sql' && linked.file).toEqual({ path: '/work/monthly report.sql', contentHash: 'h' });
+  });
+
   it('keeps open tab bindings when the sidebar connection changes', () => {
     const tab = createSqlWorkspaceTab('profile-a', {
       id: 'tab-a',
