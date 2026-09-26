@@ -66,7 +66,10 @@ const NON_SQL_TYPES: ReadonlySet<DatabaseType> = new Set([
  * 两家复用的是查询**标签**（草稿、去重、持久化都现成），标签里画的是各自的编辑器
  */
 export function hasQueryEditor(type: string): boolean {
-  return speaksSql(type) || type === DatabaseType.Neo4j || type === DatabaseType.Elasticsearch;
+  return speaksSql(type)
+    || type === DatabaseType.Neo4j
+    || type === DatabaseType.Elasticsearch
+    || type === DatabaseType.MongoDB;
 }
 
 export function isDatabaseTypeSupported(type: DatabaseType): boolean {

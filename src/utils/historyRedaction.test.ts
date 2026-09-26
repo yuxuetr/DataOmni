@@ -159,6 +159,15 @@ describe('redactConsoleForHistory', () => {
     expect(redactConsoleForHistory('redis', 'GET password')).toEqual({ sql: 'GET password', redacted: false });
   });
 
+  it('打掉 MongoDB 命令里按键名认出的口令，键带不带引号都认', () => {
+    expect(redactConsoleForHistory('mongodb', "{ createUser: 'app', pwd: 'hunter2', roles: [] }").sql)
+      .toBe("{ createUser: 'app', pwd: '***', roles: [] }");
+    expect(redactConsoleForHistory('mongodb', '{ "updateUser": "app", "pwd": "hunter2" }').sql)
+      .toBe('{ "updateUser": "app", "pwd": \'***\' }');
+    const plain = "{ find: 'users', filter: { name: 'pwd' } }";
+    expect(redactConsoleForHistory('mongodb', plain)).toEqual({ sql: plain, redacted: false });
+  });
+
   it('三种都打掉连接串里的口令', () => {
     expect(redactConsoleForHistory('cypher', "LOAD CSV FROM 'https://u:pw@h/x.csv' AS row RETURN row").sql)
       .toBe("LOAD CSV FROM 'https://u:***@h/x.csv' AS row RETURN row");

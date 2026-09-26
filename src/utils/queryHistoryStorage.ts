@@ -17,7 +17,7 @@ import type { QueryHistoryEntry } from '../contracts/queryHistory';
 import { isAnnotated, isSlowQuery } from '../contracts/queryHistory';
 
 const STORAGE_KEY = 'dataomni.query-history';
-const CONSOLE_LANGUAGES: readonly string[] = ['cypher', 'elasticsearch', 'redis'];
+const CONSOLE_LANGUAGES: readonly string[] = ['cypher', 'elasticsearch', 'redis', 'mongodb'];
 const RETENTION_KEY = 'dataomni.history-retention';
 const SNAPSHOT_VERSION = 1;
 

@@ -1263,3 +1263,44 @@ async fn an_aggregation_pages_through_its_own_results_and_never_writes() {
   .expect_err("unknown stage");
   assert!(broken.starts_with(MONGO_SERVER_ERROR), "{broken}");
 }
+
+/// 命令台：命令照服务端的原样回答；`find` 只回第一批，没取完的游标当场关掉
+#[tokio::test]
+async fn the_command_console_runs_a_command_and_closes_the_cursor_it_leaves() {
+  use dataomni_lib::services::mongo_command;
+  let Some(client) = client().await else { return };
+  let collection = fresh_collection(&client, "smoke_console").await;
+  collection.insert_many((0..5).map(|n| doc! { "n": n })).await.expect("seed");
+  let run = |text: &str| {
+    let (command, _) = mongo_command::plan(text).expect(text);
+    mongo_command::run(&client, DATABASE, command, Duration::from_secs(10))
+  };
+
+  let pong = run("{ ping: 1 }").await.expect("ping");
+  assert!(!pong.more);
+  assert_eq!(mongo_shell::parse_document(&pong.text).expect("reply").get_f64("ok"), Ok(1.0));
+
+  let first =
+    run("{ find: 'smoke_console', filter: {}, sort: { n: 1 }, batchSize: 2 }").await.expect("find");
+  assert!(first.more, "{}", first.text);
+  let reply = mongo_shell::parse_document(&first.text).expect("reply");
+  let cursor = reply.get_document("cursor").expect("cursor");
+  assert_eq!(cursor.get_array("firstBatch").expect("batch").len(), 2);
+  // 回答里的游标已经关了：再取就是 CursorNotFound（43）
+  let id = cursor.get_i64("id").expect("cursor id");
+  let again = client
+    .database(DATABASE)
+    .run_command(doc! { "getMore": id, "collection": "smoke_console" })
+    .await
+    .expect_err("cursor should be gone");
+  assert!(
+    matches!(*again.kind, mongodb::error::ErrorKind::Command(ref error) if error.code == 43),
+    "{again}"
+  );
+
+  // 服务端拒绝的命令带码报出来；写的照样能写
+  let unknown = run("{ noSuchCommand: 1 }").await.expect_err("unknown command");
+  assert!(unknown.starts_with(MONGO_SERVER_ERROR), "{unknown}");
+  run("{ insert: 'smoke_console', documents: [{ n: 5 }] }").await.expect("insert");
+  assert_eq!(collection.count_documents(doc! {}).await.expect("count"), 6);
+}

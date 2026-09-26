@@ -24,6 +24,7 @@ import { DatabaseType } from './contracts/connection';
 import { hasQueryEditor, speaksSql } from './contracts/databaseSupport';
 import { CypherWorkbench } from './components/CypherWorkbench';
 import { EsConsole } from './components/EsConsole';
+import { MongoConsole } from './components/MongoConsole';
 import { EsIndexStructureView } from './components/EsIndexStructureView';
 import { requestCypherAutorun } from './stores/cypherAutorun';
 import { ErDiagramView } from './components/ErDiagramView';
@@ -199,7 +200,7 @@ function App() {
 
   // 每个连接有一个 SQL 标签，连接就绪后按需创建；id 由连接决定，重复注册会被去重
   useEffect(() => {
-    // MongoDB 与 Redis 没有查询编辑器可开；连上之后从对象树点集合、逻辑库
+    // Redis 没有查询编辑器可开（命令行在键浏览页里）；连上之后从对象树点逻辑库
     if (!activeConnection || !hasQueryEditor(activeConnection.config.db_type)) {
       return;
     }
@@ -740,11 +741,11 @@ function App() {
       }
     );
 
-    // 连着 MongoDB 时，要开 SQL 标签的那几条放出来也只是点了没反应
+    // 连着 Redis 时，要开查询标签的那几条放出来也只是点了没反应
     if (!activeConnection || activeSpeaksSql) {
       return items;
     }
-    // Neo4j 与 Elasticsearch 能开查询标签、打开脚本文件，ER 图没有
+    // Neo4j、Elasticsearch 与 MongoDB 能开查询标签、打开脚本文件，ER 图没有
     return items.filter((item) => (
       !SQL_ONLY_PALETTE_ACTIONS.has(item.id) || (activeHasQueryEditor && item.id !== 'action:er-diagram')
     ));
@@ -766,7 +767,8 @@ function App() {
           tab={activeTab}
           profileName={boundProfile?.name ?? null}
           language={boundProfile?.db_type === DatabaseType.Neo4j ? 'cypher'
-            : boundProfile?.db_type === DatabaseType.Elasticsearch ? 'json' : 'sql'}
+            : boundProfile?.db_type === DatabaseType.Elasticsearch ? 'json'
+              : boundProfile?.db_type === DatabaseType.MongoDB ? 'javascript' : 'sql'}
           draft={documents[activeTab.id]?.sqlInput ?? ''}
         />
       );
@@ -783,6 +785,9 @@ function App() {
       }
       if (activeConnection.config.db_type === DatabaseType.Elasticsearch) {
         return <EsConsole key={activeTab.id} connection={activeConnection.config} />;
+      }
+      if (activeConnection.config.db_type === DatabaseType.MongoDB) {
+        return <MongoConsole key={activeTab.id} connection={activeConnection.config} />;
       }
 
       return (
@@ -1007,7 +1012,8 @@ function App() {
           openLanguage={!activeConnection ? null
             : activeSpeaksSql ? 'sql'
               : activeConnection.config.db_type === DatabaseType.Neo4j ? 'cypher'
-                : activeConnection.config.db_type === DatabaseType.Elasticsearch ? 'elasticsearch' : null}
+                : activeConnection.config.db_type === DatabaseType.Elasticsearch ? 'elasticsearch'
+                  : activeConnection.config.db_type === DatabaseType.MongoDB ? 'mongodb' : null}
         />
       )}
 

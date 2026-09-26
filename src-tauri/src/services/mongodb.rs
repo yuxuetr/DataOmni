@@ -1305,7 +1305,7 @@ fn reply_integer(document: &Document, key: &str) -> i64 {
 
 /// 服务端的 `maxTimeMS` 管不到网络：一条被丢掉的连接上请求能一直挂着。本机再
 /// 套一层，多给两秒，让服务端的超时先报出来（它的消息更具体）
-async fn with_deadline<T>(
+pub(crate) async fn with_deadline<T>(
   timeout: Duration,
   work: impl std::future::Future<Output = Result<T, String>>,
 ) -> Result<T, String> {

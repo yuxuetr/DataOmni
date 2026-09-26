@@ -117,15 +117,16 @@ describe('走不走 SQL', () => {
     expect(speaksSql(DatabaseType.ClickHouse)).toBe(false);
   });
 
-  it('查询编辑器：走 SQL 的都有，Neo4j 写 Cypher、Elasticsearch 写请求也有；MongoDB 与 Redis 没有', () => {
+  it('查询编辑器：走 SQL 的都有，Neo4j 写 Cypher、Elasticsearch 写请求、MongoDB 写命令文档也有；Redis 没有', () => {
     for (const type of SUPPORTED_DATABASE_TYPES) {
       expect(hasQueryEditor(type), type).toBe(
-        speaksSql(type) || type === DatabaseType.Neo4j || type === DatabaseType.Elasticsearch
+        speaksSql(type) || type === DatabaseType.Neo4j || type === DatabaseType.Elasticsearch || type === DatabaseType.MongoDB
       );
     }
     expect(hasQueryEditor(DatabaseType.Neo4j)).toBe(true);
     expect(hasQueryEditor(DatabaseType.Elasticsearch)).toBe(true);
-    expect(hasQueryEditor(DatabaseType.MongoDB)).toBe(false);
+    expect(hasQueryEditor(DatabaseType.MongoDB)).toBe(true);
+    // Redis 的命令行在键浏览页里
     expect(hasQueryEditor(DatabaseType.Redis)).toBe(false);
   });
 });

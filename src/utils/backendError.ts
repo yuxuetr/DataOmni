@@ -119,6 +119,8 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_MONGO_BULK_STOPPED: 'error.backend.mongoBulkStopped',
   DATAOMNI_MONGO_UPDATE_NOT_OPERATORS: 'error.backend.mongoUpdateNotOperators',
   DATAOMNI_MONGO_PIPELINE_WRITES: 'error.backend.mongoPipelineWrites',
+  DATAOMNI_MONGO_COMMAND_EMPTY: 'error.backend.mongoCommandEmpty',
+  DATAOMNI_MONGO_COMMAND_CONNECTION_STATE: 'error.backend.mongoCommandConnectionState',
   DATAOMNI_MONGO_PIPELINE_INVALID: 'error.backend.mongoPipelineInvalid',
   DATAOMNI_MONGO_SRV_LOOKUP_FAILED: 'error.backend.mongoSrvLookupFailed',
   DATAOMNI_MONGO_SRV_WITH_TUNNEL: 'error.backend.mongoSrvWithTunnel',

@@ -37,7 +37,8 @@ interface QueryHistoryDialogProps {
 const LANGUAGE_BADGES: Partial<Record<ReturnType<typeof historyLanguage>, string>> = {
   cypher: 'Cypher',
   elasticsearch: 'Elasticsearch',
-  redis: 'Redis'
+  redis: 'Redis',
+  mongodb: 'MongoDB'
 };
 
 const STATUS_LABEL_KEYS: Record<QueryHistoryStatus, TranslationKey> = {
@@ -487,5 +488,6 @@ const HISTORY_CODE_LANGUAGES: Record<ReturnType<typeof historyLanguage>, CodeLan
   sql: 'sql',
   cypher: 'cypher',
   elasticsearch: 'json',
-  redis: null
+  redis: null,
+  mongodb: 'javascript'
 };

@@ -8,6 +8,7 @@ use crate::commands::database_commands::{
 };
 use crate::services::csv_import::{ImportProgress, ImportSummary};
 use crate::services::export_writer::{ExportProgress, ExportSummary};
+use crate::services::mongo_command::{self, CommandPlan, CommandReply};
 use crate::services::mongo_shell;
 use crate::services::mongodb::{
   self, CollectionEntry, ExtendedJson, FindRequest, ImportMode, MongoAggregatePage,
@@ -184,6 +185,27 @@ pub async fn mongodb_delete_many(
   let timeout = timeout(timeout_ms)?;
   let client = client(&registry, &connection_string)?;
   mongodb::delete_many(&client, &database, &collection, filter, timeout).await
+}
+
+/// 命令台：只解析与分级，不连库。前端据此按确认策略决定要不要先问
+#[tauri::command]
+pub fn mongodb_plan_command(command: String) -> Result<CommandPlan, String> {
+  mongo_command::plan(&command).map(|(_, plan)| plan)
+}
+
+/// 命令台：跑一条命令。`command` 是 mongosh 写法的文档文字，第一个键是命令名
+#[tauri::command]
+pub async fn mongodb_run_command(
+  connection_string: String,
+  database: String,
+  command: String,
+  timeout_ms: u64,
+  registry: State<'_, MongoRegistry>,
+) -> Result<CommandReply, String> {
+  let (command, _) = mongo_command::plan(&command)?;
+  let timeout = timeout(timeout_ms)?;
+  let client = client(&registry, &connection_string)?;
+  mongo_command::run(&client, &database, command, timeout).await
 }
 
 /// 跑一条只读的聚合管道，取一页。`pipeline` 是 mongosh 写法的数组文字

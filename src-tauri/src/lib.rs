@@ -78,6 +78,8 @@ pub fn run() {
       mongodb_drop_index,
       mongodb_update_many,
       mongodb_delete_many,
+      mongodb_plan_command,
+      mongodb_run_command,
       mongodb_aggregate,
       mongodb_create_collection,
       mongodb_explain,

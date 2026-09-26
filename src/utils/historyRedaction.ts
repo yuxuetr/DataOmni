@@ -294,8 +294,8 @@ export function redactSqlForHistory(sql: string, dialect: SqlDialect): RedactedS
   };
 }
 
-/** 控制台那几种语言：Cypher、Elasticsearch 的请求、Redis 的命令 */
-export type ConsoleLanguage = 'cypher' | 'elasticsearch' | 'redis';
+/** 控制台那几种语言：Cypher、Elasticsearch 的请求、Redis 的命令、MongoDB 的命令文档 */
+export type ConsoleLanguage = 'cypher' | 'elasticsearch' | 'redis' | 'mongodb';
 
 /** 名字里带着这些词的键、属性、参数，值就当口令 */
 const SECRET_WORDS = '[\\w.-]*?(?:password|passwd|pwd|secret|token|api_?key|private_key|credentials?)';
@@ -322,6 +322,15 @@ function redactCypher(text: string): string {
   return replaceAll(
     result,
     new RegExp(`((?:[{,]\\s*|\\.)${SECRET_WORDS}\\s*(?::|=)\\s*)(?:${CYPHER_STRING})`, 'gi'),
+    (_, prefix) => `${prefix}${REDACTED}`
+  );
+}
+
+/** MongoDB 的命令文档按键名：`createUser` 的 `pwd: '…'`，键带不带引号都认 */
+function redactMongoCommand(text: string): string {
+  return replaceAll(
+    text,
+    new RegExp(`([{,]\\s*["']?${SECRET_WORDS}["']?\\s*:\\s*)(?:${CYPHER_STRING})`, 'gi'),
     (_, prefix) => `${prefix}${REDACTED}`
   );
 }
@@ -379,7 +388,8 @@ function redactRedisCommand(text: string): string {
 export function redactConsoleForHistory(language: ConsoleLanguage, text: string): RedactedSql {
   const redacted = language === 'cypher' ? redactCypher(text)
     : language === 'elasticsearch' ? redactEsRequest(text)
-      : redactRedisCommand(text);
+      : language === 'mongodb' ? redactMongoCommand(text)
+        : redactRedisCommand(text);
   const withoutUrlCredentials = redacted.replace(URL_CREDENTIAL, '$1***$3');
   return { sql: withoutUrlCredentials, redacted: withoutUrlCredentials !== text };
 }

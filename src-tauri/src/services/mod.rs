@@ -7,6 +7,7 @@ pub mod elasticsearch;
 pub mod er_diagram;
 pub mod explain;
 pub mod export_writer;
+pub mod mongo_command;
 pub mod mongo_shell;
 pub mod mongodb;
 pub mod neo4j;
