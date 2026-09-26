@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { ColumnInfo } from '../contracts/databaseMetadata';
 import {
   autoMapColumns,
+  canSkipInsideOneTransaction,
   columnKind,
   fitsColumn,
   importColumns,
@@ -93,6 +94,9 @@ export function CsvImportDialog({
   const [batchSize, setBatchSize] = useState(500);
   const [strategy, setStrategy] = useState<Strategy>('single-transaction');
   const [onError, setOnError] = useState<OnError>('abort');
+  // 跳过坏行要保存点；没有保存点的库（DuckDB）只能每批一个事务地跳过
+  const strategyLocked = onError === 'skip' && !canSkipInsideOneTransaction(dialect);
+  const effectiveStrategy: Strategy = strategyLocked ? 'per-batch' : strategy;
 
   const startTask = useTaskStore((state) => state.start);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -170,7 +174,7 @@ export function CsvImportDialog({
         csv: { delimiter: preview.delimiter, hasHeader, nullText },
         columns: importColumns(mappings, columns),
         batchSize,
-        strategy,
+        strategy: effectiveStrategy,
         onError
       }
     });
@@ -263,7 +267,8 @@ export function CsvImportDialog({
           {step === 'run' && preview && (
             <RunStep
               batchSize={batchSize}
-              strategy={strategy}
+              strategy={effectiveStrategy}
+              strategyLocked={strategyLocked}
               onErrorPolicy={onError}
               onBatchSizeChange={setBatchSize}
               onStrategyChange={setStrategy}
@@ -575,6 +580,7 @@ function MappingStep({
 function RunStep({
   batchSize,
   strategy,
+  strategyLocked,
   onErrorPolicy,
   onBatchSizeChange,
   onStrategyChange,
@@ -582,6 +588,8 @@ function RunStep({
 }: {
   batchSize: number;
   strategy: Strategy;
+  /** 这个组合只有一种策略做得到：控件照样显示、按不动，下面说为什么 */
+  strategyLocked: boolean;
   onErrorPolicy: OnError;
   onBatchSizeChange: (value: number) => void;
   onStrategyChange: (value: Strategy) => void;
@@ -611,8 +619,11 @@ function RunStep({
               { value: 'per-batch', label: t('import.strategy.per-batch') }
             ]}
             onChange={onStrategyChange}
+            disabled={strategyLocked}
           />
-          <p className="text-xs text-fg-subtle">{t(`import.strategy.${strategy}Note`)}</p>
+          <p className="text-xs text-fg-subtle">
+            {strategyLocked ? t('import.strategy.lockedBySkip') : t(`import.strategy.${strategy}Note`)}
+          </p>
         </div>
       </Field>
 

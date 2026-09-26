@@ -145,7 +145,7 @@ describe('改结构语料', () => {
       expect(new Set(
         corpus.cases.filter((testCase) => testCase.kind === kind)
           .map((testCase) => testCase.dialect)
-      )).toEqual(new Set(['postgresql', 'mysql', 'sqlite', 'sqlserver', 'oracle']));
+      )).toEqual(new Set(['postgresql', 'mysql', 'sqlite', 'sqlserver', 'oracle', 'duckdb']));
     }
   });
 });

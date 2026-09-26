@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ColumnInfo } from '../contracts/databaseMetadata';
 import {
   autoMapColumns,
+  canSkipInsideOneTransaction,
   columnKind,
   fitsColumn,
   importColumns,
@@ -228,5 +229,14 @@ describe('importColumns', () => {
         columns
       )
     ).toEqual([{ source: 2, target: 'n', targetType: 'integer' }]);
+  });
+});
+
+describe('canSkipInsideOneTransaction', () => {
+  it('DuckDB 没有保存点，单事务里跳不了坏行；别家都行', () => {
+    expect(canSkipInsideOneTransaction('duckdb')).toBe(false);
+    for (const dialect of ['mysql', 'postgresql', 'sqlite', 'sqlserver', 'oracle'] as const) {
+      expect(canSkipInsideOneTransaction(dialect)).toBe(true);
+    }
   });
 });

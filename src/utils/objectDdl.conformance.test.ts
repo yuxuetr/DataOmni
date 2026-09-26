@@ -60,7 +60,7 @@ describe('对象级结构操作的共用语料', () => {
   it('每一家都有用例', () => {
     // 少了一家，那一家的冒烟用例就在空跑
     const dialects = new Set(corpus.cases.map((entry) => entry.dialect));
-    expect([...dialects].sort()).toEqual(['mysql', 'oracle', 'postgresql', 'sqlite', 'sqlserver']);
+    expect([...dialects].sort()).toEqual(['duckdb', 'mysql', 'oracle', 'postgresql', 'sqlite', 'sqlserver']);
   });
 
   it('能建 schema 的每一家都有建 schema 的用例', () => {

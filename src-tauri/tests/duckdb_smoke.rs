@@ -629,3 +629,289 @@ async fn duckdb_explain_reads_the_json_plan() {
   assert_eq!(plan.roots[0].operation, "TOP_N");
   assert!(!plan.roots[0].children.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// 第三阶段：CSV 导入、整表导出
+// ---------------------------------------------------------------------------
+
+/// 与 Oracle、SQL Server 那份同一组坏行：转不成整数、不存在的日期、主键冲突、太长、
+/// 非空。DuckDB 的 VARCHAR(5) 不查长度，太长那一格靠检查约束
+const IMPORT_CSV: &str = "id,n,at,name
+1,10,2024-01-01,a
+2,abc,2024-01-02,b
+3,30,2024-13-45,c
+1,40,,d
+5,50,,toolong
+6,,,f
+7,70,2024-02-02 08:30:00,g
+";
+
+fn import_request(
+  path: &std::path::Path,
+  on_error: dataomni_lib::services::ErrorPolicy,
+  strategy: dataomni_lib::services::TransactionStrategy,
+) -> dataomni_lib::services::ImportRequest {
+  let column =
+    |source, target: &str, target_type: &str| dataomni_lib::services::csv_import::ImportColumn {
+      source,
+      target: target.to_string(),
+      target_type: target_type.to_string(),
+    };
+  dataomni_lib::services::ImportRequest {
+    path: path.to_string_lossy().to_string(),
+    schema: Some("main".into()),
+    table: "im".into(),
+    csv: dataomni_lib::services::CsvOptions {
+      delimiter: ",".into(),
+      has_header: true,
+      null_text: String::new(),
+    },
+    columns: vec![
+      column(0, "id", "INTEGER"),
+      column(1, "n", "INTEGER"),
+      column(2, "at", "TIMESTAMP"),
+      column(3, "name", "VARCHAR"),
+    ],
+    batch_size: 3,
+    strategy,
+    on_error,
+  }
+}
+
+async fn import_into_fresh_table(
+  name: &str,
+  on_error: dataomni_lib::services::ErrorPolicy,
+  strategy: dataomni_lib::services::TransactionStrategy,
+) -> (Arc<DuckDbPool>, Result<dataomni_lib::services::ImportSummary, QueryError>) {
+  let pool = pool(name).await;
+  run_all(
+    &pool,
+    &["CREATE TABLE im (id INTEGER PRIMARY KEY, n INTEGER NOT NULL, \"at\" TIMESTAMP, \
+       name VARCHAR CHECK (length(name) <= 5))"],
+  )
+  .await;
+  let path =
+    std::env::temp_dir().join(format!("dataomni-duckdb-{name}-{}.csv", std::process::id()));
+  std::fs::write(&path, IMPORT_CSV).expect("write csv");
+  let summary = dataomni_lib::services::import_csv(
+    PoolRef::DuckDb(&pool),
+    &import_request(&path, on_error, strategy),
+    &mut |_| {},
+    &mut || false,
+    &mut || false,
+  )
+  .await;
+  std::fs::remove_file(&path).ok();
+  (pool, summary)
+}
+
+async fn imported_ids(pool: &Arc<DuckDbPool>) -> Vec<JsonValue> {
+  pool
+    .select("SELECT id FROM im ORDER BY id", &[])
+    .await
+    .expect("read back")
+    .iter()
+    .map(|row| row["id"].clone())
+    .collect()
+}
+
+/// DuckDB 没有保存点、一条出错整个事务就废了：分批时整批撤掉再逐行重放，好行留下
+#[tokio::test]
+async fn duckdb_import_per_batch_skips_the_bad_rows_without_savepoints() {
+  use dataomni_lib::services::{ErrorPolicy, TransactionStrategy};
+  let (pool, summary) =
+    import_into_fresh_table("import-skip", ErrorPolicy::Skip, TransactionStrategy::PerBatch).await;
+  let summary = summary.expect("import runs");
+  assert!(!summary.rolled_back, "{summary:?}");
+  assert_eq!((summary.rows_read, summary.rows_inserted, summary.rows_failed), (7, 2, 5));
+  assert_eq!(imported_ids(&pool).await, [json!(1), json!(7)]);
+  let by_line = |line: u64| {
+    summary.errors.iter().find(|error| error.line == line).map(|error| error.message.clone())
+  };
+  for (line, fragment) in [
+    (3, "Could not convert string 'abc'"),
+    (4, "timestamp field value out of range"),
+    (5, "violates primary key constraint"),
+    (6, "CHECK constraint failed"),
+    (7, "NOT NULL constraint failed"),
+  ] {
+    assert!(by_line(line).is_some_and(|m| m.contains(fragment)), "{line}: {:?}", by_line(line));
+  }
+}
+
+/// 单事务里跳过坏行要靠保存点：开始之前就拒绝，一行都不写
+#[tokio::test]
+async fn duckdb_import_refuses_to_skip_rows_inside_one_transaction() {
+  use dataomni_lib::services::{ErrorPolicy, TransactionStrategy};
+  let (pool, summary) = import_into_fresh_table(
+    "import-single-skip",
+    ErrorPolicy::Skip,
+    TransactionStrategy::SingleTransaction,
+  )
+  .await;
+  let error = summary.expect_err("refused");
+  assert_eq!(error.message, dataomni_lib::services::csv_import::CSV_SKIP_NEEDS_SAVEPOINTS);
+  assert!(imported_ids(&pool).await.is_empty());
+}
+
+/// 出错即停：两种策略都一行不留，坏行是第 3 行（表头是第 1 行）
+#[tokio::test]
+async fn duckdb_import_aborts_on_the_first_bad_row_and_names_it() {
+  use dataomni_lib::services::{ErrorPolicy, TransactionStrategy};
+  for strategy in [TransactionStrategy::SingleTransaction, TransactionStrategy::PerBatch] {
+    let (pool, summary) =
+      import_into_fresh_table(&format!("import-abort-{strategy:?}"), ErrorPolicy::Abort, strategy)
+        .await;
+    let summary = summary.expect("import runs");
+    assert_eq!(summary.rows_inserted, 0, "{strategy:?}: {summary:?}");
+    assert_eq!(summary.errors.len(), 1, "{strategy:?}: {:?}", summary.errors);
+    assert_eq!(summary.errors[0].line, 3, "{strategy:?}: {:?}", summary.errors);
+    assert!(imported_ids(&pool).await.is_empty(), "{strategy:?}: 第一批里的好行也不该留下");
+  }
+}
+
+/// 整表导出：表头在取任何一行之前就位；不返回结果集的语句一行都不执行
+#[tokio::test]
+async fn duckdb_exports_stream_to_a_file_and_refuse_non_queries_before_running_them() {
+  let pool = pool("export").await;
+  run_all(
+    &pool,
+    &["CREATE TABLE w (id INTEGER, name VARCHAR)", "INSERT INTO w VALUES (1, '甲'), (2, '乙')"],
+  )
+  .await;
+  let dir = std::env::temp_dir().join(format!("dataomni-duckdb-export-{}", std::process::id()));
+  std::fs::create_dir_all(&dir).expect("temp dir");
+  let target = dir.join("out.csv");
+  let options = || dataomni_lib::services::ExportOptions {
+    format: dataomni_lib::services::ExportFormat::Csv,
+    delimiter: ",".to_string(),
+    include_header: true,
+    null_text: String::new(),
+    byte_order_mark: false,
+  };
+  let export = |sql: &'static str| {
+    let pool = Arc::clone(&pool);
+    let target = target.clone();
+    async move {
+      dataomni_lib::services::export_query(
+        PoolRef::DuckDb(&pool),
+        sql,
+        &target,
+        options(),
+        &mut |_| {},
+        &mut || false,
+      )
+      .await
+    }
+  };
+
+  let summary = export(
+    "SELECT a.id, a.name, b.id, a.id * 1.5 AS half FROM w a JOIN w b ON b.id = a.id ORDER BY a.id;",
+  )
+  .await
+  .expect("export");
+  assert_eq!(summary.rows_written, 2);
+  assert_eq!(
+    std::fs::read_to_string(&target).expect("read back"),
+    "id,name,id 2,half\n1,甲,1,1.5\n2,乙,2,3.0"
+  );
+
+  let error = export("DELETE FROM w").await.expect_err("refused");
+  assert_eq!(error.message, dataomni_lib::services::query_executor::NON_QUERY_MESSAGE);
+  assert_eq!(
+    pool.select("SELECT count(*) AS n FROM w", &[]).await.expect("count")[0]["n"],
+    json!(2)
+  );
+
+  let error = export("SELECT * FROM no_such_table").await.expect_err("bad sql");
+  assert_eq!(error.code.as_deref(), Some("Catalog Error"), "{error:?}");
+  std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---------------------------------------------------------------------------
+// 改结构与建表、对象级结构操作：跑前端生成的那几条语句（共用语料），跑完读目录核对
+// ---------------------------------------------------------------------------
+
+#[path = "support/ddl_corpus.rs"]
+mod ddl_corpus;
+
+#[path = "support/object_ddl_corpus.rs"]
+mod object_ddl_corpus;
+
+async fn duckdb_catalog_columns(pool: &Arc<DuckDbPool>, table: &str) -> Vec<ddl_corpus::Column> {
+  use dataomni_lib::models::DatabaseType;
+  use dataomni_lib::services::schema_metadata_queries;
+  let queries = schema_metadata_queries(&DatabaseType::DuckDB).expect("DuckDB catalog");
+  pool
+    .select(queries.columns, &[json!(table), JsonValue::Null])
+    .await
+    .expect("read column catalog")
+    .iter()
+    .map(|row| ddl_corpus::Column {
+      name: text(&row["column_name"]),
+      data_type: text(&row["data_type"]),
+      nullable: row["is_nullable"] == json!(true),
+      primary_key_ordinal: row["primary_key_ordinal"].as_i64(),
+      default_value: row["column_default"].as_str().map(str::to_string),
+      generated: row["is_generated"] == json!(true),
+      collation: row["collation"].as_str().map(str::to_string),
+      comment: row["comment"].as_str().map(str::to_string),
+      extra: row["column_extra"].as_str().map(str::to_string),
+    })
+    .collect()
+}
+
+fn statement(sql: &str) -> dataomni_lib::services::WriteStatement {
+  serde_json::from_value(json!({ "sql": sql, "params": [] })).expect("statement")
+}
+
+/// 语句走界面上同一条路（`execute_write_batch`，一个事务）：DuckDB 的 DDL 在事务里，
+/// 一次改结构的几条语句要么全生效、要么全不生效
+#[tokio::test]
+async fn duckdb_runs_the_generated_ddl_from_the_shared_corpus() {
+  use dataomni_lib::services::execute_write_batch;
+  let pool = pool("ddl-corpus").await;
+  let cases = ddl_corpus::load("duckdb");
+  assert!(!cases.is_empty(), "语料里要有 DuckDB 的用例");
+  for case in cases {
+    run_all(&pool, &case.fixture.iter().map(String::as_str).collect::<Vec<_>>()).await;
+    if !case.origin.is_empty() {
+      let origin = duckdb_catalog_columns(&pool, &case.table).await;
+      assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+    }
+    let statements: Vec<_> = case.statements.iter().map(|sql| statement(sql)).collect();
+    execute_write_batch(PoolRef::DuckDb(&pool), &statements).await.unwrap_or_else(|error| {
+      panic!(
+        "{}: 生成的语句跑不了（第 {} 条）\n{:?}",
+        case.name, error.statement_index, error.error
+      )
+    });
+    run_all(&pool, &case.insert.iter().map(String::as_str).collect::<Vec<_>>()).await;
+    let after = duckdb_catalog_columns(&pool, &case.final_table).await;
+    assert_eq!(after, case.after, "{}: 跑完之后的表和语料说的不一样", case.name);
+    run_all(&pool, &case.cleanup.iter().map(String::as_str).collect::<Vec<_>>()).await;
+  }
+}
+
+#[tokio::test]
+async fn duckdb_runs_the_object_ddl_corpus() {
+  use dataomni_lib::services::execute_write_batch;
+  let pool = pool("object-ddl-corpus").await;
+  let cases = object_ddl_corpus::load("duckdb");
+  assert!(!cases.is_empty(), "语料里要有 DuckDB 的用例");
+  let current = pool.select("SELECT current_schema() AS s", &[]).await.expect("current schema");
+  let current = text(&current[0]["s"]);
+  for case in cases {
+    if let Some(written) = &case.schema {
+      assert_eq!(written, &current, "{}: 语料写死的 schema", case.name);
+    }
+    run_all(&pool, &case.fixture.iter().map(String::as_str).collect::<Vec<_>>()).await;
+    execute_write_batch(PoolRef::DuckDb(&pool), &[statement(&case.statement)])
+      .await
+      .unwrap_or_else(|error| panic!("{}: 生成的语句跑不了\n{:?}", case.name, error.error));
+    let found = pool.select(&case.check, &[]).await.expect("核对查询");
+    let found = found[0].values().next().and_then(JsonValue::as_i64);
+    assert_eq!(found, Some(case.expect), "{}: 跑完之后的结果和语料说的不一样", case.name);
+    run_all(&pool, &case.cleanup.iter().map(String::as_str).collect::<Vec<_>>()).await;
+  }
+}

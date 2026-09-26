@@ -578,6 +578,118 @@
       "cleanup": [
         "DROP TABLE IF EXISTS OBJ_CONF_ORA_IX PURGE"
       ]
+    },
+    {
+      "name": "duckdb-drop-table",
+      "dialect": "duckdb",
+      "request": {
+        "action": "drop",
+        "kind": "table",
+        "schema": "main",
+        "name": "obj_conf_duck_t"
+      },
+      "statement": "DROP TABLE \"main\".\"obj_conf_duck_t\"",
+      "fixture": [
+        "CREATE TABLE obj_conf_duck_t (id INTEGER)"
+      ],
+      "check": "SELECT count(*) FROM duckdb_tables() WHERE table_name = 'obj_conf_duck_t'",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "duckdb-drop-view",
+      "dialect": "duckdb",
+      "request": {
+        "action": "drop",
+        "kind": "view",
+        "schema": "main",
+        "name": "obj_conf_duck_v"
+      },
+      "statement": "DROP VIEW \"main\".\"obj_conf_duck_v\"",
+      "fixture": [
+        "CREATE VIEW obj_conf_duck_v AS SELECT 1 AS one"
+      ],
+      "check": "SELECT count(*) FROM duckdb_views() WHERE view_name = 'obj_conf_duck_v'",
+      "expect": 0,
+      "cleanup": []
+    },
+    {
+      "name": "duckdb-truncate",
+      "dialect": "duckdb",
+      "request": {
+        "action": "truncate",
+        "schema": "main",
+        "name": "obj_conf_duck_rows"
+      },
+      "statement": "TRUNCATE TABLE \"main\".\"obj_conf_duck_rows\"",
+      "fixture": [
+        "CREATE TABLE obj_conf_duck_rows (id INTEGER)",
+        "INSERT INTO obj_conf_duck_rows VALUES (1), (2)"
+      ],
+      "check": "SELECT count(*) FROM obj_conf_duck_rows",
+      "expect": 0,
+      "cleanup": [
+        "DROP TABLE obj_conf_duck_rows"
+      ]
+    },
+    {
+      "name": "duckdb-create-schema",
+      "dialect": "duckdb",
+      "request": {
+        "action": "create-schema",
+        "name": "obj_conf_duck_schema"
+      },
+      "statement": "CREATE SCHEMA \"obj_conf_duck_schema\"",
+      "fixture": [],
+      "check": "SELECT count(*) FROM duckdb_schemas() WHERE schema_name = 'obj_conf_duck_schema'",
+      "expect": 1,
+      "cleanup": [
+        "DROP SCHEMA obj_conf_duck_schema"
+      ]
+    },
+    {
+      "name": "duckdb-create-unique-index",
+      "dialect": "duckdb",
+      "request": {
+        "action": "create-index",
+        "schema": "main",
+        "table": "obj_conf_duck_ix",
+        "name": "uq_obj_conf_duck_ix_b_a",
+        "columns": [
+          "b",
+          "a"
+        ],
+        "unique": true
+      },
+      "statement": "CREATE UNIQUE INDEX \"uq_obj_conf_duck_ix_b_a\" ON \"main\".\"obj_conf_duck_ix\" (\"b\", \"a\")",
+      "fixture": [
+        "CREATE TABLE obj_conf_duck_ix (a INTEGER, b INTEGER)"
+      ],
+      "check": "SELECT count(*) FROM duckdb_indexes() WHERE index_name = 'uq_obj_conf_duck_ix_b_a' AND is_unique",
+      "expect": 1,
+      "cleanup": [
+        "DROP TABLE obj_conf_duck_ix"
+      ]
+    },
+    {
+      "name": "duckdb-drop-index",
+      "dialect": "duckdb",
+      "request": {
+        "action": "drop-index",
+        "schema": "main",
+        "table": "obj_conf_duck_ix2",
+        "name": "idx_obj_conf_duck_ix2_a"
+      },
+      "statement": "DROP INDEX \"main\".\"idx_obj_conf_duck_ix2_a\"",
+      "fixture": [
+        "CREATE TABLE obj_conf_duck_ix2 (a INTEGER)",
+        "CREATE INDEX idx_obj_conf_duck_ix2_a ON obj_conf_duck_ix2 (a)"
+      ],
+      "check": "SELECT count(*) FROM duckdb_indexes() WHERE index_name = 'idx_obj_conf_duck_ix2_a'",
+      "expect": 0,
+      "cleanup": [
+        "DROP TABLE obj_conf_duck_ix2"
+      ]
     }
   ]
 }

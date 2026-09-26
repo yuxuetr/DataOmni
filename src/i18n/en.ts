@@ -258,6 +258,7 @@ export const en: Translations = {
   'ddl.refuse.oracleGeneratedColumn': 'The database produces this column (identity or virtual). It can be renamed, but its type, nullability and default are tied to how it is generated and are not changed here.',
   'ddl.oracleCommitsEach': 'Every Oracle DDL statement commits on its own: these {count} statements take effect one by one, not as one transaction. If one fails midway, the ones before it have already been applied.',
   'ddl.oracleCommitsEach.one': 'Every Oracle DDL statement commits on its own.',
+  'ddl.duckdbIndexesBlock': 'If this table has indexes created with CREATE INDEX, or another table’s foreign key references it, DuckDB refuses to change a column’s type or nullability, rename, or drop columns (“entries that depend on it”); adding columns and changing defaults still work. The batch runs in one transaction, so a refusal changes nothing; to proceed, drop the index or foreign key, make the change, and recreate it.',
   'ddl.mysqlRestates': 'MySQL can only restate a whole column definition. The statements above are exactly what will run — anything not in them is dropped.',
 
   'result.rowCount': '{count} rows',
@@ -361,6 +362,7 @@ export const en: Translations = {
   'import.onError.abortNote': 'Stops at the first row the database rejects and names the line in the file.',
   'import.onError.skip': 'Skip and carry on',
   'import.onError.skipNote': 'Records rejected rows, keeps importing, lists them at the end.',
+  'import.strategy.lockedBySkip': 'This database has no savepoints, so skipping bad rows only works one transaction per batch: a failing batch is undone as a whole, then rewritten row by row, each good row committed on its own.',
   'import.issues': 'Pre-import check',
   'import.issue.noColumns': 'No column is mapped to the target table yet.',
   'import.issue.requiredMissing': '{columns} cannot be null and has no default, so without a mapping not a single row will go in.',
@@ -827,6 +829,7 @@ export const en: Translations = {
   'form.db.oracle.desc': 'Oracle Database (Instant Client ships with the app)',
   'form.oracleService': 'Service name',
   'form.oracleServiceHint': 'The Easy Connect service name, such as FREEPDB1 or ORCLPDB1. Connecting by SID and TLS (wallets) are not supported yet.',
+  'error.backend.csvSkipNeedsSavepoints': 'This database has no savepoints, so bad rows cannot be skipped inside a single transaction. Switch to one transaction per batch, or stop on the first error.',
   'error.backend.duckdbFileLocked': 'This DuckDB file is open in another program: {detail}. DuckDB lets only one process open a file at a time (read-only included) — close it there, or disconnect this connection in the other window.',
   'error.backend.oracleClientMissing': 'Oracle Instant Client was not found (looked in: {detail}). The installer should include it; when running from source, run scripts/fetch-oracle-client.sh first, or point DATAOMNI_ORACLE_CLIENT_DIR at an Instant Client directory.',
   'error.backend.oracleClientLoadFailed': 'Oracle Instant Client failed to load: {detail}. On Linux this is usually the missing system library libaio (called libaio1t64 from Ubuntu 24.04).',

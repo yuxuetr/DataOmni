@@ -66,6 +66,11 @@ export function DdlPreviewDialog({
     && plan.statements.some((sql) => sql.includes('MODIFY COLUMN') || sql.includes('CHANGE COLUMN'));
   // Oracle 的 DDL 逐条隐式提交：只有一条时它本身是原子的，不用多说
   const commitsEach = dialect === 'oracle' && plan.statements.length > 1;
+  // DuckDB：表上有 CREATE INDEX 建的索引、或被别的表的外键引用时，改列、改名、删列一律
+  // 被拒（「entries that depend on it」，1.5.5 上试过；加列与改默认值不受影响）。预览时不知道
+  // 这张表有没有这些依赖，所以只要有这几种就说一句
+  const duckdbIndexesBlock = dialect === 'duckdb'
+    && plan.statements.some((sql) => /\b(RENAME|DROP COLUMN)\b|\bALTER COLUMN \S+ (TYPE|SET NOT NULL|DROP NOT NULL)\b/.test(sql));
   // 只有改表名之外还有别的改动时才真的拆成了两条
   const splitRename = renameApart && plan.statements.length > 1
     && plan.statements.some((sql) => sql.includes('RENAME TO'));
@@ -135,6 +140,7 @@ export function DdlPreviewDialog({
 
           {restates && <p className="text-xs text-fg-subtle">{t('ddl.mysqlRestates')}</p>}
           {splitRename && <p className="text-xs text-fg-subtle">{t('ddl.tidbRenameApart')}</p>}
+          {duckdbIndexesBlock && <p className="text-xs text-fg-subtle">{t('ddl.duckdbIndexesBlock')}</p>}
           {commitsEach && (
             <p className="text-xs text-fg-subtle">
               {t('ddl.oracleCommitsEach', { count: plan.statements.length })}

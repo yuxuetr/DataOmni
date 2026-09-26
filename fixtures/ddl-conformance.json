@@ -1122,6 +1122,205 @@
       "cleanup": [
         "BEGIN EXECUTE IMMEDIATE 'DROP TABLE ddl_conf_ora_new PURGE'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; END;"
       ]
+    },
+    {
+      "name": "duckdb-one-action-per-statement-and-not-null-after-add",
+      "dialect": "duckdb",
+      "schema": "main",
+      "table": "ddl_conf_duck",
+      "newTableName": "ddl_conf_duck_renamed",
+      "fixture": [
+        "DROP TABLE IF EXISTS ddl_conf_duck_renamed",
+        "DROP TABLE IF EXISTS ddl_conf_duck",
+        "CREATE TABLE ddl_conf_duck (id INTEGER PRIMARY KEY, code VARCHAR NOT NULL DEFAULT 'a', amount DECIMAL(10,2), gone INTEGER)"
+      ],
+      "origin": [
+        {
+          "name": "id",
+          "dataType": "INTEGER",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": false
+        },
+        {
+          "name": "code",
+          "dataType": "VARCHAR",
+          "nullable": false,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "'a'",
+          "generated": false
+        },
+        {
+          "name": "amount",
+          "dataType": "DECIMAL(10,2)",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false
+        },
+        {
+          "name": "gone",
+          "dataType": "INTEGER",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false
+        }
+      ],
+      "draft": [
+        {
+          "origin": "id"
+        },
+        {
+          "origin": "code",
+          "name": "sku",
+          "dataType": "TEXT",
+          "nullable": true,
+          "defaultValue": "'b'"
+        },
+        {
+          "origin": "amount"
+        },
+        {
+          "origin": "gone",
+          "dropped": true
+        },
+        {
+          "origin": null,
+          "name": "note",
+          "dataType": "TEXT",
+          "nullable": false,
+          "defaultValue": "''"
+        }
+      ],
+      "statements": [
+        "ALTER TABLE \"main\".\"ddl_conf_duck\" RENAME COLUMN \"code\" TO \"sku\"",
+        "ALTER TABLE \"main\".\"ddl_conf_duck\" DROP COLUMN \"gone\"",
+        "ALTER TABLE \"main\".\"ddl_conf_duck\" ALTER COLUMN \"sku\" TYPE TEXT",
+        "ALTER TABLE \"main\".\"ddl_conf_duck\" ALTER COLUMN \"sku\" DROP NOT NULL",
+        "ALTER TABLE \"main\".\"ddl_conf_duck\" ALTER COLUMN \"sku\" SET DEFAULT 'b'",
+        "ALTER TABLE \"main\".\"ddl_conf_duck\" ADD COLUMN \"note\" TEXT DEFAULT ''",
+        "ALTER TABLE \"main\".\"ddl_conf_duck\" ALTER COLUMN \"note\" SET NOT NULL",
+        "ALTER TABLE \"main\".\"ddl_conf_duck\" RENAME TO \"ddl_conf_duck_renamed\""
+      ],
+      "refusals": [],
+      "impacts": [
+        "gone"
+      ],
+      "after": [
+        {
+          "name": "id",
+          "dataType": "INTEGER",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": false
+        },
+        {
+          "name": "sku",
+          "dataType": "VARCHAR",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "'b'",
+          "generated": false
+        },
+        {
+          "name": "amount",
+          "dataType": "DECIMAL(10,2)",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false
+        },
+        {
+          "name": "note",
+          "dataType": "VARCHAR",
+          "nullable": false,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "''",
+          "generated": false
+        }
+      ],
+      "cleanup": [
+        "DROP TABLE IF EXISTS ddl_conf_duck_renamed"
+      ]
+    },
+    {
+      "name": "duckdb-create-with-a-sequence-default-key",
+      "kind": "create",
+      "dialect": "duckdb",
+      "schema": "main",
+      "table": "ddl_conf_duck_new",
+      "newTableName": "ddl_conf_duck_new",
+      "fixture": [
+        "DROP TABLE IF EXISTS ddl_conf_duck_new",
+        "DROP SEQUENCE IF EXISTS ddl_conf_duck_seq",
+        "CREATE SEQUENCE ddl_conf_duck_seq"
+      ],
+      "origin": [],
+      "draft": [
+        {
+          "origin": null,
+          "name": "id",
+          "dataType": "INTEGER",
+          "nullable": false,
+          "defaultValue": "nextval('ddl_conf_duck_seq')",
+          "primaryKey": true
+        },
+        {
+          "origin": null,
+          "name": "code",
+          "dataType": "VARCHAR",
+          "nullable": false,
+          "defaultValue": "'x'"
+        },
+        {
+          "origin": null,
+          "name": "note",
+          "dataType": "TEXT",
+          "nullable": true,
+          "defaultValue": null
+        }
+      ],
+      "statements": [
+        "CREATE TABLE \"main\".\"ddl_conf_duck_new\" (\n  \"id\" INTEGER NOT NULL DEFAULT nextval('ddl_conf_duck_seq'),\n  \"code\" VARCHAR NOT NULL DEFAULT 'x',\n  \"note\" TEXT,\n  PRIMARY KEY (\"id\")\n)"
+      ],
+      "insert": [
+        "INSERT INTO ddl_conf_duck_new (code) VALUES ('a')"
+      ],
+      "refusals": [],
+      "impacts": [],
+      "after": [
+        {
+          "name": "id",
+          "dataType": "INTEGER",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": "nextval('ddl_conf_duck_seq')",
+          "generated": false
+        },
+        {
+          "name": "code",
+          "dataType": "VARCHAR",
+          "nullable": false,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "'x'",
+          "generated": false
+        },
+        {
+          "name": "note",
+          "dataType": "VARCHAR",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false
+        }
+      ],
+      "cleanup": [
+        "DROP TABLE IF EXISTS ddl_conf_duck_new",
+        "DROP SEQUENCE IF EXISTS ddl_conf_duck_seq"
+      ]
     }
   ],
   "createCasesProveTheKeyWorks": "建表用例多一步 insert：不写主键值插一行。三家的自增写法各不相同（identity / AUTO_INCREMENT / rowid 别名），而写错的表现不是建表失败，是**建出来了但插不进行**——这正是 2ba8ac6 修掉的那个缺陷的另一种形态。insert 跑不通测试就红。",

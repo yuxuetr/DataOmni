@@ -302,6 +302,9 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
   const drops: string[] = [];
   const alters: string[] = [];
   const adds: string[] = [];
+  // DuckDB 加列时不收约束（「Adding columns with constraints not yet supported」）：
+  // NOT NULL 的新列先加、再 SET NOT NULL
+  const afterAdds: string[] = [];
 
   for (const column of request.columns) {
     const origin = column.origin;
@@ -317,7 +320,12 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
 
     if (!origin) {
       if (!isBlankDraft(column)) {
-        adds.push(`ADD COLUMN ${addColumnDefinition(column, dialect)}`);
+        if (dialect === 'duckdb' && !column.nullable) {
+          adds.push(`ADD COLUMN ${columnDefinition(column, false, dialect)}`);
+          afterAdds.push(`ALTER COLUMN ${quoteSqlIdentifier(column.name, dialect)} SET NOT NULL`);
+        } else {
+          adds.push(`ADD COLUMN ${addColumnDefinition(column, dialect)}`);
+        }
       }
       continue;
     }
@@ -384,7 +392,7 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
     }
   }
 
-  const ordered = [...drops, ...alters, ...adds];
+  const ordered = [...drops, ...alters, ...adds, ...afterAdds];
   if (request.newTableName !== request.table) {
     const renameTo = `RENAME TO ${quoteSqlIdentifier(request.newTableName, dialect)}`;
     if (combines && !request.renameApart) {
@@ -397,8 +405,9 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
   statements.push(...renames);
 
   if (ordered.length > 0) {
-    if (dialect === 'sqlite') {
-      // SQLite 一条 ALTER TABLE 只能做一件事
+    if (dialect === 'sqlite' || dialect === 'duckdb') {
+      // SQLite 一条 ALTER TABLE 只能做一件事，DuckDB 也是（「Only one ALTER command per
+      // statement is supported」）。两家的 DDL 都在事务里，一批照样整体生效或整体不生效
       statements.push(...ordered.map((action) => `ALTER TABLE ${current} ${action}`));
     } else {
       statements.push(`ALTER TABLE ${current} ${ordered.join(', ')}`);
@@ -693,6 +702,8 @@ export function defaultCreateSchema(
     ? 'dbo'
     : dialect === 'postgresql'
       ? 'public'
+      : dialect === 'duckdb'
+        ? 'main'
       : dialect === 'oracle' && username
         ? username.toUpperCase()
         : null;

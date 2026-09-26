@@ -303,6 +303,38 @@ describe('buildTableDdl / SQLite', () => {
   });
 });
 
+describe('buildTableDdl / DuckDB', () => {
+  const code = column({ name: 'code', data_type: 'VARCHAR', is_nullable: false });
+
+  it('每个动作各自一条：「Only one ALTER command per statement is supported」', () => {
+    const plan = buildTableDdl(request('duckdb', [
+      { ...draftOf(code, 'duckdb'), name: 'sku', dataType: 'TEXT', nullable: true, defaultValue: "'x'" },
+      { ...draftOf(column({ name: 'old', data_type: 'INTEGER' }), 'duckdb'), dropped: true }
+    ]));
+    expect(plan.statements).toEqual([
+      'ALTER TABLE "orders" RENAME COLUMN "code" TO "sku"',
+      'ALTER TABLE "orders" DROP COLUMN "old"',
+      'ALTER TABLE "orders" ALTER COLUMN "sku" TYPE TEXT',
+      'ALTER TABLE "orders" ALTER COLUMN "sku" DROP NOT NULL',
+      'ALTER TABLE "orders" ALTER COLUMN "sku" SET DEFAULT \'x\''
+    ]);
+    expect(plan.refusals).toEqual([]);
+  });
+
+  it('加列时不带约束，NOT NULL 另起一条：DuckDB 不收「Adding columns with constraints」', () => {
+    const plan = buildTableDdl(request('duckdb', [
+      {
+        origin: null, name: 'qty', dataType: 'INTEGER',
+        nullable: false, defaultValue: '0', dropped: false, primaryKey: false
+      }
+    ]));
+    expect(plan.statements).toEqual([
+      'ALTER TABLE "orders" ADD COLUMN "qty" INTEGER DEFAULT 0',
+      'ALTER TABLE "orders" ALTER COLUMN "qty" SET NOT NULL'
+    ]);
+  });
+});
+
 describe('buildTableDdl / Oracle', () => {
   const amount = column({ name: 'AMOUNT', data_type: 'NUMBER(10,2)', default_value: '0 ' });
   const code = column({ name: 'CODE', data_type: 'VARCHAR2(32)', is_nullable: false });

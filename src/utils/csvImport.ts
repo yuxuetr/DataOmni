@@ -305,3 +305,15 @@ export function importColumns(
       targetType: byName.get(mapping.target)?.data_type ?? 'text'
     }));
 }
+
+/**
+ * 这个库能不能在一个事务里跳过坏行。
+ *
+ * 跳过靠保存点：整批失败时退回保存点、逐行重放，好行留在同一个事务里。DuckDB 没有
+ * 保存点（`SAVEPOINT` 是语法错误），一条出错整个事务就废了，所以它只能每批一个事务
+ * 地跳过——整批撤掉、每行各自提交。选了「跳过」时策略固定成分批，界面上说出来，
+ * 后端也拒绝这个组合（`CSV_SKIP_NEEDS_SAVEPOINTS`）
+ */
+export function canSkipInsideOneTransaction(dialect: SqlIdentifierDialect): boolean {
+  return dialect !== 'duckdb';
+}

@@ -274,6 +274,7 @@ export const zh = {
   'ddl.refuse.oracleGeneratedColumn': '这一列的值由数据库产生（自增或虚拟列）。除了改名，它的类型、可空与默认值都连着生成规则，不在这里改。',
   'ddl.oracleCommitsEach': 'Oracle 的每条 DDL 都自己提交：这 {count} 条语句逐条生效，不是一个事务。中途有一条失败时，前面的已经改了。',
   'ddl.oracleCommitsEach.one': 'Oracle 的每条 DDL 都自己提交。',
+  'ddl.duckdbIndexesBlock': '这张表上有 CREATE INDEX 建的索引、或者被别的表的外键引用着时，DuckDB 会拒绝改列（类型、可空）、改名与删列，报「entries that depend on it」；加列与改默认值不受影响。整批在一个事务里，被拒时什么都不会改；要改就先删掉索引或外键，改完再建回来。',
   'ddl.mysqlRestates': 'MySQL 只能重述整段列定义。上面的语句就是将要执行的全部内容——没有出现在里面的属性会被丢掉。',
 
   // 结果表
@@ -379,6 +380,7 @@ export const zh = {
   'import.onError.abortNote': '第一条被数据库拒收的行就停，并指出是文件里的第几行。',
   'import.onError.skip': '跳过并继续',
   'import.onError.skipNote': '把拒收的行记下来接着导，最后列出来。',
+  'import.strategy.lockedBySkip': '这个库没有保存点，跳过坏行时只能每批一个事务：出错的那一批整批撤掉，再逐行重新写，好行各自提交。',
   'import.issues': '导入前检查',
   'import.issue.noColumns': '还没有把任何一列映射到目标表。',
   'import.issue.requiredMissing': '{columns} 不能为空又没有默认值，没有映射的话一行都插不进去。',
@@ -854,6 +856,7 @@ export const zh = {
   'form.db.oracle.desc': 'Oracle Database（随应用带着 Instant Client）',
   'form.oracleService': '服务名',
   'form.oracleServiceHint': 'Easy Connect 的服务名，例如 FREEPDB1、ORCLPDB1。按 SID 连接与 TLS（钱包）这一版还不支持。',
+  'error.backend.csvSkipNeedsSavepoints': '这个库没有保存点，不能在一个事务里跳过坏行。改成「每批一个事务」，或者出错时停止。',
   'error.backend.duckdbFileLocked': '这个 DuckDB 文件正被另一个程序打开着：{detail}。DuckDB 同一时间只允许一个进程打开它（只读也不行），先在那边关掉，或者断开另一个窗口里的这条连接。',
   'error.backend.oracleClientMissing': '找不到 Oracle Instant Client（找过的目录：{detail}）。安装包里应当带着它；从源码运行时先执行 scripts/fetch-oracle-client.sh，或设 DATAOMNI_ORACLE_CLIENT_DIR 指向一份 Instant Client。',
   'error.backend.oracleClientLoadFailed': 'Oracle Instant Client 加载失败：{detail}。Linux 上多半是缺系统库 libaio（Ubuntu 24.04 起叫 libaio1t64）。',

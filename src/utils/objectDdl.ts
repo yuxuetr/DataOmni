@@ -62,7 +62,8 @@ export function truncateTableSql(
  */
 export const CREATES_SCHEMAS: ReadonlySet<SqlIdentifierDialect> = new Set([
   'postgresql',
-  'sqlserver'
+  'sqlserver',
+  'duckdb'
 ]);
 
 export function createSchemaSql(name: string, dialect: SqlIdentifierDialect): string {

@@ -92,6 +92,7 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_ORACLE_CLIENT_LOAD_FAILED: 'error.backend.oracleClientLoadFailed',
   DATAOMNI_ORACLE_TLS_UNSUPPORTED: 'error.backend.oracleTlsUnsupported',
   DATAOMNI_DUCKDB_FILE_LOCKED: 'error.backend.duckdbFileLocked',
+  DATAOMNI_CSV_SKIP_NEEDS_SAVEPOINTS: 'error.backend.csvSkipNeedsSavepoints',
   DATAOMNI_CSV_TRANSACTION_LOST: 'error.backend.csvTransactionLost',
   DATAOMNI_ROW_COUNT_MISMATCH: 'error.backend.rowCountMismatch',
   DATAOMNI_FILE_TOO_LARGE: 'error.backend.fileTooLarge',

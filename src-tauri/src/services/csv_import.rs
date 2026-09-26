@@ -34,6 +34,8 @@ pub const CSV_COLUMN_TYPE_INVALID: &str = "DATAOMNI_CSV_COLUMN_TYPE_INVALID";
 pub const CSV_VALUE_NOT_CONVERTIBLE: &str = "DATAOMNI_CSV_VALUE_NOT_CONVERTIBLE";
 /// 服务端把导入的事务整个回滚了。数据是那条错误的原话
 pub const CSV_TRANSACTION_LOST: &str = "DATAOMNI_CSV_TRANSACTION_LOST";
+/// 单事务里跳过坏行要靠保存点，这个库没有（DuckDB）。界面上本来就选不到这个组合
+pub const CSV_SKIP_NEEDS_SAVEPOINTS: &str = "DATAOMNI_CSV_SKIP_NEEDS_SAVEPOINTS";
 /// 这一行字段数不够。数据是 `实际字段数 · 要取第几个 · 映射到哪一列`
 pub const CSV_ROW_TOO_SHORT: &str = "DATAOMNI_CSV_ROW_TOO_SHORT";
 pub const FILE_OPEN_FAILED: &str = "DATAOMNI_FILE_OPEN_FAILED";
@@ -396,6 +398,11 @@ impl Dialect {
     }
   }
 
+  /// DuckDB 没有保存点：`SAVEPOINT` 是语法错误（1.5.5 上试过）
+  fn has_savepoints(&self) -> bool {
+    *self != Self::DuckDb
+  }
+
   /// SQL Server 与 Oracle 没有释放保存点这回事，保存点随事务结束
   fn release(&self, name: &str) -> Option<String> {
     (!matches!(self, Self::SqlServer | Self::Oracle)).then(|| format!("RELEASE SAVEPOINT {name}"))
@@ -598,6 +605,14 @@ struct Batch {
   params: Vec<Option<String>>,
 }
 
+impl Batch {
+  fn clear(&mut self) {
+    self.records.clear();
+    self.lines.clear();
+    self.params.clear();
+  }
+}
+
 /// 把一个 CSV 文件导入一张表。
 ///
 /// 用的是另开的一条连接，与导出同一个理由：一次导入可能跑几分钟，占着编辑器
@@ -626,6 +641,12 @@ pub async fn import_csv<'a>(
 
   let mut connection = SessionConnection::acquire(pool).await?;
   let dialect = Dialect::of(&connection);
+  if !dialect.has_savepoints()
+    && request.strategy == TransactionStrategy::SingleTransaction
+    && request.on_error == ErrorPolicy::Skip
+  {
+    return Err(QueryError::message(CSV_SKIP_NEEDS_SAVEPOINTS));
+  }
   let per_statement = dialect.rows_per_statement(request.batch_size, request.columns.len());
   let batch_sql = build_insert(
     dialect,
@@ -836,6 +857,10 @@ async fn flush(
   if rows == 0 {
     return Ok(Flushed::Ok);
   }
+  if !dialect.has_savepoints() {
+    return flush_without_savepoints(connection, request, batch_sql, per_statement, batch, state)
+      .await;
+  }
   let per_batch = request.strategy == TransactionStrategy::PerBatch;
   if per_batch {
     connection.execute_unprepared(dialect.begin()).await?;
@@ -890,6 +915,102 @@ async fn flush(
   batch.lines.clear();
   batch.params.clear();
 
+  Ok(if aborted { Flushed::Aborted } else { Flushed::Ok })
+}
+
+/// 没有保存点时怎么写一批（DuckDB）。
+///
+/// 事务里退不了一步，而一条出错整个事务就废了（和 PostgreSQL 一样）。所以整批失败时
+/// 把整个事务撤掉，再逐行找：
+///
+/// - 分批 + 跳过：这一批撤掉，每行各自一条自动提交的语句——好行留下，坏行记下。结果和
+///   别家一样：出错之前提交过的批次、这一批里的好行都在库里。
+/// - 分批 + 中止：这一批撤掉，另开一个事务逐行试，第一条失败的就是坏行，试完整个撤掉。
+/// - 单事务 + 中止：反正一行都不留。这里就把导入的事务撤掉，另开一个事务逐行试到出错；
+///   收尾时照常回滚的就是这个。
+/// - 单事务 + 跳过：做不到，开始之前就拒绝了（见 [`CSV_SKIP_NEEDS_SAVEPOINTS`]）。
+async fn flush_without_savepoints(
+  connection: &mut SessionConnection,
+  request: &ImportRequest,
+  batch_sql: &str,
+  per_statement: usize,
+  batch: &mut Batch,
+  state: &mut ImportState,
+) -> Result<Flushed, QueryError> {
+  let dialect = Dialect::of(connection);
+  let rows = batch.records.len();
+  let per_batch = request.strategy == TransactionStrategy::PerBatch;
+  let tail_sql;
+  let sql = if rows == per_statement {
+    batch_sql
+  } else {
+    tail_sql =
+      build_insert(dialect, request.schema.as_deref(), &request.table, &request.columns, rows)?;
+    &tail_sql
+  };
+  let single_sql =
+    build_insert(dialect, request.schema.as_deref(), &request.table, &request.columns, 1)?;
+
+  if per_batch {
+    connection.execute_unprepared(dialect.begin()).await?;
+  }
+  let outcome = connection.execute_with_params(sql, &batch.params).await;
+  let batch_error = match outcome {
+    Ok(_) => {
+      if per_batch {
+        connection.execute_unprepared("COMMIT").await?;
+      }
+      state.rows_inserted += rows as u64;
+      batch.clear();
+      return Ok(Flushed::Ok);
+    }
+    Err(error) => error,
+  };
+
+  connection.execute_unprepared("ROLLBACK").await?;
+  let width = request.columns.len();
+  let aborted = if request.on_error == ErrorPolicy::Skip {
+    for (index, record) in batch.records.iter().enumerate() {
+      let params = &batch.params[index * width..(index + 1) * width];
+      match connection.execute_with_params(&single_sql, params).await {
+        Ok(_) => state.rows_inserted += 1,
+        Err(error) => state.fail(
+          batch.lines.get(index).copied().unwrap_or(0),
+          error.to_string(),
+          record.iter().map(|field| field.to_string()).collect(),
+        ),
+      }
+    }
+    false
+  } else {
+    // 单事务时这里撤掉的是整个导入：前面写进去的也不算了
+    if !per_batch {
+      state.rows_inserted = 0;
+    }
+    connection.execute_unprepared(dialect.begin()).await?;
+    let mut found = false;
+    for (index, record) in batch.records.iter().enumerate() {
+      let params = &batch.params[index * width..(index + 1) * width];
+      if let Err(error) = connection.execute_with_params(&single_sql, params).await {
+        state.fail(
+          batch.lines.get(index).copied().unwrap_or(0),
+          error.to_string(),
+          record.iter().map(|field| field.to_string()).collect(),
+        );
+        found = true;
+        break;
+      }
+    }
+    if !found {
+      state.fail(batch.lines.first().copied().unwrap_or(0), batch_error.to_string(), Vec::new());
+    }
+    // 分批时自己收尾；单事务留给 `import_csv` 的收尾回滚
+    if per_batch {
+      connection.execute_unprepared("ROLLBACK").await?;
+    }
+    true
+  };
+  batch.clear();
   Ok(if aborted { Flushed::Aborted } else { Flushed::Ok })
 }
 
