@@ -43,7 +43,9 @@ import {
   splitSqlStatements
 } from '../utils/sqlStatements';
 import { planFormat, sqlFormatterLanguage } from '../utils/formatSql';
-import { SQL_FILE_FILTER, suggestSqlFileName } from '../utils/sqlFile';
+import { SQL_FILE_FILTER, linkSqlFile, planSqlSave, suggestSqlFileName } from '../utils/sqlFile';
+import { useWorkspaceStore } from '../stores/workspaceStore';
+import { useConfirmPrompt } from './ConfirmPrompt';
 import { save } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { describeError } from '../utils/describeError';
@@ -77,6 +79,14 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
   // 文档随活动 SQL 标签切换，单独订阅
   const { sqlInput, statements, latestExecutionIdByStatement } =
     useQueryStore(selectActiveSqlDocument);
+  // 文档 id 就是它所在标签的 id；来源文件记在标签上
+  const activeDocumentId = useQueryStore((state) => state.activeDocumentId);
+  const sqlFile = useWorkspaceStore((state) => {
+    const tab = state.tabs.find((candidate) => candidate.id === activeDocumentId);
+    return tab?.kind === 'sql' ? tab.file : undefined;
+  });
+  const linkSqlTabFile = useWorkspaceStore((state) => state.linkSqlTabFile);
+  const { ask, prompt: confirmPrompt } = useConfirmPrompt();
   const {
     executions,
     queryTimeoutMs,
@@ -256,19 +266,44 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
     });
   };
 
-  /** 另存为 `.sql`。写完把路径显示出来——只说「已保存」，用户不知道存去了哪 */
-  const saveSqlToFile = async () => {
+  /**
+   * 存成 `.sql`。标签有来源文件就写回去，没有（或者要另存为）才弹保存框。
+   * 写完把路径显示出来——只说「已保存」，用户不知道存去了哪
+   */
+  const saveSqlToFile = async (saveAs = false) => {
     setFileError(null);
+    const documentId = activeDocumentId;
+    const contents = sqlInput;
     try {
-      const path = await save({
-        defaultPath: suggestSqlFileName(documentTitle ?? ''),
-        filters: [SQL_FILE_FILTER]
-      });
-      // 取消保存对话框不是错误，不该留下任何提示
-      if (!path) {
-        return;
+      let path = saveAs ? null : sqlFile?.path ?? null;
+      if (path && sqlFile) {
+        // 读不到（删了、被换成别的编码）也算被动过
+        const diskText = await invoke<string>('read_text_file', { path }).catch(() => null);
+        if (planSqlSave(sqlFile, diskText) === 'confirm-overwrite') {
+          const overwrite = await ask({
+            title: t('editor.fileChangedTitle'),
+            message: t('editor.fileChangedMessage', { path, shortcut: formatShortcut(SHORTCUTS.saveAsFile) }),
+            confirmLabel: t('editor.fileChangedOverwrite'),
+            destructive: true
+          });
+          if (!overwrite) {
+            return;
+          }
+        }
+      } else {
+        path = await save({
+          defaultPath: sqlFile?.path ?? suggestSqlFileName(documentTitle ?? ''),
+          filters: [SQL_FILE_FILTER]
+        });
+        // 取消保存对话框不是错误，不该留下任何提示
+        if (!path) {
+          return;
+        }
       }
-      await invoke<number>('write_text_file', { path, contents: sqlInput });
+      await invoke<number>('write_text_file', { path, contents });
+      if (documentId) {
+        linkSqlTabFile(documentId, linkSqlFile(path, contents));
+      }
       setSavedPath(path);
     } catch (error) {
       setFileError(describeError(error, t('editor.saveFailed')));
@@ -276,6 +311,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
   };
 
   const handleEditorKeyDown = (event: React.KeyboardEvent) => {
+    if (matchesShortcut(event, SHORTCUTS.saveAsFile)) {
+      event.preventDefault();
+      void saveSqlToFile(true);
+      return;
+    }
     if (matchesShortcut(event, SHORTCUTS.saveToFile)) {
       event.preventDefault();
       void saveSqlToFile();
@@ -366,6 +406,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
 
   return (
     <div className="h-full flex flex-col bg-surface">
+      {confirmPrompt}
       {pendingRun && (
         <DestructiveStatementPrompt
           sql={pendingRun.sql}
@@ -502,7 +543,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
             onClick={() => void saveSqlToFile()}
             disabled={sqlInput.trim() === ''}
             aria-label={t('editor.saveToFile')}
-            title={t('editor.saveToFileTitle', { shortcut: formatShortcut(SHORTCUTS.saveToFile) })}
+            title={sqlFile
+              ? t('editor.saveToLinkedFileTitle', {
+                path: sqlFile.path,
+                shortcut: formatShortcut(SHORTCUTS.saveToFile),
+                saveAs: formatShortcut(SHORTCUTS.saveAsFile)
+              })
+              : t('editor.saveToFileTitle', { shortcut: formatShortcut(SHORTCUTS.saveToFile) })}
             className="flex items-center rounded-control border border-line-strong p-1.5 text-fg-muted transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:border-line disabled:text-fg-subtle"
           >
             <Save size={14} />

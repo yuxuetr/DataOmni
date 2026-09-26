@@ -69,6 +69,13 @@ function isWorkspaceTab(value: unknown): value is WorkspaceTab {
 }
 
 function normalizeTab(tab: WorkspaceTab): WorkspaceTab {
+  // 来源文件缺了哪一项就当没有：⌘S 退回「选路径」，而不是拿半个链接去写
+  if (tab.kind === 'sql' && tab.file !== undefined
+    && (typeof tab.file?.path !== 'string' || typeof tab.file?.contentHash !== 'string')) {
+    const withoutFile = { ...tab };
+    delete withoutFile.file;
+    return normalizeTab(withoutFile);
+  }
   // 会话是运行期的东西，重启后一律作废，由重新连接重建
   return {
     ...tab,

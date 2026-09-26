@@ -244,6 +244,17 @@ describe('工作区快照', () => {
     expect(loadWorkspaceSnapshot()?.tabs[0].pinned).toBe(false);
   });
 
+  it('来源文件往返保留；残缺的链接丢掉，标签照常恢复', () => {
+    const linked = createSqlWorkspaceTab('profile-a', { id: 'sql-1', file: { path: '/w/a.sql', contentHash: 'abc' } });
+    const broken = { ...createSqlWorkspaceTab('profile-a', { id: 'sql-2' }), file: { path: '/w/b.sql' } };
+    storage.set(STORAGE_KEY, JSON.stringify({ version: 1, tabs: [linked, broken], activeTabId: 'sql-1', drafts: {} }));
+
+    const tabs = loadWorkspaceSnapshot()?.tabs ?? [];
+    expect(tabs.map((tab) => tab.id)).toEqual(['sql-1', 'sql-2']);
+    expect(tabs[0].kind === 'sql' && tabs[0].file).toEqual({ path: '/w/a.sql', contentHash: 'abc' });
+    expect(tabs[1]).not.toHaveProperty('file');
+  });
+
   it('localStorage 抛错时读取返回 null、写入不抛', () => {
     vi.stubGlobal('localStorage', {
       getItem: () => {

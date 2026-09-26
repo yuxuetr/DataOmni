@@ -4,6 +4,7 @@ import {
   type ClosedWorkspaceTab,
   type WorkspaceTab
 } from '../contracts/workspace';
+import { tabTitleFromSqlPath, type SqlFileLink } from '../utils/sqlFile';
 
 /** 保留多少个最近关闭的标签。超出的最旧的一个被挤掉 */
 const CLOSED_TAB_LIMIT = 10;
@@ -31,6 +32,8 @@ interface WorkspaceActions {
   registerTab: (tab: WorkspaceTab) => void;
   activateTab: (tabId: string) => void;
   closeTab: (tabId: string) => void;
+  /** SQL 标签存到了某个文件：记下它，标题换成文件名 */
+  linkSqlTabFile: (tabId: string, file: SqlFileLink) => void;
   handleProfileDeleted: (profileId: string, tabIdsWithDrafts?: ReadonlySet<string>) => void;
 }
 
@@ -100,6 +103,14 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         activeTabId: tab.id
       };
     });
+  },
+
+  linkSqlTabFile: (tabId, file) => {
+    set((state) => ({
+      tabs: state.tabs.map((tab) => tab.id === tabId && tab.kind === 'sql'
+        ? { ...tab, file, title: tabTitleFromSqlPath(file.path), titleKey: undefined, titleParams: undefined, dirty: false }
+        : tab)
+    }));
   },
 
   activateTab: (tabId) => {

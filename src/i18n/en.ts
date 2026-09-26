@@ -591,6 +591,10 @@ export const en: Translations = {
 
   'editor.saveToFile': 'Save as .sql',
   'editor.saveToFileTitle': 'Save this tab\'s SQL to a .sql file ({shortcut})',
+  'editor.saveToLinkedFileTitle': 'Save to {path} ({shortcut}; Save As {saveAs})',
+  'editor.fileChangedTitle': 'The file was changed elsewhere',
+  'editor.fileChangedMessage': '{path} no longer holds what this tab last opened or saved (another program changed or deleted it). Overwriting discards those changes; to keep them, cancel and use {shortcut} to save to a different file.',
+  'editor.fileChangedOverwrite': 'Overwrite',
   'editor.saveFailed': 'Could not save the file',
   'editor.openFailed': 'Could not open the file',
   'tab.listLabel': 'Workspace tabs',

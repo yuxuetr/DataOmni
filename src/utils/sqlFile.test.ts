@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stripBom, suggestSqlFileName, tabTitleFromSqlPath } from './sqlFile';
+import { linkSqlFile, planSqlSave, savedToFile, stripBom, suggestSqlFileName, tabTitleFromSqlPath } from './sqlFile';
 
 describe('stripBom', () => {
   it('去掉开头的 BOM', () => {
@@ -49,5 +49,30 @@ describe('tabTitleFromSqlPath', () => {
 
   it('没有后缀时原样用文件名', () => {
     expect(tabTitleFromSqlPath('/tmp/scratch')).toBe('scratch');
+  });
+});
+
+describe('就地保存', () => {
+  const link = linkSqlFile('/work/report.sql', 'SELECT 1');
+
+  it('没有来源文件时要选路径', () => {
+    expect(planSqlSave(undefined, null)).toBe('choose-path');
+  });
+
+  it('磁盘上还是上次读写时的内容，直接写', () => {
+    expect(planSqlSave(link, 'SELECT 1')).toBe('write');
+    // 带 BOM 的文件读进来时 BOM 已经去掉了，比的也是去掉之后的
+    expect(planSqlSave(link, '\ufeffSELECT 1')).toBe('write');
+  });
+
+  it('被别的程序改过或删掉了，先问', () => {
+    expect(planSqlSave(link, 'SELECT 2')).toBe('confirm-overwrite');
+    expect(planSqlSave(link, null)).toBe('confirm-overwrite');
+  });
+
+  it('内容与上次存下的一致才算已保存', () => {
+    expect(savedToFile(link, 'SELECT 1')).toBe(true);
+    expect(savedToFile(link, 'SELECT 1 ')).toBe(false);
+    expect(savedToFile(undefined, 'SELECT 1')).toBe(false);
   });
 });

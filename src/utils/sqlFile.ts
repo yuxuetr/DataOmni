@@ -42,3 +42,51 @@ export function tabTitleFromSqlPath(path: string): string {
   const fileName = path.split(/[\\/]/).pop() ?? path;
   return fileName.replace(/\.sql$/i, '') || fileName;
 }
+
+/** 标签记下的来源文件：路径，以及上次读进来或写出去时那份内容的指纹 */
+export interface SqlFileLink {
+  path: string;
+  contentHash: string;
+}
+
+/**
+ * 文本的指纹（cyrb53）。只用来判断「和上次一样吗」，不是安全用途；
+ * 存指纹而不存原文，是因为标签快照和历史共用 localStorage 的 5MB 配额
+ */
+function fingerprint(text: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    h1 = Math.imul(h1 ^ code, 2654435761);
+    h2 = Math.imul(h2 ^ code, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
+}
+
+export function linkSqlFile(path: string, text: string): SqlFileLink {
+  return { path, contentHash: fingerprint(text) };
+}
+
+/** 编辑器里的内容就是文件里的内容：标签上不画「未保存」，关的时候也不用问 */
+export function savedToFile(link: SqlFileLink | undefined, text: string): boolean {
+  return link !== undefined && fingerprint(text) === link.contentHash;
+}
+
+/**
+ * ⌘S 该做什么。`diskText` 是文件现在的内容，读不到（删了、不再是 UTF-8）时为 `null`。
+ *
+ * 磁盘上的不是上次读写的那份，说明别的程序动过它——照写会把别人的改动悄悄盖掉，
+ * 所以先问
+ */
+export function planSqlSave(
+  link: SqlFileLink | undefined,
+  diskText: string | null
+): 'choose-path' | 'write' | 'confirm-overwrite' {
+  if (!link) {
+    return 'choose-path';
+  }
+  return diskText !== null && fingerprint(stripBom(diskText)) === link.contentHash ? 'write' : 'confirm-overwrite';
+}

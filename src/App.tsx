@@ -56,7 +56,8 @@ import {
   createTableWorkspaceTab,
   orderWorkspaceTabs,
   tabsShowingTable,
-  workspaceTabId
+  workspaceTabId,
+  type WorkspaceTab
 } from './contracts/workspace';
 import { useSessionManager } from './utils/stateSync';
 import { saveWorkspaceSnapshot } from './utils/workspacePersistence';
@@ -64,7 +65,7 @@ import { useResizablePanel } from './hooks/useResizablePanel';
 import { PanelResizeHandle } from './components/PanelResizeHandle';
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette';
 import { QueryHistoryDialog } from './components/QueryHistoryDialog';
-import { SQL_FILE_FILTER, stripBom, tabTitleFromSqlPath } from './utils/sqlFile';
+import { SQL_FILE_FILTER, linkSqlFile, savedToFile, stripBom, tabTitleFromSqlPath, type SqlFileLink } from './utils/sqlFile';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -79,6 +80,22 @@ const SQL_ONLY_PALETTE_ACTIONS: ReadonlySet<string> = new Set([
   'action:open-sql-file',
   'action:er-diagram'
 ]);
+
+/**
+ * 这个 SQL 标签上有没有丢了就找不回来的东西：有内容，而且不是刚存进文件的那一份。
+ * 标签上的「未保存」圆点、关标签时的询问都按它
+ */
+function sqlTabHasUnsavedWork(
+  tabs: readonly WorkspaceTab[],
+  state: Parameters<typeof selectSqlDocumentHasUnsavedContent>[0],
+  tabId: string
+): boolean {
+  if (!selectSqlDocumentHasUnsavedContent(state, tabId)) {
+    return false;
+  }
+  const tab = tabs.find((candidate) => candidate.id === tabId);
+  return !(tab?.kind === 'sql' && savedToFile(tab.file, state.documents[tabId]?.sqlInput ?? ''));
+}
 
 function App() {
   const { activeConnection, selectedTable, openConnectionForm } = useAppStore();
@@ -121,10 +138,10 @@ function App() {
   const unsavedTabIds = useMemo(
     () => new Set(
       Object.keys(documents).filter(
-        (documentId) => selectSqlDocumentHasUnsavedContent({ documents }, documentId)
+        (documentId) => sqlTabHasUnsavedWork(tabs, { documents }, documentId)
       )
     ),
-    [documents]
+    [documents, tabs]
   );
 
   const sessionManager = useSessionManager();
@@ -368,7 +385,7 @@ function App() {
     // 关闭标签会连草稿一起从工作区快照里抹掉，所以带内容时先问一次。
     // 三个选项各自做不同的事：保留草稿（进「最近关闭」，可重新打开）、
     // 丢弃（永久删除）、取消（不关）。
-    if (tab?.kind === 'sql' && selectSqlDocumentHasUnsavedContent(useQueryStore.getState(), tabId)) {
+    if (tab?.kind === 'sql' && sqlTabHasUnsavedWork(tabs, useQueryStore.getState(), tabId)) {
       setPendingCloseTabId(tabId);
       return;
     }
@@ -394,7 +411,7 @@ function App() {
     const plan = planCloseOthers(
       tabs,
       keepId,
-      (tab) => selectSqlDocumentHasUnsavedContent(useQueryStore.getState(), tab.id),
+      (tab) => sqlTabHasUnsavedWork(tabs, useQueryStore.getState(), tab.id),
       (tab) => {
         const tableKey = tableKeyOfTab(tab);
         return tableKey !== null && pendingChangeCount(tableKey) > 0;
@@ -477,7 +494,7 @@ function App() {
    * 从历史里取回语句走的是「开新标签」而不是「写进当前标签」：后者会把用户
    * 正在写的草稿覆盖掉，而那份草稿没有第二个地方存着。
    */
-  const openSqlTab = (initialSql?: string, title?: string): string | undefined => {
+  const openSqlTab = (initialSql?: string, title?: string, file?: SqlFileLink): string | undefined => {
     if (!activeConnection || !activeHasQueryEditor) {
       return undefined;
     }
@@ -491,7 +508,7 @@ function App() {
       profileId,
       // 从文件打开的标签直接用文件名，不走「查询 N」的编号
       title
-        ? { title }
+        ? { title, file }
         : {
             titleKey: 'tab.queryNumbered',
             titleParams: { index: sqlTabCount + 1, connection: activeConnection.config.name }
@@ -527,7 +544,8 @@ function App() {
       const contents = await invoke<string>('read_text_file', { path: selected });
       // BOM 在编辑器里不可见，却会跟着第一条语句发给数据库，换来一条指着
       // 第 1 行第 1 列的语法错误，而那一行看上去完全正常
-      openSqlTab(stripBom(contents), tabTitleFromSqlPath(selected));
+      const text = stripBom(contents);
+      openSqlTab(text, tabTitleFromSqlPath(selected), linkSqlFile(selected, text));
     } catch (error) {
       setFileError(describeError(error, t('editor.openFailed')));
     }

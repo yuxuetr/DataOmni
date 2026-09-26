@@ -610,8 +610,12 @@ export const zh = {
   'table.readOnly.metadataUnavailable': '读不到这张表的索引与约束，因此无法确定靠哪几列能定位到唯一一行。在弄清楚之前网格不写入——拿一个猜出来的键拼条件会改掉别的行。可以刷新重试，或在 SQL 编辑器里写明条件。',
 
   // SQL 编辑器
-  'editor.saveToFile': '另存为 .sql',
+  'editor.saveToFile': '保存为 .sql',
   'editor.saveToFileTitle': '把当前标签的 SQL 存成 .sql 文件（{shortcut}）',
+  'editor.saveToLinkedFileTitle': '保存到 {path}（{shortcut}；另存为 {saveAs}）',
+  'editor.fileChangedTitle': '文件在别处被改过',
+  'editor.fileChangedMessage': '{path} 已经不是这个标签上次打开或保存时的内容（被别的程序改过，或者删掉了）。覆盖会丢掉那些改动；想留着它们就取消，用 {shortcut} 另存为别的文件。',
+  'editor.fileChangedOverwrite': '覆盖',
   'editor.saveFailed': '保存文件失败',
   'editor.openFailed': '打开文件失败',
   'tab.listLabel': '工作区标签',

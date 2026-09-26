@@ -59,9 +59,10 @@ describe('翻译目录', () => {
         if (call[2].includes('...')) {
           continue;
         }
-        // `{ count }` 简写和 `{ count: n }` 都要认出来
+        // `{ count }` 简写和 `{ count: n }` 都要认出来。结尾用前瞻不吃掉逗号：吃掉的话
+        // `{ path, shortcut: x }` 里简写后面那个键就认不出来了
         const passed = new Set(
-          [...call[2].matchAll(/(?:^|,)\s*([A-Za-z_$][\w$]*)\s*(:|,|$)/g)].map(match => match[1])
+          [...call[2].matchAll(/(?:^|,)\s*([A-Za-z_$][\w$]*)\s*(?=:|,|$)/g)].map(match => match[1])
         );
         const expected = placeholders(zh[key]);
         const missing = expected.filter(name => !passed.has(name));

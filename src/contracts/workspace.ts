@@ -1,3 +1,5 @@
+import type { SqlFileLink } from '../utils/sqlFile';
+
 export type WorkspaceTabKind = 'sql' | 'table-data' | 'table-structure' | 'er-diagram';
 
 export interface WorkspaceTabBinding {
@@ -34,6 +36,8 @@ export interface SqlWorkspaceTab extends WorkspaceTabBase {
   draft: {
     sql: string;
   };
+  /** 从文件打开或存到过文件：⌘S 直接写回这里 */
+  file?: SqlFileLink;
 }
 
 export interface TableWorkspaceTab extends WorkspaceTabBase {
@@ -91,6 +95,7 @@ interface CreateSqlWorkspaceTabOptions extends WorkspaceTabOptions {
   titleKey?: string;
   titleParams?: Record<string, string | number>;
   sql?: string;
+  file?: SqlFileLink;
 }
 
 interface CreateTableWorkspaceTabOptions extends WorkspaceTabOptions {
@@ -143,7 +148,8 @@ export function createSqlWorkspaceTab(
     }),
     kind: 'sql',
     dirty: sql.length > 0,
-    draft: { sql }
+    draft: { sql },
+    ...(options.file ? { file: options.file } : {})
   };
 }
 
