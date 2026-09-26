@@ -1448,13 +1448,49 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     不该藏在「接入 DuckDB」这条底下。
   - 定位上也要先想清楚：DuckDB 的典型用法是对本地 parquet / csv 做分析，
     与「连远程关系库的客户端」这个当前定位只有部分重叠。
-- [x] ~~评估并接入 ClickHouse~~ **评估完成：不接**
+- [x] ~~评估并接入 ClickHouse~~ **评估完成：不接**（2026-09-26 已推翻，见下面的「ClickHouse」一条）
   - 同上的驱动问题（要 HTTP 客户端，不是 sqlx driver），另加一条更硬的：
     它会直接冲击 P2 2.5 已经立起来的写入不变量。ClickHouse 没有通用事务，
     `UPDATE` / `DELETE` 是异步的 `ALTER TABLE ... UPDATE`，不返回可信的
     影响行数——而「影响 0 行或多于预期就报错」是 2.5 的核心断言之一
     （`ROW_COUNT_MISMATCH_CODE`）。在这个模型下那条断言要么失效要么误报，
     等于把已经可信的路径重新变得不可信。
+- [ ] **ClickHouse**（2026-09-26 立项，用户要求接；**表格只读**，编辑以后再议）
+  - 推翻上面那条的是两件事：驱动那半条早已不成立（SQL Server / Oracle / DuckDB 都是后端
+    持有连接）；写入不变量那半条仍然成立，所以**不放宽它，而是不给 ClickHouse 开表格写入**。
+    它没有通用事务，`UPDATE` / `DELETE` 是异步的 mutation，不回可信的影响行数。
+    写库在编辑器里写 SQL，照常过危险语句确认。
+  - 驱动：官方 `clickhouse` crate 0.15（HTTP）。不用它的类型化行（要为每张表写结构体），
+    用 `query_raw(..).fetch_bytes(格式)` 取原始字节自己解。`query_raw` 不把 `?` 当占位符——
+    用户的 SQL 里 `?` 是字面量；目录查询用服务端参数 `{name: Type}`。
+  - 五分钟实验（scratchpad `chprobe`，对着 cu 上的 `dataomni-clickhouse`，25.8.33）：
+    - **格式选 `TabSeparatedWithNamesAndTypes`，不选 JSON**：TSV 给的是 ClickHouse 自己的文本
+      写法，逐字节原样（`unhex('ff00')` 出来就是 `ff 00`；NULL 是 `\N`，字符串 `\N` 写成
+      `\\N`，不混）；`nan` / `inf` 原样；嵌套值是 ClickHouse 字面量（`['a','b']`、`{'k':1}`），
+      粘回 SQL 就能用；`UInt64` / `Int128` / `Decimal(38, 9)` 都是精确文本。
+      JSON 那一族 `nan` 变 `null`，不是 UTF-8 的字符串被换成 U+FFFD。
+    - **流到一半的异常**：crate 认得出（25.11 前是末尾的 `Code: N. DB::Exception`，之后是
+      `X-ClickHouse-Exception-Tag`）。**但开着 lz4 时**报错里裹着之前收到的全部数据
+      （5 万行都进了消息）；不压缩时先流完 388951 字节、再报一句干净的错。所以不压缩。
+    - **丢掉请求不会让服务端停下**：future 丢掉 1.5 秒后 `system.processes` 里还在。
+      取消与超时要按 `query_id` 发 `KILL QUERY … SYNC`（实验里立即 `finished`），另外把
+      `max_execution_time` 设成超时，服务端自己也会停。
+    - 一次一条（「Multi-statements are not allowed」），编辑器本来就按方言切语句。
+      `CREATE` / `INSERT` 的回答是零字节，`SHOW` / 空结果的 `SELECT` 也有名字与类型两行表头——
+      **有没有表头就是有没有结果集**，不用按关键字猜。`INSERT` 的行数在
+      `X-ClickHouse-Summary` 的 `written_rows`（`BytesCursor::summary`）。
+  - 会话：HTTP 本身无状态，`SET`、临时表要 `session_id`。每条会话连接一个 id，
+    同一个 id 上同时只能跑一条（服务端锁着），与现在「一个标签一条会话连接」吻合。
+  - 分阶段，每一阶段都能用、都提交，`PENDING_FEATURES` 登记没做的：
+    1. 后端：连接（HTTP / HTTPS、TLS 模式、SSH 隧道）、会话执行（结果上限、超时、取消即
+       KILL、错误带号码）、目录查询（`system.tables` / `system.columns`）
+    2. 前端：连接表单、编辑器、对象树（库 → 表 / 视图 / 物化视图 / 字典）、结构页（列、
+       引擎、排序键、分区键、`SHOW CREATE`）、只读表数据（分页、排序、筛选）、补全、风险分级
+    3. 执行计划（`EXPLAIN indexes = 1`）、整表与结果导出
+  - **这一版不做**，各带重估条件：表格编辑与会话事务（见上）；ER 图（没有外键，画出来是
+    一堆孤立的框）；建表 / 改结构界面（MergeTree 要排序键，引擎各有必填项，表单做不通用；
+    DDL 在编辑器里写）；CSV 导入（做不到「中途失败什么都不留」，要做就照 MongoDB 导入那样
+    写明「不在事务里」）；原生 TCP 协议（crate 还没有）。
 - [x] 协议兼容库：用现有驱动验 MariaDB、TiDB、CockroachDB（2026-09-23 立项，同日完成）
   - **结论**：MariaDB 11.4 收为「支持」；TiDB 8.5 与 CockroachDB 25.2 收为
     「可用，有缺口」。矩阵在 README「兼容性矩阵」。
