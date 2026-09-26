@@ -616,3 +616,75 @@ async fn clickhouse_refuses_grid_writes() {
   .expect_err("no transactions");
   assert_eq!(error.error.message, CLICKHOUSE_WRITE_UNSUPPORTED);
 }
+
+/// 导出走会话连接：先 DESCRIBE 拿表头（不执行），再流式写完全部行。
+/// 值的写法与另外几家一致：大整数、定点小数按原文，NULL 写成空，二进制写 `0x…`
+#[tokio::test]
+async fn clickhouse_exports_stream_to_a_file_and_refuse_non_queries() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool);
+  for sql in [
+    "DROP TABLE IF EXISTS smoke_export",
+    "CREATE TABLE smoke_export (
+       id UInt64,
+       big UInt64,
+       cents Decimal(10, 2),
+       note Nullable(String),
+       raw String,
+       doubled UInt64 MATERIALIZED id * 2
+     ) ENGINE = MergeTree ORDER BY id",
+    "INSERT INTO smoke_export (id, big, cents, note, raw) VALUES
+       (1, 18446744073709551615, 10.5, '甲,乙', unhex('ff00')),
+       (2, 7, 3, NULL, 'x')",
+  ] {
+    run(&mut connection, sql).await;
+  }
+  let dir = std::env::temp_dir().join(format!("dataomni-clickhouse-export-{}", std::process::id()));
+  std::fs::create_dir_all(&dir).expect("temp dir");
+  let target = dir.join("out.csv");
+  let options = || dataomni_lib::services::ExportOptions {
+    format: dataomni_lib::services::ExportFormat::Csv,
+    delimiter: ",".to_string(),
+    include_header: true,
+    null_text: String::new(),
+    byte_order_mark: false,
+  };
+  let export = |sql: &'static str| {
+    let pool = Arc::clone(&pool);
+    let target = target.clone();
+    async move {
+      dataomni_lib::services::export_query(
+        PoolRef::ClickHouse(&pool),
+        sql,
+        &target,
+        options(),
+        &mut |_| {},
+        &mut || false,
+      )
+      .await
+    }
+  };
+
+  // 表数据页导出时点名的那种投影：MATERIALIZED 列要写出来才有值
+  let summary = export("SELECT `id`, `big`, `cents`, `note`, `raw`, `doubled` FROM smoke_export ORDER BY id")
+    .await
+    .expect("export");
+  assert_eq!(summary.rows_written, 2);
+  assert_eq!(
+    std::fs::read_to_string(&target).expect("read back"),
+    "id,big,cents,note,raw,doubled\n1,18446744073709551615,10.50,\"甲,乙\",0xff00,2\n2,7,3.00,,x,4"
+  );
+
+  let summary = export("SELECT number FROM numbers(100000)").await.expect("stream");
+  assert_eq!(summary.rows_written, 100000);
+
+  let error = export("ALTER TABLE smoke_export DELETE WHERE 1").await.expect_err("refused");
+  assert_eq!(error.message, dataomni_lib::services::query_executor::NON_QUERY_MESSAGE);
+  let left = pool.select("SELECT count() AS n FROM smoke_export", &[]).await.expect("count");
+  assert_eq!(left[0]["n"], json!(2), "拒绝导出时语句一次都没发出去");
+
+  let error = export("SELECT * FROM smoke_no_such_table").await.expect_err("bad sql");
+  assert_eq!(error.code.as_deref(), Some("60"), "{error:?}");
+  std::fs::remove_dir_all(&dir).ok();
+  run(&mut connection, "DROP TABLE smoke_export").await;
+}
