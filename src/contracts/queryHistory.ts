@@ -114,7 +114,7 @@ export function historyEntryFromExecution(
     return null;
   }
 
-  const { sql, redacted } = redactSqlForHistory(execution.sqlSnapshot);
+  const { sql, redacted } = redactSqlForHistory(execution.sqlSnapshot, execution.dialect);
   return {
     id: execution.id,
     startedAt: execution.startedAt ?? execution.createdAt,

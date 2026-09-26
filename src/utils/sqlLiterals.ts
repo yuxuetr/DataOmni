@@ -7,9 +7,8 @@ import type { SqlIdentifierDialect } from './sqlIdentifiers';
  * 筛选条件里的值只能内联。这不是权限问题——用户本来就能在编辑器里写任意
  * SQL——而是**正确性**问题：一个带撇号的姓氏会让语句直接语法错误。
  *
- * 这里按方言分支，与历史脱敏里「反斜杠一律按 MySQL 算」的取舍相反，因为
- * 代价方向不同：那边错了只是多打码或少打码一个展示用的字符串，这边错了
- * 是把一个错误的值发给数据库，查出来的行是错的而语句本身不会报错。
+ * 反斜杠要按方言分：认错了是把一个错误的值发给数据库，查出来的行是错的而
+ * 语句本身不会报错。
  */
 export function quoteSqlStringLiteral(value: string, dialect: SqlIdentifierDialect): string {
   // 单引号写两遍是三种方言共同的规则

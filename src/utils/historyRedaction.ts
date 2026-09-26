@@ -13,6 +13,8 @@
  * 干净地失败，而不是悄悄改成一个谁也不知道的值。
  */
 
+import type { SqlDialect } from '../contracts/queryExecution';
+
 export const REDACTED = "'***'";
 
 export interface RedactedSql {
@@ -51,14 +53,16 @@ interface Span {
  * 双引号与反引号包的是标识符（PostgreSQL 的 `"col"`、MySQL 的 `` `col` ``），
  * 跳过它们只是为了不把里面的撇号当成字符串开头。
  */
-function scanStringLiterals(sql: string): Span[] {
+function scanStringLiterals(sql: string, dialect: SqlDialect): Span[] {
   const literals: Span[] = [];
   let index = 0;
 
   while (index < sql.length) {
     const character = sql[index];
 
-    if (sql.startsWith('--', index) || character === '#') {
+    // `#` 只在 MySQL 里是注释。SQL Server 的临时表就叫 `#tmp`，当成注释会把
+    // 同一行后面的字面量整个跳过
+    if (sql.startsWith('--', index) || (character === '#' && dialect === 'mysql')) {
       const lineEnd = sql.indexOf('\n', index);
       index = lineEnd === -1 ? sql.length : lineEnd + 1;
       continue;
@@ -80,13 +84,13 @@ function scanStringLiterals(sql: string): Span[] {
     }
 
     if (character === '"' || character === '`') {
-      index = skipQuoted(sql, index, character);
+      index = skipQuoted(sql, index, character, false);
       continue;
     }
 
     if (character === "'") {
       const from = index;
-      index = skipQuoted(sql, index, "'");
+      index = skipQuoted(sql, index, "'", backslashEscapes(sql, index, dialect));
       literals.push({ from, to: index });
       continue;
     }
@@ -98,17 +102,27 @@ function scanStringLiterals(sql: string): Span[] {
 }
 
 /**
- * 从开引号扫到闭引号之后。`''` 是转义的引号，`\'` 在 MySQL 下也是。
+ * `start` 处的单引号字面量里反斜杠是不是转义符。
  *
- * 反斜杠按 MySQL 算而不按方言分：这里拿不到方言，而两边选错的代价不对称——
- * 按 MySQL 算，PostgreSQL 里以反斜杠结尾的字面量边界会偏（少见）；反过来
- * 按 PostgreSQL 算，MySQL 的 `'it\'s'` 会让**后面整条语句**的字面量全部错位，
- * 该打码的就打不中了。
+ * 只有 MySQL 默认如此；PostgreSQL 与 DuckDB 只在 `E'…'` 里才是，其余几家从来不是。
+ * 认错一边，字面量边界就错位：PostgreSQL 的 `'C:\'` 按 MySQL 算会一路吞到下一个
+ * 字面量的开引号，后面的口令落到「字面量外面」而漏打；反过来 MySQL 的 `'it\'s'`
+ * 按标准算也一样
  */
-function skipQuoted(sql: string, start: number, quote: string): number {
+function backslashEscapes(sql: string, start: number, dialect: SqlDialect): boolean {
+  if (dialect === 'mysql') {
+    return true;
+  }
+  return (dialect === 'postgresql' || dialect === 'duckdb')
+    && /[eE]/.test(sql[start - 1] ?? '')
+    && !/[\w$]/.test(sql[start - 2] ?? '');
+}
+
+/** 从开引号扫到闭引号之后。`''` 是转义的引号，`backslash` 时 `\'` 也是 */
+function skipQuoted(sql: string, start: number, quote: string, backslash: boolean): number {
   let index = start + 1;
   while (index < sql.length) {
-    if (sql[index] === '\\' && quote === "'") {
+    if (backslash && sql[index] === '\\') {
       index += 2;
       continue;
     }
@@ -140,7 +154,7 @@ function matchDollarTag(sql: string, index: number): string | null {
  * 字面量。列数与值数对不上（写错了，或者值里有函数调用）时这一组整个放弃，
  * 宁可不打也不打错位置。
  */
-function insertSecretLiterals(sql: string, literals: Span[]): Set<number> {
+function insertSecretLiterals(sql: string, literals: Span[], dialect: SqlDialect): Set<number> {
   const targets = new Set<number>();
   const header =
     /\binsert\s+(?:ignore\s+|low_priority\s+|delayed\s+|high_priority\s+)*into\s+[^(]+\(([^)]*)\)\s*values\s*/gi;
@@ -156,7 +170,7 @@ function insertSecretLiterals(sql: string, literals: Span[]): Set<number> {
       continue;
     }
 
-    for (const items of valueTuples(sql, match.index + match[0].length)) {
+    for (const items of valueTuples(sql, match.index + match[0].length, dialect)) {
       if (items.length !== columns.length) {
         // 列数与值数对不上，这条 INSERT 本来就跑不起来，位置对应无从谈起
         continue;
@@ -183,7 +197,7 @@ function insertSecretLiterals(sql: string, literals: Span[]): Set<number> {
  * 打掉它既泄了真正的口令又毁了语句。有了位置就能要求「这一项整个就是一个
  * 字面量」，表达式自然被排除在外。
  */
-function valueTuples(sql: string, start: number): Span[][] {
+function valueTuples(sql: string, start: number, dialect: SqlDialect): Span[][] {
   const tuples: Span[][] = [];
   let index = start;
 
@@ -199,7 +213,7 @@ function valueTuples(sql: string, start: number): Span[][] {
     while (index < sql.length) {
       const character = sql[index];
       if (character === "'" || character === '"' || character === '`') {
-        index = skipQuoted(sql, index, character);
+        index = skipQuoted(sql, index, character, character === "'" && backslashEscapes(sql, index, dialect));
         continue;
       }
       if (character === '(') {
@@ -249,9 +263,9 @@ function trimmedSpan(sql: string, from: number, to: number): Span {
   return { from: start, to: end };
 }
 
-export function redactSqlForHistory(sql: string): RedactedSql {
-  const literals = scanStringLiterals(sql);
-  const targets = insertSecretLiterals(sql, literals);
+export function redactSqlForHistory(sql: string, dialect: SqlDialect): RedactedSql {
+  const literals = scanStringLiterals(sql, dialect);
+  const targets = insertSecretLiterals(sql, literals, dialect);
 
   literals.forEach((literal, index) => {
     // 关键字与列名都在字面量**之前**，所以看它前面那一段就够了。
