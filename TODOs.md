@@ -2135,7 +2135,15 @@ scope 开到整个主目录，而这里需要的只有「写一个文件」。
     单测三种形状各一份；真库用例 1 条（共 31 条）：按有索引的字段查是 `IXSCAN (email_1)`、各看 1 个，
     按没索引的查是 COLLSCAN、50 个里看完 50 个返回 10 个。反向验过：不往 `inputStage` 里走 → 单测与
     真库各红一条（IXSCAN 在 FETCH 下面）。浏览器里（模拟后端）看过对话框与 1100px 宽的条件栏。
-  - 还没做：mongosh 命令。
+  - **命令台已落地**（2026-09-26，`f4383d5`）：不做完整的 mongosh（那要一整个 JS 运行时），做
+    `db.runCommand({...})`——MongoDB 连接上开查询标签，写一条命令文档（筛选框同一种写法），选库、跑、
+    看原样的回答。分级在后端按命令名：只读名单外一律按写；update / delete / findAndModify 有空条件
+    就是整个集合；`$out` / `$merge` 按批量写；drop 系、renameCollection、shutdown 按删除；前端照确认
+    策略问。`authenticate` / `logout` / `sasl*` 拒跑（连接池共用）。find / aggregate 只回第一批，
+    剩下的游标当场关掉。进历史，`pwd` 按键名打码。真库用例 1 条（共 32 条），反向验过四处（见提交）。
+    **打包版待验**。
+    **不做**：`db.coll.find()` 这种 JS 写法（要 JS 引擎）；一个标签里写多条命令（mongosh 字面量里
+    分不出边界，有选区就跑选区）。重估条件：有人拿着一段 mongosh 脚本来要整段跑。
 - [ ] Redis 使用键空间、类型和值浏览模型
   - **第一阶段（只读浏览）已落地**（2026-09-25）。驱动 redis-rs 1.7（rustls），`ConnectionManager`
     多路复用、断了自己重连。
