@@ -90,10 +90,11 @@ export type PendingFeature =
 
 /**
  * 分阶段接入的库还没接上的功能。SQL Server 与 Oracle 的各个阶段都已接上
- * （TODOs 4.2）；DuckDB 正在接，第一阶段是连接、编辑器、对象树、结构页与只读的表数据
+ * （TODOs 4.2）；DuckDB 正在接，前两个阶段（连接、编辑器、对象与结构浏览、表格编辑、
+ * 事务）已接上
  */
 export const PENDING_FEATURES: Readonly<Partial<Record<DatabaseType, readonly PendingFeature[]>>> = {
-  [DatabaseType.DuckDB]: ['dataEditing', 'transactions', 'explain', 'structureEditing', 'import', 'streamingExport']
+  [DatabaseType.DuckDB]: ['explain', 'structureEditing', 'import', 'streamingExport']
 };
 
 /** `dbType` 收字符串：调用方手里常常只有方言名（`'sqlserver'`），它与类型值同形 */

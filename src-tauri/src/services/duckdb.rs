@@ -659,12 +659,12 @@ fn logical_type(id: LogicalTypeId) -> &'static str {
     | LogicalTypeId::TimestampNs
     | LogicalTypeId::TimestampTZ => "datetime",
     LogicalTypeId::Blob | LogicalTypeId::Geometry => "binary",
-    LogicalTypeId::List
-    | LogicalTypeId::Array
-    | LogicalTypeId::Struct
-    | LogicalTypeId::Map
-    | LogicalTypeId::Union => "json",
-    LogicalTypeId::Varchar
+    LogicalTypeId::List | LogicalTypeId::Array | LogicalTypeId::Struct | LogicalTypeId::Union => {
+      "json"
+    }
+    // MAP 按 DuckDB 自己的写法显示（见 `map_text`），不是 JSON
+    LogicalTypeId::Map
+    | LogicalTypeId::Varchar
     | LogicalTypeId::Enum
     | LogicalTypeId::Uuid
     | LogicalTypeId::Interval
@@ -719,8 +719,28 @@ fn decode(value: &Value, type_id: LogicalTypeId) -> JsonValue {
     Value::Blob(bytes) | Value::Geometry(bytes) => {
       tagged_value("binary", bytes.iter().map(|byte| format!("{byte:02x}")).collect())
     }
+    Value::Map(entries) => JsonValue::from(map_text(entries)),
     nested => tagged_value("json", plain(nested).to_string()),
   }
+}
+
+/// MAP 照 DuckDB 自己的写法：`{k=1, other=2}`。
+///
+/// 列表与结构体写成 JSON 之后原样填回去，DuckDB 转得回列的类型；MAP 不行——
+/// `{"k":1}` 报「can't be cast to the destination type MAP」，`{k=1}` 可以（都实验过）。
+/// 表格里改一格就是把显示的文字填回去，所以 MAP 用它认的那种。
+fn map_text(entries: &duckdb::types::OrderedMap<Value, Value>) -> String {
+  let part = |value: &Value| match value {
+    Value::Null => "NULL".to_string(),
+    Value::Text(text) | Value::Enum(text) => text.clone(),
+    other => match plain(other) {
+      JsonValue::String(text) => text,
+      json => json.to_string(),
+    },
+  };
+  let pairs: Vec<String> =
+    entries.iter().map(|(key, value)| format!("{}={}", part(key), part(value))).collect();
+  format!("{{{}}}", pairs.join(", "))
 }
 
 fn integer(value: i128) -> JsonValue {
@@ -1092,6 +1112,11 @@ mod tests {
       decode(&Value::Timestamp(TimeUnit::Microsecond, 0), LogicalTypeId::TimestampTZ),
       tagged_value("datetime", "1970-01-01 00:00:00+00".to_string())
     );
+    let map = Value::Map(duckdb::types::OrderedMap::from(vec![
+      (Value::Text("k".into()), Value::Int(1)),
+      (Value::Text("n".into()), Value::Null),
+    ]));
+    assert_eq!(decode(&map, LogicalTypeId::Map), JsonValue::from("{k=1, n=NULL}"));
     let nested = Value::Struct(duckdb::types::OrderedMap::from(vec![
       ("a".to_string(), Value::HugeInt(1 << 60)),
       ("b".to_string(), Value::List(vec![Value::Int(1), Value::Null])),

@@ -820,6 +820,9 @@ ORDER BY t.trigger_name
 // - 外键不能跨 schema（DuckDB 拒绝建），被引用表就在同一个 schema 里；也只有
 //   NO ACTION 一种动作。
 // - DuckDB 没有触发器。
+// - 名字不分大小写地比：DuckDB 的标识符**带不带引号都不分大小写**（只保留写法），
+//   编辑器里写 `FROM Child` 指的就是表 `child`。按 PostgreSQL 折小写、按 Oracle 折大写
+//   都不对，照原样比又查不到——现象是「这张表好像没有主键」，结果不能改。
 
 const DUCKDB_COLUMNS: &str = r#"
 SELECT
@@ -845,8 +848,8 @@ LEFT JOIN LATERAL (
   WHERE k.table_oid = c.table_oid AND k.constraint_type = 'PRIMARY KEY'
     AND list_contains(k.constraint_column_names, c.column_name)
 ) pk ON true
-WHERE c.table_name = $1
-  AND c.schema_name = COALESCE($2, current_schema())
+WHERE lower(c.table_name) = lower($1)
+  AND lower(c.schema_name) = lower(COALESCE($2, current_schema()))
   AND c.database_name = current_database()
 ORDER BY c.column_index
 "#;
@@ -869,8 +872,8 @@ FROM (
     'ART' AS method
   FROM duckdb_constraints() k
   WHERE k.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
-    AND k.table_name = $1
-    AND k.schema_name = COALESCE($2, current_schema())
+    AND lower(k.table_name) = lower($1)
+    AND lower(k.schema_name) = lower(COALESCE($2, current_schema()))
     AND k.database_name = current_database()
   UNION ALL
   SELECT
@@ -894,8 +897,8 @@ FROM (
         ELSE part
       END
     ) AS parts) e
-  WHERE i.table_name = $1
-    AND i.schema_name = COALESCE($2, current_schema())
+  WHERE lower(i.table_name) = lower($1)
+    AND lower(i.schema_name) = lower(COALESCE($2, current_schema()))
     AND i.database_name = current_database()
 )
 ORDER BY index_name, ordinal
@@ -913,8 +916,8 @@ SELECT
   'NO ACTION' AS on_delete
 FROM duckdb_constraints() k
 WHERE k.constraint_type = 'FOREIGN KEY'
-  AND k.table_name = $1
-  AND k.schema_name = COALESCE($2, current_schema())
+  AND lower(k.table_name) = lower($1)
+  AND lower(k.schema_name) = lower(COALESCE($2, current_schema()))
   AND k.database_name = current_database()
 ORDER BY constraint_name, ordinal
 "#;
@@ -925,8 +928,8 @@ SELECT
   k.expression AS expression
 FROM duckdb_constraints() k
 WHERE k.constraint_type = 'CHECK'
-  AND k.table_name = $1
-  AND k.schema_name = COALESCE($2, current_schema())
+  AND lower(k.table_name) = lower($1)
+  AND lower(k.schema_name) = lower(COALESCE($2, current_schema()))
   AND k.database_name = current_database()
 ORDER BY k.constraint_index
 "#;
@@ -937,21 +940,21 @@ const DUCKDB_DDL: &str = r#"
 SELECT sql FROM (
   SELECT 0 AS part, t.table_name AS name, t.sql
   FROM duckdb_tables() t
-  WHERE t.table_name = $1
-    AND t.schema_name = COALESCE($2, current_schema())
+  WHERE lower(t.table_name) = lower($1)
+    AND lower(t.schema_name) = lower(COALESCE($2, current_schema()))
     AND t.database_name = current_database()
   UNION ALL
   SELECT 0, v.view_name, v.sql
   FROM duckdb_views() v
-  WHERE v.view_name = $1
-    AND v.schema_name = COALESCE($2, current_schema())
+  WHERE lower(v.view_name) = lower($1)
+    AND lower(v.schema_name) = lower(COALESCE($2, current_schema()))
     AND v.database_name = current_database()
     AND NOT v.internal
   UNION ALL
   SELECT 1, i.index_name, i.sql
   FROM duckdb_indexes() i
-  WHERE i.table_name = $1
-    AND i.schema_name = COALESCE($2, current_schema())
+  WHERE lower(i.table_name) = lower($1)
+    AND lower(i.schema_name) = lower(COALESCE($2, current_schema()))
     AND i.database_name = current_database()
     AND i.sql IS NOT NULL
 )

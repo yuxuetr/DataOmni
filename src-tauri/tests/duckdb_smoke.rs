@@ -105,7 +105,7 @@ async fn duckdb_decodes_values_the_way_the_other_dialects_do() {
   assert_eq!(row["nothing"], JsonValue::Null);
   assert_eq!((kind(&row["list"]), text(&row["list"]).as_str()), ("json", "[1,2,null]"));
   assert_eq!(text(&row["st"]), r#"{"a":1,"b":"x"}"#);
-  assert_eq!(text(&row["m"]), r#"{"k":1}"#);
+  assert_eq!(row["m"], json!("{k=1}"), "MAP 按 DuckDB 的写法：填回去转得回列的类型");
   assert_eq!(row["e"], json!("ok"));
   assert_eq!(row["u"], json!("00000000-0000-0000-0000-000000000001"));
   assert_eq!(row["j"], json!(r#"{"a":1}"#));
@@ -351,6 +351,78 @@ async fn duckdb_write_batches_check_row_counts_and_roll_back_as_a_whole() {
   assert_eq!(notes[0]["note"], json!("x"));
 }
 
+/// 表格里改一格，值以文本绑定（界面给的就是显示出来的那串字），由 DuckDB 转成列的
+/// 类型；并发守卫拿原值去比，同样是文本。每种类型都要能原样转回去——转不回去的话
+/// 那一格改不了，或者每次提交都报「没有恰好影响一行」
+#[tokio::test]
+async fn duckdb_writes_bind_displayed_text_into_every_column_type() {
+  use dataomni_lib::services::WriteStatement;
+  let pool = pool("casts").await;
+  run_all(
+    &pool,
+    &[
+      "CREATE TABLE t (id INTEGER PRIMARY KEY, i INTEGER, d DECIMAL(10,2), ts TIMESTAMP, \
+        tz TIMESTAMPTZ, dt DATE, tm TIME, b BOOLEAN, u UUID, e ENUM('ok', 'no'), l INTEGER[], \
+        st STRUCT(a INTEGER, b VARCHAR), m MAP(VARCHAR, INTEGER), j JSON, h HUGEINT, iv INTERVAL, \
+        bl BLOB)",
+      "INSERT INTO t (id) VALUES (1)",
+    ],
+  )
+  .await;
+  let mut connection = session(&pool).await;
+  // 二进制走表达式（`binaryLiteral`）：`from_hex` 存进去的是那两个字节，不是那串字
+  connection.execute("UPDATE t SET bl = from_hex('aa01') WHERE id = 1", 1).await.expect("blob");
+  let blob = rows_of(
+    connection.execute("SELECT bl, octet_length(bl) AS n FROM t", 1).await.expect("blob back"),
+  );
+  assert_eq!((text(&blob[0]["bl"]), blob[0]["n"].clone()), ("aa01".to_string(), json!(2)));
+  for (column, value) in [
+    ("i", json!("42")),
+    ("d", json!("10.50")),
+    ("ts", json!("2026-09-26 07:04:05.123456")),
+    ("tz", json!("2026-09-25 23:04:05+00")),
+    ("dt", json!("2026-09-26")),
+    ("tm", json!("07:04:05.12")),
+    ("b", json!(true)),
+    ("u", json!("00000000-0000-0000-0000-000000000001")),
+    ("e", json!("ok")),
+    ("l", json!("[1,2,null]")),
+    ("st", json!(r#"{"a":1,"b":"x"}"#)),
+    ("m", json!("{k=1}")),
+    ("j", json!(r#"{"a":1}"#)),
+    ("h", json!("170141183460469231731687303715884105727")),
+    ("iv", json!("1 year 2 days 03:04:05")),
+  ] {
+    let write = |sql: String, params: Vec<JsonValue>| {
+      serde_json::from_value::<WriteStatement>(
+        json!({ "sql": sql, "params": params, "expectRows": 1 }),
+      )
+      .expect("statement")
+    };
+    pool
+      .write_batch(&[write(
+        format!("UPDATE t SET {column} = ? WHERE id = ?"),
+        vec![value.clone(), json!(1)],
+      )])
+      .await
+      .unwrap_or_else(|error| panic!("{column} = {value}: {:?}", error.error));
+    // 读回来显示的那串字，要能再原样比中
+    let shown =
+      rows_of(connection.execute(&format!("SELECT {column} FROM t"), 1).await.expect("read back"));
+    let shown = match &shown[0][column] {
+      JsonValue::Bool(flag) => json!(flag),
+      other => json!(text(other)),
+    };
+    pool
+      .write_batch(&[write(
+        format!("UPDATE t SET id = 1 WHERE id = ? AND {column} = ?"),
+        vec![json!(1), shown.clone()],
+      )])
+      .await
+      .unwrap_or_else(|error| panic!("{column} 显示成 {shown} 比不中: {:?}", error.error));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 目录查询。夹具里放的是会咬人的那几样：复合主键、复合外键、表达式索引、带空格与
 // 关键字的名字、计算列、带注释的列、视图、序列、宏（含表宏）。
@@ -415,6 +487,10 @@ async fn duckdb_catalog_queries_describe_the_fixture() {
     [("my col".into(), json!(false)), ("x y".into(), json!(true)), ("select".into(), json!(false))],
     "带空格、带引号的列名也认得出计算列"
   );
+  // DuckDB 的名字带不带引号都不分大小写：编辑器里写 `FROM Sales.CHILD` 也是这张表
+  let shouting =
+    pool.select(queries.columns, &[json!("CHILD"), json!("Sales")]).await.expect("upper");
+  assert_eq!(shouting.len(), 8, "大写的名字也该查到同一张表");
   // 不给 schema 就是当前 schema（main），sales 里的表查不到
   assert!(pool
     .select(queries.columns, &[json!("child"), JsonValue::Null])

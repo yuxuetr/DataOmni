@@ -69,7 +69,8 @@ export function isCompleteHex(text: string): boolean {
  *
  * PostgreSQL 的 bytea 输入格式是 `\x` 开头（`standard_conforming_strings`
  * 默认开着，所以这里的反斜杠是字面的）；MySQL 与 SQLite 用 `X'...'`；
- * SQL Server 是 `0x...`，它不认 `X'...'`。
+ * SQL Server 是 `0x...`，它不认 `X'...'`。DuckDB 也不认：`X'AA01'` 在它那里被读成
+ * 列别名，查出来是字符串 `xAA01`——语句成功、存进去的是错的值；它要 `from_hex('aa01')`。
  */
 export function binaryLiteral(hex: string, dialect: SqlIdentifierDialect): string {
   const normalized = normalizeHex(hex).toLowerCase();
@@ -79,6 +80,9 @@ export function binaryLiteral(hex: string, dialect: SqlIdentifierDialect): strin
   // Oracle 没有二进制字面量
   if (dialect === 'oracle') {
     return `HEXTORAW('${normalized}')`;
+  }
+  if (dialect === 'duckdb') {
+    return `from_hex('${normalized}')`;
   }
   return dialect === 'postgresql'
     ? `'\\x${normalized}'::bytea`

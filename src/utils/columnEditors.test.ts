@@ -76,6 +76,10 @@ describe('binaryLiteral', () => {
     expect(binaryLiteral('DE AD', 'sqlserver')).toBe('0xdead');
     expect(binaryLiteral('DE AD', 'oracle')).toBe("HEXTORAW('dead')");
   });
+
+  it('DuckDB 用 from_hex：X\'...\' 在它那里是列别名，存进去的是一串字', () => {
+    expect(binaryLiteral('DE AD', 'duckdb')).toBe("from_hex('dead')");
+  });
 });
 
 describe('prettyJson', () => {
