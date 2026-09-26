@@ -666,9 +666,10 @@ async fn clickhouse_exports_stream_to_a_file_and_refuse_non_queries() {
   };
 
   // 表数据页导出时点名的那种投影：MATERIALIZED 列要写出来才有值
-  let summary = export("SELECT `id`, `big`, `cents`, `note`, `raw`, `doubled` FROM smoke_export ORDER BY id")
-    .await
-    .expect("export");
+  let summary =
+    export("SELECT `id`, `big`, `cents`, `note`, `raw`, `doubled` FROM smoke_export ORDER BY id")
+      .await
+      .expect("export");
   assert_eq!(summary.rows_written, 2);
   assert_eq!(
     std::fs::read_to_string(&target).expect("read back"),
@@ -687,4 +688,80 @@ async fn clickhouse_exports_stream_to_a_file_and_refuse_non_queries() {
   assert_eq!(error.code.as_deref(), Some("60"), "{error:?}");
   std::fs::remove_dir_all(&dir).ok();
   run(&mut connection, "DROP TABLE smoke_export").await;
+}
+
+/// 经 SSH 隧道：和 Elasticsearch 同一段 `http_endpoint`，地址是 IP 时直接改写成本地端口，
+/// 是域名时经 `resolve` 落到本地端口、证书仍按原名校验。两种各连一次。
+///
+/// 另要 `DATAOMNI_SSH_TUNNEL_HOST` / `_USER` / `_KEY`（同 `ssh_tunnel_smoke.rs`）和
+/// `DATAOMNI_CLICKHOUSE_TUNNEL_PORT`：从跳板机看过去 ClickHouse 在 127.0.0.1 的哪个端口。
+/// 那个地址在**本机**也要直连不到——本机要是正好开着一条转发到同一个端口（跑别的用例时
+/// 手工开的那种），代码没把地址改指本地端口也照样连得上，这条就成了假绿（反向验证时撞上过）。
+/// 所以每种写法先断言直连不到，主连接串用别的本地端口转发
+#[tokio::test]
+async fn clickhouse_connects_through_an_ssh_tunnel() {
+  use dataomni_lib::models::{SshAuthMethod, SshTunnelConfig};
+  use dataomni_lib::services::ssh_tunnel;
+  let Some(base) = profile_from_env() else { return };
+  let variable = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+  let (Some(host), Some(user), Some(key), Some(port)) = (
+    variable("DATAOMNI_SSH_TUNNEL_HOST"),
+    variable("DATAOMNI_SSH_TUNNEL_USER"),
+    variable("DATAOMNI_SSH_TUNNEL_KEY"),
+    variable("DATAOMNI_CLICKHOUSE_TUNNEL_PORT"),
+  ) else {
+    return;
+  };
+  let port: u16 = port.parse().expect("tunnel port");
+  #[allow(deprecated)]
+  let known_hosts = std::env::home_dir().expect("home").join(".ssh").join("known_hosts");
+  // 域名选一个本机解析不出来的：写 `localhost` 的话，没有 `resolve` 也照样落到 127.0.0.1，
+  // 证明不了它（反向验证时撞上过）。转发目标另写 127.0.0.1——「从跳板机看过去不是同一个
+  // 地址」正是这种填法
+  for (remote_host, forward_to) in
+    [("127.0.0.1", None), ("clickhouse.dataomni.invalid", Some("127.0.0.1"))]
+  {
+    let mut target = base.clone();
+    target.host = remote_host.to_string();
+    target.port = port;
+    target.database = None;
+    let direct = tokio::time::timeout(
+      Duration::from_secs(10),
+      clickhouse::connect(ClickHouseTarget::from_profile(&target, None)),
+    )
+    .await;
+    assert!(
+      !matches!(direct, Ok(Ok(_))),
+      "{remote_host}:{port} 在本机直连得上（开着一条转发？），这条证明不了隧道"
+    );
+    let tunnel = SshTunnelConfig {
+      host: host.clone(),
+      port: 22,
+      username: user.clone(),
+      private_key_path: key.clone(),
+      auth: SshAuthMethod::PrivateKey,
+      secret: String::new(),
+      secret_ref: None,
+      remote_host: forward_to.map(str::to_string),
+      remote_port: forward_to.map(|_| port),
+    };
+    target.ssh_tunnel = Some(tunnel.clone());
+    let opened = ssh_tunnel::open(&target, &tunnel, &known_hosts).await.expect("tunnel");
+    let pool =
+      clickhouse::connect(ClickHouseTarget::from_profile(&target, Some(opened.local_port)))
+        .await
+        .unwrap_or_else(|error| panic!("{remote_host}: {error}"));
+    let rows = pool.select("SELECT 1 AS one", &[]).await.expect("select through the tunnel");
+    assert_eq!(rows[0]["one"], json!(1), "{remote_host}");
+  }
+  // 直连同一个地址（跳板机的公网地址）是连不上的：否则上面那两次证明不了隧道
+  let mut direct = base.clone();
+  direct.host = host.clone();
+  direct.port = port;
+  let refused = tokio::time::timeout(
+    Duration::from_secs(20),
+    clickhouse::connect(ClickHouseTarget::from_profile(&direct, None)),
+  )
+  .await;
+  assert!(!matches!(refused, Ok(Ok(_))), "{host}:{port} 直连得上，这条证明不了隧道");
 }

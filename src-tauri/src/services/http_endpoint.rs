@@ -38,8 +38,15 @@ impl HttpEndpoint {
     }
   }
 
-  /// 请求发往的根地址。经隧道、主机是 IP 时只能写 127.0.0.1（`resolve` 只管域名），
-  /// 这时证书按 127.0.0.1 校验，校验不过就是那句 TLS 错误
+  /// 请求发往的根地址。
+  ///
+  /// 经隧道时端口一律是本地转发的端口：reqwest 的 `resolve` 只换 IP，**端口永远取 URL 里的**
+  /// （文档原话 “Ports in the URL itself will always be used”）。原先域名那一支留着远端端口，
+  /// 请求实际发往 127.0.0.1:远端端口——经隧道连一个写成域名的主机从来没通过，而单元测试只比了
+  /// URL 字符串（`clickhouse_smoke.rs` 的隧道用例连真的才撞上）。
+  ///
+  /// 主机名照旧：TLS 按它校验证书，`resolve` 把它指到 127.0.0.1。主机是 IP 时只能写 127.0.0.1
+  /// （`resolve` 只管域名），这时证书按 127.0.0.1 校验，校验不过就是那句 TLS 错误
   pub fn base_url(&self) -> Result<Url, EndpointError> {
     let scheme = if self.tls == TlsMode::Disabled { "http" } else { "https" };
     let host = match (self.tunnel_port, self.host.parse::<IpAddr>()) {
@@ -47,10 +54,7 @@ impl HttpEndpoint {
       (_, Ok(IpAddr::V6(address))) => format!("[{address}]"),
       _ => self.host.clone(),
     };
-    let port = match (self.tunnel_port, self.host.parse::<IpAddr>()) {
-      (Some(local), Ok(_)) => local,
-      _ => self.port,
-    };
+    let port = self.tunnel_port.unwrap_or(self.port);
     Url::parse(&format!("{scheme}://{host}:{port}"))
       .map_err(|error| EndpointError::Unreachable(format!("{}: {error}", self.host)))
   }
@@ -117,8 +121,8 @@ mod tests {
       ca_certificate_path: None,
       tunnel_port: Some(40001),
     };
-    // 域名：地址不变，连接经 `resolve` 落到本地端口
-    assert_eq!(endpoint.base_url().unwrap().as_str(), "https://es.internal:9200/");
+    // 域名：名字不变（证书按它校验），端口是本地转发的端口，名字经 `resolve` 指到 127.0.0.1
+    assert_eq!(endpoint.base_url().unwrap().as_str(), "https://es.internal:40001/");
     // IP：`resolve` 管不到，只能直接写本地端口
     endpoint.host = "10.0.0.5".to_string();
     assert_eq!(endpoint.base_url().unwrap().as_str(), "https://127.0.0.1:40001/");
