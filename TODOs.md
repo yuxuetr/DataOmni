@@ -95,8 +95,14 @@
     SQLite 主键列被目录报成可空。
   - 当前版本不做：列与表的注释（ER 的七套目录查询都没取注释）、AI 按名字猜的说明（RFC 里要求标「推测」）。
     重估条件：有人拿字典去给人看、嫌只有名字不够——先补注释查询，AI 说明排在它后面。
-- [ ] A6 备份：SQLite `VACUUM INTO`、DuckDB `EXPORT DATABASE` 先；`mysqldump` / `pg_dump` / `mongodump` 找得到才给
-  - 不自己实现 dump；密码经环境变量传，不进命令行
+- [x] A6a 备份：SQLite `VACUUM INTO`、DuckDB `EXPORT DATABASE (FORMAT PARQUET)`（`services/backup.rs`）
+  - 先写 `.part` 再改名；DuckDB 目标已存在则拒绝。入口在连接信息对话框底部与命令面板，走后台任务（不给取消：一条语句打不断）。
+  - 门：两条 Rust 用例恢复后核对内容（路径带撇号），去掉路径转义变红；`describeTask` 断言备份不给取消。
+  - 打包版上两家各备份一次并恢复核对（SQLite 副本直接打开；DuckDB 目录 `IMPORT DATABASE` 进新库，`decimal(10,2)` 原样）。
+- [ ] A6b 网络库备份：`mysqldump` / `pg_dump` / `mongodump` 找得到才给
+  - 不自己实现 dump；密码经环境变量传（`MYSQL_PWD` / `PGPASSWORD`），不进命令行
+  - 要先定的：从 Finder 启动的应用 PATH 里没有 Homebrew（`/opt/homebrew/bin`），得按已知位置找；
+    SSH 隧道要改成连本地端口；TLS 选项逐项映射到各工具的参数；工具版本比服务端旧时 `pg_dump` 直接拒绝
 - [ ] ~~A7 框架代码生成（Prisma / TypeORM / JPA）~~ **当前版本不做**
   - 确定性映射，不用 AI；重估条件：A2 落地后先只做 Prisma 一种
 - [ ] ~~A8 DataOmni 作为 MCP 服务~~ **当前版本不做**
