@@ -68,3 +68,22 @@ export function aiAvailable(): Promise<boolean> {
   availability ??= invoke<boolean>('ai_available').catch(() => false);
   return availability;
 }
+
+/** 发一轮给模型，拿回文本。设计页两种（关系库、MongoDB）共用这一个口子 */
+export function completeWithAi(settings: AiSettings, messages: { system: string; user: string }): Promise<string> {
+  return invoke<string>('ai_complete', {
+    request: {
+      protocol: settings.protocol,
+      baseUrl: settings.baseUrl,
+      model: settings.model,
+      system: messages.system,
+      user: messages.user
+    }
+  });
+}
+
+/** 钥匙串里没有 Key 时后端报的是通用的「凭据缺失」，那句文案说的是连接密码，这里换成 AI 的说法 */
+export function isAiKeyMissing(caught: unknown): boolean {
+  const message = (caught as { message?: unknown } | null)?.message ?? caught;
+  return typeof message === 'string' && message.startsWith('DATAOMNI_CREDENTIAL_MISSING');
+}

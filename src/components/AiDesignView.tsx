@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { AlertTriangle, Loader2, Sparkles } from 'lucide-react';
+import { AlertTriangle, Sparkles } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { ConnectionProfile } from '../contracts';
 import type { TranslationKey } from '../i18n/translate';
@@ -10,7 +10,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useCompletionCatalog } from '../hooks/useCompletionCatalog';
 import { buildDesignMessages, parseDraftResponse } from '../utils/aiDesign';
-import { aiConfigured } from '../utils/aiSettings';
+import { aiConfigured, completeWithAi, isAiKeyMissing } from '../utils/aiSettings';
 import { describeError } from '../utils/describeError';
 import {
   buildCreateSchema,
@@ -26,7 +26,7 @@ import { identifierDialectFor } from '../utils/sqlIdentifiers';
 import { serverLabel } from '../utils/serverPresets';
 import { DdlPreviewDialog } from './DdlPreviewDialog';
 import { ErDiagramCanvas } from './ErDiagramView';
-import { PLAIN_TEXT_INPUT } from './FormControls';
+import { AiRequestPanel } from './AiRequestPanel';
 
 interface AiDesignViewProps {
   tabId: string;
@@ -107,15 +107,7 @@ export function AiDesignView({ tabId, connection }: AiDesignViewProps) {
     setCreated(null);
     setRunning(true);
     try {
-      const reply = await invoke<string>('ai_complete', {
-        request: {
-          protocol: settings.protocol,
-          baseUrl: settings.baseUrl,
-          model: settings.model,
-          system: messages.system,
-          user: messages.user
-        }
-      });
+      const reply = await completeWithAi(settings, messages);
       const parsed = parseDraftResponse(reply);
       if (parsed.ok) {
         update(tabId, { draft: parsed.draft });
@@ -126,10 +118,7 @@ export function AiDesignView({ tabId, connection }: AiDesignViewProps) {
         });
       }
     } catch (caught) {
-      // 钥匙串里没有 Key 时后端报的是通用的「凭据缺失」，那句文案说的是连接密码
-      const message = (caught as { message?: unknown })?.message;
-      const keyMissing = typeof message === 'string' && message.startsWith('DATAOMNI_CREDENTIAL_MISSING');
-      update(tabId, { error: keyMissing ? t('aiDesign.keyMissing') : describeError(caught) });
+      update(tabId, { error: isAiKeyMissing(caught) ? t('aiDesign.keyMissing') : describeError(caught) });
     } finally {
       setRunning(false);
     }
@@ -180,63 +169,18 @@ export function AiDesignView({ tabId, connection }: AiDesignViewProps) {
           <span className="ml-auto text-xs text-fg-subtle">{connection.name} · {dialect}</span>
         </div>
 
-        {!configured && (
-          <p className="rounded-control border border-warning-line bg-warning-soft px-3 py-2 text-xs text-warning">
-            {t('aiDesign.notConfigured')}
-          </p>
-        )}
-
-        <textarea
-          value={design.requirement}
-          onChange={(event) => update(tabId, { requirement: event.target.value })}
-          placeholder={draft ? t('aiDesign.revisePlaceholder') : t('aiDesign.requirementPlaceholder')}
-          aria-label={t('aiDesign.requirement')}
-          rows={4}
-          className="w-full resize-y rounded-control border border-line-strong bg-surface px-3 py-2 text-sm text-fg outline-none focus:border-accent"
-          {...PLAIN_TEXT_INPUT}
+        <AiRequestPanel
+          requirement={design.requirement}
+          onRequirementChange={(requirement) => update(tabId, { requirement })}
+          hasDraft={draft !== null}
+          configured={configured}
+          running={running}
+          onGenerate={() => void generate()}
+          onDiscard={() => update(tabId, { draft: null, sent: null, rawReply: null, error: null })}
+          sent={design.sent}
+          error={design.error}
+          rawReply={design.rawReply}
         />
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void generate()}
-            disabled={!configured || running || design.requirement.trim() === ''}
-            className="flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:opacity-90 disabled:opacity-50"
-          >
-            {running && <Loader2 size={14} className="animate-spin" />}
-            {draft ? t('aiDesign.revise') : t('aiDesign.generate')}
-          </button>
-          {draft && (
-            <button
-              type="button"
-              onClick={() => update(tabId, { draft: null, sent: null, rawReply: null, error: null })}
-              disabled={running}
-              className="rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover disabled:opacity-50"
-            >
-              {t('aiDesign.discard')}
-            </button>
-          )}
-        </div>
-
-        {design.sent && (
-          <details className="text-xs text-fg-muted">
-            <summary className="cursor-pointer select-none">{t('aiDesign.sent')}</summary>
-            <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-control border border-line bg-surface-sunken p-2 font-mono text-fg select-text">
-              {`[system]\n${design.sent.system}\n\n[user]\n${design.sent.user}`}
-            </pre>
-          </details>
-        )}
-
-        {design.error && (
-          <div className="rounded-control border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
-            <p className="break-words">{design.error}</p>
-            {design.rawReply && (
-              <details className="mt-1">
-                <summary className="cursor-pointer select-none">{t('aiDesign.rawReply')}</summary>
-                <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono select-text">{design.rawReply}</pre>
-              </details>
-            )}
-          </div>
-        )}
 
         {created !== null && (
           <p className="rounded-control border border-line bg-surface-sunken px-3 py-2 text-xs text-success">
