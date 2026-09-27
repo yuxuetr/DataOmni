@@ -42,18 +42,19 @@
 #### 兼容性矩阵
 
 下表每一格都来自真库上跑完的冒烟用例（`src-tauri/tests/database_smoke.rs`，
-MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断的。
+MySQL 一组 22 条、PostgreSQL 一组 23 条），不是按协议兼容推断的。
 连接表单里 MariaDB、TiDB、CockroachDB 各有一个入口，填好各自的默认端口；存下来
 的就是 MySQL / PostgreSQL 连接。
 
 | 服务端 | 版本 | 连接类型 | 结论 | 用例 |
 | --- | --- | --- | --- | --- |
 | MySQL | 8.4 | MySQL | ✅ 支持 | 22 / 22 |
-| PostgreSQL | 16 | PostgreSQL | ✅ 支持 | 22 / 22 |
+| PostgreSQL | 16 | PostgreSQL | ✅ 支持 | 23 / 23 |
 | SQLite | 随应用内置 | SQLite | ✅ 支持 | 全部 |
 | MariaDB | 11.4 | MySQL | ✅ 支持 | 22 / 22 |
 | TiDB | 8.5 | MySQL | ✅ 支持 | 22 / 22 |
-| CockroachDB | 25.2 | PostgreSQL | ⚠️ 可用，有缺口 | 22 / 22（缺口由用例钉住） |
+| CockroachDB | 25.2 | PostgreSQL | ⚠️ 可用，有缺口 | 23 / 23（缺口由用例钉住） |
+| openGauss | 5.0.3（lite，PG 兼容库） | PostgreSQL | ⚠️ 可用，有缺口 | 23 / 23（缺口由用例钉住） |
 | SQL Server | 2022 | SQL Server | ✅ 支持 | 17 / 17（独立用例，`sql_server_smoke.rs`，含改结构语料） |
 | Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 14 / 14（独立用例，`oracle_smoke.rs`，含改结构语料） |
 | DuckDB | 1.5.5（编进应用） | DuckDB（libduckdb） | ✅ 支持 | 16 / 16（独立用例，`duckdb_smoke.rs`，每次都跑，含改结构语料） |
@@ -71,6 +72,10 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
   语句（它不收一条 ALTER 里两件事都做，8200），不再是一个整体，预览里写明。
   服务端本身没有的：结构页不显示检查约束（默认不启用，启用后目录里也接不上）、
   没有触发器与存储过程。按连上之后 `VERSION()` 分辨，从 MySQL 入口连的也一样。
+- **openGauss**（GaussDB 同源）：建库时要 `DBCOMPATIBILITY 'PG'`（默认的 `'A'` 是 Oracle 语义，没测过）。
+  只存 sha256 口令的用户连不上——标准 PostgreSQL 驱动不认它的 sha256 认证，连接时会说明服务端怎么改
+  （`password_encryption_type = 1` 后重设口令）。缺口：序列的属性页读不出（没有 `pg_sequences`）；
+  违反约束时不给约束名与表名（服务端不填那两个字段）。
 - **CockroachDB 的缺口**：结构页的触发器一段读不到（它没有
   `pg_get_triggerdef()`，目录表里也查不到触发器，只有 `SHOW CREATE TRIGGER`
   看得见），那一段单独显示原因，其余照常；错误里没有出错位置和表名。执行计划
