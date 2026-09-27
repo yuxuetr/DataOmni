@@ -17,7 +17,7 @@ Rust 后端在 `src-tauri/`，前端在 `src/`。
 | 对外的能力说明 | `README.md` |
 | Tauri 命令清单 | `src-tauri/src/lib.rs` 的 `invoke_handler` |
 | 立项时的设计意图 | `rfcs/design.md`（2025-06，**已不跟代码走**，开头有说明） |
-| 单项的设计说明与评估 | `rfcs/ssh-tunnel.md`（跟代码走）；`rfcs/ai-design-and-export.md`、`rfcs/editions-and-branching.md`（只有评估，未实现） |
+| 单项的设计说明与评估 | `rfcs/ssh-tunnel.md`（跟代码走）；`rfcs/ai-design-and-export.md`（AI 设计新表已实现，§2.5 是实验数据；导出代码、备份等其余部分仍只有评估）；`rfcs/editions-and-branching.md`（`ai` feature 已落地，其余只有评估） |
 | 版本怎么分 | **一条 `main`，不开长期版本分支**；差异用 Cargo feature 控制，AI 整块在 `ai` feature 后面（见 `rfcs/editions-and-branching.md`） |
 
 `fix_docs/` 是早期的一次性排查记录，已被后续改动大量推翻，不要据它判断现状。
@@ -32,6 +32,9 @@ bun tauri dev        # 开发（前后端一起）
 bun tauri build      # 打包
 scripts/install-macos.sh  # 构建（带 Oracle Instant Client，只出 .app）并装进 /Applications
 ```
+
+AI 在 Cargo feature `ai` 后面（默认开）。`bun run rust:clippy:no-ai` 查不带 AI 的构建，CI 两种都跑；
+前端没有构建开关，问后端 `ai_available`。
 
 单项：`bun run test`（vitest）、`bun run typecheck`、`bun run lint`、
 `bun run rust:test`、`bun run rust:clippy`。

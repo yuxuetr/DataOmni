@@ -246,6 +246,12 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
   有外键的表之间按具体字段连线；可搜索表名与列名、缩放平移、自由拖动卡片、
   导出为 SVG / PNG / PDF；执行 DDL 后自动刷新
 
+- AI 设计新表（可选，默认关）：一句话需求 → 模型给出多表设计 → 校验结果、ER 图、
+  每条外键「删除被引用的行时」怎么办（级联删除标红，一格可改）→ 预览建表语句 → 执行。
+  接口只有两种：Anthropic 与 OpenAI 兼容（DeepSeek、通义千问、智谱、Kimi、本地 Ollama 都走后者）；
+  只发需求、已有表名与当前设计，不发数据；发了什么可以展开看；Key 存系统钥匙串。
+  不要 AI 的构建用 `--no-default-features`，那样二进制里没有发往模型服务的代码
+
 - 表结构编辑：结构页上直接改列名、类型、可空、默认值，加列删列改表名；
   对象树里新建表（填列与主键）。**一律先出预览 SQL 再执行**——预览里分开列出
   会丢什么、会跑什么、哪几项这个方言做不到（带理由）。删列走二次确认，
@@ -380,6 +386,9 @@ bun tauri dev
 # pnpm tauri build
 bun tauri build
 
+# 不带 AI 的构建（内网 / 信创）：发往模型服务的代码整块不编进去
+bun tauri build -- --no-default-features
+
 # macOS：构建（带 Oracle Instant Client）并装进 /Applications，装完启动
 # --skip-build 只装上次的产物，--no-open 装完不启动，-y 正开着时不问直接结束它
 scripts/install-macos.sh
@@ -499,6 +508,7 @@ bun install
 - 🏠 首页连接多时只让连接列表滚动，「新建连接」与「打开数据库文件」留在原地
 - 🛠️ `scripts/install-macos.sh`：构建并装进 `/Applications`
 - 📤 导出为 `INSERT` 语句（表数据与查询结果，含整表流式导出）
+- ✨ AI 设计新表（Anthropic / OpenAI 兼容，默认关，Cargo feature `ai`）
 
 ### v0.4.0（首个发布版）
 
