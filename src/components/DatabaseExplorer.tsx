@@ -8,6 +8,7 @@ import {
   View,
   FunctionSquare,
   GitBranch,
+  Sparkles,
   Hash,
   Plus,
   FolderPlus,
@@ -101,6 +102,7 @@ interface DatabaseExplorerProps {
   /** 直接打开结构页。此前没有任何入口造得出 `table-structure` 标签 */
   onOpenStructure?: (tableName: string, schema?: string) => void;
   onOpenErDiagram?: () => void;
+  onOpenAiDesign?: () => void;
   /**
    * Neo4j 的标签与关系类型点开是一条查询，不是一张表：开一个查询标签并跑一次。
    * 标题是 `:Person`、`[:KNOWS]` 这样的写法
@@ -137,6 +139,7 @@ export default function DatabaseExplorer({
   onTableSelect,
   onOpenStructure,
   onOpenErDiagram,
+  onOpenAiDesign,
   onOpenQuery
 }: DatabaseExplorerProps) {
   const { connections } = useConnectionStore();
@@ -601,6 +604,16 @@ export default function DatabaseExplorer({
         
         {/* 按钮不让位：窄的时候宁可截掉左边的状态标记，也不能让「+」与刷新消失 */}
         <div className="flex shrink-0 items-center gap-1">
+          {onOpenAiDesign && (
+            <button
+              onClick={onOpenAiDesign}
+              className="p-1 text-fg-muted hover:text-accent transition-colors"
+              title={t('aiDesign.open')}
+              aria-label={t('aiDesign.open')}
+            >
+              <Sparkles size={14} />
+            </button>
+          )}
           {onOpenErDiagram && speaksSql(connection.db_type) && (
             <button
               onClick={onOpenErDiagram}

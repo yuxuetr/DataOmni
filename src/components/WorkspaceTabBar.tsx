@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  FolderOpen, GitBranch, FileText, History, Pin, Plus, Table, X } from 'lucide-react';
+  FolderOpen, GitBranch, FileText, History, Pin, Plus, Sparkles, Table, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { orderWorkspaceTabs, type WorkspaceTab, type WorkspaceTabKind } from '../contracts/workspace';
 import type { ConnectionEnvironment } from '../contracts';
@@ -43,7 +43,8 @@ const TAB_ICONS: Record<WorkspaceTabKind, typeof Table> = {
   sql: FileText,
   'table-data': Table,
   'table-structure': FileText,
-  'er-diagram': GitBranch
+  'er-diagram': GitBranch,
+  'ai-design': Sparkles
 };
 
 export function WorkspaceTabBar({

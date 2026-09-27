@@ -66,6 +66,9 @@ export function DdlPreviewDialog({
     && plan.statements.some((sql) => sql.includes('MODIFY COLUMN') || sql.includes('CHANGE COLUMN'));
   // Oracle 的 DDL 逐条隐式提交：只有一条时它本身是原子的，不用多说
   const commitsEach = dialect === 'oracle' && plan.statements.length > 1;
+  // MySQL 的 DDL 同样逐条隐式提交，放进事务也没用：建到第五张失败时前四张已经在了
+  const mysqlCommitsEach = dialect === 'mysql'
+    && plan.statements.filter((sql) => /^\s*(CREATE|ALTER|DROP)\b/i.test(sql)).length > 1;
   // DuckDB：表上有 CREATE INDEX 建的索引、或被别的表的外键引用时，改列、改名、删列一律
   // 被拒（「entries that depend on it」，1.5.5 上试过；加列与改默认值不受影响）。预览时不知道
   // 这张表有没有这些依赖，所以只要有这几种就说一句
@@ -141,6 +144,11 @@ export function DdlPreviewDialog({
           {restates && <p className="text-xs text-fg-subtle">{t('ddl.mysqlRestates')}</p>}
           {splitRename && <p className="text-xs text-fg-subtle">{t('ddl.tidbRenameApart')}</p>}
           {duckdbIndexesBlock && <p className="text-xs text-fg-subtle">{t('ddl.duckdbIndexesBlock')}</p>}
+          {mysqlCommitsEach && (
+            <p className="text-xs text-fg-subtle">
+              {t('ddl.mysqlCommitsEach', { count: plan.statements.length })}
+            </p>
+          )}
           {commitsEach && (
             <p className="text-xs text-fg-subtle">
               {t('ddl.oracleCommitsEach', { count: plan.statements.length })}

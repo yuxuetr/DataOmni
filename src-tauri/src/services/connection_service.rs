@@ -6,7 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
 
-const CREDENTIAL_SERVICE: &str = "DataOmni";
+pub(crate) const CREDENTIAL_SERVICE: &str = "DataOmni";
 const CREDENTIAL_REF_PREFIX: &str = "system-keyring://connection/";
 const SESSION_PASSWORD_REQUIRED: &str = "SESSION_PASSWORD_REQUIRED";
 
@@ -66,7 +66,7 @@ trait CredentialStore: Send + Sync {
 /// macOS 在钥匙串 ACL 校验不通过时返回的原文是「用户名或密码不正确」，
 /// 指向的却不是数据库账号——照搬只会把人引到错误的方向。未签名的开发
 /// 构建每次重建都换一个代码签名身份，旧条目因此拒绝访问，这是最常见的成因。
-fn describe_credential_read_failure(error: &keyring::Error) -> String {
+pub(crate) fn describe_credential_read_failure(error: &keyring::Error) -> String {
   match error {
     keyring::Error::NoEntry => CREDENTIAL_MISSING.to_string(),
     keyring::Error::PlatformFailure(cause) => format!("{CREDENTIAL_STORE_REJECTED}: {cause}"),
@@ -476,7 +476,7 @@ impl ConnectionService {
   }
 }
 
-fn credential_entry(profile_id: &str) -> Result<Entry, String> {
+pub(crate) fn credential_entry(profile_id: &str) -> Result<Entry, String> {
   Entry::new(CREDENTIAL_SERVICE, profile_id)
     .map_err(|error| describe_store_unavailable(&error, Entry::store_status()))
 }

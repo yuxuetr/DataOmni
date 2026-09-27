@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCreateSchema,
+  draftToEr,
   orderForCreation,
   validateSchemaDraft,
   type ColumnSpec,
@@ -72,6 +73,17 @@ describe('validateSchemaDraft', () => {
       'error:unknown-column:a:nope',
       'error:unknown-column:a:nothing'
     ]);
+  });
+
+  it('外键指向库里已有的表只是警告：那张表的列由数据库在建表时核对', () => {
+    const draft = {
+      tables: [table('articles', [column('id', 'int'), column('author_id', 'int')], {
+        foreignKeys: [{ columns: ['author_id'], referencedTable: 'Authors', referencedColumns: ['id'], onDelete: null }]
+      })]
+    };
+    expect(codes(draft, 'postgresql', ['authors'])).toEqual(['warning:references-existing-table:articles:author_id']);
+    expect(codes(draft)).toEqual(['error:unknown-table:articles:author_id']);
+    expect(buildCreateSchema(draft, 'postgresql')[0]).toContain('REFERENCES "Authors" ("id")');
   });
 
   it('外键只能指向主键或唯一约束', () => {
@@ -261,5 +273,24 @@ describe('buildCreateSchema', () => {
     const sqlite = buildCreateSchema(cycle, 'sqlite');
     expect(sqlite).toHaveLength(2);
     expect(sqlite[0]).toContain('FOREIGN KEY ("b_id") REFERENCES "b" ("id")');
+  });
+});
+
+describe('draftToEr', () => {
+  it('主键列标出来，复合外键拆成逐列的线', () => {
+    const draft = {
+      tables: [
+        table('t', [column('tenant', 'int'), column('id', 'int'), column('parent_tenant', 'int', true), column('parent_id', 'int', true)], {
+          primaryKey: ['tenant', 'id'],
+          foreignKeys: [{ columns: ['parent_tenant', 'parent_id'], referencedTable: 't', referencedColumns: ['tenant', 'id'], onDelete: null }]
+        })
+      ]
+    };
+    const { tables, links } = draftToEr(draft);
+    expect(tables[0]?.columns.map((entry) => entry.isPrimaryKey)).toEqual([true, true, false, false]);
+    expect(links).toEqual([
+      { constraintName: 't#0', from: { table: 't', column: 'parent_tenant' }, to: { table: 't', column: 'tenant' } },
+      { constraintName: 't#0', from: { table: 't', column: 'parent_id' }, to: { table: 't', column: 'id' } }
+    ]);
   });
 });

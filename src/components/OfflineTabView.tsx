@@ -66,8 +66,8 @@ export function OfflineTabView({ tab, profileName, draft, language }: OfflineTab
               )
               : <p className="text-sm text-fg-muted">{t('offline.emptyDraft')}</p>
           )
-          : tab.kind === 'er-diagram'
-            ? <p className="text-sm text-fg-muted">{t('offline.erNeedsConnection')}</p>
+          : tab.kind === 'er-diagram' || tab.kind === 'ai-design'
+            ? <p className="text-sm text-fg-muted">{t(tab.kind === 'er-diagram' ? 'offline.erNeedsConnection' : 'offline.aiDesignNeedsConnection')}</p>
             : (
               <p className="text-sm text-fg-muted">
                 {/* 结构页和数据页是两种标签，离线时要读的东西也不一样，

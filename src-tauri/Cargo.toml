@@ -17,6 +17,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[features]
+default = ["ai"]
+# AI 设计（发往模型服务的请求）。内网 / 信创构建用 `--no-default-features` 关掉：
+# 代码不在二进制里，可以证明不出网。见 rfcs/editions-and-branching.md §6
+ai = []
+
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"

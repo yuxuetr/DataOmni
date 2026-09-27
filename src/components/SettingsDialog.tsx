@@ -14,6 +14,7 @@ import {
   SLOW_QUERY_MS_CHOICES
 } from '../utils/queryHistoryStorage';
 import { useLanguageStore } from '../stores/languageStore';
+import { AiSettingsSection } from './AiSettingsSection';
 import type { TranslationKey } from '../i18n/translate';
 
 interface SettingsDialogProps {
@@ -225,6 +226,8 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
               {t('settings.history.current', { count: historyCount })}
             </p>
           </div>
+
+          <AiSettingsSection />
         </div>
       </div>
     </div>

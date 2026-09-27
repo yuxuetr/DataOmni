@@ -11,6 +11,7 @@
     "test": "vitest run",
     "rust:fmt": "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
     "rust:clippy": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets",
+    "rust:clippy:no-ai": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --no-default-features",
     "rust:test": "cargo test --manifest-path src-tauri/Cargo.toml",
     "rust:test:databases": "cargo test --manifest-path src-tauri/Cargo.toml --test database_smoke -- --nocapture",
     "check": "bun run lint && bun run typecheck && bun run test && bun run rust:fmt && bun run rust:clippy && bun run rust:test",

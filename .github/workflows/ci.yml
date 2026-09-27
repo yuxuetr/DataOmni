@@ -62,6 +62,10 @@ jobs:
       - name: Run Rust Clippy
         run: bun run rust:clippy
 
+      # 不带 AI 的构建（内网 / 信创）要一直编得过：没人用的那一套会悄悄坏掉。见 rfcs/editions-and-branching.md §5
+      - name: Rust clippy (no default features)
+        run: bun run rust:clippy:no-ai
+
       - name: Test Rust
         run: bun run rust:test
 

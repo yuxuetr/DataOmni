@@ -43,6 +43,7 @@ function isWorkspaceTab(value: unknown): value is WorkspaceTab {
     && tab.kind !== 'table-data'
     && tab.kind !== 'table-structure'
     && tab.kind !== 'er-diagram'
+    && tab.kind !== 'ai-design'
   ) {
     return false;
   }

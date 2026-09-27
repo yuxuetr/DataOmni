@@ -1,4 +1,5 @@
 import type { SqlDialect } from '../contracts/queryExecution';
+import type { ErLink, ErTable } from './erLayout';
 import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from './sqlIdentifiers';
 import { buildCreateTable } from './tableDdl';
 
@@ -60,6 +61,7 @@ export type SchemaIssueCode =
   | 'name-too-long'
   | 'unknown-column'
   | 'unknown-table'
+  | 'references-existing-table'
   | 'column-count-mismatch'
   | 'reference-not-unique'
   | 'set-null-on-not-null'
@@ -219,7 +221,13 @@ export function validateSchemaDraft(
       const ownColumnsExist = checkColumns(key.columns);
       const target = tablesByName.get(fold(key.referencedTable));
       if (!target) {
-        report('error', 'unknown-table', table.name, label, key.referencedTable);
+        // 指向库里已有的表是合理的设计（新的文章表引用已有的用户表）。那张表的列、主键
+        // 这里不知道，列存不存在、是不是唯一由数据库在建表时查——报警告让人知道这一条没核对过
+        if (existing.has(fold(key.referencedTable))) {
+          report('warning', 'references-existing-table', table.name, label, key.referencedTable);
+        } else {
+          report('error', 'unknown-table', table.name, label, key.referencedTable);
+        }
         continue;
       }
       if (key.columns.length !== key.referencedColumns.length || key.columns.length === 0) {
@@ -418,4 +426,32 @@ function columnDraft(column: ColumnSpec, inPrimaryKey: boolean) {
     dropped: false,
     primaryKey: false
   };
+}
+
+/**
+ * 画成 ER 图要的形状，喂给现成的 `ErDiagramCanvas`。表不带 schema（建在连接的默认 schema 里）；
+ * 复合外键拆成逐列的线，和从目录读出来的一样
+ */
+export function draftToEr(draft: SchemaDraft): { tables: ErTable[]; links: ErLink[] } {
+  const tables = draft.tables.map((table) => {
+    const primaryKey = new Set(table.primaryKey.map(fold));
+    return {
+      schema: null,
+      name: table.name,
+      columns: table.columns.map((column) => ({
+        name: column.name,
+        dataType: column.dataType,
+        isPrimaryKey: primaryKey.has(fold(column.name)),
+        isNullable: column.nullable
+      }))
+    };
+  });
+  const links = draft.tables.flatMap((table) =>
+    table.foreignKeys.flatMap((key, index) =>
+      key.columns.map((column, position) => ({
+        constraintName: `${table.name}#${index}`,
+        from: { table: table.name, column },
+        to: { table: key.referencedTable, column: key.referencedColumns[position] ?? '' }
+      }))));
+  return { tables, links };
 }

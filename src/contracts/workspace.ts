@@ -1,6 +1,6 @@
 import type { SqlFileLink } from '../utils/sqlFile';
 
-export type WorkspaceTabKind = 'sql' | 'table-data' | 'table-structure' | 'er-diagram';
+export type WorkspaceTabKind = 'sql' | 'table-data' | 'table-structure' | 'er-diagram' | 'ai-design';
 
 export interface WorkspaceTabBinding {
   readonly profileId: string;
@@ -56,7 +56,16 @@ export interface ErDiagramWorkspaceTab extends WorkspaceTabBase {
   kind: 'er-diagram';
 }
 
-export type WorkspaceTab = SqlWorkspaceTab | TableWorkspaceTab | ErDiagramWorkspaceTab;
+/**
+ * AI 设计新表。和 ER 图一样是库级的、一个连接一个。设计本身（需求、草稿）在
+ * `aiDesignStore` 里按标签存在内存，不进工作区快照：它是还没建出来的东西，重启丢了
+ * 重新生成就是，而把它塞进快照会让每次改一格都去写 localStorage
+ */
+export interface AiDesignWorkspaceTab extends WorkspaceTabBase {
+  kind: 'ai-design';
+}
+
+export type WorkspaceTab = SqlWorkspaceTab | TableWorkspaceTab | ErDiagramWorkspaceTab | AiDesignWorkspaceTab;
 
 /** 关闭时要求保留的标签，连同它当时的草稿一起留待重新打开 */
 export interface ClosedWorkspaceTab {
@@ -214,6 +223,16 @@ export function createErDiagramWorkspaceTab(
   return {
     ...createTabBase('er-diagram', profileId, 'ER', { ...options, titleKey: 'er.title' }),
     kind: 'er-diagram'
+  };
+}
+
+export function createAiDesignWorkspaceTab(
+  profileId: string,
+  options: WorkspaceTabOptions = {}
+): AiDesignWorkspaceTab {
+  return {
+    ...createTabBase('ai-design', profileId, 'AI', { ...options, titleKey: 'aiDesign.title' }),
+    kind: 'ai-design'
   };
 }
 

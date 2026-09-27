@@ -30,6 +30,8 @@ interface SidebarProps {
   onTableSelect?: (tableName: string, schema?: string) => void;
   onOpenStructure?: (tableName: string, schema?: string) => void;
   onOpenErDiagram?: () => void;
+  /** 只在能用 AI 设计时给；不给就没有那个按钮 */
+  onOpenAiDesign?: () => void;
   /** Neo4j 的标签与关系类型点开是一条查询：开一个查询标签并跑一次 */
   onOpenQuery?: (query: string, title: string) => void;
   /** 历史对话框由 App 渲染：它要能把一条语句开进新标签，而建标签是 App 的事 */
@@ -44,6 +46,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onTableSelect,
   onOpenStructure,
   onOpenErDiagram,
+  onOpenAiDesign,
   onOpenQuery,
   onOpenHistory,
   onCollapse
@@ -280,6 +283,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onTableSelect={onTableSelect}
             onOpenStructure={onOpenStructure}
             onOpenErDiagram={onOpenErDiagram}
+            onOpenAiDesign={onOpenAiDesign}
             onOpenQuery={onOpenQuery}
           />
         ) : (

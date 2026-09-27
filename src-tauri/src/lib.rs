@@ -121,6 +121,11 @@ pub fn run() {
       get_er_diagram_queries,
       get_completion_catalog_query,
       get_session_target_query,
+      // AI 设计（没编进 `ai` feature 时命令照样在，一律回答「这个构建没有 AI」）
+      ai_available,
+      ai_complete,
+      ai_save_key,
+      ai_has_key,
       // 文件写入
       write_text_file,
       write_binary_file,

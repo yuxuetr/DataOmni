@@ -21,13 +21,16 @@ import { RedisKeyBrowser } from './components/RedisKeyBrowser';
 import { redisDatabaseIndex } from './utils/redisKeys';
 import { MongoCollectionStructureView } from './components/MongoCollectionStructureView';
 import { DatabaseType } from './contracts/connection';
-import { hasQueryEditor, speaksSql } from './contracts/databaseSupport';
+import { hasQueryEditor, speaksSql, supportsFeature } from './contracts/databaseSupport';
 import { CypherWorkbench } from './components/CypherWorkbench';
 import { EsConsole } from './components/EsConsole';
 import { MongoConsole } from './components/MongoConsole';
 import { EsIndexStructureView } from './components/EsIndexStructureView';
 import { requestCypherAutorun } from './stores/cypherAutorun';
 import { ErDiagramView } from './components/ErDiagramView';
+import { AiDesignView } from './components/AiDesignView';
+import { useSettingsStore } from './stores/settingsStore';
+import { aiAvailable } from './utils/aiSettings';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { CloseTabPrompt, type CloseTabChoice } from './components/CloseTabPrompt';
 import {
@@ -52,6 +55,7 @@ import {
 } from './stores/tableEditStore';
 import { useWorkspaceStore } from './stores/workspaceStore';
 import {
+  createAiDesignWorkspaceTab,
   createErDiagramWorkspaceTab,
   createSqlWorkspaceTab,
   createTableWorkspaceTab,
@@ -79,7 +83,8 @@ import { environmentBadge } from './contracts/environment';
 const SQL_ONLY_PALETTE_ACTIONS: ReadonlySet<string> = new Set([
   'action:new-sql',
   'action:open-sql-file',
-  'action:er-diagram'
+  'action:er-diagram',
+  'action:ai-design'
 ]);
 
 /**
@@ -158,6 +163,14 @@ function App() {
   const activeSpeaksSql = activeConnection ? speaksSql(activeConnection.config.db_type) : false;
   // 能不能开查询标签：走 SQL 的，加上 Neo4j（Cypher）、Elasticsearch（请求）、MongoDB（命令台）
   const activeHasQueryEditor = activeConnection ? hasQueryEditor(activeConnection.config.db_type) : false;
+  // AI 设计的入口：构建里有 AI（后端说了算）、设置里开着、这个连接能建表（ClickHouse 不能）
+  const aiEnabled = useSettingsStore((state) => state.ai.enabled);
+  const [aiInBuild, setAiInBuild] = useState(false);
+  useEffect(() => {
+    void aiAvailable().then(setAiInBuild);
+  }, []);
+  const activeCanAiDesign = aiInBuild && aiEnabled && activeSpeaksSql
+    && !!activeConnection && supportsFeature(activeConnection.config.db_type, 'structureEditing');
   const environmentByProfileId = useMemo(
     () => Object.fromEntries(
       connections.map((connection) => [connection.id, connection.environment])
@@ -563,6 +576,17 @@ function App() {
     );
   };
 
+  /** 和 ER 图一样一个连接一个标签：设计是库级的，重复打开只是回到那一份 */
+  const openAiDesignTab = () => {
+    if (!activeConnection || !activeCanAiDesign) {
+      return;
+    }
+    const profileId = activeConnection.config.id;
+    registerTab(
+      createAiDesignWorkspaceTab(profileId, { id: workspaceTabId(profileId, 'ai-design') })
+    );
+  };
+
   const openTableTab = (
     tableName: string,
     schema?: string,
@@ -680,6 +704,14 @@ function App() {
         group: t('palette.group.action'),
         run: () => openErDiagramTab()
       },
+      ...(activeCanAiDesign
+        ? [{
+          id: 'action:ai-design',
+          title: t('aiDesign.open'),
+          group: t('palette.group.action'),
+          run: () => openAiDesignTab()
+        }]
+        : []),
       {
         id: 'action:reopen-tab',
         title: t('palette.action.reopenTab'),
@@ -747,7 +779,8 @@ function App() {
     }
     // Neo4j、Elasticsearch 与 MongoDB 能开查询标签、打开脚本文件，ER 图没有
     return items.filter((item) => (
-      !SQL_ONLY_PALETTE_ACTIONS.has(item.id) || (activeHasQueryEditor && item.id !== 'action:er-diagram')
+      !SQL_ONLY_PALETTE_ACTIONS.has(item.id)
+      || (activeHasQueryEditor && item.id !== 'action:er-diagram' && item.id !== 'action:ai-design')
     ));
   };
 
@@ -810,6 +843,10 @@ function App() {
 
     if (activeTab.kind === 'er-diagram') {
       return <ErDiagramView key={activeTab.id} connection={activeConnection.config} />;
+    }
+
+    if (activeTab.kind === 'ai-design') {
+      return <AiDesignView key={activeTab.id} tabId={activeTab.id} connection={activeConnection.config} />;
     }
 
     // Redis 的逻辑库同样开在这种标签里（table 那一格是 `db3`），换成键浏览页
@@ -887,6 +924,7 @@ function App() {
           onTableSelect={(table, schema) => openTableTab(table, schema)}
           onOpenStructure={(table, schema) => openTableTab(table, schema, 'table-structure')}
           onOpenErDiagram={openErDiagramTab}
+          onOpenAiDesign={activeCanAiDesign ? openAiDesignTab : undefined}
           onOpenQuery={(query, title) => {
             const tabId = openSqlTab(query, title);
             if (tabId) requestCypherAutorun(tabId);
