@@ -38,8 +38,19 @@
 - [ ] A0 实验：AI 生成的库设计能不能一次通过校验
   - 10 条典型需求 × 3 次，量 JSON 合法率、通过校验的比例、人工判断设计是否合理的比例
   - 结果决定 A3 的重心（比例低：「校验出错 → 回给 AI 修」的循环是主体）。要一个 API Key，只经环境变量给
-- [ ] A1 导出为 `INSERT` 语句（可与 A0 并行）
-  - 加进现有导出对话框的格式；前后端两份格式化照旧由 `fixtures/export-conformance.json` 钉住
+- [x] A1 导出为 `INSERT` 语句（`9545fb9`）
+  - 导出对话框的第三种格式，表数据（当前页 / 整表流式 / 选区）与查询结果都有；目标表只写表名不带 schema，
+    查询结果默认空、不填不让导。每行一条（Oracle 不认多行 `VALUES`）；重名列照原样写，让数据库报错。
+  - 值按方言：字符串转义沿用 `quoteSqlStringLiteral`，二进制沿用 `binaryLiteral`，SQL Server / Oracle 布尔写 `1`/`0`，
+    Oracle 日期写 `DATE '…'` / `TIMESTAMP '…'`（字符串会按会话 NLS_DATE_FORMAT 解析）。
+  - 门：语料新增 12 条（7 种方言各一条全值类型、4 条标识符转义、1 条空结果），下限改 28；
+    `sql_export_replays_into_an_identical_table` 导出后灌回副本双向 `EXCEPT` 比对。反向验过：改 Oracle 日期写法语料红；
+    SQLite 二进制写成字符串、SQLite 反斜杠写两遍，回灌测试都红。
+  - 真库：MySQL 8.4、PostgreSQL 16、SQL Server 2022、Oracle 23 Free、ClickHouse 25.8、DuckDB、SQLite 执行生成的语句并读回，
+    值一致（MySQL / ClickHouse 反斜杠按字符数核过）；Oracle 的 `''` 读回是 NULL，属 Oracle 自身规则，手册写明。
+  - 打包版（`com.dataomni.uitest` 测试包）看过：格式切换、清空表名时禁用与提示、整表流式写文件后回灌一致、查询结果默认空表名。
+  - 已知不做：SQL Server 老式 `datetime` 在 `DATEFORMAT dmy` 会话里日月颠倒（手册写明）；Oracle 超过 4000 字节的字符串字面量会被拒。
+    重估条件：有人拿着这两种数据来。
 - [ ] A2 多表模型 `SchemaDraft` + 外键进 DDL + 按依赖排序 + 校验；从目录读成 `SchemaDraft`
   - 顺带产出**整库结构导出**（建表脚本）；有环的外键先建表再 `ALTER … ADD CONSTRAINT`，SQLite 有环则拒绝
   - 覆盖不到的对象（视图、触发器、序列…）列出来，不悄悄略过
