@@ -643,6 +643,8 @@ export interface CreateTableRequest {
   table: string;
   dialect: SqlIdentifierDialect;
   columns: readonly ColumnDraft[];
+  /** 接在列与主键后面的表级约束原文（多表设计的 UNIQUE / FOREIGN KEY） */
+  constraints?: readonly string[];
 }
 
 /**
@@ -673,6 +675,7 @@ export function buildCreateTable(request: CreateTableRequest): DdlPlan {
         .join(', ')})`
     );
   }
+  definitions.push(...(request.constraints ?? []));
 
   const reference = quoteQualifiedSqlIdentifier(
     request.schema ? [request.schema, request.table] : [request.table],
