@@ -88,7 +88,13 @@
   - 打包版（测试 identifier）走通：设置填 Key（`axt typeenv`，没有钥匙串弹窗）、生成、改删除行为、预览、建表、
     对象树刷新、引用已有表、离线提示；测完删了钥匙串条目与数据目录。
   - 已知不做：设计不进工作区快照，重启要重新生成；外键指向已有表时不核对那边的列。重估条件：有人因此丢过设计 / 建表失败。
-- [ ] A5 数据字典 / Agent Skill 导出（`SKILL.md`：同一份 `SchemaDraft` 的 Markdown 输出）
+- [x] A5 数据字典 / Agent Skill 导出
+  - ER 图导出菜单的两项，来源是图上的 `ErTable` / `ErLink`（不是 `SchemaDraft`：从目录读成设计要的字段 ER 查询里没有，
+    而字典只需要列、类型、键）；AI 设计页的图同样能导，开头注明是未建的设计。`utils/dataDictionary.ts`，5 条单测。
+  - 打包版上导出过两份并读回核对（YAML frontmatter 用 `yaml.safe_load` 解析过）；跑出来两处已修：UTC 日期（图片导出的文件名同病）、
+    SQLite 主键列被目录报成可空。
+  - 当前版本不做：列与表的注释（ER 的七套目录查询都没取注释）、AI 按名字猜的说明（RFC 里要求标「推测」）。
+    重估条件：有人拿字典去给人看、嫌只有名字不够——先补注释查询，AI 说明排在它后面。
 - [ ] A6 备份：SQLite `VACUUM INTO`、DuckDB `EXPORT DATABASE` 先；`mysqldump` / `pg_dump` / `mongodump` 找得到才给
   - 不自己实现 dump；密码经环境变量传，不进命令行
 - [ ] ~~A7 框架代码生成（Prisma / TypeORM / JPA）~~ **当前版本不做**
