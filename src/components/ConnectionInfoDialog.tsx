@@ -6,7 +6,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import { serverLabel } from '../utils/serverPresets';
 import { serverAddress } from '../utils/mongoConnection';
 import { isFileDatabase } from '../utils/databaseFiles';
-import { startDatabaseBackup } from '../utils/databaseBackup';
+import { backupSupported, startDatabaseBackup } from '../utils/databaseBackup';
 
 interface ConnectionInfoDialogProps {
   connection: ConnectionProfile;
@@ -101,10 +101,14 @@ export function ConnectionInfoDialog({ connection, session, onClose }: Connectio
           </div>
         </div>
 
-        {isFileDatabase(connection.db_type) && (
+        {backupSupported(connection) && (
           <div className="flex items-center gap-3 border-t border-line px-5 py-3">
             <p className="min-w-0 flex-1 text-xs text-fg-subtle">
-              {t(connection.db_type === 'duckdb' ? 'backup.hintDuckdb' : 'backup.hintSqlite')}
+              {t(connection.db_type === 'duckdb'
+                ? 'backup.hintDuckdb'
+                : connection.db_type === 'postgresql'
+                  ? 'backup.hintPostgres'
+                  : 'backup.hintSqlite')}
             </p>
             <button
               type="button"

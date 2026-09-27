@@ -278,13 +278,19 @@ export const useTaskStore = create<TaskState>((set, get) => {
 
   const runBackup = async (id: string, payload: BackupTaskPayload) => {
     try {
-      const kind = await invoke<'sqlite-file' | 'duckdb-directory'>('backup_database', {
+      const kind = await invoke<'sqlite-file' | 'duckdb-directory' | 'postgres-dump'>('backup_database', {
         connectionId: payload.connectionId,
         path: payload.path
       });
       log(id, [
         entry('info', payload.path),
-        entry('info', translateNow(kind === 'sqlite-file' ? 'backup.restoreSqlite' : 'backup.restoreDuckdb'))
+        entry('info', translateNow(
+          kind === 'sqlite-file'
+            ? 'backup.restoreSqlite'
+            : kind === 'postgres-dump'
+              ? 'backup.restorePostgres'
+              : 'backup.restoreDuckdb'
+        ))
       ]);
       // 备份写的是新文件 / 新目录，重跑不会往库里重复写东西
       finish(id, 'succeeded', translateNow('backup.done'), false);

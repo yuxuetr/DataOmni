@@ -4533,3 +4533,74 @@ async fn sqlite_runs_the_object_ddl_corpus() {
     .expect("connect to in-memory SQLite");
   run_object_corpus(&pool, object_ddl_corpus::load("sqlite")).await;
 }
+
+/// PostgreSQL 的备份走 pg_dump（TODOs 下一步规划 A6b）。本机没装 pg_dump 时跳过——那条路径
+/// （报「找不到 pg_dump」）由单测管
+#[tokio::test]
+async fn postgres_backup_with_pg_dump_keeps_the_rows() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  if is_cockroach(&pool).await || is_opengauss(&pool).await {
+    return;
+  }
+  let table = "dataomni_backup_probe";
+  for statement in [
+    format!("DROP TABLE IF EXISTS {table}"),
+    format!("CREATE TABLE {table} (id int PRIMARY KEY, label text)"),
+    format!("INSERT INTO {table} VALUES (1, 'O''Brien'), (2, '中文')"),
+  ] {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare backup fixture");
+  }
+
+  // postgres://user:password@host:port/database（密码里的特殊字符按百分号编码）
+  let rest = url.split_once("://").map(|(_, rest)| rest).expect("scheme");
+  let (credentials, address) = rest.rsplit_once('@').expect("credentials");
+  let (username, password) = credentials.split_once(':').expect("password");
+  let (host_port, database) = address.split_once('/').expect("database");
+  let database = database.split('?').next().unwrap_or_default();
+  let (host, port) = host_port.rsplit_once(':').expect("port");
+  let profile = dataomni_lib::models::ConnectionProfile {
+    db_type: dataomni_lib::models::DatabaseType::PostgreSQL,
+    host: host.to_string(),
+    port: port.parse().expect("port number"),
+    database: Some(database.to_string()),
+    username: urlencoding::decode(username).expect("user").into_owned(),
+    password: urlencoding::decode(password).expect("password").into_owned(),
+    ..Default::default()
+  };
+
+  let dir = std::env::temp_dir().join(format!("dataomni-pgdump-{}", std::process::id()));
+  std::fs::create_dir_all(&dir).expect("temp dir");
+  let target = dir.join("backup.dump");
+  match dataomni_lib::services::backup::backup_postgres(&profile, None, &target).await {
+    Err(error)
+      if error.message.starts_with(dataomni_lib::services::backup::BACKUP_TOOL_MISSING) =>
+    {
+      eprintln!("本机没有 pg_dump，跳过");
+      return;
+    }
+    result => {
+      assert_eq!(result.expect("backup"), dataomni_lib::services::backup::BackupKind::PostgresDump)
+    }
+  }
+  let bytes = std::fs::read(&target).expect("read dump");
+  assert!(bytes.starts_with(b"PGDMP"), "custom 格式的文件头");
+
+  // pg_restore -f - 把备份还原成 SQL 文本：值在里面，就说明恢复得回来
+  let output = std::process::Command::new("pg_restore")
+    .arg("--data-only")
+    .arg(format!("--table={table}"))
+    .arg("-f")
+    .arg("-")
+    .arg(&target)
+    .output()
+    .expect("pg_restore 与 pg_dump 装在一起，找得到 pg_dump 就该找得到它");
+  assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+  let text = String::from_utf8_lossy(&output.stdout);
+  assert!(text.contains("O'Brien") && text.contains("中文"), "{text}");
+  std::fs::remove_dir_all(&dir).ok();
+  sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+}

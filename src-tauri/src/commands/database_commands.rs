@@ -366,8 +366,8 @@ pub async fn export_query_to_file(
   result
 }
 
-/// 备份嵌入式库（SQLite 的库文件、DuckDB 的导出目录）到 `path`。网络库不在这里：
-/// 那要找官方的 dump 工具、传密码，见 `services::backup` 开头
+/// 备份到 `path`：SQLite 的库文件、DuckDB 的导出目录、PostgreSQL 的 pg_dump（custom 格式）。
+/// 别的网络库还没有，见 `services::backup` 开头
 // 参数都是 Tauri 注入的 State，理由同 `export_query_to_file`
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -383,14 +383,34 @@ pub async fn backup_database(
   clickhouse: State<'_, ClickHouseRegistry>,
 ) -> Result<crate::services::backup::BackupKind, QueryError> {
   let tunnel_port = tunnels.local_port(&connection_id).await;
-  let connection_string = {
+  // PostgreSQL 走 pg_dump：要的是补上凭据的 profile（主机、用户、TLS），不是连接池
+  let (connection_string, postgres_profile) = {
     let connection_service_guard = connection_service_state
       .lock()
       .map_err(|e| QueryError::message(format!("{SERVICE_STATE_UNAVAILABLE}: {e}")))?;
     let service =
       connection_service_guard.as_ref().ok_or_else(|| QueryError::message(SERVICE_NOT_READY))?;
-    service.resolve_connection_string(&connection_id, tunnel_port).map_err(QueryError::message)?
+    let profile = service
+      .get_connection(&connection_id)
+      .ok_or_else(|| QueryError::message(CONNECTION_NOT_FOUND))?;
+    let postgres_profile = if profile.db_type == crate::models::DatabaseType::PostgreSQL {
+      Some(service.resolve_for_connection(profile).map_err(QueryError::message)?)
+    } else {
+      None
+    };
+    let connection_string = service
+      .resolve_connection_string(&connection_id, tunnel_port)
+      .map_err(QueryError::message)?;
+    (connection_string, postgres_profile)
   };
+  if let Some(profile) = postgres_profile {
+    return crate::services::backup::backup_postgres(
+      &profile,
+      tunnel_port,
+      std::path::Path::new(&path),
+    )
+    .await;
+  }
   let resolved = ResolvedPool::resolve(
     connection_string,
     &database_instances,
