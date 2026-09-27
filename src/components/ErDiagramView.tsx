@@ -403,18 +403,19 @@ export function ErDiagramCanvas({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-3 border-b border-line bg-surface-sunken px-4 py-2">
-        <span className="text-xs text-fg-muted">
+      {/* 窄的时候整行换行、每段文字不折：AI 设计页里图只占右半边，不换行时统计文字被挤成一字一行 */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-surface-sunken px-4 py-2">
+        <span className="whitespace-nowrap text-xs text-fg-muted">
           {t('er.summary', { tables: layout.nodes.length, links: visible.links.length })}
         </span>
         {/* 过滤中要说清楚分母，否则「5 张表」读起来像整个库只有五张 */}
         {filtering && (
-          <span className="text-xs text-accent">
+          <span className="whitespace-nowrap text-xs text-accent">
             {t('er.filteredOf', { total: tables.length })}
           </span>
         )}
         {unlinked > 0 && (
-          <span className="text-xs text-fg-subtle">{t('er.unlinkedNote', { count: unlinked })}</span>
+          <span className="whitespace-nowrap text-xs text-fg-subtle">{t('er.unlinkedNote', { count: unlinked })}</span>
         )}
         <div className="relative ml-auto">
           <ErFilterMenu
