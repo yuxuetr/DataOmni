@@ -64,6 +64,7 @@ export type SchemaIssueCode =
   | 'reference-not-unique'
   | 'set-null-on-not-null'
   | 'on-delete-unsupported'
+  | 'unknown-sequence'
   | 'type-mismatch'
   | 'no-primary-key'
   | 'cycle-unsupported';
@@ -93,8 +94,28 @@ const IDENTIFIER_MAX_BYTES: Partial<Record<CreatableDialect, number>> = {
 /** 表名、列名比较时不分大小写：设计里同时有 `Users` 和 `users` 不会是有意的 */
 const fold = (name: string): string => name.trim().toLowerCase();
 
-/** 类型比较只抹掉大小写和空白。`int` 与 `integer` 算不算一样因库而异，报成警告让人看 */
-const normalizeType = (dataType: string): string => dataType.toLowerCase().replace(/\s+/g, '');
+/**
+ * 类型比较抹掉大小写和空白，再认几个**确定等价**的写法。
+ *
+ * PostgreSQL 的 `serial` 家族是「整数 + 序列默认值」的简写，外键那一端就该写成对应的整数——
+ * A0 实验里 30 份设计有 12 份这样写，全被报成两端不一致，那是校验在说错话。
+ * 其余不一致（`int` 对 `bigint`）MySQL 直接拒绝（3780）、PostgreSQL 放行，报警告让人看
+ */
+const SERIAL_BASE: Record<string, string> = { smallserial: 'smallint', serial: 'integer', bigserial: 'bigint' };
+/** 自增是列的属性、不是另一种类型：`bigint GENERATED ALWAYS AS IDENTITY` 的外键那一端就是 `bigint` */
+const AUTO_INCREMENT_CLAUSE =
+  /\s+(?:generated\s+(?:always|by\s+default)\s+as\s+identity(?:\s*\([^)]*\))?|auto_increment|identity\s*\(\s*\d+\s*,\s*\d+\s*\))/gi;
+const normalizeType = (dataType: string, dialect: CreatableDialect): string => {
+  const compact = dataType.replace(AUTO_INCREMENT_CLAUSE, '').toLowerCase().replace(/\s+/g, '');
+  const base = compact === 'int' ? 'integer' : compact;
+  return dialect === 'postgresql' ? SERIAL_BASE[base] ?? base : base;
+};
+
+/**
+ * 默认值里用到的序列。设计里没有「序列」这种对象，所以引用任何一个都建不出来——
+ * A0 实验里 PostgreSQL 执行失败的 7 份设计全是 `DEFAULT nextval('users_id_seq')` 而序列不存在
+ */
+const NEXTVAL = /\bnextval\s*\(/i;
 
 /**
  * 结构性校验：名字、引用、外键两端。**不校验类型是否属于该方言**——手写一份类型清单一定
@@ -168,6 +189,9 @@ export function validateSchemaDraft(
       if (column.dataType.trim() === '') {
         report('error', 'missing-type', table.name, column.name);
       }
+      if (column.defaultValue !== null && NEXTVAL.test(column.defaultValue)) {
+        report('error', 'unknown-sequence', table.name, column.name, column.defaultValue);
+      }
     }
 
     const checkColumns = (names: readonly string[]) => {
@@ -227,7 +251,7 @@ export function validateSchemaDraft(
         if (!own || !referenced) {
           return;
         }
-        if (normalizeType(own.dataType) !== normalizeType(referenced.dataType)) {
+        if (normalizeType(own.dataType, dialect) !== normalizeType(referenced.dataType, dialect)) {
           // MySQL 对 int → bigint 这类不一致直接拒绝（3780），PostgreSQL 放行。报警告
           report('warning', 'type-mismatch', table.name, own.name, `${referenced.dataType}`);
         }
