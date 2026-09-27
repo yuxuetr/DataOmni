@@ -53,14 +53,17 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
   // 最近用过的排前面；排序只在列表变化时算一次
   const ordered = useMemo(() => orderProfilesByRecency(connections), [connections]);
 
+  // 连接多了只让列表自己滚：标题和下面两个按钮留在原地。此前整页一起滚，二十来个连接时
+  // 「新建连接」被推到窗口外，要先滚到底才看得见。列表不撑满：连接少时框就是那几行高。
+  // 外层仍可滚——窗口矮到连两行都放不下时（`min-h`），宁可整页滚也不把列表压没
   return (
-    <div className="flex-1 overflow-auto">
-      <div className="mx-auto w-full max-w-lg px-6 pb-10 pt-16">
-        <h1 className="text-lg font-semibold text-fg">DataOmni</h1>
-        <p className="mt-1 text-xs text-fg-subtle">{t('welcome.hint')}</p>
+    <div className="flex min-h-0 flex-1 flex-col overflow-auto">
+      <div className="mx-auto flex min-h-0 w-full max-w-lg flex-1 flex-col px-6 pb-10 pt-16">
+        <h1 className="shrink-0 text-lg font-semibold text-fg">DataOmni</h1>
+        <p className="mt-1 shrink-0 text-xs text-fg-subtle">{t('welcome.hint')}</p>
 
         {error && (
-          <div className="mt-4 flex items-start gap-2 rounded-control border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
+          <div className="mt-4 flex shrink-0 items-start gap-2 rounded-control border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
             <AlertCircle size={14} className="mt-0.5 shrink-0" />
             <span className="min-w-0 flex-1 break-words">{error}</span>
             <button
@@ -75,7 +78,13 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
         )}
 
         {ordered.length > 0 && (
-          <ul className="mt-5 overflow-hidden rounded-panel border border-line bg-surface">
+          <ul
+            className={clsx(
+              'mt-5 overflow-y-auto rounded-panel border border-line bg-surface',
+              // 约两行半：看得出下面还有、可以滚。不到三个连接时不设，免得框比内容高、空出一截
+              ordered.length > 2 && 'min-h-[7.5rem]'
+            )}
+          >
             {ordered.map((profile) => {
               const isConnecting = connectingProfileId === profile.id;
 
@@ -110,7 +119,7 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
           </ul>
         )}
 
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex shrink-0 gap-2">
           {/* 不能写成 onClick={onConnect}：React 会把 MouseEvent 当作「要编辑的
               连接」传进去，表单就会以编辑模式打开一个事件对象 */}
           <button
