@@ -115,7 +115,19 @@
 - [ ] B1 第一个协议兼容的国产库：KingbaseES 或 OceanBase（MySQL 模式）
   - 走归档 4.2「协议兼容库」的流程：连真库跑现有用例、归因、修应用缺陷、写明缺口
   - 先确认 cu 的容量（2026-09-27 `/data` 剩约 8 GB；OceanBase 单机版吃内存与磁盘）
-- [ ] B2 openGauss / GaussDB：先做 sha256 认证的实验（标准 PostgreSQL 驱动不认）
+- [x] B2 openGauss / GaussDB：sha256 认证的实验（2026-09-28，openGauss-lite 5.0.3，cu 上 `dataomni-opengauss`）
+  - 只存 sha256 口令的用户：sqlx 报 `unsupported SASL authentication mechanisms:`（机制列表是空的），libpq 17 同样不认。
+    `password_encryption_type = 1`（同时存 md5）的用户连得上，`pg_hba` 写 `sha256` 也连得上。
+  - 做了：这句原话换成说明（服务端怎么改），原话留在后面；连接测试里只印一遍（打包版上核对过）。
+  - 不做：在驱动里实现 openGauss 的 sha256 认证（要 fork sqlx 的认证流程）。重估条件：有人的服务端不许改口令存储方式
+    （比如托管的 GaussDB 强制 sha256）。
+  - 官方镜像 `opengauss/opengauss:latest`（7.0.0-RC3）起不来（缺 `libopenblas.so.0`），用的是 `enmotech/opengauss-lite:5.0.3`。
+- [ ] B2b openGauss 兼容（PG 模式库）：现有 PostgreSQL 冒烟用例 23 条过 12 条，逐条归因
+  - 用例夹具用了新版语法（4 条）：触发器 `EXECUTE FUNCTION`（PG 11+，要 `EXECUTE PROCEDURE`）、`IDENTITY` 列（PG 10+）。
+  - 应用的目录查询在 openGauss 上报错（4 条）：列参数查询、ER 外键与索引查询（语法错，疑为 `WITH ORDINALITY` 一类）、
+    `pg_sequences` 不存在。
+  - 错误与计划的细节不同（3 条）：约束违反不带约束名、语法错的 SQLSTATE 是 `0A000`、`EXPLAIN ANALYZE` 没有总耗时。
+  - openGauss 建库默认 `DBCOMPATIBILITY 'A'`（Oracle 语义，`''` 即 NULL）；测试库是 `PG` 模式建的，A 模式另测。
 - [ ] B3 云库认证（AWS RDS IAM、Azure Entra、GCP Cloud SQL 代理）：按有人要的顺序
 - [ ] B4 驱动按 Cargo feature 分
   - 重估条件：第一个客户端库不许随包分发或只在部分平台有的库（多半是达梦）、或包的大小成问题（现在 171 MB）
