@@ -516,7 +516,7 @@ bun install
 - 🏠 首页连接多时只让连接列表滚动，「新建连接」与「打开数据库文件」留在原地
 - 🛠️ `scripts/install-macos.sh`：构建并装进 `/Applications`
 - 📤 导出为 `INSERT` 语句（表数据与查询结果，含整表流式导出）
-- ✨ AI 设计新表（Anthropic / OpenAI 兼容，默认关，Cargo feature `ai`）
+- ✨ AI 设计新表（Anthropic / OpenAI 兼容，默认关，Cargo feature `ai`）；MongoDB 上设计集合与 `$jsonSchema` 校验规则
 - 📚 ER 图导出数据字典（Markdown）与 Agent Skill（`SKILL.md`）
 - 💾 SQLite / DuckDB / PostgreSQL 备份（连接信息与命令面板）
 
