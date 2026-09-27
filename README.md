@@ -378,6 +378,10 @@ bun tauri dev
 # npm tauri build
 # pnpm tauri build
 bun tauri build
+
+# macOS：构建（带 Oracle Instant Client）并装进 /Applications，装完启动
+# --skip-build 只装上次的产物，--no-open 装完不启动，-y 正开着时不问直接结束它
+scripts/install-macos.sh
 ```
 
 ### 示例数据

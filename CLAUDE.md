@@ -25,6 +25,7 @@ PostgreSQL、SQLite。Rust 后端在 `src-tauri/`，前端在 `src/`。
 bun run check        # 完整闸门：lint → typecheck → vitest → cargo fmt/clippy/test
 bun tauri dev        # 开发（前后端一起）
 bun tauri build      # 打包
+scripts/install-macos.sh  # 构建（带 Oracle Instant Client，只出 .app）并装进 /Applications
 ```
 
 单项：`bun run test`（vitest）、`bun run typecheck`、`bun run lint`、
