@@ -309,7 +309,10 @@ fn parse_postgres(rows: &[Map<String, JsonValue>], analyze: bool) -> Result<Quer
   for entry in &entries {
     let Some(object) = entry.as_object() else { continue };
     planning_ms = planning_ms.or_else(|| number(object.get("Planning Time")));
-    execution_ms = execution_ms.or_else(|| number(object.get("Execution Time")));
+    // openGauss（PG 9.2 系）还叫旧名字 `Total Runtime`，PostgreSQL 9.4 起改成 `Execution Time`
+    execution_ms = execution_ms
+      .or_else(|| number(object.get("Execution Time")))
+      .or_else(|| number(object.get("Total Runtime")));
     if let Some(plan) = object.get("Plan").and_then(JsonValue::as_object) {
       roots.push(postgres_node(plan));
     }
@@ -989,6 +992,15 @@ mod tests {
       "Execution Time": 0.051
     }
   ]"#;
+
+  /// openGauss 5.0 的 `EXPLAIN (ANALYZE, FORMAT JSON)` 顶层是 `Plan` / `Triggers` / `Total Runtime`（实测）
+  #[test]
+  fn an_opengauss_plan_reports_its_total_runtime_as_execution_time() {
+    let text = r#"[{"Plan": {"Node Type": "Result", "Actual Rows": 1, "Actual Loops": 1}, "Triggers": [], "Total Runtime": 0.042}]"#;
+    let plan = parse_plan(&DatabaseType::PostgreSQL, &json_row(text), true).expect("parse");
+    assert_eq!(plan.execution_ms, Some(0.042));
+    assert_eq!(plan.planning_ms, None);
+  }
 
   #[test]
   fn postgres_plan_keeps_the_nesting_and_both_row_counts() {

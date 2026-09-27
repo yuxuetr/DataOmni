@@ -147,6 +147,13 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
 /// 可空性只能用 `MODIFY COLUMN`，而 MODIFY **重述整段定义**——没写进去的
 /// 排序规则与注释会被静默丢掉。PostgreSQL 与 SQLite 走的是
 /// `ALTER COLUMN ... TYPE` 这类窄语法，只改被点名的那一项，用不上这三项。
+///
+/// **openGauss（PG 9.2 系，TODOs 下一步规划 B2b）也要跑得通**，所以这条查询有两处特别的写法：
+/// - identity / 计算列经 `row_to_json(a)->>'…'` 读：openGauss 的 pg_attribute 没有
+///   `attidentity` / `attgenerated`，直接写列名是语法错；行转成 JSON 只含真实存在的列，
+///   缺的读出来是 NULL。openGauss 的计算列记在 `pg_attrdef.adgencol = 's'`。
+/// - 不用 `LATERAL` / `WITH ORDINALITY`（PG 9.3 / 9.4 起才有）：集合返回函数放进子查询的
+///   选择列表里，PostgreSQL、CockroachDB、openGauss 三家都认。
 const POSTGRES_COLUMNS: &str = r#"
 SELECT
   a.attname::text AS column_name,
@@ -155,7 +162,9 @@ SELECT
   pg_get_expr(d.adbin, d.adrelid)::text AS column_default,
   (pk.ord IS NOT NULL) AS is_primary_key,
   pk.ord::int AS primary_key_ordinal,
-  (a.attidentity <> '' OR a.attgenerated <> '') AS is_generated,
+  (COALESCE(row_to_json(a)->>'attidentity', '') <> ''
+    OR COALESCE(row_to_json(a)->>'attgenerated', '') <> ''
+    OR COALESCE(row_to_json(d)->>'adgencol', '') = 's') AS is_generated,
   NULL::text AS collation,
   NULL::text AS comment,
   NULL::text AS column_extra
@@ -163,12 +172,14 @@ FROM pg_class t
 JOIN pg_namespace n ON n.oid = t.relnamespace
 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum > 0 AND NOT a.attisdropped
 LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-LEFT JOIN LATERAL (
-  SELECT k.ord
-  FROM pg_constraint c
-  CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
-  WHERE c.conrelid = t.oid AND c.contype = 'p' AND k.attnum = a.attnum
-) pk ON true
+LEFT JOIN (
+  SELECT x.conrelid, x.conkey[x.ord] AS attnum, x.ord
+  FROM (
+    SELECT c.conrelid, c.conkey, generate_subscripts(c.conkey, 1) AS ord
+    FROM pg_constraint c
+    WHERE c.contype = 'p'
+  ) x
+) pk ON pk.conrelid = t.oid AND pk.attnum = a.attnum
 WHERE t.relname = $1
   AND n.nspname = COALESCE($2, current_schema())
 ORDER BY a.attnum
@@ -287,11 +298,13 @@ ORDER BY p.cid
 /// 拿它拼 `WHERE u = ?` 会命中谓词外的重复行；`indisvalid = false` 的索引则是
 /// `CONCURRENTLY` 建失败留下的残骸，**它的唯一性从未在存量数据上验证过**。
 /// 两者都不能当行标识，但它们是两个不同的事实，合成一个布尔会让索引列表说谎。
+/// 键列序号 `1..indnkeyatts` 由 `generate_series` 直接生成：`indkey` 是 int2vector，下标从 0 开始，
+/// 对它 `generate_subscripts` 会差一；`LATERAL` 写法 openGauss 不认（见列的查询）。
 const POSTGRES_INDEXES: &str = r#"
 SELECT
   i.relname::text AS index_name,
-  pg_get_indexdef(ix.indexrelid, k.ord::int, true)::text AS column_name,
-  k.ord::int AS ordinal,
+  pg_get_indexdef(ix.indexrelid, ix.ord, true)::text AS column_name,
+  ix.ord AS ordinal,
   ix.indisunique AS is_unique,
   ix.indisprimary AS is_primary,
   (ix.indpred IS NOT NULL) AS is_partial,
@@ -299,23 +312,25 @@ SELECT
   am.amname::text AS method
 FROM pg_class t
 JOIN pg_namespace n ON n.oid = t.relnamespace
-JOIN pg_index ix ON ix.indrelid = t.oid
+JOIN (
+  SELECT p.*, generate_series(1, p.indnkeyatts::int) AS ord
+  FROM pg_index p
+) ix ON ix.indrelid = t.oid
 JOIN pg_class i ON i.oid = ix.indexrelid
 JOIN pg_am am ON am.oid = i.relam
-CROSS JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord)
 WHERE t.relname = $1
   AND n.nspname = COALESCE($2, current_schema())
-  AND k.ord <= ix.indnkeyatts
-ORDER BY i.relname, k.ord
+ORDER BY i.relname, ix.ord
 "#;
 
-/// `unnest(conkey, confkey) WITH ORDINALITY` 把本表列与被引用列按同一个下标
-/// 配对。分两次 unnest 再按名字拼会在复合外键上错位，而错位后的结果看上去
+/// 本表列与被引用列按同一个下标（`conkey[i]` 与 `confkey[i]`）
+/// 配对；下标由 `generate_subscripts` 在子查询的选择列表里生成，不用 openGauss 不认的
+/// `LATERAL` / `WITH ORDINALITY`（见列的查询）。分两次 unnest 再按名字拼会在复合外键上错位，而错位后的结果看上去
 /// 完全正常。
 const POSTGRES_FOREIGN_KEYS: &str = r#"
 SELECT
   c.conname::text AS constraint_name,
-  k.ord::int AS ordinal,
+  c.ord::int AS ordinal,
   a.attname::text AS column_name,
   fn.nspname::text AS referenced_schema,
   ft.relname::text AS referenced_table,
@@ -326,18 +341,20 @@ SELECT
   CASE c.confdeltype
     WHEN 'a' THEN 'NO ACTION' WHEN 'r' THEN 'RESTRICT' WHEN 'c' THEN 'CASCADE'
     WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' END AS on_delete
-FROM pg_constraint c
+FROM (
+  SELECT c.*, generate_subscripts(c.conkey, 1) AS ord
+  FROM pg_constraint c
+  WHERE c.contype = 'f'
+) c
 JOIN pg_class t ON t.oid = c.conrelid
 JOIN pg_namespace n ON n.oid = t.relnamespace
 JOIN pg_class ft ON ft.oid = c.confrelid
 JOIN pg_namespace fn ON fn.oid = ft.relnamespace
-CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(attnum, fattnum, ord)
-JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
-JOIN pg_attribute fa ON fa.attrelid = ft.oid AND fa.attnum = k.fattnum
-WHERE c.contype = 'f'
-  AND t.relname = $1
+JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = c.conkey[c.ord]
+JOIN pg_attribute fa ON fa.attrelid = ft.oid AND fa.attnum = c.confkey[c.ord]
+WHERE t.relname = $1
   AND n.nspname = COALESCE($2, current_schema())
-ORDER BY c.conname, k.ord
+ORDER BY c.conname, c.ord
 "#;
 
 /// 走 `pg_constraint` 而不是 `information_schema.check_constraints`：后者会把

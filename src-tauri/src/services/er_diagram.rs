@@ -95,8 +95,9 @@ WHERE c.relkind IN ('r', 'p')
 ORDER BY n.nspname, c.relname, a.attnum
 "#;
 
-/// 与单表版本同样的要点：`unnest(conkey, confkey) WITH ORDINALITY` 把本表列
-/// 与被引用列按同一个下标配对，分两次 unnest 会在复合外键上错位。
+/// 与单表版本同样的要点：`conkey[i]` 与 `confkey[i]` 按同一个下标把本表列
+/// 与被引用列配对，分两次 unnest 会在复合外键上错位。写法与 `schema_metadata` 的外键查询相同
+/// （不用 openGauss 不认的 `LATERAL` / `WITH ORDINALITY`）。
 const POSTGRES_FOREIGN_KEYS: &str = r#"
 SELECT
   n.nspname::text AS table_schema,
@@ -106,18 +107,20 @@ SELECT
   ft.relname::text AS referenced_table,
   fa.attname::text AS referenced_column,
   c.conname::text AS constraint_name,
-  k.ord::int AS ordinal
-FROM pg_constraint c
+  c.ord::int AS ordinal
+FROM (
+  SELECT c.*, generate_subscripts(c.conkey, 1) AS ord
+  FROM pg_constraint c
+  WHERE c.contype = 'f'
+) c
 JOIN pg_class t ON t.oid = c.conrelid
 JOIN pg_namespace n ON n.oid = t.relnamespace
 JOIN pg_class ft ON ft.oid = c.confrelid
 JOIN pg_namespace fn ON fn.oid = ft.relnamespace
-CROSS JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(attnum, fattnum, ord)
-JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
-JOIN pg_attribute fa ON fa.attrelid = ft.oid AND fa.attnum = k.fattnum
-WHERE c.contype = 'f'
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')
-ORDER BY n.nspname, t.relname, c.conname, k.ord
+JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = c.conkey[c.ord]
+JOIN pg_attribute fa ON fa.attrelid = ft.oid AND fa.attnum = c.confkey[c.ord]
+WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')
+ORDER BY n.nspname, t.relname, c.conname, c.ord
 "#;
 
 /// 取 `COLUMN_TYPE` 而不是 `DATA_TYPE`：前者是 `varchar(32)`、`int unsigned`，
@@ -408,7 +411,8 @@ mod tests {
   fn postgres_pairs_composite_foreign_keys_by_key_order() {
     let queries = er_diagram_queries(&DatabaseType::PostgreSQL).expect("supported");
     assert!(
-      queries.foreign_keys.contains("unnest(c.conkey, c.confkey) WITH ORDINALITY"),
+      queries.foreign_keys.contains("c.conkey[c.ord]")
+        && queries.foreign_keys.contains("c.confkey[c.ord]"),
       "分两次 unnest 会让复合外键错位，且错位后看上去完全正常"
     );
   }

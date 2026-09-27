@@ -1617,8 +1617,10 @@ async fn postgres_catalog_results_are_decodable_by_the_plugin() {
       "CREATE OR REPLACE FUNCTION {function}() RETURNS trigger AS $$ BEGIN RETURN NEW; END; $$ LANGUAGE plpgsql"
     ),
     format!(
-      "CREATE TRIGGER {}_trg BEFORE INSERT ON {} FOR EACH ROW EXECUTE FUNCTION {function}()",
-      fixture.child, fixture.child
+      "CREATE TRIGGER {}_trg BEFORE INSERT ON {} FOR EACH ROW {} {function}()",
+      fixture.child,
+      fixture.child,
+      trigger_execute(&pool).await
     ),
   ] {
     sqlx::query(&statement).execute(&pool).await.expect("prepare PostgreSQL objects");
@@ -1657,12 +1659,19 @@ async fn postgres_catalog_results_are_decodable_by_the_plugin() {
     vec![Some(sequence_oid)],
   ));
 
+  let opengauss = is_opengauss(&pool).await;
   for request in &requests {
     let mut query = sqlx::query(&request.sql);
     for param in &request.params {
       query = query.bind(param.clone());
     }
     let rows = match query.fetch_all(&pool).await {
+      // openGauss 没有 pg_sequences（PG 10+），序列属性页在它上面报错：已知缺口（TODOs B2b）。
+      // pg_sequence_parameters 不是出路——三家给的列不一样，CockroachDB 上还会崩
+      Err(error) if opengauss && request.name == "sequence_properties" => {
+        assert!(error.to_string().contains("pg_sequences"), "{error}");
+        continue;
+      }
       Err(error) if cockroach && request.name == "triggers" => {
         assert_cockroach_refuses_the_trigger_catalog(error);
         // 界面按这个码把它说成「这个服务端列不出触发器」（`isUndefinedFunctionError`）
@@ -1775,8 +1784,9 @@ async fn postgres_lists_user_triggers_without_the_foreign_key_internals() {
   .await
   .expect("create trigger function");
   sqlx::query(&format!(
-    "CREATE TRIGGER {trigger} BEFORE INSERT ON {} FOR EACH ROW EXECUTE FUNCTION {function}()",
-    fixture.child
+    "CREATE TRIGGER {trigger} BEFORE INSERT ON {} FOR EACH ROW {} {function}()",
+    fixture.child,
+    trigger_execute(&pool).await
   ))
   .execute(&pool)
   .await
@@ -2057,6 +2067,20 @@ async fn postgres_lists_database_objects_and_resolves_overloaded_routines() {
     .map(|(.., id)| id.clone())
     .expect("sequence listed");
   let sequence_sql = queries.sequence_properties.expect("PostgreSQL has sequences");
+  // openGauss 没有 pg_sequences（PG 10+）：序列的属性页在它上面报错，这是已知缺口（B2b）。
+  // 钉住现状，哪天能读了这里会红，提醒回来把缺口划掉
+  if is_opengauss(&pool).await {
+    let error = sqlx::query(sequence_sql)
+      .bind(&sequence_id)
+      .fetch_one(&pool)
+      .await
+      .expect_err("openGauss 没有 pg_sequences");
+    assert!(error.to_string().contains("pg_sequences"), "{error}");
+    sqlx::query(&format!("DROP MATERIALIZED VIEW IF EXISTS {matview}")).execute(&pool).await.ok();
+    sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
+    sqlx::query(&format!("DROP SEQUENCE IF EXISTS {sequence}")).execute(&pool).await.ok();
+    return;
+  }
   let row = sqlx::query(sequence_sql)
     .bind(&sequence_id)
     .fetch_one(&pool)
@@ -2755,6 +2779,24 @@ async fn is_cockroach(pool: &sqlx::PgPool) -> bool {
   version.contains("CockroachDB")
 }
 
+/// openGauss（PG 9.2 系，TODOs 下一步规划 B2b）。它的差异分两种：夹具用了它没有的新语法
+/// （`EXECUTE FUNCTION`、`IDENTITY`），按它的写法换；服务端本身给得不一样的（约束名、SQLSTATE），
+/// 钉住「现在是这样」，哪天变了这些断言会红
+async fn is_opengauss(pool: &sqlx::PgPool) -> bool {
+  let version: String =
+    sqlx::query_scalar("SELECT version()").fetch_one(pool).await.expect("read server version");
+  version.contains("openGauss")
+}
+
+/// 触发器调用函数的写法：`EXECUTE FUNCTION` 是 PostgreSQL 11 起的，openGauss 只认老写法
+async fn trigger_execute(pool: &sqlx::PgPool) -> &'static str {
+  if is_opengauss(pool).await {
+    "EXECUTE PROCEDURE"
+  } else {
+    "EXECUTE FUNCTION"
+  }
+}
+
 /// 目录里的整数列：PostgreSQL 是 INT4，CockroachDB 的 INT 一律是 INT8。
 /// 界面走插件的解码器，两种都认；sqlx 的 `get` 按宽度严格匹配
 fn pg_int(row: &sqlx::postgres::PgRow, column: &str) -> Option<i64> {
@@ -2866,6 +2908,14 @@ async fn postgres_syntax_error_carries_sqlstate_and_position() {
     .await
     .expect_err("syntax error should fail");
 
+  // openGauss 把这句归成 0A000（Invalid use of identifiers），位置指在 `form` 上——是它自己的判断，
+  // 原样带上来就对了
+  if is_opengauss(&pool).await {
+    assert_eq!(error.code.as_deref(), Some("0A000"), "{error:?}");
+    let position = error.position().expect("openGauss 也给位置") as usize;
+    assert_eq!(&sql[position - 1..position + 3], "form", "{error:?}");
+    return;
+  }
   assert_eq!(error.code.as_deref(), Some("42601"), "SQLSTATE 要原样带上来");
   // CockroachDB 不给出错位置（没有 POSITION 字段），界面就不标位置，
   // 只显示原话。钉住「没有」：哪天它给了，这条会红，提醒回来验对不对得上
@@ -2910,6 +2960,17 @@ async fn postgres_constraint_violation_names_the_constraint_and_table() {
   assert_eq!(error.code.as_deref(), Some("23505"));
   // CockroachDB 给约束名，但不填 TABLE 字段，DETAIL 里的值带引号
   // （`Key (code)=('a')`）。界面少的只是单独标出的表名那一栏
+  // openGauss 不填 CONSTRAINT / TABLE 字段，只有原话和 DETAIL。不从原话里抠名字：服务端的
+  // lc_messages 可以是中文，按英文句式抠在那种库上悄悄失效
+  if is_opengauss(&pool).await {
+    assert!(
+      error.constraint().is_none() && error.table().is_none(),
+      "openGauss 开始给约束名了，回来重估: {error:?}"
+    );
+    assert!(error.detail().unwrap_or_default().contains("(code)=(a)"), "{error:?}");
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+    return;
+  }
   if is_cockroach(&pool).await {
     assert_eq!(error.constraint(), Some(format!("uq_{table}_code").as_str()));
     assert!(error.table().is_none(), "CockroachDB 开始给表名了，回来重估: {error:?}");
@@ -3165,6 +3226,21 @@ fn column_fixture_ddl(dialect: &str, table: &str) -> Vec<String> {
          )"
       ),
     ],
+    // openGauss 没有 identity 列，自增用 serial（带默认值，本来就插得进行）；计算列照样有
+    "opengauss" => vec![
+      drop,
+      format!(
+        "CREATE TABLE {table} (
+           id serial PRIMARY KEY,
+           code varchar(32) NOT NULL,
+           tags text[],
+           amount numeric(10,2) DEFAULT 0,
+           w int NOT NULL,
+           h int NOT NULL,
+           area int GENERATED ALWAYS AS (w * h) STORED
+         )"
+      ),
+    ],
     "mysql" => vec![
       drop,
       format!(
@@ -3293,7 +3369,8 @@ async fn postgres_reports_declared_types_and_generated_columns() {
     PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
 
   let table = "dataomni_columns_pg";
-  for statement in column_fixture_ddl("postgres", table) {
+  let opengauss = is_opengauss(&pool).await;
+  for statement in column_fixture_ddl(if opengauss { "opengauss" } else { "postgres" }, table) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare PostgreSQL column fixture");
   }
 
@@ -3328,8 +3405,13 @@ async fn postgres_reports_declared_types_and_generated_columns() {
   assert_eq!(by_name("tags").1, "text[]", "数组类型不能报成 ARRAY: {columns:?}");
   assert_eq!(by_name("amount").1, "numeric(10,2)", "精度不能丢: {columns:?}");
 
-  // identity 列没有 column_default 又是非空——没有 is_generated 就插不进行
-  assert!(by_name("id").4, "GENERATED ALWAYS AS IDENTITY 必须标成由数据库产生: {columns:?}");
+  // identity 列没有 column_default 又是非空——没有 is_generated 就插不进行。
+  // openGauss 的 serial 带默认值，不算由数据库产生（和 PostgreSQL 的 serial 一样）
+  if opengauss {
+    assert!(!by_name("id").4, "serial 有默认值，不该标成由数据库产生: {columns:?}");
+  } else {
+    assert!(by_name("id").4, "GENERATED ALWAYS AS IDENTITY 必须标成由数据库产生: {columns:?}");
+  }
   assert!(by_name("area").4, "计算列必须标成由数据库产生: {columns:?}");
   assert!(!by_name("code").4, "普通非空列不是由数据库产生的: {columns:?}");
 
@@ -3543,6 +3625,11 @@ async fn postgres_runs_the_generated_ddl_from_the_shared_corpus() {
   // 拼写。在它上面守住真正要紧的三件事：生成的语句跑得通、建出来的表插得进行、
   // 跑完之后列名与顺序和语料一致
   let cockroach = is_cockroach(&pool).await;
+  // 语料的夹具用了 IDENTITY 列（PG 10+），openGauss 建不出来；按它改写要动共用语料，
+  // 这一版不在 openGauss 上跑这份语料（TODOs 下一步规划 B2b 写着这个缺口）
+  if is_opengauss(&pool).await {
+    return;
+  }
   let names = |columns: &[ddl_corpus::Column]| -> Vec<String> {
     columns.iter().map(|column| column.name.clone()).collect()
   };
