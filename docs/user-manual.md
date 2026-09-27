@@ -883,7 +883,7 @@ TiDB 上同时改列和改表名会拆成两条语句（它不收一条 ALTER �
 流式导出在后台任务里跑，有进度、能取消、失败能重试。取消或中途失败不会留下一份
 看上去完整的文件。
 
-### 备份（SQLite 与 DuckDB）
+### 备份（SQLite、DuckDB、PostgreSQL）
 
 连接信息（工作台头部的「信息」）底部，或命令面板「备份数据库…」。选好位置后在后台任务里跑：
 
@@ -892,8 +892,12 @@ TiDB 上同时改列和改表名会拆成两条语句（它不收一条 ALTER �
 - **DuckDB**：用 `EXPORT DATABASE` 导出成一个目录（数据是 Parquet，表结构在 `schema.sql`）。恢复：在一个新的空库里
   执行 `IMPORT DATABASE '<目录>'`。目标目录已经存在时不会覆盖。
 
-备份跑起来就打不断（一条语句），任务面板上没有取消按钮。网络库（MySQL、PostgreSQL……）的备份还没有，
-请用各家的官方工具。
+- **PostgreSQL**：调用本机的 `pg_dump`，写成 custom 格式（`.dump`）。恢复：先建好目标库，再
+  `pg_restore -d <目标库> <文件>`。要先装 PostgreSQL 客户端（macOS：`brew install libpq`）；找不到时任务里会说。
+  密码只经环境变量交给 pg_dump，不出现在命令行上；配了 SSH 隧道的连接照样能备份。
+  CockroachDB 不行，请用它自己的 `BACKUP` 语句。
+
+备份跑起来就打不断，任务面板上没有取消按钮。MySQL、MongoDB 的备份还没有，请用各家的官方工具。
 
 ## ER 关系图
 

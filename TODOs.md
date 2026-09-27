@@ -99,10 +99,15 @@
   - 先写 `.part` 再改名；DuckDB 目标已存在则拒绝。入口在连接信息对话框底部与命令面板，走后台任务（不给取消：一条语句打不断）。
   - 门：两条 Rust 用例恢复后核对内容（路径带撇号），去掉路径转义变红；`describeTask` 断言备份不给取消。
   - 打包版上两家各备份一次并恢复核对（SQLite 副本直接打开；DuckDB 目录 `IMPORT DATABASE` 进新库，`decimal(10,2)` 原样）。
-- [ ] A6b 网络库备份：`mysqldump` / `pg_dump` / `mongodump` 找得到才给
-  - 不自己实现 dump；密码经环境变量传（`MYSQL_PWD` / `PGPASSWORD`），不进命令行
-  - 要先定的：从 Finder 启动的应用 PATH 里没有 Homebrew（`/opt/homebrew/bin`），得按已知位置找；
-    SSH 隧道要改成连本地端口；TLS 选项逐项映射到各工具的参数；工具版本比服务端旧时 `pg_dump` 直接拒绝
+- [x] A6b（PostgreSQL）用本机 `pg_dump` 备份（custom 格式）
+  - 密码只经 `PGPASSWORD`；TLS 走 `PGSSLMODE` 等；隧道用 `PGHOSTADDR` + 原主机名（verify-full 照样成立）；
+    工具在 PATH 与 Homebrew / Postgres.app 位置里找；CockroachDB 预设直接拒绝并说用 `BACKUP`。
+  - 门：三条单测（密码不进参数、隧道与 TLS 的环境变量、CockroachDB 拒绝）；真库用例备份后 `pg_restore` 还原成 SQL 核对值，
+    去掉 `PGPASSWORD` 变红。打包版上从 `open` 启动（PATH 无 Homebrew）备份成功。
+  - 已知：工具版本比服务端旧时 `pg_dump` 自己拒绝，原话显示在任务里；没有取消（与另两种备份一样）。
+- [ ] A6c MySQL（`mysqldump`）与 MongoDB（`mongodump`）备份
+  - 做法照 A6b：`MYSQL_PWD`、`--ssl-mode`、隧道连本地端口；MariaDB 的 mysqldump 参数不同要分开。
+  - 没做的原因：本机没有 `mysqldump` / `mongodump`，写了也跑不了真库验证。重估条件：`which mysqldump` 有结果（或装上 mysql-client）。
 - [ ] ~~A7 框架代码生成（Prisma / TypeORM / JPA）~~ **当前版本不做**
   - 确定性映射，不用 AI；重估条件：A2 落地后先只做 Prisma 一种
 - [ ] ~~A8 DataOmni 作为 MCP 服务~~ **当前版本不做**
