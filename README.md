@@ -239,6 +239,8 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
   布尔和日期各有专用编辑器
 - 结果导出为 CSV / JSON / `INSERT` 语句，可选分隔符、表头、NULL 写法与 UTF-8 BOM，
   对话框带真实输出预览；`INSERT` 的字面量与标识符按当前连接的数据库写，七种关系库都实际灌回去验过
+- SQLite 与 DuckDB 的备份：`VACUUM INTO` 写一份一致的库文件，`EXPORT DATABASE` 导成 Parquet 目录；
+  走后台任务。网络库的 `mysqldump` / `pg_dump` 还没接
 - 整表流式导出：行从数据库直接落盘，不受行数上限截断，带进度、可取消、失败可
   重试；中途停下不会留下一份看上去完整的文件
 
@@ -510,6 +512,7 @@ bun install
 - 📤 导出为 `INSERT` 语句（表数据与查询结果，含整表流式导出）
 - ✨ AI 设计新表（Anthropic / OpenAI 兼容，默认关，Cargo feature `ai`）
 - 📚 ER 图导出数据字典（Markdown）与 Agent Skill（`SKILL.md`）
+- 💾 SQLite / DuckDB 备份（连接信息与命令面板）
 
 ### v0.4.0（首个发布版）
 
