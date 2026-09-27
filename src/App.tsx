@@ -29,6 +29,7 @@ import { EsIndexStructureView } from './components/EsIndexStructureView';
 import { requestCypherAutorun } from './stores/cypherAutorun';
 import { ErDiagramView } from './components/ErDiagramView';
 import { AiDesignView } from './components/AiDesignView';
+import { AiMongoDesignView } from './components/AiMongoDesignView';
 import { useSettingsStore } from './stores/settingsStore';
 import { aiAvailable } from './utils/aiSettings';
 import { backupSupported, startDatabaseBackup } from './utils/databaseBackup';
@@ -170,8 +171,11 @@ function App() {
   useEffect(() => {
     void aiAvailable().then(setAiInBuild);
   }, []);
-  const activeCanAiDesign = aiInBuild && aiEnabled && activeSpeaksSql
-    && !!activeConnection && supportsFeature(activeConnection.config.db_type, 'structureEditing');
+  // MongoDB 另有一种设计页（集合与 $jsonSchema），同一个标签种类
+  const activeCanAiDesign = aiInBuild && aiEnabled && !!activeConnection && (
+    activeConnection.config.db_type === DatabaseType.MongoDB
+    || (activeSpeaksSql && supportsFeature(activeConnection.config.db_type, 'structureEditing'))
+  );
   const environmentByProfileId = useMemo(
     () => Object.fromEntries(
       connections.map((connection) => [connection.id, connection.environment])
@@ -789,7 +793,8 @@ function App() {
     // Neo4j、Elasticsearch 与 MongoDB 能开查询标签、打开脚本文件，ER 图没有
     return items.filter((item) => (
       !SQL_ONLY_PALETTE_ACTIONS.has(item.id)
-      || (activeHasQueryEditor && item.id !== 'action:er-diagram' && item.id !== 'action:ai-design')
+      || (activeHasQueryEditor && item.id !== 'action:er-diagram'
+        && (item.id !== 'action:ai-design' || activeConnection.config.db_type === DatabaseType.MongoDB))
     ));
   };
 
@@ -855,7 +860,9 @@ function App() {
     }
 
     if (activeTab.kind === 'ai-design') {
-      return <AiDesignView key={activeTab.id} tabId={activeTab.id} connection={activeConnection.config} />;
+      return activeConnection.config.db_type === DatabaseType.MongoDB
+        ? <AiMongoDesignView key={activeTab.id} tabId={activeTab.id} connection={activeConnection.config} />
+        : <AiDesignView key={activeTab.id} tabId={activeTab.id} connection={activeConnection.config} />;
     }
 
     // Redis 的逻辑库同样开在这种标签里（table 那一格是 `db3`），换成键浏览页
