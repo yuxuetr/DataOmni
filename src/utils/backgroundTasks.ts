@@ -1,6 +1,6 @@
 import type { TranslationKey } from '../i18n/translate';
 
-export type TaskKind = 'import' | 'export';
+export type TaskKind = 'import' | 'export' | 'backup';
 
 /**
  * 类型从数组推出来，不是各写一遍：跨状态机的那道门要能在运行期遍历所有档位，
@@ -136,7 +136,8 @@ export function describeTask(task: BackgroundTask, now: number = Date.now()): Ta
     // 循环讨价还价，按下去要么无效，要么把取消又拖长一批
     canPause: task.kind === 'import' && task.status === 'running',
     canResume: task.status === 'paused',
-    cancel: pendingCancel ? 'pending' : active ? 'available' : 'none',
+    // 备份是一条 VACUUM INTO / EXPORT DATABASE，中途打不断：给一个按了没用的取消按钮是在骗人
+    cancel: task.kind === 'backup' ? 'none' : pendingCancel ? 'pending' : active ? 'available' : 'none',
     canRetry: !active && !task.leftBehind,
     canDismiss: !active,
     elapsedMs: Math.max(0, (task.finishedAt ?? now) - task.startedAt)

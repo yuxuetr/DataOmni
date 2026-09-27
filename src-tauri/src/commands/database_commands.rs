@@ -366,6 +366,43 @@ pub async fn export_query_to_file(
   result
 }
 
+/// 备份嵌入式库（SQLite 的库文件、DuckDB 的导出目录）到 `path`。网络库不在这里：
+/// 那要找官方的 dump 工具、传密码，见 `services::backup` 开头
+// 参数都是 Tauri 注入的 State，理由同 `export_query_to_file`
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn backup_database(
+  connection_id: String,
+  path: String,
+  connection_service_state: State<'_, ConnectionServiceState>,
+  tunnels: State<'_, TunnelRegistry>,
+  database_instances: State<'_, DbInstances>,
+  sql_server: State<'_, SqlServerRegistry>,
+  oracle: State<'_, OracleRegistry>,
+  duckdb: State<'_, DuckDbRegistry>,
+  clickhouse: State<'_, ClickHouseRegistry>,
+) -> Result<crate::services::backup::BackupKind, QueryError> {
+  let tunnel_port = tunnels.local_port(&connection_id).await;
+  let connection_string = {
+    let connection_service_guard = connection_service_state
+      .lock()
+      .map_err(|e| QueryError::message(format!("{SERVICE_STATE_UNAVAILABLE}: {e}")))?;
+    let service =
+      connection_service_guard.as_ref().ok_or_else(|| QueryError::message(SERVICE_NOT_READY))?;
+    service.resolve_connection_string(&connection_id, tunnel_port).map_err(QueryError::message)?
+  };
+  let resolved = ResolvedPool::resolve(
+    connection_string,
+    &database_instances,
+    &sql_server,
+    &oracle,
+    &duckdb,
+    &clickhouse,
+  )
+  .await?;
+  crate::services::backup::backup_embedded(resolved.pool_ref()?, std::path::Path::new(&path)).await
+}
+
 /// 取消一次导出。与 `cancel_query` 共用登记表，所以这里只是换个名字说同一件事。
 #[tauri::command]
 pub async fn cancel_export(

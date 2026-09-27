@@ -60,9 +60,16 @@ export interface MongoExportTaskPayload {
 
 export type ExportTaskPayload = SqlExportTaskPayload | MongoExportTaskPayload;
 
+/** 嵌入式库的备份：SQLite 得到一份库文件，DuckDB 得到一个 `EXPORT DATABASE` 目录 */
+export interface BackupTaskPayload {
+  connectionId: string;
+  path: string;
+}
+
 export type TaskRequest =
   | { kind: 'import'; title: string; payload: ImportTaskPayload }
-  | { kind: 'export'; title: string; payload: ExportTaskPayload };
+  | { kind: 'export'; title: string; payload: ExportTaskPayload }
+  | { kind: 'backup'; title: string; payload: BackupTaskPayload };
 
 interface ImportProgress {
   rowsRead: number;
@@ -269,6 +276,24 @@ export const useTaskStore = create<TaskState>((set, get) => {
     }
   };
 
+  const runBackup = async (id: string, payload: BackupTaskPayload) => {
+    try {
+      const kind = await invoke<'sqlite-file' | 'duckdb-directory'>('backup_database', {
+        connectionId: payload.connectionId,
+        path: payload.path
+      });
+      log(id, [
+        entry('info', payload.path),
+        entry('info', translateNow(kind === 'sqlite-file' ? 'backup.restoreSqlite' : 'backup.restoreDuckdb'))
+      ]);
+      // 备份写的是新文件 / 新目录，重跑不会往库里重复写东西
+      finish(id, 'succeeded', translateNow('backup.done'), false);
+    } catch (error) {
+      log(id, [entry('error', describeError(error, translateNow('backup.failed')))]);
+      finish(id, 'failed', null, false);
+    }
+  };
+
   const launch = (request: TaskRequest): string => {
     const id = crypto.randomUUID();
     requests.set(id, request);
@@ -289,8 +314,10 @@ export const useTaskStore = create<TaskState>((set, get) => {
 
     if (request.kind === 'import') {
       void runImport(id, request.payload);
-    } else {
+    } else if (request.kind === 'export') {
       void runExport(id, request.payload);
+    } else {
+      void runBackup(id, request.payload);
     }
     return id;
   };

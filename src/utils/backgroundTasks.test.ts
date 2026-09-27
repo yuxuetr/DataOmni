@@ -35,6 +35,13 @@ describe('describeTask', () => {
     expect(describeTask(task({ kind: 'export' }), NOW).canPause).toBe(false);
   });
 
+  it('备份打不断：跑着的时候也不给取消，也不给暂停', () => {
+    const display = describeTask(task({ kind: 'backup' }), NOW);
+    expect(display.cancel).toBe('none');
+    expect(display.canPause).toBe(false);
+    expect(describeTask(task({ kind: 'export' }), NOW).cancel).toBe('available');
+  });
+
   it('暂停着的任务能继续，也还能取消', () => {
     const display = describeTask(task({ status: 'paused' }), NOW);
     expect(display.canResume).toBe(true);

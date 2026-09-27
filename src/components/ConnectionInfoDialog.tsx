@@ -6,6 +6,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import { serverLabel } from '../utils/serverPresets';
 import { serverAddress } from '../utils/mongoConnection';
 import { isFileDatabase } from '../utils/databaseFiles';
+import { startDatabaseBackup } from '../utils/databaseBackup';
 
 interface ConnectionInfoDialogProps {
   connection: ConnectionProfile;
@@ -99,6 +100,24 @@ export function ConnectionInfoDialog({ connection, session, onClose }: Connectio
             <Row label={t('info.session')} value={session?.id ?? t('info.noSession')} />
           </div>
         </div>
+
+        {isFileDatabase(connection.db_type) && (
+          <div className="flex items-center gap-3 border-t border-line px-5 py-3">
+            <p className="min-w-0 flex-1 text-xs text-fg-subtle">
+              {t(connection.db_type === 'duckdb' ? 'backup.hintDuckdb' : 'backup.hintSqlite')}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                void startDatabaseBackup(connection);
+              }}
+              className="shrink-0 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover"
+            >
+              {t('backup.action')}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

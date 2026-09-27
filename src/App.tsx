@@ -31,6 +31,8 @@ import { ErDiagramView } from './components/ErDiagramView';
 import { AiDesignView } from './components/AiDesignView';
 import { useSettingsStore } from './stores/settingsStore';
 import { aiAvailable } from './utils/aiSettings';
+import { startDatabaseBackup } from './utils/databaseBackup';
+import { isFileDatabase } from './utils/databaseFiles';
 import { WelcomeScreen } from './components/WelcomeScreen';
 import { CloseTabPrompt, type CloseTabChoice } from './components/CloseTabPrompt';
 import {
@@ -704,6 +706,14 @@ function App() {
         group: t('palette.group.action'),
         run: () => openErDiagramTab()
       },
+      ...(activeConnection && isFileDatabase(activeConnection.config.db_type)
+        ? [{
+          id: 'action:backup',
+          title: t('backup.action'),
+          group: t('palette.group.action'),
+          run: () => void startDatabaseBackup(activeConnection.config)
+        }]
+        : []),
       ...(activeCanAiDesign
         ? [{
           id: 'action:ai-design',

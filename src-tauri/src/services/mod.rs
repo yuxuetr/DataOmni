@@ -1,5 +1,6 @@
 #[cfg(feature = "ai")]
 pub mod ai;
+pub mod backup;
 pub mod clickhouse;
 pub mod completion_catalog;
 pub mod connection_probe;
