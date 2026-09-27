@@ -112,7 +112,9 @@
 
 ### B. 更多数据库（P7）
 
-- [ ] B1 第一个协议兼容的国产库：KingbaseES 或 OceanBase（MySQL 模式）
+- [!] B1 第一个协议兼容的国产库：KingbaseES 或 OceanBase（MySQL 模式）——**阻塞：测试环境**（2026-09-28 核对）
+  - OceanBase CE 单机要 6–8 GB 内存，cu 只剩约 3 GB；KingbaseES 没有官方公开的镜像（社区镜像来源与许可说不清）。
+  - 解除条件：有一台能跑 OceanBase 的机器，或拿到 KingbaseES 的试用安装包。在那之前先做 B2b（openGauss，PG 协议同一类问题）。
   - 走归档 4.2「协议兼容库」的流程：连真库跑现有用例、归因、修应用缺陷、写明缺口
   - 先确认 cu 的容量（2026-09-27 `/data` 剩约 8 GB；OceanBase 单机版吃内存与磁盘）
 - [x] B2 openGauss / GaussDB：sha256 认证的实验（2026-09-28，openGauss-lite 5.0.3，cu 上 `dataomni-opengauss`）
