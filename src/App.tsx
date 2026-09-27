@@ -30,6 +30,7 @@ import { requestCypherAutorun } from './stores/cypherAutorun';
 import { ErDiagramView } from './components/ErDiagramView';
 import { AiDesignView } from './components/AiDesignView';
 import { AiMongoDesignView } from './components/AiMongoDesignView';
+import { AiGraphDesignView } from './components/AiGraphDesignView';
 import { useSettingsStore } from './stores/settingsStore';
 import { aiAvailable } from './utils/aiSettings';
 import { backupSupported, startDatabaseBackup } from './utils/databaseBackup';
@@ -171,9 +172,10 @@ function App() {
   useEffect(() => {
     void aiAvailable().then(setAiInBuild);
   }, []);
-  // MongoDB 另有一种设计页（集合与 $jsonSchema），同一个标签种类
+  // MongoDB（集合与 $jsonSchema）与 Neo4j（图模型）各有一种设计页，同一个标签种类
   const activeCanAiDesign = aiInBuild && aiEnabled && !!activeConnection && (
     activeConnection.config.db_type === DatabaseType.MongoDB
+    || activeConnection.config.db_type === DatabaseType.Neo4j
     || (activeSpeaksSql && supportsFeature(activeConnection.config.db_type, 'structureEditing'))
   );
   const environmentByProfileId = useMemo(
@@ -794,7 +796,7 @@ function App() {
     return items.filter((item) => (
       !SQL_ONLY_PALETTE_ACTIONS.has(item.id)
       || (activeHasQueryEditor && item.id !== 'action:er-diagram'
-        && (item.id !== 'action:ai-design' || activeConnection.config.db_type === DatabaseType.MongoDB))
+        && (item.id !== 'action:ai-design' || activeCanAiDesign))
     ));
   };
 
@@ -860,9 +862,13 @@ function App() {
     }
 
     if (activeTab.kind === 'ai-design') {
-      return activeConnection.config.db_type === DatabaseType.MongoDB
-        ? <AiMongoDesignView key={activeTab.id} tabId={activeTab.id} connection={activeConnection.config} />
-        : <AiDesignView key={activeTab.id} tabId={activeTab.id} connection={activeConnection.config} />;
+      if (activeConnection.config.db_type === DatabaseType.MongoDB) {
+        return <AiMongoDesignView key={activeTab.id} tabId={activeTab.id} connection={activeConnection.config} />;
+      }
+      if (activeConnection.config.db_type === DatabaseType.Neo4j) {
+        return <AiGraphDesignView key={activeTab.id} tabId={activeTab.id} connection={activeConnection.config} />;
+      }
+      return <AiDesignView key={activeTab.id} tabId={activeTab.id} connection={activeConnection.config} />;
     }
 
     // Redis 的逻辑库同样开在这种标签里（table 那一格是 `db3`），换成键浏览页
