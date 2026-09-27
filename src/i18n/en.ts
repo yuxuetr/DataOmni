@@ -1044,6 +1044,7 @@ export const en: Translations = {
   'error.backend.backupUnsupported': "This kind of database cannot be backed up here yet.",
   'error.backend.backupTargetExists': "The target already exists and was not overwritten: {detail}",
   'error.backend.backupFailed': "The backup could not be written to the target: {detail}",
+  'error.driver.saslUnsupported': 'The server asks for an authentication method the standard PostgreSQL driver does not support, most likely the sha256 authentication openGauss / GaussDB use by default. Ask an administrator to set password_encryption_type = 1 (which also stores an md5 hash) and reset this user\'s password, or to use md5 for this client in pg_hba.conf. Original message: {detail}',
   'error.backend.fileWriteFailed': 'Could not write the file: {detail}',
   'error.backend.fileReadFailed': 'Could not read the file: {detail}',
   'error.backend.fileOpenFailed': 'Could not open the file: {detail}',

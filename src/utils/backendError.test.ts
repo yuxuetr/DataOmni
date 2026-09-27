@@ -186,3 +186,23 @@ describe('导入的行错误', () => {
     }
   });
 });
+
+describe('驱动原话', () => {
+  // openGauss 5.0.3 上 sha256-only 的用户实测拿到的就是这一句（机制列表是空的）
+  const sasl = 'Protocol("unsupported SASL authentication mechanisms:  (sqlx_postgres::connection::sasl:44)")';
+
+  it('sha256 认证的那一句换成能照着改的说明，原话留在后面', () => {
+    const translated = translateBackendMessage(sasl);
+    expect(translated).toContain('password_encryption_type');
+    expect(translated).toContain(sasl);
+  });
+
+  it('翻过一次的再送进来不会再翻一遍', () => {
+    const once = translateBackendMessage(sasl);
+    expect(translateBackendMessage(`prefix: ${once}`)).toBe(`prefix: ${once}`);
+  });
+
+  it('别的驱动原话照旧原样显示', () => {
+    expect(translateBackendMessage(' connection refused ')).toBe('connection refused');
+  });
+});

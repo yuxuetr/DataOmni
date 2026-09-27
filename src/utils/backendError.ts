@@ -213,6 +213,17 @@ export function parseBackendError(message: string): BackendError | null {
 export function translateBackendMessage(message: string): string {
   const parsed = parseBackendError(message);
   if (!parsed) {
+    // 驱动自己的一句原话，唯一值得认的一条：openGauss / GaussDB 默认的 sha256 认证，
+    // sqlx 与 libpq 都不认，报的却是一个空的机制列表，看不出该去改什么（TODOs 下一步规划 B2）。
+    // 原话留在后面，别的驱动错误照旧原样显示
+    // 连接测试会把已经翻过的一句再送进来一次（外面包一层「连接测试失败：」），而说明里带着原话：
+    // 已经带着说明的不再翻，否则同一段说明印两遍（打包版上见过）
+    if (
+      message.includes('unsupported SASL authentication mechanisms')
+      && !message.includes('password_encryption_type')
+    ) {
+      return translateNow('error.driver.saslUnsupported', { detail: message.trim() });
+    }
     return message.trim();
   }
   return translateNow(parsed.key, { detail: parsed.detail });

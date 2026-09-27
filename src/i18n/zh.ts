@@ -1059,6 +1059,7 @@ export const zh = {
   'error.backend.backupUnsupported': "这种数据库在这里还不能备份。",
   'error.backend.backupTargetExists': "目标已经存在，没有覆盖：{detail}",
   'error.backend.backupFailed': "备份没能写到目标位置：{detail}",
+  'error.driver.saslUnsupported': '服务端要求的认证方式标准 PostgreSQL 驱动不支持——多半是 openGauss / GaussDB 默认的 sha256 认证。请管理员把 password_encryption_type 设为 1（同时存 md5），再给这个用户重设一次密码；或在 pg_hba.conf 里对这个来源用 md5。原始信息：{detail}',
   'error.backend.fileWriteFailed': '写入文件失败：{detail}',
   'error.backend.fileReadFailed': '读取文件失败：{detail}',
   'error.backend.fileOpenFailed': '打开文件失败：{detail}',
