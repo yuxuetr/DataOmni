@@ -730,6 +730,10 @@ export const en: Translations = {
   'editor.rerun': 'Run again',
   'editor.run': 'Run',
   'editor.deleteStatement': 'Remove statement',
+  'editor.collapseResult': 'Collapse result',
+  'editor.expandResult': 'Expand result',
+  'editor.collapseAllResults': 'Collapse all results',
+  'editor.expandAllResults': 'Expand all results',
   'editor.staleResult': 'This result is from the previous run; the edited SQL has not been executed.',
   'editor.executionError': 'Execution error',
 

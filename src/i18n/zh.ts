@@ -751,6 +751,10 @@ export const zh = {
   'editor.rerun': '重新执行',
   'editor.run': '执行',
   'editor.deleteStatement': '删除语句',
+  'editor.collapseResult': '收起结果',
+  'editor.expandResult': '展开结果',
+  'editor.collapseAllResults': '收起全部结果',
+  'editor.expandAllResults': '展开全部结果',
   'editor.staleResult': '当前结果来自上一次执行，编辑后的 SQL 尚未执行。',
   'editor.executionError': '执行错误',
 

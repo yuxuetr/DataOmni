@@ -169,6 +169,29 @@ describe('SQL 文档分片', () => {
     expect(executions[0].tabId).toBe('tab-a');
   });
 
+  it('收起结果：给 id 只动那一条，不给是当前标签里的全部', () => {
+    const store = useQueryStore.getState();
+    store.openDocument('tab-b');
+    store.setSqlInput('SELECT 9;');
+    store.parseStatements();
+    store.openDocument('tab-a');
+    store.setSqlInput('SELECT 1; SELECT 2;');
+    store.parseStatements();
+    const collapsedOf = (tab: string) =>
+      useQueryStore.getState().documents[tab].statements.map((statement) => statement.collapsed ?? false);
+    const [first] = useQueryStore.getState().documents['tab-a'].statements;
+
+    store.setResultsCollapsed(true, first.id);
+    expect(collapsedOf('tab-a')).toEqual([true, false]);
+
+    store.setResultsCollapsed(true);
+    expect(collapsedOf('tab-a')).toEqual([true, true]);
+    expect(collapsedOf('tab-b')).toEqual([false]);
+
+    store.setResultsCollapsed(false);
+    expect(collapsedOf('tab-a')).toEqual([false, false]);
+  });
+
   it('有草稿文本的标签算作未保存', () => {
     const store = useQueryStore.getState();
 

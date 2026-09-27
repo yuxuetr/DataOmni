@@ -90,7 +90,9 @@ export function clearSqlStatementResult(statement: SqlStatement): SqlStatement {
     result: undefined,
     resultSql: undefined,
     error: undefined,
-    executedAt: undefined
+    executedAt: undefined,
+    // 没有结果可收了；下一次执行的结果照常摊开
+    collapsed: undefined
   };
 }
 

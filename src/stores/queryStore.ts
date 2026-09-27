@@ -147,6 +147,8 @@ interface QueryActions {
   // 结果管理
   clearResults: () => void;
   removeStatement: (statementId: string) => void;
+  /** 收起 / 摊开结果；不给 id 是这个标签里的全部 */
+  setResultsCollapsed: (collapsed: boolean, statementId?: string) => void;
   
   // 错误处理
   setError: (error: string | null) => void;
@@ -1013,6 +1015,20 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
     set((state) => writeSqlDocument(state, documentId, (document) => ({
       statements: document.statements.filter(s => s.id !== statementId)
+    })));
+  },
+
+  setResultsCollapsed: (collapsed: boolean, statementId?: string) => {
+    const documentId = get().activeDocumentId;
+    if (!documentId) {
+      return;
+    }
+
+    set((state) => writeSqlDocument(state, documentId, (document) => ({
+      statements: document.statements.map((statement) =>
+        statementId === undefined || statement.id === statementId
+          ? { ...statement, collapsed }
+          : statement)
     })));
   },
 

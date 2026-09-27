@@ -94,6 +94,18 @@ describe('query statement lifecycle', () => {
     expect(failed.error).toBe('column does not exist');
   });
 
+  it('keeps a collapsed result collapsed when the editor re-splits the text', () => {
+    const [kept] = reconcileSqlStatements('SELECT 1;', [{ ...executedStatement, collapsed: true }]);
+    expect(kept.collapsed).toBe(true);
+    // 改了这条语句（结果成了上一次的）也还是它，照样收着
+    const [edited] = reconcileSqlStatements('SELECT 2;', [{ ...executedStatement, collapsed: true }]);
+    expect(edited.collapsed).toBe(true);
+  });
+
+  it('clearing a result also expands it, so the next run shows up', () => {
+    expect(clearSqlStatementResult({ ...executedStatement, collapsed: true }).collapsed).toBeUndefined();
+  });
+
   it('removes results only through the explicit clear action', () => {
     expect(clearSqlStatementResult(executedStatement)).toMatchObject({
       result: undefined,

@@ -77,4 +77,9 @@ export interface SqlStatement {
   /** 数据库给的结构化错误，用来显示 SQLSTATE、位置与 DETAIL */
   errorDetails?: QueryExecutionError;
   executedAt?: string;
+  /**
+   * 结果收起来了，只留标题一行。语句多时一份几百行的结果把后面几条推出屏幕外。
+   * 存在语句上而不是组件里：切标签页再回来、编辑器重新切语句时都还在；执行不动它
+   */
+  collapsed?: boolean;
 }

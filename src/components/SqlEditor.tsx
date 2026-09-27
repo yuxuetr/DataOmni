@@ -15,7 +15,11 @@ import {
   AlignLeft,
   Save,
   PanelTopClose,
-  PanelTopOpen
+  PanelTopOpen,
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown
 } from 'lucide-react';
 import { selectActiveSqlDocument, useQueryStore, SqlStatement } from '../stores/queryStore';
 import type { QueryExecution } from '../contracts/queryExecution';
@@ -103,11 +107,16 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
     setQueryResultRowLimit,
     clearResults,
     removeStatement,
+    setResultsCollapsed,
     setError,
     autocommit,
     setAutocommit,
     session
   } = useQueryStore();
+
+  const shownResults = statements.filter((statement) => statement.result || statement.error);
+  const anyResultShown = shownResults.length > 0;
+  const anyResultExpanded = shownResults.some((statement) => !statement.collapsed);
 
   const [autoParseEnabled, setAutoParseEnabled] = useState(true);
   // 切语句要按方言：SQL Server 的 `GO`、`#临时表` 与 `[标识符]`
@@ -568,6 +577,17 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
             <AlignLeft size={14} />
           </button>
 
+          {/* 全部收起 / 全部摊开。还有摊开着的就是收起，全收着才是摊开 */}
+          <button
+            onClick={() => setResultsCollapsed(anyResultExpanded)}
+            disabled={!anyResultShown}
+            aria-label={anyResultExpanded ? t('editor.collapseAllResults') : t('editor.expandAllResults')}
+            title={anyResultExpanded ? t('editor.collapseAllResults') : t('editor.expandAllResults')}
+            className="flex items-center rounded-control border border-line-strong p-1.5 text-fg-muted transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:border-line disabled:text-fg-subtle"
+          >
+            {anyResultExpanded || !anyResultShown ? <ChevronsDownUp size={14} /> : <ChevronsUpDown size={14} />}
+          </button>
+
           {/* 清除结果 */}
           <button
             onClick={clearResults}
@@ -790,6 +810,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
                   )}
                   onCancel={() => execution && cancelExecution(execution.id)}
                   onRemove={() => removeStatement(statement.id)}
+                  onToggleCollapsed={() => setResultsCollapsed(!statement.collapsed, statement.id)}
                   formatExecutionTime={formatExecutionTime}
                   statementOffset={statementOffset}
                   onJumpToError={jumpToOffset}
@@ -812,6 +833,7 @@ interface SqlStatementCardProps {
   onExecute: () => void;
   onCancel: () => void;
   onRemove: () => void;
+  onToggleCollapsed: () => void;
   formatExecutionTime: (ms: number) => string;
   /** 这条语句在整份文档里的起始偏移，用来把数据库给的相对位置换成可跳转的位置 */
   statementOffset?: number;
@@ -827,17 +849,31 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
   onExecute,
   onCancel,
   onRemove,
+  onToggleCollapsed,
   formatExecutionTime,
   statementOffset,
   onJumpToError
 }) => {
   const t = useLanguageStore((state) => state.t);
+  const hasOutput = Boolean(statement.result || statement.error);
+  const collapsed = hasOutput && statement.collapsed === true;
 
   return (
     <div className="border border-line rounded-panel overflow-hidden">
       {/* 语句头部 */}
       <div className="flex items-center justify-between gap-2 border-b border-line bg-surface-sunken px-2.5 py-1">
         <div className="flex min-w-0 items-center gap-2">
+          {hasOutput && (
+            <button
+              onClick={onToggleCollapsed}
+              aria-expanded={!collapsed}
+              aria-label={collapsed ? t('editor.expandResult') : t('editor.collapseResult')}
+              title={collapsed ? t('editor.expandResult') : t('editor.collapseResult')}
+              className="-mr-1 shrink-0 rounded-control p-0.5 text-fg-subtle transition-colors hover:bg-surface-hover hover:text-fg"
+            >
+              {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+            </button>
+          )}
           <span className="shrink-0 text-xs font-medium text-fg-muted">#{ordinal}</span>
           {/* 语句原文折成一行：完整内容就在上面的编辑器里，这里只是用来认
               「这份结果是哪条语句的」。靠 nowrap 在显示上折，不改原文再上色——
@@ -849,6 +885,19 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
             <span className="flex shrink-0 items-center gap-1 text-xs text-fg-subtle">
               <Clock size={11} />
               {statement.executedAt}
+            </span>
+          )}
+          {/* 收起时标题上留一句结果摘要：不摊开也看得出跑完了、拿回多少 */}
+          {collapsed && statement.result && !statement.error && (
+            <span className="shrink-0 text-xs text-fg-subtle">
+              {statement.result.columns.length > 0
+                ? t('result.rowCount', { count: statement.result.rows.length })
+                : t('result.affectedRows', { count: statement.result.affected_rows })}
+            </span>
+          )}
+          {collapsed && statement.error && (
+            <span className="min-w-0 truncate text-xs text-danger" title={statement.error}>
+              {statement.error}
             </span>
           )}
         </div>
@@ -903,7 +952,7 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
       </div>
 
       {/* 执行结果 */}
-      {statement.result && (
+      {statement.result && !collapsed && (
         <>
           {statement.resultSql && statement.resultSql !== statement.sql && (
             <div className="px-3 py-2 text-xs text-warning bg-warning-soft border-t border-warning-line">
@@ -920,7 +969,7 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
       )}
 
       {/* 错误信息 */}
-      {statement.error && (
+      {statement.error && !collapsed && (
         <QueryErrorPanel
           message={statement.error}
           details={statement.errorDetails}
