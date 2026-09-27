@@ -1,7 +1,11 @@
+import type { SqlDialect } from '../contracts/queryExecution';
 import type { SerializedResultValue } from '../contracts/resultSet';
+import { binaryLiteral } from './columnEditors';
 import { isTaggedResultValue } from './resultValues';
+import { quoteSqlIdentifier } from './sqlIdentifiers';
+import { quoteSqlStringLiteral } from './sqlLiterals';
 
-export type ExportFormat = 'csv' | 'json';
+export type ExportFormat = 'csv' | 'json' | 'sql';
 export type CsvDelimiter = ',' | ';' | '\t';
 
 export interface ExportOptions {
@@ -12,6 +16,13 @@ export interface ExportOptions {
   nullText: string;
   /** UTF-8 BOM。Excel 不认没有 BOM 的 UTF-8 CSV，中文会读成乱码。 */
   byteOrderMark: boolean;
+  /**
+   * `INSERT INTO` 后面的表名，只有 `sql` 格式用。写成一个标识符、不带 schema：
+   * 导出的语句多半是拿去灌进另一个库，那边的 schema 不见得同名。
+   */
+  sqlTable: string;
+  /** 字面量与标识符按哪家的规矩写。`sql` 格式必须有 */
+  sqlDialect?: SqlDialect;
 }
 
 export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
@@ -19,7 +30,8 @@ export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
   delimiter: ',',
   includeHeader: true,
   nullText: '',
-  byteOrderMark: false
+  byteOrderMark: false,
+  sqlTable: ''
 };
 
 /**
@@ -39,7 +51,9 @@ export function serializeExport(
 ): string {
   const text = options.format === 'json'
     ? toJson(columns, rows)
-    : toCsv(columns, rows, options);
+    : options.format === 'sql'
+      ? toSqlInserts(columns, rows, options)
+      : toCsv(columns, rows, options);
 
   return options.byteOrderMark ? UTF8_BOM + text : text;
 }
@@ -84,6 +98,68 @@ export function toJson(
   });
 
   return JSON.stringify(records, null, 2);
+}
+
+/**
+ * 每行一条 `INSERT`，以 `;` 结尾、换行分隔。
+ *
+ * 不写多行 `VALUES`：Oracle 不认，而一行一条在任何一家都能跑、出错时也能定位到行。
+ * 重名列照原样写出去——替它改名是往一张不存在的列里插值，让数据库报错更诚实。
+ */
+export function toSqlInserts(
+  columns: readonly string[],
+  rows: ReadonlyArray<readonly SerializedResultValue[]>,
+  options: Pick<ExportOptions, 'sqlTable' | 'sqlDialect'>
+): string {
+  const dialect = options.sqlDialect ?? 'sqlite';
+  const head = `INSERT INTO ${quoteSqlIdentifier(options.sqlTable, dialect)} (`
+    + columns.map(name => quoteSqlIdentifier(name, dialect)).join(', ')
+    + ') VALUES (';
+
+  return rows
+    .map(row => head + columns.map((_, index) => sqlLiteral(row[index] ?? null, dialect)).join(', ') + ');')
+    .join(LINE_SEPARATOR);
+}
+
+/**
+ * 日期时间写成字符串，由数据库隐式转换——各家都认 `YYYY-MM-DD HH:MM:SS`。
+ * 只有 Oracle 不行：它按会话的 NLS_DATE_FORMAT 解析字符串，所以写成 ANSI 的
+ * `DATE '…'` / `TIMESTAMP '…'`。
+ */
+export function sqlLiteral(value: SerializedResultValue, dialect: SqlDialect): string {
+  if (value === null) {
+    return 'NULL';
+  }
+  if (typeof value === 'boolean') {
+    // SQL Server 没有 TRUE；Oracle 23 之前也没有，布尔多半存成 NUMBER(1)
+    if (dialect === 'sqlserver' || dialect === 'oracle') {
+      return value ? '1' : '0';
+    }
+    return value ? 'TRUE' : 'FALSE';
+  }
+  if (typeof value === 'number') {
+    return String(value);
+  }
+  if (typeof value === 'string') {
+    return quoteSqlStringLiteral(value, dialect);
+  }
+  if (!isTaggedResultValue(value)) {
+    // 契约之外的对象 / 数组：照 Rust 那侧的 `to_string()` 写成紧凑的 JSON 文本
+    return quoteSqlStringLiteral(JSON.stringify(value), dialect);
+  }
+  switch (value.type) {
+    case 'bigint':
+    case 'decimal':
+      return value.value;
+    case 'binary':
+      return binaryLiteral(value.value, dialect);
+    case 'date':
+      return dialect === 'oracle' ? `DATE '${value.value}'` : quoteSqlStringLiteral(value.value, dialect);
+    case 'datetime':
+      return dialect === 'oracle' ? `TIMESTAMP '${value.value}'` : quoteSqlStringLiteral(value.value, dialect);
+    default:
+      return quoteSqlStringLiteral(value.value, dialect);
+  }
 }
 
 /**

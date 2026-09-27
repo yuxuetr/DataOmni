@@ -24,7 +24,7 @@ const corpus = JSON.parse(readFileSync(CORPUS_PATH, 'utf8')) as { cases: Conform
 
 describe('导出语料', () => {
   it('语料本身不能被删空——一道不会红的门等于没有门', () => {
-    expect(corpus.cases.length).toBeGreaterThanOrEqual(16);
+    expect(corpus.cases.length).toBeGreaterThanOrEqual(28);
   });
 
   it.each(corpus.cases.map((testCase) => [testCase.name, testCase] as const))(

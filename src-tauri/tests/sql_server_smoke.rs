@@ -920,6 +920,8 @@ fn export_options() -> dataomni_lib::services::ExportOptions {
     include_header: true,
     null_text: String::new(),
     byte_order_mark: false,
+    sql_table: String::new(),
+    sql_dialect: None,
   }
 }
 

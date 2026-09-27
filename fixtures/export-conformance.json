@@ -136,7 +136,7 @@
         {
           "fraction": 1.5,
           "huge": 1e+21,
-          "tiny": 1e-07
+          "tiny": 1e-7
         }
       ],
       "options": {
@@ -394,6 +394,737 @@
         "byteOrderMark": true
       },
       "expected": "﻿[\n  {\n    \"a\": \"中文\"\n  }\n]"
+    },
+    {
+      "name": "sql-every-value-kind-mysql",
+      "columns": [
+        "text",
+        "number",
+        "float",
+        "flag",
+        "nothing",
+        "big",
+        "money",
+        "day",
+        "when",
+        "doc",
+        "blob"
+      ],
+      "rows": [
+        {
+          "text": "O'Brien C:\\temp 中文",
+          "number": 42,
+          "float": 1.5,
+          "flag": true,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "day": {
+            "type": "date",
+            "value": "2024-01-02"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-02 03:04:05.5"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": \"it's\"}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "DEADbeef"
+          }
+        },
+        {
+          "text": "",
+          "number": -0.25,
+          "float": 1.5,
+          "flag": false,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "day": {
+            "type": "date",
+            "value": "2024-01-02"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-02 03:04:05.5"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": \"it's\"}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "DEADbeef"
+          }
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "orders",
+        "sqlDialect": "mysql"
+      },
+      "expected": "INSERT INTO `orders` (`text`, `number`, `float`, `flag`, `nothing`, `big`, `money`, `day`, `when`, `doc`, `blob`) VALUES ('O''Brien C:\\\\temp 中文', 42, 1.5, TRUE, NULL, 9007199254740993, 1.10, '2024-01-02', '2024-01-02 03:04:05.5', '{\"a\": \"it''s\"}', X'deadbeef');\nINSERT INTO `orders` (`text`, `number`, `float`, `flag`, `nothing`, `big`, `money`, `day`, `when`, `doc`, `blob`) VALUES ('', -0.25, 1.5, FALSE, NULL, 9007199254740993, 1.10, '2024-01-02', '2024-01-02 03:04:05.5', '{\"a\": \"it''s\"}', X'deadbeef');"
+    },
+    {
+      "name": "sql-every-value-kind-postgresql",
+      "columns": [
+        "text",
+        "number",
+        "float",
+        "flag",
+        "nothing",
+        "big",
+        "money",
+        "day",
+        "when",
+        "doc",
+        "blob"
+      ],
+      "rows": [
+        {
+          "text": "O'Brien C:\\temp 中文",
+          "number": 42,
+          "float": 1.5,
+          "flag": true,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "day": {
+            "type": "date",
+            "value": "2024-01-02"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-02 03:04:05.5"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": \"it's\"}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "DEADbeef"
+          }
+        },
+        {
+          "text": "",
+          "number": -0.25,
+          "float": 1.5,
+          "flag": false,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "day": {
+            "type": "date",
+            "value": "2024-01-02"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-02 03:04:05.5"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": \"it's\"}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "DEADbeef"
+          }
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "orders",
+        "sqlDialect": "postgresql"
+      },
+      "expected": "INSERT INTO \"orders\" (\"text\", \"number\", \"float\", \"flag\", \"nothing\", \"big\", \"money\", \"day\", \"when\", \"doc\", \"blob\") VALUES ('O''Brien C:\\temp 中文', 42, 1.5, TRUE, NULL, 9007199254740993, 1.10, '2024-01-02', '2024-01-02 03:04:05.5', '{\"a\": \"it''s\"}', '\\xdeadbeef'::bytea);\nINSERT INTO \"orders\" (\"text\", \"number\", \"float\", \"flag\", \"nothing\", \"big\", \"money\", \"day\", \"when\", \"doc\", \"blob\") VALUES ('', -0.25, 1.5, FALSE, NULL, 9007199254740993, 1.10, '2024-01-02', '2024-01-02 03:04:05.5', '{\"a\": \"it''s\"}', '\\xdeadbeef'::bytea);"
+    },
+    {
+      "name": "sql-every-value-kind-sqlite",
+      "columns": [
+        "text",
+        "number",
+        "float",
+        "flag",
+        "nothing",
+        "big",
+        "money",
+        "day",
+        "when",
+        "doc",
+        "blob"
+      ],
+      "rows": [
+        {
+          "text": "O'Brien C:\\temp 中文",
+          "number": 42,
+          "float": 1.5,
+          "flag": true,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "day": {
+            "type": "date",
+            "value": "2024-01-02"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-02 03:04:05.5"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": \"it's\"}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "DEADbeef"
+          }
+        },
+        {
+          "text": "",
+          "number": -0.25,
+          "float": 1.5,
+          "flag": false,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "day": {
+            "type": "date",
+            "value": "2024-01-02"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-02 03:04:05.5"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": \"it's\"}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "DEADbeef"
+          }
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "orders",
+        "sqlDialect": "sqlite"
+      },
+      "expected": "INSERT INTO \"orders\" (\"text\", \"number\", \"float\", \"flag\", \"nothing\", \"big\", \"money\", \"day\", \"when\", \"doc\", \"blob\") VALUES ('O''Brien C:\\temp 中文', 42, 1.5, TRUE, NULL, 9007199254740993, 1.10, '2024-01-02', '2024-01-02 03:04:05.5', '{\"a\": \"it''s\"}', X'deadbeef');\nINSERT INTO \"orders\" (\"text\", \"number\", \"float\", \"flag\", \"nothing\", \"big\", \"money\", \"day\", \"when\", \"doc\", \"blob\") VALUES ('', -0.25, 1.5, FALSE, NULL, 9007199254740993, 1.10, '2024-01-02', '2024-01-02 03:04:05.5', '{\"a\": \"it''s\"}', X'deadbeef');"
+    },
+    {
+      "name": "sql-every-value-kind-sqlserver",
+      "columns": [
+        "text",
+        "number",
+        "float",
+        "flag",
+        "nothing",
+        "big",
+        "money",
+        "day",
+        "when",
+        "doc",
+        "blob"
+      ],
+      "rows": [
+        {
+          "text": "O'Brien C:\\temp 中文",
+          "number": 42,
+          "float": 1.5,
+          "flag": true,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "day": {
+            "type": "date",
+            "value": "2024-01-02"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-02 03:04:05.5"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": \"it's\"}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "DEADbeef"
+          }
+        },
+        {
+          "text": "",
+          "number": -0.25,
+          "float": 1.5,
+          "flag": false,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "day": {
+            "type": "date",
+            "value": "2024-01-02"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-02 03:04:05.5"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": \"it's\"}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "DEADbeef"
+          }
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "orders",
+        "sqlDialect": "sqlserver"
+      },
+      "expected": "INSERT INTO [orders] ([text], [number], [float], [flag], [nothing], [big], [money], [day], [when], [doc], [blob]) VALUES (N'O''Brien C:\\temp 中文', 42, 1.5, 1, NULL, 9007199254740993, 1.10, N'2024-01-02', N'2024-01-02 03:04:05.5', N'{\"a\": \"it''s\"}', 0xdeadbeef);\nINSERT INTO [orders] ([text], [number], [float], [flag], [nothing], [big], [money], [day], [when], [doc], [blob]) VALUES (N'', -0.25, 1.5, 0, NULL, 9007199254740993, 1.10, N'2024-01-02', N'2024-01-02 03:04:05.5', N'{\"a\": \"it''s\"}', 0xdeadbeef);"
+    },
+    {
+      "name": "sql-every-value-kind-oracle",
+      "columns": [
+        "text",
+        "number",
+        "float",
+        "flag",
+        "nothing",
+        "big",
+        "money",
+        "day",
+        "when",
+        "doc",
+        "blob"
+      ],
+      "rows": [
+        {
+          "text": "O'Brien C:\\temp 中文",
+          "number": 42,
+          "float": 1.5,
+          "flag": true,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "day": {
+            "type": "date",
+            "value": "2024-01-02"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-02 03:04:05.5"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": \"it's\"}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "DEADbeef"
+          }
+        },
+        {
+          "text": "",
+          "number": -0.25,
+          "float": 1.5,
+          "flag": false,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "day": {
+            "type": "date",
+            "value": "2024-01-02"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-02 03:04:05.5"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": \"it's\"}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "DEADbeef"
+          }
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "orders",
+        "sqlDialect": "oracle"
+      },
+      "expected": "INSERT INTO \"orders\" (\"text\", \"number\", \"float\", \"flag\", \"nothing\", \"big\", \"money\", \"day\", \"when\", \"doc\", \"blob\") VALUES ('O''Brien C:\\temp 中文', 42, 1.5, 1, NULL, 9007199254740993, 1.10, DATE '2024-01-02', TIMESTAMP '2024-01-02 03:04:05.5', '{\"a\": \"it''s\"}', HEXTORAW('deadbeef'));\nINSERT INTO \"orders\" (\"text\", \"number\", \"float\", \"flag\", \"nothing\", \"big\", \"money\", \"day\", \"when\", \"doc\", \"blob\") VALUES ('', -0.25, 1.5, 0, NULL, 9007199254740993, 1.10, DATE '2024-01-02', TIMESTAMP '2024-01-02 03:04:05.5', '{\"a\": \"it''s\"}', HEXTORAW('deadbeef'));"
+    },
+    {
+      "name": "sql-every-value-kind-duckdb",
+      "columns": [
+        "text",
+        "number",
+        "float",
+        "flag",
+        "nothing",
+        "big",
+        "money",
+        "day",
+        "when",
+        "doc",
+        "blob"
+      ],
+      "rows": [
+        {
+          "text": "O'Brien C:\\temp 中文",
+          "number": 42,
+          "float": 1.5,
+          "flag": true,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "day": {
+            "type": "date",
+            "value": "2024-01-02"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-02 03:04:05.5"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": \"it's\"}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "DEADbeef"
+          }
+        },
+        {
+          "text": "",
+          "number": -0.25,
+          "float": 1.5,
+          "flag": false,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "day": {
+            "type": "date",
+            "value": "2024-01-02"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-02 03:04:05.5"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": \"it's\"}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "DEADbeef"
+          }
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "orders",
+        "sqlDialect": "duckdb"
+      },
+      "expected": "INSERT INTO \"orders\" (\"text\", \"number\", \"float\", \"flag\", \"nothing\", \"big\", \"money\", \"day\", \"when\", \"doc\", \"blob\") VALUES ('O''Brien C:\\temp 中文', 42, 1.5, TRUE, NULL, 9007199254740993, 1.10, '2024-01-02', '2024-01-02 03:04:05.5', '{\"a\": \"it''s\"}', from_hex('deadbeef'));\nINSERT INTO \"orders\" (\"text\", \"number\", \"float\", \"flag\", \"nothing\", \"big\", \"money\", \"day\", \"when\", \"doc\", \"blob\") VALUES ('', -0.25, 1.5, FALSE, NULL, 9007199254740993, 1.10, '2024-01-02', '2024-01-02 03:04:05.5', '{\"a\": \"it''s\"}', from_hex('deadbeef'));"
+    },
+    {
+      "name": "sql-every-value-kind-clickhouse",
+      "columns": [
+        "text",
+        "number",
+        "float",
+        "flag",
+        "nothing",
+        "big",
+        "money",
+        "day",
+        "when",
+        "doc",
+        "blob"
+      ],
+      "rows": [
+        {
+          "text": "O'Brien C:\\temp 中文",
+          "number": 42,
+          "float": 1.5,
+          "flag": true,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "day": {
+            "type": "date",
+            "value": "2024-01-02"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-02 03:04:05.5"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": \"it's\"}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "DEADbeef"
+          }
+        },
+        {
+          "text": "",
+          "number": -0.25,
+          "float": 1.5,
+          "flag": false,
+          "nothing": null,
+          "big": {
+            "type": "bigint",
+            "value": "9007199254740993"
+          },
+          "money": {
+            "type": "decimal",
+            "value": "1.10"
+          },
+          "day": {
+            "type": "date",
+            "value": "2024-01-02"
+          },
+          "when": {
+            "type": "datetime",
+            "value": "2024-01-02 03:04:05.5"
+          },
+          "doc": {
+            "type": "json",
+            "value": "{\"a\": \"it's\"}"
+          },
+          "blob": {
+            "type": "binary",
+            "value": "DEADbeef"
+          }
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "orders",
+        "sqlDialect": "clickhouse"
+      },
+      "expected": "INSERT INTO `orders` (`text`, `number`, `float`, `flag`, `nothing`, `big`, `money`, `day`, `when`, `doc`, `blob`) VALUES ('O''Brien C:\\\\temp 中文', 42, 1.5, TRUE, NULL, 9007199254740993, 1.10, '2024-01-02', '2024-01-02 03:04:05.5', '{\"a\": \"it''s\"}', X'deadbeef');\nINSERT INTO `orders` (`text`, `number`, `float`, `flag`, `nothing`, `big`, `money`, `day`, `when`, `doc`, `blob`) VALUES ('', -0.25, 1.5, FALSE, NULL, 9007199254740993, 1.10, '2024-01-02', '2024-01-02 03:04:05.5', '{\"a\": \"it''s\"}', X'deadbeef');"
+    },
+    {
+      "name": "sql-identifier-quoting-mysql",
+      "columns": [
+        "a`b"
+      ],
+      "rows": [
+        {
+          "a`b": 1
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "we`ird",
+        "sqlDialect": "mysql"
+      },
+      "expected": "INSERT INTO `we``ird` (`a``b`) VALUES (1);"
+    },
+    {
+      "name": "sql-identifier-quoting-postgresql",
+      "columns": [
+        "Mixed Case"
+      ],
+      "rows": [
+        {
+          "Mixed Case": 1
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "my\"table",
+        "sqlDialect": "postgresql"
+      },
+      "expected": "INSERT INTO \"my\"\"table\" (\"Mixed Case\") VALUES (1);"
+    },
+    {
+      "name": "sql-identifier-quoting-sqlserver",
+      "columns": [
+        "c]d"
+      ],
+      "rows": [
+        {
+          "c]d": 1
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "a]b",
+        "sqlDialect": "sqlserver"
+      },
+      "expected": "INSERT INTO [a]]b] ([c]]d]) VALUES (1);"
+    },
+    {
+      "name": "sql-identifier-quoting-clickhouse",
+      "columns": [
+        "h"
+      ],
+      "rows": [
+        {
+          "h": 1
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "e\\f`g",
+        "sqlDialect": "clickhouse"
+      },
+      "expected": "INSERT INTO `e\\\\f``g` (`h`) VALUES (1);"
+    },
+    {
+      "name": "sql-empty-result-is-an-empty-file",
+      "columns": [
+        "id"
+      ],
+      "rows": [],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "t",
+        "sqlDialect": "postgresql"
+      },
+      "expected": ""
     }
   ]
 }

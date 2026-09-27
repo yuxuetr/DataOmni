@@ -803,6 +803,8 @@ async fn clickhouse_exports_stream_to_a_file_and_refuse_non_queries() {
     include_header: true,
     null_text: String::new(),
     byte_order_mark: false,
+    sql_table: String::new(),
+    sql_dialect: None,
   };
   let export = |sql: &'static str| {
     let pool = Arc::clone(&pool);

@@ -1841,6 +1841,8 @@ export default function TableDataViewer({
           rows={visibleRows}
           sourceName={tableName}
           connectionId={connection.id}
+          sqlDialect={dialect}
+          sqlTable={tableName}
           // 导出跟着可见列走，否则藏起来的列会在文件里冒出来。两个范围各自把
           // 话说全：少了哪几列、是这一页还是整张表，用户不该打开文件才发现
           scopes={exportScopes}

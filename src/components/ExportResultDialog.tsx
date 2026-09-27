@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
+import type { SqlDialect } from '../contracts/queryExecution';
 import type { SerializedResultValue } from '../contracts/resultSet';
 import {
   DEFAULT_EXPORT_OPTIONS,
@@ -14,7 +15,7 @@ import {
 } from '../utils/exportResult';
 import { describeError } from '../utils/describeError';
 import { formatBytes } from '../utils/formatBytes';
-import { Checkbox, Field, SegmentedControl } from './FormControls';
+import { Checkbox, Field, PLAIN_TEXT_INPUT, SegmentedControl } from './FormControls';
 import { useLanguageStore } from '../stores/languageStore';
 import { useTaskStore } from '../stores/taskStore';
 import type { TranslationKey } from '../i18n/translate';
@@ -55,6 +56,10 @@ interface ExportResultDialogProps {
   scopes?: readonly ExportScope[];
   /** 流式导出要在哪个连接上跑 */
   connectionId?: string;
+  /** 给了才有 `INSERT` 语句这一种格式：字面量与标识符得按这家的规矩写 */
+  sqlDialect?: SqlDialect;
+  /** `INSERT INTO` 的默认表名。查询结果多半说不出来自哪张表，留空让用户填 */
+  sqlTable?: string;
   onClose: () => void;
 }
 
@@ -88,10 +93,16 @@ export function ExportResultDialog({
   scopeNote,
   scopes,
   connectionId,
+  sqlDialect,
+  sqlTable,
   onClose
 }: ExportResultDialogProps) {
   const t = useLanguageStore((state) => state.t);
-  const [options, setOptions] = useState<ExportOptions>(DEFAULT_EXPORT_OPTIONS);
+  const [options, setOptions] = useState<ExportOptions>({
+    ...DEFAULT_EXPORT_OPTIONS,
+    sqlTable: sqlTable ?? '',
+    sqlDialect
+  });
   const [scopeId, setScopeId] = useState(scopes?.[0]?.id ?? '');
   const [writing, setWriting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,6 +120,8 @@ export function ExportResultDialog({
   // 范围自带数据时一切都跟着它走：预览、右上角的行列数、写出去的内容
   const activeColumns = scope?.columns ?? columns;
   const activeRows = scope?.rows ?? rows;
+  // 没有表名的 INSERT 是一句语法错误，别让它写进文件
+  const missingTable = options.format === 'sql' && options.sqlTable.trim() === '';
 
   useEffect(() => {
     cancelRef.current?.focus();
@@ -132,8 +145,11 @@ export function ExportResultDialog({
     if (options.format === 'json') {
       return serializeExport(activeColumns, activeRows.slice(0, 1), { ...options, byteOrderMark: false });
     }
+    if (options.format === 'sql') {
+      return missingTable ? '' : serializeExport(activeColumns, activeRows.slice(0, PREVIEW_ROWS), options);
+    }
     return toCsv(activeColumns, activeRows.slice(0, PREVIEW_ROWS), options);
-  }, [activeColumns, activeRows, options]);
+  }, [activeColumns, activeRows, missingTable, options]);
 
   const update = (patch: Partial<ExportOptions>) => {
     setOptions(current => ({ ...current, ...patch }));
@@ -178,7 +194,9 @@ export function ExportResultDialog({
       filters: [
         options.format === 'csv'
           ? { name: 'CSV', extensions: ['csv'] }
-          : { name: 'JSON', extensions: ['json'] }
+          : options.format === 'sql'
+            ? { name: 'SQL', extensions: ['sql'] }
+            : { name: 'JSON', extensions: ['json'] }
       ]
     }).catch((err) => {
       setError(describeError(err, t('export.failed')));
@@ -248,11 +266,26 @@ export function ExportResultDialog({
               value={options.format}
               options={[
                 { value: 'csv', label: 'CSV' },
-                { value: 'json', label: 'JSON' }
+                { value: 'json', label: 'JSON' },
+                ...(sqlDialect ? [{ value: 'sql' as const, label: t('export.format.sql') }] : [])
               ]}
               onChange={format => update({ format })}
             />
           </Field>
+
+          {options.format === 'sql' && (
+            <Field label={t('export.sqlTable')}>
+              <input
+                value={options.sqlTable}
+                onChange={(event) => update({ sqlTable: event.target.value })}
+                placeholder={t('export.sqlTablePlaceholder')}
+                aria-label={t('export.sqlTable')}
+                className="w-full rounded-control border border-line-strong bg-surface px-2 py-1 font-mono text-xs text-fg outline-none focus:border-accent"
+                {...PLAIN_TEXT_INPUT}
+              />
+              <p className="mt-1 text-xs text-fg-subtle">{t('export.sqlTableHint')}</p>
+            </Field>
+          )}
 
           {options.format === 'csv' && (
             <>
@@ -305,13 +338,18 @@ export function ExportResultDialog({
                   })
                 : options.format === 'json'
                   ? t('export.previewJson', { total: activeRows.length })
+                  : options.format === 'sql'
+                  ? t('export.previewSql', {
+                      shown: Math.min(PREVIEW_ROWS, activeRows.length),
+                      total: activeRows.length
+                    })
                   : t('export.previewCsv', {
                       shown: Math.min(PREVIEW_ROWS, activeRows.length),
                       total: activeRows.length
                     })}
             </p>
             <pre className="max-h-36 overflow-auto rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg select-text whitespace-pre">
-              {preview || t('export.previewEmpty')}
+              {missingTable ? t('export.sqlTableMissing') : preview || t('export.previewEmpty')}
             </pre>
           </div>
         </div>
@@ -357,7 +395,7 @@ export function ExportResultDialog({
           <button
             type="button"
             onClick={handleExport}
-            disabled={writing || (!streaming && rows.length === 0)}
+            disabled={writing || missingTable || (!streaming && rows.length === 0)}
             className="flex shrink-0 items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-sm text-fg-on-accent hover:opacity-90 disabled:opacity-50"
           >
             {writing && <Loader2 size={14} className="animate-spin" />}

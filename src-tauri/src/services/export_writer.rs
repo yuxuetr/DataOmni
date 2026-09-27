@@ -1,4 +1,4 @@
-//! 把查询结果流式写成 CSV / JSON 文件。
+//! 把查询结果流式写成 CSV / JSON / INSERT 语句文件。
 //!
 //! 整表导出的行数不设上限，所以整个过程不能有任何一步把结果攒在内存里：
 //! 行从数据库流出来，逐行格式化，逐行写进文件。前端只出选项和路径。
@@ -24,6 +24,20 @@ pub const EXPORT_CANCELLED: &str = "DATAOMNI_EXPORT_CANCELLED";
 pub enum ExportFormat {
   Csv,
   Json,
+  Sql,
+}
+
+/// `INSERT` 里的字面量与标识符按哪家的规矩写。取值与前端 `SqlDialect` 相同
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SqlDialect {
+  Mysql,
+  Postgresql,
+  Sqlite,
+  Sqlserver,
+  Oracle,
+  Duckdb,
+  Clickhouse,
 }
 
 /// 导出选项。字段与前端 `ExportOptions` 一一对应——同一份选项既喂对话框里的
@@ -38,6 +52,12 @@ pub struct ExportOptions {
   pub null_text: String,
   /// UTF-8 BOM。Excel 不认没有 BOM 的 UTF-8 CSV，中文会读成乱码。
   pub byte_order_mark: bool,
+  /// `INSERT INTO` 后面的表名，只有 `sql` 格式用；写成一个标识符、不带 schema
+  #[serde(default)]
+  pub sql_table: String,
+  /// `sql` 格式必须有；缺了按 SQLite（双引号标识符、标准字符串）写，与前端一致
+  #[serde(default)]
+  pub sql_dialect: Option<SqlDialect>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -107,6 +127,8 @@ impl<W: Write> ExportWriter<W> {
           writer.wrote_anything = true;
         }
       }
+      // 语句一行一条，没有表头；空结果就是空文件
+      ExportFormat::Sql => {}
       // 空结果要写成 `[]`，与 `JSON.stringify([], null, 2)` 一致。开头的 `[`
       // 留到第一行或收尾时再决定，就不用回头改已经写出去的字节。
       ExportFormat::Json => {}
@@ -150,6 +172,29 @@ impl<W: Write> ExportWriter<W> {
         }
         self.emit("  ")?;
         self.emit(&rendered)?;
+      }
+      ExportFormat::Sql => {
+        let dialect = self.options.sql_dialect.unwrap_or(SqlDialect::Sqlite);
+        let values = self
+          .columns
+          .iter()
+          .map(|name| sql_literal(row.get(name).unwrap_or(&JsonValue::Null), dialect))
+          .collect::<Vec<_>>()
+          .join(", ");
+        let names = self
+          .columns
+          .iter()
+          .map(|name| quote_identifier(name, dialect))
+          .collect::<Vec<_>>()
+          .join(", ");
+        let statement = format!(
+          "INSERT INTO {} ({names}) VALUES ({values});",
+          quote_identifier(&self.options.sql_table, dialect)
+        );
+        if self.wrote_anything {
+          self.emit(LINE_SEPARATOR)?;
+        }
+        self.emit(&statement)?;
       }
     }
     self.wrote_anything = true;
@@ -298,6 +343,69 @@ pub fn json_field(value: &JsonValue) -> JsonValue {
     // bigint / decimal 写成字符串。JSON 数字在实践中就是 IEEE-754 双精度，
     // 消费方 JSON.parse 一个 20 位整数必然丢位；加引号才能无损往返。
     Some((_, text)) => JsonValue::String(text.to_string()),
+  }
+}
+
+/// 与前端 `sqlLiteral` 一一对应。日期时间写成字符串由数据库隐式转换，只有 Oracle
+/// 按会话的 NLS_DATE_FORMAT 解析字符串，所以写成 ANSI 的 `DATE '…'` / `TIMESTAMP '…'`
+pub fn sql_literal(value: &JsonValue, dialect: SqlDialect) -> String {
+  let numeric_boolean = matches!(dialect, SqlDialect::Sqlserver | SqlDialect::Oracle);
+  match tagged_parts(value) {
+    None => match value {
+      JsonValue::Null => "NULL".to_string(),
+      // SQL Server 没有 TRUE；Oracle 23 之前也没有，布尔多半存成 NUMBER(1)
+      JsonValue::Bool(flag) => match (numeric_boolean, flag) {
+        (true, true) => "1".to_string(),
+        (true, false) => "0".to_string(),
+        (false, true) => "TRUE".to_string(),
+        (false, false) => "FALSE".to_string(),
+      },
+      JsonValue::Number(number) => number_text(number),
+      JsonValue::String(text) => string_literal(text, dialect),
+      other => string_literal(&other.to_string(), dialect),
+    },
+    Some(("bigint" | "decimal", text)) => text.to_string(),
+    Some(("binary", hex)) => binary_literal(hex, dialect),
+    Some(("date", text)) if dialect == SqlDialect::Oracle => format!("DATE '{text}'"),
+    Some(("datetime", text)) if dialect == SqlDialect::Oracle => format!("TIMESTAMP '{text}'"),
+    Some((_, text)) => string_literal(text, dialect),
+  }
+}
+
+/// 与前端 `quoteSqlIdentifier` 一致
+fn quote_identifier(name: &str, dialect: SqlDialect) -> String {
+  match dialect {
+    SqlDialect::Sqlserver => format!("[{}]", name.replace(']', "]]")),
+    SqlDialect::Clickhouse => format!("`{}`", name.replace('\\', "\\\\").replace('`', "``")),
+    SqlDialect::Mysql => format!("`{}`", name.replace('`', "``")),
+    _ => format!("\"{}\"", name.replace('"', "\"\"")),
+  }
+}
+
+/// 与前端 `quoteSqlStringLiteral` 一致：MySQL 与 ClickHouse 的反斜杠是转义符，
+/// SQL Server 要 `N'…'` 才是 Unicode 字面量
+fn string_literal(text: &str, dialect: SqlDialect) -> String {
+  let mut escaped = text.replace('\'', "''");
+  if matches!(dialect, SqlDialect::Mysql | SqlDialect::Clickhouse) {
+    escaped = escaped.replace('\\', "\\\\");
+  }
+  if dialect == SqlDialect::Sqlserver {
+    format!("N'{escaped}'")
+  } else {
+    format!("'{escaped}'")
+  }
+}
+
+/// 与前端 `binaryLiteral` 一致（那边的注释写了每家为什么这么写）
+fn binary_literal(hex: &str, dialect: SqlDialect) -> String {
+  let normalized = hex.chars().filter(|character| !character.is_whitespace()).collect::<String>();
+  let normalized = normalized.to_lowercase();
+  match dialect {
+    SqlDialect::Sqlserver => format!("0x{normalized}"),
+    SqlDialect::Oracle => format!("HEXTORAW('{normalized}')"),
+    SqlDialect::Duckdb => format!("from_hex('{normalized}')"),
+    SqlDialect::Postgresql => format!("'\\x{normalized}'::bytea"),
+    _ => format!("X'{normalized}'"),
   }
 }
 
@@ -483,7 +591,7 @@ mod tests {
   fn matches_the_shared_conformance_corpus() {
     let corpus: ConformanceCorpus =
       serde_json::from_str(CONFORMANCE_CORPUS).expect("parse conformance corpus");
-    assert!(corpus.cases.len() >= 16, "语料被删空了就不是门了");
+    assert!(corpus.cases.len() >= 28, "语料被删空了就不是门了");
 
     for case in &corpus.cases {
       let actual = render(case.columns.clone(), &case.rows, case.options.clone());
@@ -585,6 +693,8 @@ mod tests {
       include_header: true,
       null_text: String::new(),
       byte_order_mark: false,
+      sql_table: String::new(),
+      sql_dialect: None,
     }
   }
 
@@ -693,6 +803,51 @@ mod tests {
     assert!(started.elapsed() < std::time::Duration::from_secs(1), "取消没有真的打断这趟导出");
     assert!(!target.exists(), "取消后不该出现目标文件");
     assert!(!part_path_for(&target).exists(), "取消后 .part 也要消失");
+
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  /// 导出的 `INSERT` 要能原样灌回去：只和语料比，比的是「长得像不像」，
+  /// 这里比的是数据库认不认、灌回去的值是不是同一个
+  #[tokio::test]
+  async fn sql_export_replays_into_an_identical_table() {
+    let dir = temp_dir("sql-replay");
+    let pool = seeded_pool(&dir).await;
+    let DbPool::Sqlite(sqlite) = &pool else { panic!("expected SQLite") };
+    let schema = "(id INTEGER, label TEXT, size REAL, data BLOB, note TEXT)";
+    for statement in [
+      format!("CREATE TABLE kinds {schema}"),
+      format!("CREATE TABLE kinds_copy {schema}"),
+      "INSERT INTO kinds VALUES (1, 'O''Brien C:\\temp 中文', 1.5, X'00ff10', NULL)".to_string(),
+      "INSERT INTO kinds VALUES (9007199254740993, '', -0.25, X'', 'line\nbreak')".to_string(),
+    ] {
+      sqlx::query(&statement).execute(sqlite).await.expect("seed");
+    }
+    let target = dir.join("kinds.sql");
+    let options = ExportOptions {
+      format: ExportFormat::Sql,
+      sql_table: "kinds_copy".to_string(),
+      sql_dialect: Some(SqlDialect::Sqlite),
+      ..csv_options()
+    };
+
+    export_query(&pool, "SELECT * FROM kinds", &target, options, &mut |_| {}, &mut || false)
+      .await
+      .expect("export");
+    let script = std::fs::read_to_string(&target).expect("read back");
+    sqlx::raw_sql(&script).execute(sqlite).await.expect("replay the exported statements");
+
+    let differing: i64 = sqlx::query_scalar(
+      // 复合查询在 SQLite 里从左到右结合，两个方向要各自包一层，否则只比了一边
+      "SELECT (SELECT COUNT(*) FROM (SELECT * FROM kinds EXCEPT SELECT * FROM kinds_copy)) \
+       + (SELECT COUNT(*) FROM (SELECT * FROM kinds_copy EXCEPT SELECT * FROM kinds))",
+    )
+    .fetch_one(sqlite)
+    .await
+    .expect("compare");
+    let copied: i64 =
+      sqlx::query_scalar("SELECT COUNT(*) FROM kinds_copy").fetch_one(sqlite).await.expect("count");
+    assert_eq!((differing, copied), (0, 2), "灌回去的和原表不一样:\n{script}");
 
     std::fs::remove_dir_all(&dir).ok();
   }

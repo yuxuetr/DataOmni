@@ -854,9 +854,20 @@ TiDB 上同时改列和改表名会拆成两条语句（它不收一条 ALTER �
 
 ## 导出
 
-结果和表数据上方的「导出」。格式 CSV 或 JSON；CSV 可选分隔符、是否写表头、NULL
+结果和表数据上方的「导出」。格式 CSV、JSON 或「INSERT 语句」；CSV 可选分隔符、是否写表头、NULL
 写成什么，以及「UTF-8 加 BOM」（要用 Excel 打开中文就勾上）。对话框里的预览就是文件
 的真实内容。
+
+「INSERT 语句」每行一条 `INSERT INTO 表 (列…) VALUES (…);`，要填目标表：表数据页默认是这张表，
+查询结果要自己填。只写表名、不带 schema——文件拿到哪个连接上执行，就插进那个连接的默认 schema。
+值按当前连接的数据库写：字符串的转义、二进制（`X'…'`、`0x…`、`HEXTORAW`…）、布尔
+（SQL Server 与 Oracle 写成 `1` / `0`）、Oracle 的日期写成 `DATE '…'` / `TIMESTAMP '…'`。
+不写多行 `VALUES`（Oracle 不认）。几点要知道：
+
+- 查询结果里有重名列时，语句里也是重名的列，数据库会报错——先在 SQL 里起别名。
+- Oracle 把空字符串当成 NULL，灌回去的 `''` 会变成 NULL，这是 Oracle 自己的规矩。
+- SQL Server 的老式 `datetime` 列在 `SET DATEFORMAT dmy` 的会话里会把 `2024-01-02` 读成 2 月 1 日；
+  `datetime2` / `date` 不受影响。
 
 范围：
 
