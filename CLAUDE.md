@@ -1,7 +1,9 @@
 # CLAUDE.md
 
-DataOmni：Tauri 2 + React 18 + TypeScript 的桌面数据库客户端，支持 MySQL、
-PostgreSQL、SQLite。Rust 后端在 `src-tauri/`，前端在 `src/`。
+DataOmni：Tauri 2 + React 18 + TypeScript 的桌面数据库客户端。关系库有 MySQL、PostgreSQL、
+SQLite、SQL Server、Oracle、DuckDB、ClickHouse（MariaDB、TiDB、CockroachDB 走兼容的连接类型），
+另有 MongoDB、Redis、Neo4j、Elasticsearch 各自的工作区。支持矩阵以 README「兼容性矩阵」为准。
+Rust 后端在 `src-tauri/`，前端在 `src/`。
 
 本文件只记**仓库自身的事实与约定**。通用的代码风格、提交规范与工程取向在
 `~/.claude/CLAUDE.md`，不在这里重复。
@@ -14,6 +16,8 @@ PostgreSQL、SQLite。Rust 后端在 `src-tauri/`，前端在 `src/`。
 | 对外的能力说明 | `README.md` |
 | Tauri 命令清单 | `src-tauri/src/lib.rs` 的 `invoke_handler` |
 | 立项时的设计意图 | `rfcs/design.md`（2025-06，**已不跟代码走**，开头有说明） |
+| 单项的设计说明与评估 | `rfcs/ssh-tunnel.md`（跟代码走）；`rfcs/ai-design-and-export.md`、`rfcs/editions-and-branching.md`（只有评估，未实现） |
+| 版本怎么分 | **一条 `main`，不开长期版本分支**；差异用 Cargo feature 控制，AI 整块在 `ai` feature 后面（见 `rfcs/editions-and-branching.md`） |
 
 `fix_docs/` 是早期的一次性排查记录，已被后续改动大量推翻，不要据它判断现状。
 

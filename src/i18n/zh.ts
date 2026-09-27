@@ -126,7 +126,6 @@ export const zh = {
   'welcome.title': '连接到数据库',
   'welcome.recent': '最近连接',
   'welcome.newConnection': '新建连接',
-  'welcome.openSqlite': '打开 SQLite 文件',
   'welcome.noConnections': '还没有保存的连接',
 
   'tab.close': '关闭 {title}',

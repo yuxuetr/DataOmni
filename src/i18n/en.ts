@@ -110,7 +110,6 @@ export const en: Translations = {
   'welcome.title': 'Connect to a database',
   'welcome.recent': 'Recent connections',
   'welcome.newConnection': 'New connection',
-  'welcome.openSqlite': 'Open a SQLite file',
   'welcome.noConnections': 'No saved connections yet',
 
   'tab.close': 'Close {title}',

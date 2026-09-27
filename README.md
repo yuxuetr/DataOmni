@@ -211,6 +211,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
   `IDENTIFIED BY`、`PASSWORD =`、敏感列名赋值与 `INSERT` 的对应列都覆盖到
 - Cypher、Elasticsearch 的请求、Redis 与 MongoDB 的命令同样进历史（带语言标记、按各自的写法脱敏），
   从历史里打开只给同一种语言的连接
+- 多条语句的结果可以逐条或全部收起，收起后标题上留一句摘要（行数、影响行数或错误原文）
 
 ### 📊 数据浏览与编辑
 
@@ -314,7 +315,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 
 - 基于 Tauri 构建，原生性能
 - 应用级浅色 / 深色 / 跟随系统主题，首次渲染前落地，不闪白
-- ⌘K / Ctrl+K 命令面板：模糊搜索连接与表，新建查询、打开 SQLite、切换外观
+- ⌘K / Ctrl+K 命令面板：模糊搜索连接与表，新建查询、打开数据库文件（SQLite / DuckDB）、切换外观
 - 数据网格按内容估算列宽、可拖动调整、双击恢复；点表头三态排序；
   键盘选区与 ⌘C 复制为 TSV
 - 侧边栏与编辑器高度可拖动并持久化
@@ -416,10 +417,11 @@ psql -h HOST -U USER -d dataomni_demo -f examples/sample-schema.postgres.sql
 
 ### 后端
 
-- **框架**: Tauri (Rust)
-- **数据库驱动**: SQLx
-- **序列化**: Serde
-- **配置管理**: TOML
+- **框架**: Tauri 2 (Rust)
+- **数据库驱动**: SQLx（MySQL、PostgreSQL、SQLite）、tiberius（SQL Server）、oracle / ODPI-C（Oracle）、
+  duckdb、mongodb、redis、neo4j（Bolt）；Elasticsearch 与 ClickHouse 走 HTTP（reqwest）
+- **SSH 隧道**: russh；**凭据**: keyring（系统钥匙串）
+- **序列化**: Serde（连接配置存成 JSON）
 
 ### 开发工具
 
@@ -432,16 +434,21 @@ psql -h HOST -U USER -d dataomni_demo -f examples/sample-schema.postgres.sql
 ```bash
 DataOmni/
 ├── src/                   # 前端源码
-│   ├── components/        # React组件
-│   ├── stores/            # 状态管理
-│   └── assets/            # 静态资源
+│   ├── components/        # React 组件
+│   ├── stores/            # Zustand 状态
+│   ├── utils/             # 纯函数（大部分决策逻辑，旁边是同名测试）
+│   ├── contracts/         # 跨层的类型与状态机不变量
+│   └── i18n/              # 中英文文案
 ├── src-tauri/             # 后端源码
 │   ├── src/
 │   │   ├── commands/      # Tauri命令
 │   │   ├── services/      # 业务服务
 │   │   └── models/        # 数据模型
 │   └── Cargo.toml         # Rust依赖
-├── docs/                  # 文档
+├── docs/                  # 用户手册
+├── rfcs/                  # 设计说明与评估
+├── scripts/               # 打包与安装脚本
+├── TODOs.md               # 进度、取舍与验证记录
 └── README.md              # 项目说明
 ```
 
@@ -479,23 +486,30 @@ bun install
 
 ### 未发布
 
+- 🦆 DuckDB：打开文件、查询、对象树与结构页、表格编辑与事务、执行计划、改结构与建表、CSV 导入、整表导出
+- 📈 ClickHouse：查询、对象与结构浏览、表数据（一次改一行，前后各核对一次）、执行计划、导出；取消即在服务端停下
 - 🕸️ Neo4j：连接、按库列出标签与关系类型、Cypher 查询标签（结果按 Cypher 字面量显示，
   写入计数，会写的先按门槛确认）；结果里有节点与关系时画成图；在界面上改属性与标签、删节点
   与关系、建节点；`EXPLAIN` / `PROFILE` 的计划树
 - 🔎 Elasticsearch：连接、对象树（索引、别名、数据流）、Dev Tools 写法的控制台（JSON 与表格两种看法，
-  大整数不失真，会写的先按门槛确认）
+  大整数不失真，会写的先按门槛确认）；Mapping 结构页、从搜索结果里改删文档、删索引与数据流、
+  聚合结果的表格；OpenSearch 验过
+- 🍃 MongoDB 命令台（`db.runCommand`）；🔑 Redis stream 条目的添加与删除
+- 📝 `.sql` 标签就地保存（⌘S 写回原文件，⇧⌘S 另存为）；Cypher、Elasticsearch、Redis 的执行也进查询历史
 - 🎨 只读的代码也上色：执行前确认里的语句、DDL、结果里的 JSON、MongoDB 的文档、语句列表与查询历史，
   颜色和编辑器一致
+- 📂 编辑器里多条语句的结果可以逐条或全部收起，收起后标题上留一句摘要
+- 🏠 首页连接多时只让连接列表滚动，「新建连接」与「打开数据库文件」留在原地
+- 🛠️ `scripts/install-macos.sh`：构建并装进 `/Applications`
 
 ### v0.4.0（首个发布版）
 
 版本号对应 [TODOs.md](TODOs.md)「发布里程碑」：v0.2、v0.4 的条件已满足；
 v0.3 只差 Windows 安装验证，所以这一版**不提供 Windows 安装包**。
 
-- 🔗 MySQL、PostgreSQL、SQLite、SQL Server、Oracle、DuckDB；MariaDB、TiDB、CockroachDB
+- 🔗 MySQL、PostgreSQL、SQLite、SQL Server、Oracle；MariaDB、TiDB、CockroachDB
   走对应的连接类型，每一格都有真库用例（见兼容性矩阵）
-- 📈 ClickHouse：查询、对象与结构浏览、表数据（一次改一行，前后各核对一次）、执行计划、导出；取消即在服务端停下
-- 🍃 MongoDB：库与集合、文档的条件 / 排序 / 分页、增删改、集合的建与删、执行计划、命令台；
+- 🍃 MongoDB：库与集合、文档的条件 / 排序 / 分页、增删改、集合的建与删、执行计划；
   认证库、TLS、客户端证书与 X.509 登录、`mongodb+srv://`、SSH 隧道
 - 🔑 Redis：逻辑库、按模式翻键、六种类型的值、redis-cli 写法的命令行，
   键与元素的增删改；口令 / ACL 用户、TLS、SSH 隧道。不含集群与 Sentinel
