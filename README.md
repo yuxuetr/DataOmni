@@ -244,7 +244,7 @@ MySQL 一组 22 条、PostgreSQL 一组 22 条），不是按协议兼容推断�
 
 - ER 关系图：整库的表都画出来（含没有外键的），每张列出全部字段与类型，
   有外键的表之间按具体字段连线；可搜索表名与列名、缩放平移、自由拖动卡片、
-  导出为 SVG / PNG / PDF；执行 DDL 后自动刷新
+  导出为 SVG / PNG / PDF，或导出成数据字典（Markdown）与 Agent Skill（`SKILL.md`）；执行 DDL 后自动刷新
 
 - AI 设计新表（可选，默认关）：一句话需求 → 模型给出多表设计 → 校验结果、ER 图、
   每条外键「删除被引用的行时」怎么办（级联删除标红，一格可改）→ 预览建表语句 → 执行。
@@ -509,6 +509,7 @@ bun install
 - 🛠️ `scripts/install-macos.sh`：构建并装进 `/Applications`
 - 📤 导出为 `INSERT` 语句（表数据与查询结果，含整表流式导出）
 - ✨ AI 设计新表（Anthropic / OpenAI 兼容，默认关，Cargo feature `ai`）
+- 📚 ER 图导出数据字典（Markdown）与 Agent Skill（`SKILL.md`）
 
 ### v0.4.0（首个发布版）
 
