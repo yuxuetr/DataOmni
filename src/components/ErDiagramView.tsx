@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { save } from '@tauri-apps/plugin-dialog';
+import { buildAgentSkill, buildDataDictionary } from '../utils/dataDictionary';
+import { serverLabel } from '../utils/serverPresets';
 import {
   rasterizeSvgToJpegBytes,
   rasterizeSvgToPngBase64,
@@ -68,14 +70,23 @@ const METRICS = DEFAULT_ER_METRICS;
  * 232px 的框去掉两侧 10px 内边距还剩 212px；11px 的无衬线字体一个字符
  * 约 6px，10px 的约 5.4px。留一点空隙，分成 20 / 16 两份。
  */
-type ExportFormat = 'svg' | 'png' | 'pdf';
+type ExportFormat = 'svg' | 'png' | 'pdf' | 'markdown' | 'skill';
 
-/** 矢量在前：需要放进文档再排版的场景，SVG 才是对的那个 */
+/** 矢量在前：需要放进文档再排版的场景，SVG 才是对的那个。文字的两种排在图之后 */
 const EXPORT_FORMATS: Array<{ format: ExportFormat; labelKey: TranslationKey }> = [
   { format: 'svg', labelKey: 'er.exportSvg' },
   { format: 'png', labelKey: 'er.exportPng' },
-  { format: 'pdf', labelKey: 'er.exportPdf' }
+  { format: 'pdf', labelKey: 'er.exportPdf' },
+  { format: 'markdown', labelKey: 'er.exportDictionary' },
+  { format: 'skill', labelKey: 'er.exportSkill' }
 ];
+
+/** 字典与 Skill 要说得出这是哪个库；不给就只有图的三种 */
+export interface ErDocument {
+  title: string;
+  dialect: string;
+  origin: 'catalog' | 'design';
+}
 
 const NAME_BUDGET = 20;
 const TYPE_BUDGET = 16;
@@ -179,6 +190,7 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
       tables={tables}
       links={links}
       onRefresh={() => setReloadToken(token => token + 1)}
+      document={{ title: connection.name, dialect: serverLabel(connection), origin: 'catalog' }}
     />
   );
 }
@@ -190,10 +202,12 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
 export function ErDiagramCanvas({
   tables,
   links,
-  onRefresh
+  onRefresh,
+  document: source
 }: {
   tables: ErTable[];
   links: ErLink[];
+  document?: ErDocument;
   /** 外部改了结构时用：数据库不会推送这件事，只能主动再查一遍 */
   onRefresh?: () => void;
 }) {
@@ -308,8 +322,30 @@ export function ErDiagramCanvas({
     setExportMenuOpen(false);
 
     try {
+      const date = localDate(new Date());
+      // 字典与 Skill 跟着图上看得到的走（过滤过就是过滤后的那些表），和导出图片一样
+      if (format === 'markdown' || format === 'skill') {
+        if (!source) {
+          return;
+        }
+        const path = await save({
+          defaultPath: format === 'skill' ? 'SKILL.md' : `data-dictionary-${date}.md`,
+          filters: [{ name: 'Markdown', extensions: ['md'] }]
+        });
+        if (!path) {
+          return;
+        }
+        setExporting(true);
+        const input = { ...source, tables: visible.tables, links: visible.links, date };
+        const contents = format === 'skill' ? buildAgentSkill(input, t) : buildDataDictionary(input, t);
+        await invoke('write_text_file', { path, contents });
+        setExported(path);
+        window.setTimeout(() => setExported(null), 2500);
+        return;
+      }
+
       const path = await save({
-        defaultPath: `er-diagram-${new Date().toISOString().slice(0, 10)}.${format}`,
+        defaultPath: `er-diagram-${date}.${format}`,
         filters: [{ name: format.toUpperCase(), extensions: [format] }]
       });
       // 取消保存对话框不是错误，不该留下任何提示
@@ -480,8 +516,8 @@ export function ErDiagramCanvas({
               <>
                 {/* 点空白处收起来。不铺这一层的话菜单只能靠再点一次按钮关掉 */}
                 <div className="fixed inset-0 z-10" onClick={() => setExportMenuOpen(false)} />
-                <div className="absolute right-0 top-full z-20 mt-1 w-32 overflow-hidden rounded-control border border-line bg-surface-raised shadow-lg">
-                  {EXPORT_FORMATS.map(({ format, labelKey }) => (
+                <div className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-control border border-line bg-surface-raised shadow-lg">
+                  {EXPORT_FORMATS.filter(({ format }) => source || (format !== 'markdown' && format !== 'skill')).map(({ format, labelKey }) => (
                     <button
                       key={format}
                       type="button"
@@ -898,4 +934,13 @@ function ErFilterMenu({
       )}
     </>
   );
+}
+
+/**
+ * 本地日期 `YYYY-MM-DD`。不用 `toISOString`：那是 UTC，东八区零点到八点之间导出的文件
+ * 会标成前一天（打包版上 9 月 28 日凌晨导出，文件名与字典里写的都是 27 日）
+ */
+function localDate(now: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }

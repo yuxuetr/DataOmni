@@ -23,6 +23,7 @@ import {
   type SchemaIssueCode
 } from '../utils/schemaDraft';
 import { identifierDialectFor } from '../utils/sqlIdentifiers';
+import { serverLabel } from '../utils/serverPresets';
 import { DdlPreviewDialog } from './DdlPreviewDialog';
 import { ErDiagramCanvas } from './ErDiagramView';
 import { PLAIN_TEXT_INPUT } from './FormControls';
@@ -296,7 +297,11 @@ export function AiDesignView({ tabId, connection }: AiDesignViewProps) {
 
       <div className="min-w-0 flex-1">
         {diagram ? (
-          <ErDiagramCanvas tables={diagram.tables} links={diagram.links} />
+          <ErDiagramCanvas
+            tables={diagram.tables}
+            links={diagram.links}
+            document={{ title: t('aiDesign.documentTitle', { connection: connection.name }), dialect: serverLabel(connection), origin: 'design' }}
+          />
         ) : (
           <div className="flex h-full items-center justify-center p-8 text-center text-sm text-fg-muted">
             {t('aiDesign.empty')}
