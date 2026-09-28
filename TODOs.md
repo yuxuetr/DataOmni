@@ -24,7 +24,7 @@
 | P4 | 扩展数据库与外围能力 | [x] |
 | P5 | 完成统一桌面 UI 与交互设计 | [ ] |
 | P6 | AI 设计、导出与备份（下一步规划 A） | [x] A0–A6c、A9 完成（A2b / A7 / A8 当前版本不做） |
-| P7 | 更多数据库：国产库与云库（下一步规划 B） | [-] B2 / B2b（openGauss）完成；B1 阻塞（测试环境）；B3 / B4 按触发条件 |
+| P7 | 更多数据库：国产库与云库（下一步规划 B） | [-] B1（OceanBase）、B2 / B2b（openGauss）完成；KingbaseES 缺安装包；B3 / B4 按触发条件 |
 
 ---
 
@@ -146,11 +146,24 @@
 
 ### B. 更多数据库（P7）
 
-- [!] B1 第一个协议兼容的国产库：KingbaseES 或 OceanBase（MySQL 模式）——**阻塞：测试环境**（2026-09-28 核对）
-  - OceanBase CE 单机要 6–8 GB 内存，cu 只剩约 3 GB；KingbaseES 没有官方公开的镜像（社区镜像来源与许可说不清）。
-  - 解除条件：有一台能跑 OceanBase 的机器，或拿到 KingbaseES 的试用安装包。在那之前先做 B2b（openGauss，PG 协议同一类问题）。
-  - 走归档 4.2「协议兼容库」的流程：连真库跑现有用例、归因、修应用缺陷、写明缺口
-  - 先确认 cu 的容量（2026-09-27 `/data` 剩约 8 GB；OceanBase 单机版吃内存与磁盘）
+- [x] B1 第一个协议兼容的国产库：OceanBase（MySQL 模式）（`83d0752`，2026-09-28）
+  - 环境：本机 Docker Desktop（8 GB），`oceanbase/oceanbase-ce` 4.4.2.1 arm64，`MODE=mini`，占约 3.9 GB；
+    只绑 127.0.0.1:2881，口令随机生成、只在容器环境里（`docker inspect`）。用户名 `root@test`（`用户@租户`）。
+  - 首跑 16/23，归因后 23/23：
+    - 修了应用（2 处）：执行计划 OceanBase 给自己的 JSON 形状（`OPERATOR` / `CHILD_n`），新增方言与解析，子节点按编号数值排；
+      要重写表的改列与 `RENAME TO` 同句报 1235，改表名拆开（与 TiDB 同一条路，文案去掉厂商名）。
+    - 拼写差异（用例换拼法）：整数显示宽度、`on update current_timestamp` 小写、`SHOW CREATE TABLE` 列类型是 TEXT
+      （解码器白名单里有，解码那条用例本就过）；预处理协议收 `USE`（与 MariaDB / TiDB 同，由应用那道挡住）。
+    - 已知缺口（钉住现状）：表达式默认值不带 `DEFAULT_GENERATED`，`DEFAULT (UUID())` 与字符串 `'UUID()'` 在
+      INFORMATION_SCHEMA 里一模一样，只有 SHOW CREATE TABLE 与内部表 `oceanbase.__all_column.column_flags`（第 8 位）分得开。
+      改结构时会被重述成字符串默认值（预览里看得见）。不做：列目录是一段按连接类型固定的 SQL，引用内部表在 MySQL 上解析不过，
+      要按服务端换查询是另一层机制。重估条件：有人在 OceanBase 上改带表达式默认值的列，或它补上标记（那条断言会红）。
+    - 环境问题，不在应用：mysql 命令行客户端 26.7 对它的每条非查询语句报 `ERROR 2027 Malformed packet`；
+      备份（`mysqldump` 26.7 或 `mariadb-dump` 13.0）没问题，恢复要用 `mariadb` 客户端。手册写明。
+  - 反向验证：去掉子节点排序，倒序写入的单测红（正序写入时不红——serde_json 在这个构建里保留插入顺序，已改成倒序）。
+  - 回归：MySQL 8.4、MariaDB 11.4、TiDB 8.5 各 23/23；`bun run check` 通过。打包版（测试包）看过计划树与明细、
+    改列加改表名的预览（两条 + 新文案）并执行成功。
+- [!] B1b KingbaseES——**阻塞：没有安装包**（官方没有公开镜像，社区镜像来源与许可说不清）。解除条件：拿到试用安装包。
 - [x] B2 openGauss / GaussDB：sha256 认证的实验（2026-09-28，openGauss-lite 5.0.3，cu 上 `dataomni-opengauss`）
   - 只存 sha256 口令的用户：sqlx 报 `unsupported SASL authentication mechanisms:`（机制列表是空的），libpq 17 同样不认。
     `password_encryption_type = 1`（同时存 md5）的用户连得上，`pg_hba` 写 `sha256` 也连得上。
