@@ -532,8 +532,9 @@ describe('defaultCreateSchema', () => {
 });
 
 describe('renamesApart', () => {
-  it('只有 VERSION() 带 TiDB 的 MySQL 连接才拆', () => {
+  it('只有 VERSION() 带 TiDB 或 OceanBase 的 MySQL 连接才拆', () => {
     expect(renamesApart('mysql', '8.0.11-TiDB-v8.5.3')).toBe(true);
+    expect(renamesApart('mysql', '5.7.25-OceanBase_CE-v4.4.2.1')).toBe(true);
     expect(renamesApart('mysql', '8.4.2')).toBe(false);
     expect(renamesApart('mysql', '11.4.3-MariaDB')).toBe(false);
     // 还没读到版本时按 MySQL 走：原子的那一条，TiDB 上被整条拒绝、什么都不改

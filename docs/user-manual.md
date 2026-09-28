@@ -101,6 +101,9 @@ MySQL / PostgreSQL 协议，连上之后的用法和 MySQL / PostgreSQL 一样�
 那一格标着「有缺口」，选中时表单里会列出具体哪几项用不了；完整的对照见 README 的
 「兼容性矩阵」。
 
+**OceanBase**（MySQL 模式）没有单独的入口，选 MySQL：端口填 2881，用户名写成
+`用户@租户`（如 `root@test`）。它的执行计划和改结构的差别见后面各节，缺口见 README。
+
 **SQL Server** 的功能和 MySQL / PostgreSQL 一样齐：连接（TLS、SSH 隧道）、执行、
 对象树与表结构、ER 图、表格编辑、事务、执行计划、改结构与建表、CSV 导入、整表导出。
 和另外几家用起来不同的几处：
@@ -667,7 +670,7 @@ Elasticsearch 连接用的是控制台：写法和 Kibana 的 Dev Tools 一样�
 
 ### 不能用 USE 切库
 
-在 MySQL 类的连接上（包括 MariaDB、TiDB），编辑器里的 `USE 库名` 会被拒绝：
+在 MySQL 类的连接上（包括 MariaDB、TiDB、OceanBase），编辑器里的 `USE 库名` 会被拒绝：
 它会让对象树悄悄变成另一个库的内容。要换库，在连接配置里改默认数据库，或者在
 SQL 里写全限定名 `库名.表名`。
 
@@ -695,7 +698,8 @@ PostgreSQL 还有「真的执行一遍」：语句会**真的执行**，换来�
 真的写进去，想安全地试，先关掉自动提交，跑完回滚。
 
 CockroachDB 同样可以「真的执行一遍」（`EXPLAIN ANALYZE`），「原文」一栏是它自己的
-文本树。TiDB 给的是估算的计划（`tidb_json`），没有「真的执行一遍」。
+文本树。TiDB 给的是估算的计划（`tidb_json`），没有「真的执行一遍」；OceanBase 同样只有估算，
+明细里的 `EST.TIME(us)` 是它估的耗时（微秒），不是代价。
 
 ## 查询结果
 
@@ -814,7 +818,7 @@ CockroachDB 同样可以「真的执行一遍」（`EXPLAIN ANALYZE`），「原
 SQLite 改列类型（要重建整张表）、MySQL 改一个默认值是表达式的列或计算列的类型
 （重述出来的未必是原来那个表达式）。
 
-TiDB 上同时改列和改表名会拆成两条语句（它不收一条 ALTER 里两件事都做）：两条不是
+TiDB 与 OceanBase 上同时改列和改表名会拆成两条语句（它们不收一条 ALTER 里两件事都做）：两条不是
 一个整体，第二条失败时列已经改了、表名还是原来的，预览里会写明。
 
 ### 索引
@@ -902,6 +906,8 @@ TiDB 上同时改列和改表名会拆成两条语句（它不收一条 ALTER �
   `mariadb-dump` 也认。连接上没填库名时不给这个按钮。密码同样只经环境变量传，SSH 隧道照样能用。
   用的是 MariaDB 的客户端时，「要求 TLS」会按「验证证书」处理：它没有「只加密不验证」这一档，
   而不验证时连不上 TLS 会悄悄退回明文。TiDB 不行（一致性快照那一步失败），请用它的 Dumpling 或 BR。
+  OceanBase 能备份，恢复要用 MariaDB 的 `mariadb` 客户端：mysql 命令行客户端对它的非查询语句都报
+  `Malformed packet`。
 
 - **MongoDB**：在对象树的库上右键「备份这个库…」，调用本机的 `mongodump`，写成 gzip 的归档（`.archive.gz`）。
   一次一个库：备份整个部署要读 `admin` 里的用户表，只有部分库权限的账号会直接失败。恢复：

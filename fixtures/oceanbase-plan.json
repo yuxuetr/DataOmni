@@ -1,0 +1,88 @@
+{
+  "ID":0,
+  "OPERATOR":"TOP-N SORT",
+  "NAME":"",
+  "EST.ROWS":3,
+  "EST.TIME(us)":59,
+  "output":"output([UNION([1])], [UNION([2])])",
+  "CHILD_1": {
+    "ID":1,
+    "OPERATOR":"UNION ALL",
+    "NAME":"",
+    "EST.ROWS":3,
+    "EST.TIME(us)":59,
+    "output":"output([UNION([1])], [UNION([2])])",
+    "CHILD_1": {
+      "ID":2,
+      "OPERATOR":"TOP-N SORT",
+      "NAME":"",
+      "EST.ROWS":2,
+      "EST.TIME(us)":59,
+      "output":"output([cast(VIEW1.explain_smoke.n, BIGINT(20, 0))], [T_FUN_COUNT(*)])",
+      "CHILD_1": {
+        "ID":3,
+        "OPERATOR":"HASH GROUP BY",
+        "NAME":"",
+        "EST.ROWS":2,
+        "EST.TIME(us)":59,
+        "output":"output([T_FUN_COUNT(*)], [VIEW1.explain_smoke.n])",
+        "CHILD_1": {
+          "ID":4,
+          "OPERATOR":"SUBPLAN FILTER",
+          "NAME":"",
+          "EST.ROWS":2,
+          "EST.TIME(us)":59,
+          "output":"output([VIEW1.explain_smoke.n])",
+          "CHILD_1": {
+            "ID":5,
+            "OPERATOR":"SUBPLAN SCAN",
+            "NAME":"VIEW1",
+            "EST.ROWS":3,
+            "EST.TIME(us)":5,
+            "output":"output([VIEW1.max(n)], [VIEW1.explain_smoke.id], [VIEW1.explain_smoke.n])",
+            "CHILD_1": {
+              "ID":6,
+              "OPERATOR":"WINDOW FUNCTION",
+              "NAME":"",
+              "EST.ROWS":3,
+              "EST.TIME(us)":5,
+              "output":"output([T_FUN_MAX(explain_smoke.n)], [explain_smoke.id], [explain_smoke.n])",
+              "CHILD_1": {
+                "ID":7,
+                "OPERATOR":"TABLE FULL SCAN",
+                "NAME":"explain_smoke",
+                "EST.ROWS":3,
+                "EST.TIME(us)":3,
+                "output":"output([explain_smoke.id], [explain_smoke.n])"
+              }
+            }
+          },
+          "CHILD_2": {
+            "ID":8,
+            "OPERATOR":"TABLE RANGE SCAN",
+            "NAME":"explain_smoke_child(parent)",
+            "EST.ROWS":1,
+            "EST.TIME(us)":18,
+            "output":"output([1])"
+          }
+        }
+      }
+    },
+    "CHILD_2": {
+      "ID":9,
+      "OPERATOR":"LIMIT",
+      "NAME":"",
+      "EST.ROWS":1,
+      "EST.TIME(us)":1,
+      "output":"output([1], [2])",
+      "CHILD_1": {
+        "ID":10,
+        "OPERATOR":"EXPRESSION",
+        "NAME":"",
+        "EST.ROWS":1,
+        "EST.TIME(us)":1,
+        "output":"output([1])"
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 DataOmni：Tauri 2 + React 18 + TypeScript 的桌面数据库客户端。关系库有 MySQL、PostgreSQL、
-SQLite、SQL Server、Oracle、DuckDB、ClickHouse（MariaDB、TiDB、CockroachDB 走兼容的连接类型），
+SQLite、SQL Server、Oracle、DuckDB、ClickHouse（MariaDB、TiDB、OceanBase、CockroachDB 走兼容的连接类型），
 另有 MongoDB、Redis、Neo4j、Elasticsearch 各自的工作区。支持矩阵以 README「兼容性矩阵」为准。
 Rust 后端在 `src-tauri/`，前端在 `src/`。
 

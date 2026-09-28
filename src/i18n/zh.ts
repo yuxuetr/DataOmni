@@ -230,7 +230,7 @@ export const zh = {
   'ddl.edit': '编辑结构',
   'ddl.createTitle': '新建表',
   'ddl.createTable': '新建表',
-  'ddl.tidbRenameApart': 'TiDB 不允许在一条 ALTER 里同时改列和改表名，改表名单独放在最后一条。两条不是一个整体：第二条失败时，列已经改好了、表名还是原来的。',
+  'ddl.renameApart': 'TiDB 与 OceanBase 不允许在一条 ALTER 里同时改列和改表名，改表名单独放在最后一条。两条不是一个整体：第二条失败时，列已经改好了、表名还是原来的。',
   'indexCreate.title': '新建索引',
   'indexCreate.pickColumns': '按键内次序勾选列：先勾的在前。(a, b) 与 (b, a) 能加速的查询不一样。',
   'indexCreate.unique': '唯一',

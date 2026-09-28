@@ -55,15 +55,18 @@ export interface TableDdlRequest {
   columns: readonly ColumnDraft[];
   /**
    * 改表名单独成句，放在最后。TiDB 要这样：它不收一条 ALTER 里同时改列又改表名
-   * （8200）。代价是不再原子——第二条失败时列已经改了，预览里照实说。
+   * （8200）；OceanBase 也要：要重写表的改列（换类型、缩短长度）与 `RENAME TO` 同句
+   * 报 1235（4.4.2 上试过，加列、删列、改列名不受影响——但预览时分不清是哪种，一律拆）。
+   * 代价是不再原子——第二条失败时列已经改了，预览里照实说。
    * 由 [`renamesApart`] 按服务端版本决定，别处不该手写 true
    */
   renameApart?: boolean;
 }
 
-/** `VERSION()` 里带 `TiDB` 的 MySQL 连接要把改表名拆出来 */
+/** `VERSION()` 里带 `TiDB` 或 `OceanBase` 的 MySQL 连接要把改表名拆出来 */
 export function renamesApart(dialect: SqlIdentifierDialect, serverVersion: string | null): boolean {
-  return dialect === 'mysql' && (serverVersion ?? '').includes('TiDB');
+  const version = serverVersion ?? '';
+  return dialect === 'mysql' && (version.includes('TiDB') || version.includes('OceanBase'));
 }
 
 export type DdlAction =

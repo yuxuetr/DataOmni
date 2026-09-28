@@ -142,7 +142,7 @@ export function DdlPreviewDialog({
           )}
 
           {restates && <p className="text-xs text-fg-subtle">{t('ddl.mysqlRestates')}</p>}
-          {splitRename && <p className="text-xs text-fg-subtle">{t('ddl.tidbRenameApart')}</p>}
+          {splitRename && <p className="text-xs text-fg-subtle">{t('ddl.renameApart')}</p>}
           {duckdbIndexesBlock && <p className="text-xs text-fg-subtle">{t('ddl.duckdbIndexesBlock')}</p>}
           {mysqlCommitsEach && (
             <p className="text-xs text-fg-subtle">

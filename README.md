@@ -42,17 +42,18 @@
 #### 兼容性矩阵
 
 下表每一格都来自真库上跑完的冒烟用例（`src-tauri/tests/database_smoke.rs`，
-MySQL 一组 22 条、PostgreSQL 一组 23 条），不是按协议兼容推断的。
+MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断的。
 连接表单里 MariaDB、TiDB、CockroachDB 各有一个入口，填好各自的默认端口；存下来
 的就是 MySQL / PostgreSQL 连接。
 
 | 服务端 | 版本 | 连接类型 | 结论 | 用例 |
 | --- | --- | --- | --- | --- |
-| MySQL | 8.4 | MySQL | ✅ 支持 | 22 / 22 |
+| MySQL | 8.4 | MySQL | ✅ 支持 | 23 / 23 |
 | PostgreSQL | 16 | PostgreSQL | ✅ 支持 | 23 / 23 |
 | SQLite | 随应用内置 | SQLite | ✅ 支持 | 全部 |
-| MariaDB | 11.4 | MySQL | ✅ 支持 | 22 / 22 |
-| TiDB | 8.5 | MySQL | ✅ 支持 | 22 / 22 |
+| MariaDB | 11.4 | MySQL | ✅ 支持 | 23 / 23 |
+| TiDB | 8.5 | MySQL | ✅ 支持 | 23 / 23 |
+| OceanBase | 4.4.2（CE，MySQL 模式） | MySQL | ⚠️ 可用，有缺口 | 23 / 23（缺口由用例钉住） |
 | CockroachDB | 25.2 | PostgreSQL | ⚠️ 可用，有缺口 | 23 / 23（缺口由用例钉住） |
 | openGauss | 5.0.3（lite，PG 兼容库） | PostgreSQL | ⚠️ 可用，有缺口 | 23 / 23（缺口由用例钉住） |
 | SQL Server | 2022 | SQL Server | ✅ 支持 | 17 / 17（独立用例，`sql_server_smoke.rs`，含改结构语料） |
@@ -72,6 +73,12 @@ MySQL 一组 22 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
   语句（它不收一条 ALTER 里两件事都做，8200），不再是一个整体，预览里写明。
   服务端本身没有的：结构页不显示检查约束（默认不启用，启用后目录里也接不上）、
   没有触发器与存储过程。按连上之后 `VERSION()` 分辨，从 MySQL 入口连的也一样。
+- **OceanBase**（MySQL 模式）：从 MySQL 入口连，端口 2881，用户名写 `用户@租户`（如 `root@test`）。
+  执行计划解析的是它自己的 `FORMAT=JSON`（算子挂在 `CHILD_n` 下），没有「真的执行一遍」；改结构时
+  同时改列和改表名同样拆成两条（要重写表的改列与改表名同句它报 1235）。缺口：表达式默认值
+  （`DEFAULT (UUID())`）在目录里与同样文字的字符串默认值分不开，改结构时这一列会被重述成字符串默认值，
+  预览里看得见，动这种列前先核对。备份用 `mysqldump` 或 `mariadb-dump` 都行；恢复要用 MariaDB 的
+  `mariadb` 客户端——mysql 命令行客户端（Homebrew 的 26.7）对它的每一条非查询语句都报 `Malformed packet`。
 - **openGauss**（GaussDB 同源）：建库时要 `DBCOMPATIBILITY 'PG'`（默认的 `'A'` 是 Oracle 语义，没测过）。
   只存 sha256 口令的用户连不上——标准 PostgreSQL 驱动不认它的 sha256 认证，连接时会说明服务端怎么改
   （`password_encryption_type = 1` 后重设口令）。缺口：序列的属性页读不出（没有 `pg_sequences`）；

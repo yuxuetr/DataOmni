@@ -1073,12 +1073,14 @@ async fn mysql_returns_the_authoritative_create_table_statement() {
   // 列名字面就叫 `Create Table`（带空格）；猜成 `create_table` 会取到空值
   // 前端拿到的是按列名索引的 JSON，所以列名本身就是契约的一部分：
   // 它字面就叫 `Create Table`（带空格），猜成 `create_table` 会取到空值。
-  // 类型是 VARCHAR，不是 BLOB——plugin-sql 的解码器能处理。
+  // 类型是 VARCHAR（OceanBase 是 TEXT），不是 BLOB——plugin-sql 的解码器两种都能处理。
   assert_eq!(
     row.columns().iter().map(|column| column.name()).collect::<Vec<_>>(),
     vec!["Table", "Create Table"]
   );
-  assert_eq!(row.columns()[1].type_info().name(), "VARCHAR");
+  let ddl_type =
+    if mysql_flavor(&pool).await == MysqlFlavor::OceanBase { "TEXT" } else { "VARCHAR" };
+  assert_eq!(row.columns()[1].type_info().name(), ddl_type);
 
   // 按序号取值：sqlx 对 SHOW 语句不建列名索引，`row.get("Create Table")` 会报
   // ColumnNotFound，尽管 row.columns() 明明给出了这个名字。
@@ -2706,11 +2708,14 @@ async fn mysql_use_is_rejected_by_the_prepared_protocol() {
   // 所以界面上那一栏在 MySQL 下恒等于连上去时选定的库。哪天改回文本协议，
   // 这条会红，提醒回来重估那一栏的说法。
   //
-  // MariaDB 与 TiDB 不一样：它们的预处理协议**收** `USE`。这正是下面那条
+  // MariaDB、TiDB、OceanBase 不一样：它们的预处理协议**收** `USE`。这正是下面那条
   // 用例要防的事，这里照实钉住差别——哪天它们也拒了，那道防线就可以重估。
   let outcome = sqlx::query("USE information_schema").execute(&pool).await;
   if mysql_flavor(&pool).await != MysqlFlavor::MySql {
-    assert!(outcome.is_ok(), "MariaDB / TiDB 的预处理协议本来收 USE，实际: {outcome:?}");
+    assert!(
+      outcome.is_ok(),
+      "MariaDB / TiDB / OceanBase 的预处理协议本来收 USE，实际: {outcome:?}"
+    );
     return;
   }
   let error = outcome.expect_err("prepared protocol must reject USE");
@@ -2753,13 +2758,14 @@ async fn mysql_use_cannot_move_a_pooled_connection_to_another_database() {
   assert_eq!(database.as_deref(), Some("dataomni_test"), "池子里的连接被挪走了");
 }
 
-/// 同一个 URL 可能指向 MySQL、MariaDB 或 TiDB，几家只在少数地方真的不同，
-/// 用例在那几处按服务端自报的版本分开断言。
+/// 同一个 URL 可能指向 MySQL、MariaDB、TiDB 或 OceanBase（MySQL 模式），
+/// 几家只在少数地方真的不同，用例在那几处按服务端自报的版本分开断言。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MysqlFlavor {
   MySql,
   MariaDb,
   TiDb,
+  OceanBase,
 }
 
 impl MysqlFlavor {
@@ -2767,8 +2773,14 @@ impl MysqlFlavor {
   fn fixture_dialect(self) -> &'static str {
     match self {
       Self::MariaDb => "mariadb",
-      Self::MySql | Self::TiDb => "mysql",
+      Self::MySql | Self::TiDb | Self::OceanBase => "mysql",
     }
+  }
+
+  /// 整数类型照旧带显示宽度（`int(11)`）的两家；拼写不同、取值范围一样，
+  /// 比较前用 `mariadb_spelling_as_mysql` 换成 MySQL 的拼法
+  fn shows_integer_display_width(self) -> bool {
+    matches!(self, Self::MariaDb | Self::OceanBase)
   }
 }
 
@@ -2824,6 +2836,8 @@ async fn mysql_flavor(pool: &sqlx::MySqlPool) -> MysqlFlavor {
     MysqlFlavor::MariaDb
   } else if version.contains("TiDB") {
     MysqlFlavor::TiDb
+  } else if version.contains("OceanBase") {
+    MysqlFlavor::OceanBase
   } else {
     MysqlFlavor::MySql
   }
@@ -2841,19 +2855,23 @@ fn mysql_ordinal(row: &sqlx::mysql::MySqlRow, column: &str) -> Option<i64> {
     .unwrap_or_else(|error| panic!("decode {column}: {error}"))
 }
 
-/// MariaDB 与 MySQL 只在**拼写**上不同、意思一样的两处，换成 MySQL 的拼法。
+/// MariaDB（与 OceanBase）和 MySQL 只在**拼写**上不同、意思一样的两处，换成 MySQL 的拼法。
 ///
 /// - 整数类型带显示宽度：`int(11)`、`int(10) unsigned`。MySQL 8.0.19 起不再
-///   显示它，MariaDB 照旧；宽度从来不影响取值范围。
-/// - 表达式小写带括号：`on update current_timestamp()`。
+///   显示它，MariaDB、OceanBase 照旧；宽度从来不影响取值范围。
+/// - 表达式小写：MariaDB 是 `on update current_timestamp()`，OceanBase 不带括号。
+///   界面按不分大小写的正则取出来原样重述，两种写法都是合法的 SQL。
 ///
 /// 只放这两条。默认值那种「意思也不同」的差别由目录查询自己换形状
 /// （见 `mysql_column_defaults_come_back_in_one_shape_on_mysql_and_mariadb`），
 /// 不能在用例里抹平——抹平了就看不见界面会拿到什么。
 fn mariadb_spelling_as_mysql(mut column: ddl_corpus::Column) -> ddl_corpus::Column {
   column.data_type = strip_integer_display_width(&column.data_type);
-  column.extra =
-    column.extra.map(|extra| extra.replace("current_timestamp()", "CURRENT_TIMESTAMP"));
+  column.extra = column.extra.map(|extra| {
+    extra
+      .replace("current_timestamp()", "CURRENT_TIMESTAMP")
+      .replace("current_timestamp", "CURRENT_TIMESTAMP")
+  });
   column
 }
 
@@ -3344,6 +3362,14 @@ async fn mysql_column_defaults_come_back_in_one_shape_on_mysql_and_mariadb() {
   // 表达式的原文两家写法不同（`CURRENT_TIMESTAMP` / `current_timestamp()`），
   // 都是合法的 SQL；要钉的是它被认成表达式
   for (name, default_value, generated) in &shapes[10..12] {
+    // 已知缺口：OceanBase 不给表达式默认值打 `DEFAULT_GENERATED`，`DEFAULT (UUID())` 与
+    // 字符串 `DEFAULT 'UUID()'` 在 INFORMATION_SCHEMA 里一模一样（4.4.2 上核对过），只有
+    // SHOW CREATE TABLE 分得开。改结构时这一列会被重述成字符串默认值。钉住现状：
+    // 哪天它补上标记，这里会红，回来删掉这个分支
+    if flavor == MysqlFlavor::OceanBase && name == "e_expr" {
+      assert!(!*generated, "OceanBase 给表达式默认值打上标记了: {shapes:?}");
+      continue;
+    }
     assert!(*generated && default_value.is_some(), "{name} 应被认成表达式: {shapes:?}");
   }
   assert_eq!(shapes[12], literal("s_ctsword", Some("CURRENT_TIMESTAMP")));
@@ -3441,14 +3467,14 @@ async fn mysql_reports_declared_types_and_generated_columns() {
     .fetch_all(&pool)
     .await
     .expect("run MySQL column query");
-  let mariadb = mysql_flavor(&pool).await == MysqlFlavor::MariaDb;
+  let display_width = mysql_flavor(&pool).await.shows_integer_display_width();
   let columns: Vec<(String, String, i64, Option<i64>, i64)> = rows
     .iter()
     .map(|row| {
       let data_type = row.get::<String, _>("data_type");
       (
         row.get::<String, _>("column_name"),
-        if mariadb { strip_integer_display_width(&data_type) } else { data_type },
+        if display_width { strip_integer_display_width(&data_type) } else { data_type },
         row.get::<i64, _>("is_nullable"),
         mysql_ordinal(row, "primary_key_ordinal"),
         row.get::<i64, _>("is_generated"),
@@ -3685,7 +3711,7 @@ async fn mysql_runs_the_generated_ddl_from_the_shared_corpus() {
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
   let catalog = column_queries(dataomni_lib::models::DatabaseType::MySQL);
   let flavor = mysql_flavor(&pool).await;
-  let mariadb = flavor == MysqlFlavor::MariaDb;
+  let display_width = flavor.shows_integer_display_width();
   // 没写 `COLLATE` 的列拿到的是库的默认排序规则：MySQL 8 是 `utf8mb4_0900_ai_ci`，
   // MariaDB 11.4 是 `utf8mb4_uca1400_ai_ci`，TiDB 是 `utf8mb4_bin`。语料照 MySQL 写，
   // 换成这台服务端的默认值再比——换的是**期望**，不是数据库给的结果；而且只换
@@ -3709,7 +3735,7 @@ async fn mysql_runs_the_generated_ddl_from_the_shared_corpus() {
       .collect()
   };
   let comparable = |columns: Vec<ddl_corpus::Column>| {
-    if mariadb {
+    if display_width {
       columns.into_iter().map(mariadb_spelling_as_mysql).collect()
     } else {
       columns
@@ -3732,17 +3758,20 @@ async fn mysql_runs_the_generated_ddl_from_the_shared_corpus() {
       );
     }
 
-    // TiDB 不收「一条 ALTER 里同时改列又改表名」（8200）。MySQL 形状的用例为了
-    // 原子性恰好这么写，在 TiDB 上被整条拒绝、什么都没改——钉住的是这一点。
-    // 界面在 TiDB 上发的是拆开的那一种（`renameApart` 的用例），它在三家上都要跑通
+    // TiDB 不收「一条 ALTER 里同时改列又改表名」（8200），OceanBase 不收要重写表的改列
+    // 与改表名同句（1235）。MySQL 形状的用例为了原子性恰好这么写，在这两家上被整条拒绝、
+    // 什么都没改——钉住的是这一点。界面在这两家上发的是拆开的那一种（`renameApart`
+    // 的用例），它在每一家上都要跑通
     let mut refused_by_tidb = false;
     for statement in &case.statements {
       match sqlx::query(statement).execute(&pool).await {
         Ok(_) => {}
         Err(error)
-          if flavor == MysqlFlavor::TiDb
-            && !case.rename_apart
-            && error.to_string().contains("Unsupported multi schema change") =>
+          if !case.rename_apart
+            && ((flavor == MysqlFlavor::TiDb
+              && error.to_string().contains("Unsupported multi schema change"))
+              || (flavor == MysqlFlavor::OceanBase
+                && error.to_string().contains("alter options in single statment"))) =>
         {
           refused_by_tidb = true;
           break;
@@ -3752,7 +3781,7 @@ async fn mysql_runs_the_generated_ddl_from_the_shared_corpus() {
     }
     if refused_by_tidb {
       let untouched = comparable(mysql_catalog_columns(&pool, catalog, &case.table).await);
-      assert_eq!(untouched, expected(&case.origin), "{}: TiDB 拒绝之后表不该有任何变化", case.name);
+      assert_eq!(untouched, expected(&case.origin), "{}: 整条被拒之后表不该有任何变化", case.name);
       for statement in &case.cleanup {
         sqlx::query(statement).execute(&pool).await.ok();
       }
@@ -4108,7 +4137,38 @@ async fn mysql_explain_nests_the_join_and_names_both_tables() {
     flavor == MysqlFlavor::TiDb,
     "按 VERSION() 分辨出来的和夹具判断的不一致"
   );
+  assert_eq!(
+    dialect == dataomni_lib::services::PlanDialect::OceanBase,
+    flavor == MysqlFlavor::OceanBase,
+    "按 VERSION() 分辨出来的和夹具判断的不一致"
+  );
   let plan = explain_with_session(&sessions, &db_pool, &url, &dialect, query, false).await;
+
+  // OceanBase 的 `FORMAT=JSON` 是它自己的形状：算子挂在 `CHILD_n` 下，表名在 NAME 里
+  // （带索引时写成 `c(parent)`）。钉的同样是两张表都在连接下面
+  if flavor == MysqlFlavor::OceanBase {
+    let operations = all_operations(&plan);
+    let join = plan
+      .roots
+      .iter()
+      .find(|node| node.operation.contains("JOIN"))
+      .unwrap_or_else(|| panic!("顶上要是连接算子: {operations:?}"));
+    let mut tables: Vec<String> = join
+      .children
+      .iter()
+      .filter_map(|node| node.target.as_deref())
+      .map(|target| target.split('(').next().unwrap_or_default().to_string())
+      .collect();
+    tables.sort();
+    assert_eq!(tables, vec!["c", "p"], "{operations:?}");
+    for statement in
+      ["DROP TABLE IF EXISTS explain_smoke_child", "DROP TABLE IF EXISTS explain_smoke"]
+    {
+      sessions.execute("plan", &url, &db_pool, statement, 1, Duration::from_secs(30)).await.ok();
+    }
+    sessions.release("plan").await;
+    return;
+  }
 
   // TiDB 不认 `FORMAT=JSON`，发的是它自己的 `tidb_json`：算子按 `subOperators` 嵌套，
   // 表写在 accessObject 里（`table:p`）。钉的是两张表都在连接下面
@@ -4668,9 +4728,23 @@ async fn mysql_backup_with_mysqldump_restores_into_a_new_database() {
   let restored = "dataomni_backup_restored";
   sqlx::query(&format!("DROP DATABASE IF EXISTS {restored}")).execute(&pool).await.expect("drop");
   sqlx::query(&format!("CREATE DATABASE {restored}")).execute(&pool).await.expect("create");
-  let client = backup::find_tool("mysql")
-    .or_else(|| backup::find_tool("mariadb"))
-    .expect("mysql 客户端与 mysqldump 装在一起");
+  // OceanBase 上先找 MariaDB 的客户端：mysql 命令行客户端（Homebrew 的 26.7）对它的
+  // 每一条非查询语句都报 `ERROR 2027 Malformed packet`，连 `SET @a = 1` 都是，
+  // 备份文件本身没问题（mariadb 客户端恢复得进去）。没有 mariadb 客户端就只验到备份这一步
+  let client = if flavor == MysqlFlavor::OceanBase {
+    let Some(client) = backup::find_tool("mariadb") else {
+      eprintln!("OceanBase 要用 mariadb 客户端恢复，本机没有，恢复这一步跳过");
+      sqlx::query(&format!("DROP DATABASE IF EXISTS {restored}")).execute(&pool).await.ok();
+      sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+      std::fs::remove_dir_all(&dir).ok();
+      return;
+    };
+    client
+  } else {
+    backup::find_tool("mysql")
+      .or_else(|| backup::find_tool("mariadb"))
+      .expect("mysql 客户端与 mysqldump 装在一起")
+  };
   let status = std::process::Command::new(client)
     .arg("--no-defaults")
     .arg(format!("--host={host}"))

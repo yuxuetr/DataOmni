@@ -214,7 +214,7 @@ export const en: Translations = {
   'ddl.edit': 'Edit structure',
   'ddl.createTitle': 'New table',
   'ddl.createTable': 'New table',
-  'ddl.tidbRenameApart': 'TiDB does not allow changing columns and renaming the table in one ALTER, so the rename is a separate last statement. The two are not one unit: if the second fails, the columns are already changed and the table keeps its old name.',
+  'ddl.renameApart': 'TiDB and OceanBase do not allow changing columns and renaming the table in one ALTER, so the rename is a separate last statement. The two are not one unit: if the second fails, the columns are already changed and the table keeps its old name.',
   'indexCreate.title': 'New index',
   'indexCreate.pickColumns': 'Tick the columns in key order: the first one ticked comes first. (a, b) and (b, a) speed up different queries.',
   'indexCreate.unique': 'Unique',

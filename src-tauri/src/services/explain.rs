@@ -99,7 +99,8 @@ pub fn supports_analyze(db_type: &DatabaseType) -> bool {
 ///
 /// 比连接类型细一层：TiDB 与 CockroachDB 说 MySQL / PostgreSQL 的线协议，
 /// EXPLAIN 却各说各的——TiDB 不认 `FORMAT=JSON`，有自己的 `tidb_json`；
-/// CockroachDB 没有 JSON 格式，给的是一棵文本树。
+/// CockroachDB 没有 JSON 格式，给的是一棵文本树；OceanBase 认 `FORMAT=JSON`，
+/// 给的却是它自己的形状（`OPERATOR` / `CHILD_1`…），不是 MySQL 的 `query_block`。
 ///
 /// 分辨靠连上之后读 `VERSION()`（[`SERVER_VERSION_QUERY`]），不看连接表单上
 /// 记的入口：那一格只供显示，从 MySQL 入口连 TiDB 的人同样该拿到计划。
@@ -109,6 +110,7 @@ pub enum PlanDialect {
   CockroachDb,
   MySql,
   TiDb,
+  OceanBase,
   Sqlite,
   SqlServer,
   Oracle,
@@ -142,11 +144,12 @@ impl PlanDialect {
     matches!(db_type, DatabaseType::MySQL | DatabaseType::PostgreSQL)
   }
 
-  /// `VERSION()` 的原话：TiDB 是 `8.0.11-TiDB-v8.5.3`，CockroachDB 是
-  /// `CockroachDB CCL v25.2.x ...`
+  /// `VERSION()` 的原话：TiDB 是 `8.0.11-TiDB-v8.5.3`，OceanBase 是
+  /// `5.7.25-OceanBase_CE-v4.4.2.1`，CockroachDB 是 `CockroachDB CCL v25.2.x ...`
   pub fn detect(db_type: &DatabaseType, server_version: &str) -> Self {
     match Self::from(db_type) {
       Self::MySql if server_version.contains("TiDB") => Self::TiDb,
+      Self::MySql if server_version.contains("OceanBase") => Self::OceanBase,
       Self::PostgreSql if server_version.contains("CockroachDB") => Self::CockroachDb,
       other => other,
     }
@@ -162,6 +165,7 @@ impl PlanDialect {
       Self::CockroachDb => "CockroachDB",
       Self::MySql => "MySQL",
       Self::TiDb => "TiDB",
+      Self::OceanBase => "OceanBase",
       Self::Sqlite => "SQLite",
       Self::SqlServer => "SqlServer",
       Self::Oracle => "Oracle",
@@ -201,7 +205,7 @@ pub fn explain_statement(
     } else {
       format!("EXPLAIN (VERBOSE) {sql}")
     }),
-    PlanDialect::MySql => Ok(format!("EXPLAIN FORMAT=JSON {sql}")),
+    PlanDialect::MySql | PlanDialect::OceanBase => Ok(format!("EXPLAIN FORMAT=JSON {sql}")),
     PlanDialect::TiDb => Ok(format!("EXPLAIN FORMAT='tidb_json' {sql}")),
     PlanDialect::Sqlite => Ok(format!("EXPLAIN QUERY PLAN {sql}")),
     // 没有 EXPLAIN：语句原样，由执行那一侧用 `SET SHOWPLAN_XML` 包住
@@ -275,6 +279,7 @@ pub fn parse_plan(
     PlanDialect::CockroachDb => parse_cockroach(rows, analyze),
     PlanDialect::MySql => parse_mysql(rows),
     PlanDialect::TiDb => parse_tidb(rows),
+    PlanDialect::OceanBase => parse_oceanbase(rows),
     PlanDialect::Sqlite => Ok(parse_sqlite(rows)),
     PlanDialect::SqlServer => parse_sql_server(rows),
     PlanDialect::Oracle => parse_oracle(rows),
@@ -485,6 +490,44 @@ fn tidb_operation(id: &str) -> String {
     Some(role) => format!("{base} ({role})"),
     None => base.to_string(),
   }
+}
+
+/// OceanBase 的 `FORMAT=JSON`：一个对象就是一个算子，子算子挂在 `CHILD_1`、`CHILD_2`… 下。
+///
+/// 子节点按编号的**数值**排：`UNION ALL` 十一路时有 `CHILD_10`，按键名排会排到
+/// `CHILD_2` 前面，左右次序就错了。`EST.TIME(us)` 是估的耗时而不是代价，不进 `cost`，
+/// 和其余字段一起按原名进 detail。
+fn parse_oceanbase(rows: &[Map<String, JsonValue>]) -> Result<QueryPlan, QueryError> {
+  let (parsed, raw) = parse_json_payload(rows)?;
+  let Some(root) = parsed.as_object() else {
+    return Err(QueryError::message(EXPLAIN_EMPTY));
+  };
+  Ok(QueryPlan {
+    roots: vec![oceanbase_node(root)],
+    analyzed: false,
+    planning_ms: None,
+    execution_ms: None,
+    raw,
+  })
+}
+
+fn oceanbase_node(operator: &Map<String, JsonValue>) -> PlanNode {
+  let text =
+    |key: &str| operator.get(key).and_then(scalar_text).map(|value| value.trim().to_string());
+  let mut node = PlanNode::new(text("OPERATOR").unwrap_or_else(|| "?".to_string()));
+  node.target = text("NAME").filter(|name| !name.is_empty());
+  node.estimated_rows = number(operator.get("EST.ROWS"));
+  let mut children = Vec::new();
+  for (key, value) in operator {
+    match (key.strip_prefix("CHILD_").and_then(|n| n.parse::<u32>().ok()), value.as_object()) {
+      (Some(position), Some(child)) => children.push((position, oceanbase_node(child))),
+      _ if ["OPERATOR", "NAME", "EST.ROWS"].contains(&key.as_str()) => {}
+      _ => node.detail.push(PlanDetail { key: key.clone(), value: cell_text(value) }),
+    }
+  }
+  children.sort_by_key(|(position, _)| *position);
+  node.children = children.into_iter().map(|(_, child)| child).collect();
+  node
 }
 
 /// CockroachDB：一行一行的文本树。
@@ -1372,6 +1415,57 @@ mod tests {
       .any(|entry| entry.key == "id" && entry.value == "IndexRangeScan_31"));
   }
 
+  /// OceanBase 4.4 的 `EXPLAIN FORMAT=JSON`，原样取自真库（`fixtures/oceanbase-plan.json`）
+  const OCEANBASE_PLAN: &str = include_str!("../../../fixtures/oceanbase-plan.json");
+
+  #[test]
+  fn oceanbase_plan_nests_by_child_keys_and_names_the_scanned_tables() {
+    let plan = parse_plan(PlanDialect::OceanBase, &json_row(OCEANBASE_PLAN), false).expect("parse");
+    assert_eq!(plan.roots.len(), 1);
+    // `OPERATOR` 带尾随空格（`"MERGE JOIN "`），树上不该留着
+    assert_eq!(plan.roots[0].operation, "TOP-N SORT");
+
+    let filter = find(&plan.roots[0], "SUBPLAN FILTER").expect("子查询过滤在树上");
+    let sides: Vec<(&str, Option<&str>)> = filter
+      .children
+      .iter()
+      .map(|child| (child.operation.as_str(), child.target.as_deref()))
+      .collect();
+    assert_eq!(
+      sides,
+      vec![
+        ("SUBPLAN SCAN", Some("VIEW1")),
+        ("TABLE RANGE SCAN", Some("explain_smoke_child(parent)"))
+      ]
+    );
+    let scan = &filter.children[1];
+    assert_eq!(scan.estimated_rows, Some(1.0));
+    assert_eq!(scan.cost, None, "EST.TIME 是耗时不是代价");
+    assert!(scan.detail.iter().any(|entry| entry.key == "EST.TIME(us)" && entry.value == "18"));
+    assert!(scan.detail.iter().all(|entry| !entry.key.starts_with("CHILD_")));
+    // 空的 NAME 不是目标
+    assert_eq!(plan.roots[0].target, None);
+  }
+
+  #[test]
+  fn oceanbase_children_follow_the_number_not_the_key_spelling() {
+    // 倒着写：serde_json 在这个构建里保留键的插入顺序，正着写的话不排序也对，
+    // 这条就测不出任何东西
+    let children: Vec<String> = (1..=11)
+      .rev()
+      .map(|n| {
+        format!(r#""CHILD_{n}": {{"ID": {n}, "OPERATOR": "TABLE FULL SCAN", "NAME": "t{n}"}}"#)
+      })
+      .collect();
+    let text =
+      format!(r#"{{"ID": 0, "OPERATOR": "UNION ALL", "NAME": "", {}}}"#, children.join(","));
+    let plan = parse_plan(PlanDialect::OceanBase, &json_row(&text), false).expect("parse");
+    let targets: Vec<&str> =
+      plan.roots[0].children.iter().filter_map(|child| child.target.as_deref()).collect();
+    let expected: Vec<String> = (1..=11).map(|n| format!("t{n}")).collect();
+    assert_eq!(targets, expected);
+  }
+
   #[test]
   fn tidb_operation_drops_the_optimizer_serial_but_not_a_real_suffix() {
     assert_eq!(tidb_operation("HashJoin_27"), "HashJoin");
@@ -1460,6 +1554,7 @@ mod tests {
     assert_eq!(PlanDialect::detect(&mysql, "8.0.11-TiDB-v8.5.3"), PlanDialect::TiDb);
     assert_eq!(PlanDialect::detect(&mysql, "8.4.2"), PlanDialect::MySql);
     assert_eq!(PlanDialect::detect(&mysql, "11.4.3-MariaDB"), PlanDialect::MySql);
+    assert_eq!(PlanDialect::detect(&mysql, "5.7.25-OceanBase_CE-v4.4.2.1"), PlanDialect::OceanBase);
     assert_eq!(
       PlanDialect::detect(&postgres, "CockroachDB CCL v25.2.1 (x86_64-pc-linux-gnu)"),
       PlanDialect::CockroachDb
