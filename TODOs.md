@@ -23,7 +23,7 @@
 | P3 | 补齐数据库管理与数据工程能力 | [x] |
 | P4 | 扩展数据库与外围能力 | [x] |
 | P5 | 完成统一桌面 UI 与交互设计 | [ ] |
-| P6 | AI 设计、导出与备份（下一步规划 A） | [-] A0–A6b、A9 完成；A6c 的 MySQL 完成，MongoDB 缺工具 |
+| P6 | AI 设计、导出与备份（下一步规划 A） | [x] A0–A6c、A9 完成（A2b / A7 / A8 当前版本不做） |
 | P7 | 更多数据库：国产库与云库（下一步规划 B） | [-] B2 / B2b（openGauss）完成；B1 阻塞（测试环境）；B3 / B4 按触发条件 |
 
 ---
@@ -105,7 +105,7 @@
   - 门：三条单测（密码不进参数、隧道与 TLS 的环境变量、CockroachDB 拒绝）；真库用例备份后 `pg_restore` 还原成 SQL 核对值，
     去掉 `PGPASSWORD` 变红。打包版上从 `open` 启动（PATH 无 Homebrew）备份成功。
   - 已知：工具版本比服务端旧时 `pg_dump` 自己拒绝，原话显示在任务里；没有取消（与另两种备份一样）。
-- [-] A6c MySQL（`mysqldump`）与 MongoDB（`mongodump`）备份
+- [x] A6c MySQL（`mysqldump`）与 MongoDB（`mongodump`）备份
   - MySQL / MariaDB 完成（`a6eab1f`，本机 `brew install mysql-client` 后做）：`--single-transaction` 一致性快照、
     `--no-defaults`、`--protocol=TCP`、密码只经 `MYSQL_PWD`；按 `--version` 分 Oracle / MariaDB 两家客户端拼 TLS 参数
     （MariaDB 的 `--ssl` 连不上 TLS 会退回明文，所以「要求 TLS」落到验证证书——在 cu 的 mariadb-dump 11.4 上对三家服务端实测过）。
@@ -113,7 +113,12 @@
   - 门：四条单测（密码不进参数、`--no-defaults` 在第一位、两家 TLS 参数、TiDB / 无库名先拒绝）；真库用例在 MySQL 8.4、MariaDB 11.4
     备份后用 `mysql` 灌进新库核对值，TiDB 上钉住失败原因（它好了会红）；去掉 `MYSQL_PWD` 变红（1045）。
     打包版从 `open` 启动（PATH 无 Homebrew）备份成功，恢复说明显示正确，备份灌回新库三张表与值都在。
-  - 未做：MongoDB。`mongodump` 只在第三方 tap `mongodb/brew` 里，本机没装。重估条件：`which mongodump` 有结果。
+  - MongoDB 完成（官方 Database Tools 100.19 解压到临时目录验，没装进系统）：按库 `mongodump --db --archive --gzip`，
+    密码从标准输入喂、连接串不带凭据，SRV / TLS / X.509 / 隧道照 `MongoTarget`。**按库不按整个部署**：
+    整个部署要读 `admin.system.users`，X.509 用户（只有 `dataomni_test` 权限）实测一开始就被拒。入口在对象树的库上右键。
+  - 门：三条单测（密码不在参数与环境里、X.509 的 URI、SRV 不写 authSource）与无库名拒绝；真库用例备份后 `mongorestore`
+    换库名灌回、文档相同，口令错被服务端拒，X.509 备份得出；不喂密码变红。打包版（`open --env PATH=…` 启动）
+    右键备份 `dataomni_test`，恢复到新库 30 个集合文档数逐一相同。
   - 未验：MariaDB 客户端的 mysqldump 只在容器里手跑过参数，没经过应用本身（本机装的是 Oracle 版）。
 - [ ] ~~A7 框架代码生成（Prisma / TypeORM / JPA）~~ **当前版本不做**
   - 确定性映射，不用 AI；重估条件：A2 落地后先只做 Prisma 一种
