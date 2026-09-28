@@ -4575,7 +4575,7 @@ async fn postgres_backup_with_pg_dump_keeps_the_rows() {
   let dir = std::env::temp_dir().join(format!("dataomni-pgdump-{}", std::process::id()));
   std::fs::create_dir_all(&dir).expect("temp dir");
   let target = dir.join("backup.dump");
-  match dataomni_lib::services::backup::backup_with_tool(&profile, None, &target).await {
+  match dataomni_lib::services::backup::backup_with_tool(&profile, None, &target, None).await {
     Err(error)
       if error.message.starts_with(dataomni_lib::services::backup::BACKUP_TOOL_MISSING) =>
     {
@@ -4646,7 +4646,7 @@ async fn mysql_backup_with_mysqldump_restores_into_a_new_database() {
   let dir = std::env::temp_dir().join(format!("dataomni-mysqldump-{}", std::process::id()));
   std::fs::create_dir_all(&dir).expect("temp dir");
   let target = dir.join("backup.sql");
-  let result = backup::backup_with_tool(&profile, None, &target).await;
+  let result = backup::backup_with_tool(&profile, None, &target, None).await;
   if let Err(error) = &result {
     if error.message.starts_with(backup::BACKUP_TOOL_MISSING) {
       eprintln!("本机没有 mysqldump，跳过");

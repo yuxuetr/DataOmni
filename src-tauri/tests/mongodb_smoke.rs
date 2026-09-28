@@ -1304,3 +1304,93 @@ async fn the_command_console_runs_a_command_and_closes_the_cursor_it_leaves() {
   run("{ insert: 'smoke_console', documents: [{ n: 5 }] }").await.expect("insert");
   assert_eq!(collection.count_documents(doc! {}).await.expect("count"), 6);
 }
+
+/// mongodump 备份后用 mongorestore 换个库名灌回去，文档原样回来才算备份成立（TODOs A6c）。
+/// 密码走标准输入：口令错时是服务端拒绝认证，而不是卡在等输入
+#[tokio::test]
+async fn a_mongodump_backup_restores_into_another_database() {
+  use dataomni_lib::services::backup;
+  let Some(profile) = profile_from_env() else { return };
+  let client = mongo::connect(&MongoTarget::from_profile(&profile)).await.expect("connect");
+  let collection = fresh_collection(&client, "smoke_backup").await;
+  let stored = doc! { "_id": 1, "label": "O'Brien 中文", "amount": mongodb::bson::Decimal128::from_bytes([0; 16]) };
+  collection.insert_one(stored.clone()).await.expect("insert");
+  let restored_db = "dataomni_backup_restored";
+  client.database(restored_db).drop().await.expect("drop leftover");
+
+  let dir = std::env::temp_dir().join(format!("dataomni-mongodump-{}", std::process::id()));
+  std::fs::create_dir_all(&dir).expect("temp dir");
+  let target = dir.join("backup.archive.gz");
+  match backup::backup_with_tool(&profile, None, &target, Some(DATABASE)).await {
+    Err(error) if error.message.starts_with(backup::BACKUP_TOOL_MISSING) => {
+      eprintln!("本机没有 mongodump，跳过");
+      return;
+    }
+    result => assert_eq!(result.expect("backup"), backup::BackupKind::MongoArchive),
+  }
+
+  let restore = backup::find_tool("mongorestore").expect("mongorestore 与 mongodump 装在一起");
+  let uri = format!(
+    "mongodb://{}:{}/?directConnection=true&authSource={}&tls=false",
+    profile.host,
+    profile.port,
+    profile.database.as_deref().filter(|source| !source.is_empty()).unwrap_or("admin")
+  );
+  let mut child = std::process::Command::new(restore)
+    .arg(format!("--uri={uri}"))
+    .arg(format!("--username={}", profile.username))
+    .arg(format!("--archive={}", target.display()))
+    .arg("--gzip")
+    .arg(format!("--nsInclude={DATABASE}.smoke_backup"))
+    .arg(format!("--nsFrom={DATABASE}.smoke_backup"))
+    .arg(format!("--nsTo={restored_db}.smoke_backup"))
+    .stdin(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped())
+    .spawn()
+    .expect("run mongorestore");
+  {
+    use std::io::Write;
+    let mut pipe = child.stdin.take().expect("stdin");
+    writeln!(pipe, "{}", profile.password).expect("password");
+  }
+  let output = child.wait_with_output().expect("wait");
+  assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+  let back = client
+    .database(restored_db)
+    .collection::<Document>("smoke_backup")
+    .find_one(doc! { "_id": 1 })
+    .await
+    .expect("read restored");
+  assert_eq!(back, Some(stored));
+  client.database(restored_db).drop().await.ok();
+
+  let wrong = ConnectionProfile { password: format!("{}-wrong", profile.password), ..profile };
+  let error = backup::backup_with_tool(&wrong, None, &dir.join("wrong.archive.gz"), Some(DATABASE))
+    .await
+    .expect_err("wrong password");
+  assert!(error.message.contains("Authentication failed"), "{}", error.message);
+  assert!(!dir.join("wrong.archive.gz").exists());
+  std::fs::remove_dir_all(&dir).ok();
+}
+
+/// 拿证书登录的备份：不发用户名和口令，也备份得出来。这个账号只有 `dataomni_test` 的权限——
+/// 备份整个部署时它在 `admin.system.users` 上被拒，这就是按库备份的原因
+#[tokio::test]
+async fn an_x509_profile_backs_up_with_its_certificate() {
+  use dataomni_lib::services::backup;
+  let Some(mut profile) = tls_profile(Some("client.pem")) else { return };
+  profile.options.insert(
+    dataomni_lib::models::MONGO_AUTH_MECHANISM_OPTION.to_string(),
+    dataomni_lib::models::MONGO_X509.to_string(),
+  );
+  let dir = std::env::temp_dir().join(format!("dataomni-mongodump-x509-{}", std::process::id()));
+  std::fs::create_dir_all(&dir).expect("temp dir");
+  let target = dir.join("backup.archive.gz");
+  match backup::backup_with_tool(&profile, None, &target, Some(DATABASE)).await {
+    Err(error) if error.message.starts_with(backup::BACKUP_TOOL_MISSING) => return,
+    result => assert_eq!(result.expect("x509 backup"), backup::BackupKind::MongoArchive),
+  }
+  let bytes = std::fs::read(&target).expect("archive");
+  assert!(bytes.starts_with(&[0x1f, 0x8b]), "gzip 文件头");
+  std::fs::remove_dir_all(&dir).ok();
+}

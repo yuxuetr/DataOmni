@@ -64,6 +64,8 @@ export type ExportTaskPayload = SqlExportTaskPayload | MongoExportTaskPayload;
 export interface BackupTaskPayload {
   connectionId: string;
   path: string;
+  /** MongoDB 备份哪个库 */
+  database?: string;
 }
 
 export type TaskRequest =
@@ -278,10 +280,10 @@ export const useTaskStore = create<TaskState>((set, get) => {
 
   const runBackup = async (id: string, payload: BackupTaskPayload) => {
     try {
-      const kind = await invoke<'sqlite-file' | 'duckdb-directory' | 'postgres-dump' | 'mysql-dump'>('backup_database', {
-        connectionId: payload.connectionId,
-        path: payload.path
-      });
+      const kind = await invoke<'sqlite-file' | 'duckdb-directory' | 'postgres-dump' | 'mysql-dump' | 'mongo-archive'>(
+        'backup_database',
+        { connectionId: payload.connectionId, path: payload.path, database: payload.database ?? null }
+      );
       log(id, [
         entry('info', payload.path),
         entry('info', translateNow(
@@ -291,7 +293,9 @@ export const useTaskStore = create<TaskState>((set, get) => {
               ? 'backup.restorePostgres'
               : kind === 'mysql-dump'
                 ? 'backup.restoreMysql'
-                : 'backup.restoreDuckdb'
+                : kind === 'mongo-archive'
+                  ? 'backup.restoreMongo'
+                  : 'backup.restoreDuckdb'
         ))
       ]);
       // 备份写的是新文件 / 新目录，重跑不会往库里重复写东西

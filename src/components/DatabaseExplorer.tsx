@@ -21,7 +21,8 @@ import {
   AlertCircle,
   Info,
   Search,
-  X
+  X,
+  Archive
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { DatabaseType } from '../contracts/connection';
@@ -49,6 +50,7 @@ import { CreateTableDialog } from './CreateTableDialog';
 import { CreateSchemaDialog } from './CreateSchemaDialog';
 import { identifierDialectFor } from '../utils/sqlIdentifiers';
 import { ObjectContextMenu } from './ObjectContextMenu';
+import { startDatabaseBackup } from '../utils/databaseBackup';
 import { qualifiedObjectName, type ObjectMenuAction } from '../utils/objectMenu';
 import {
   CREATES_SCHEMAS,
@@ -183,6 +185,10 @@ export default function DatabaseExplorer({
   const [newSchema, setNewSchema] = useState<string | null>(null);
   const [objectMenu, setObjectMenu] = useState<
     { object: DatabaseObject; position: { x: number; y: number } } | null
+  >(null);
+  /** MongoDB 的库上右键：备份这个库（它按库备份，见 `startDatabaseBackup`） */
+  const [databaseMenu, setDatabaseMenu] = useState<
+    { database: string; position: { x: number; y: number } } | null
   >(null);
   // 复制失败与删表 / 清空失败共用这一条：都是「右键菜单那一下没成」
   const [actionError, setActionError] = useState<string | null>(null);
@@ -759,6 +765,9 @@ export default function DatabaseExplorer({
                 onToggle={toggleNode}
                 onSelect={handleObjectClick}
                 onContextMenu={(object, position) => setObjectMenu({ object, position })}
+                onGroupContextMenu={connection.db_type === DatabaseType.MongoDB
+                  ? (group, position) => setDatabaseMenu({ database: group.label, position })
+                  : undefined}
               />
             ))}
           </div>
@@ -823,11 +832,26 @@ export default function DatabaseExplorer({
       )}
 
       {createMenu && (
-        <CreateMenu
+        <PopupMenu
           position={createMenu}
           onDismiss={() => setCreateMenu(null)}
-          onCreateTable={() => setCreatingTable(true)}
-          onCreateSchema={() => setCreatingSchema(true)}
+          items={[
+            { key: 'table', label: t('ddl.createTable'), Icon: Table2, run: () => setCreatingTable(true) },
+            { key: 'schema', label: t('schemaCreate.title'), Icon: FolderPlus, run: () => setCreatingSchema(true) }
+          ]}
+        />
+      )}
+
+      {databaseMenu && (
+        <PopupMenu
+          position={databaseMenu.position}
+          onDismiss={() => setDatabaseMenu(null)}
+          items={[{
+            key: 'backup',
+            label: t('backup.thisDatabase'),
+            Icon: Archive,
+            run: () => void startDatabaseBackup(connection, databaseMenu.database)
+          }]}
         />
       )}
 
@@ -885,24 +909,17 @@ export default function DatabaseExplorer({
   );
 }
 
-/** 头部「+」在能建 schema 的方言上展开的两项 */
-function CreateMenu({
+/** 头部「+」在能建 schema 的方言上展开的两项，以及 MongoDB 库上的右键菜单 */
+function PopupMenu({
   position,
   onDismiss,
-  onCreateTable,
-  onCreateSchema
+  items
 }: {
   position: { x: number; y: number };
   onDismiss: () => void;
-  onCreateTable: () => void;
-  onCreateSchema: () => void;
+  items: Array<{ key: string; label: string; Icon: typeof Table2; run: () => void }>;
 }) {
-  const t = useLanguageStore((state) => state.t);
   const { ref, style } = useContextMenu<HTMLDivElement>(position, onDismiss);
-  const items = [
-    { key: 'table', label: t('ddl.createTable'), Icon: Table2, run: onCreateTable },
-    { key: 'schema', label: t('schemaCreate.title'), Icon: FolderPlus, run: onCreateSchema }
-  ];
   return (
     <div
       ref={ref}
@@ -948,7 +965,8 @@ function ObjectTreeGroup({
   forceExpand,
   onToggle,
   onSelect,
-  onContextMenu
+  onContextMenu,
+  onGroupContextMenu
 }: {
   node: ObjectTreeNode;
   depth: number;
@@ -961,6 +979,8 @@ function ObjectTreeGroup({
   onToggle: (key: string) => void;
   onSelect: (object: DatabaseObject) => void;
   onContextMenu: (object: DatabaseObject, position: { x: number; y: number }) => void;
+  /** 在 schema 那一层（有子分组的节点）上右键；不给就是浏览器默认的菜单 */
+  onGroupContextMenu?: (node: ObjectTreeNode, position: { x: number; y: number }) => void;
 }) {
   const t = useLanguageStore((state) => state.t);
   const expanded = forceExpand || expandedNodes.has(node.key);
@@ -982,6 +1002,12 @@ function ObjectTreeGroup({
         tabIndex={node.key === rovingKey ? 0 : -1}
         onFocus={() => onFocusNode(node.key)}
         onClick={() => onToggle(node.key)}
+        onContextMenu={node.children && onGroupContextMenu
+          ? (event) => {
+            event.preventDefault();
+            onGroupContextMenu(node, { x: event.clientX, y: event.clientY });
+          }
+          : undefined}
         // 焦点不另加底色：渲染验证过，浏览器默认的 outline 在深浅两套主题下
         // 都看得清。而按 `focusedKey` 涂底色的话，焦点离开树之后底色还留着，
         // 看上去像一个并不存在的选中态
@@ -1010,6 +1036,7 @@ function ObjectTreeGroup({
               onToggle={onToggle}
               onSelect={onSelect}
               onContextMenu={onContextMenu}
+              onGroupContextMenu={onGroupContextMenu}
             />
           ))}
         </div>

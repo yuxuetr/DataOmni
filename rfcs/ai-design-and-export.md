@@ -1,7 +1,7 @@
 # AI 设计、代码导出、备份与 Agent 集成：评估
 
 > 评估日期：2026-09-27。当前状态：**A（AI 设计新表，关系库）与 B（`INSERT` 导出）已实现**（2026-09-27，
-> 见 TODOs 下一步规划 A1–A4，实验数据在 §2.5）；D（备份）除 MongoDB 外已实现（A6 / A6b / A6c）；其余部分仍只有评估。
+> 见 TODOs 下一步规划 A1–A4，实验数据在 §2.5）；D（备份）已实现（A6 / A6b / A6c）；其余部分仍只有评估。
 > 结论都限定在「当前版本」（v0.4.0，14 种数据库，无任何 AI 能力、无任何网络服务依赖）。
 > 每条「不做 / 后做」都带重估条件。
 
@@ -155,7 +155,7 @@ JSON 合法率、通过 §2.2 第 3 条校验的比例、人工看「设计合�
 | DuckDB | `EXPORT DATABASE '目录'`，自带 |
 | MySQL / MariaDB | 调 `mysqldump`（已实现；Oracle 与 MariaDB 两家客户端的 TLS 参数分开拼，TiDB 拒绝） |
 | PostgreSQL | 调 `pg_dump`（已实现；要注意客户端版本不能低于服务端） |
-| MongoDB | 调 `mongodump` |
+| MongoDB | 调 `mongodump`（已实现；按库备份，密码经标准输入） |
 | 其余 | 不做 |
 
 经 SSH 隧道时要把外部工具指到本地转发端口；密码经环境变量（`MYSQL_PWD`、`PGPASSWORD`）传，

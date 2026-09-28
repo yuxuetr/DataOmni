@@ -367,7 +367,7 @@ pub async fn export_query_to_file(
 }
 
 /// 备份到 `path`：SQLite 的库文件、DuckDB 的导出目录、PostgreSQL 的 pg_dump（custom 格式）、
-/// MySQL / MariaDB 的 mysqldump（SQL 文本）。
+/// MySQL / MariaDB 的 mysqldump（SQL 文本）、MongoDB 的 mongodump（gzip 归档）。
 /// 别的网络库还没有，见 `services::backup` 开头
 // 参数都是 Tauri 注入的 State，理由同 `export_query_to_file`
 #[allow(clippy::too_many_arguments)]
@@ -375,6 +375,8 @@ pub async fn export_query_to_file(
 pub async fn backup_database(
   connection_id: String,
   path: String,
+  // MongoDB 备份哪个库（对象树上右键的那个）；别的库不用
+  database: Option<String>,
   connection_service_state: State<'_, ConnectionServiceState>,
   tunnels: State<'_, TunnelRegistry>,
   database_instances: State<'_, DbInstances>,
@@ -384,7 +386,7 @@ pub async fn backup_database(
   clickhouse: State<'_, ClickHouseRegistry>,
 ) -> Result<crate::services::backup::BackupKind, QueryError> {
   let tunnel_port = tunnels.local_port(&connection_id).await;
-  // PostgreSQL / MySQL 走外部工具：要的是补上凭据的 profile（主机、用户、TLS），不是连接池
+  // PostgreSQL / MySQL / MongoDB 走外部工具：要的是补上凭据的 profile（主机、用户、TLS），不是连接池
   let (connection_string, tool_profile) = {
     let connection_service_guard = connection_service_state
       .lock()
@@ -396,7 +398,9 @@ pub async fn backup_database(
       .ok_or_else(|| QueryError::message(CONNECTION_NOT_FOUND))?;
     let tool_profile = if matches!(
       profile.db_type,
-      crate::models::DatabaseType::PostgreSQL | crate::models::DatabaseType::MySQL
+      crate::models::DatabaseType::PostgreSQL
+        | crate::models::DatabaseType::MySQL
+        | crate::models::DatabaseType::MongoDB
     ) {
       Some(service.resolve_for_connection(profile).map_err(QueryError::message)?)
     } else {
@@ -412,6 +416,7 @@ pub async fn backup_database(
       &profile,
       tunnel_port,
       std::path::Path::new(&path),
+      database.as_deref(),
     )
     .await;
   }

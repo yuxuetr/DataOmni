@@ -883,7 +883,7 @@ TiDB 上同时改列和改表名会拆成两条语句（它不收一条 ALTER �
 流式导出在后台任务里跑，有进度、能取消、失败能重试。取消或中途失败不会留下一份
 看上去完整的文件。
 
-### 备份（SQLite、DuckDB、PostgreSQL、MySQL）
+### 备份（SQLite、DuckDB、PostgreSQL、MySQL、MongoDB）
 
 连接信息（工作台头部的「信息」）底部，或命令面板「备份数据库…」。选好位置后在后台任务里跑：
 
@@ -903,7 +903,13 @@ TiDB 上同时改列和改表名会拆成两条语句（它不收一条 ALTER �
   用的是 MariaDB 的客户端时，「要求 TLS」会按「验证证书」处理：它没有「只加密不验证」这一档，
   而不验证时连不上 TLS 会悄悄退回明文。TiDB 不行（一致性快照那一步失败），请用它的 Dumpling 或 BR。
 
-备份跑起来就打不断，任务面板上没有取消按钮。MongoDB 的备份还没有，请用 `mongodump`。
+- **MongoDB**：在对象树的库上右键「备份这个库…」，调用本机的 `mongodump`，写成 gzip 的归档（`.archive.gz`）。
+  一次一个库：备份整个部署要读 `admin` 里的用户表，只有部分库权限的账号会直接失败。恢复：
+  `mongorestore --gzip --archive=<文件>`，换库名加 `--nsFrom '原库.*' --nsTo '新库.*'`。要先装
+  [MongoDB Database Tools](https://www.mongodb.com/try/download/database-tools)。密码经标准输入交给 mongodump，
+  不出现在命令行上；SRV、TLS、客户端证书（X.509）与 SSH 隧道都照连接上的设置走。
+
+备份跑起来就打不断，任务面板上没有取消按钮。
 
 ## ER 关系图
 

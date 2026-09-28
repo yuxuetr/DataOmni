@@ -15,6 +15,7 @@ describe('backupName', () => {
     expect(backupName('shop', DatabaseType.PostgreSQL, NOW)).toBe('shop-backup-20260928-000509.dump');
     expect(backupName('shop.v2', DatabaseType.PostgreSQL, NOW)).toBe('shop.v2-backup-20260928-000509.dump');
     expect(backupName('shop.v2', DatabaseType.MySQL, NOW)).toBe('shop.v2-backup-20260928-000509.sql');
+    expect(backupName('shop', DatabaseType.MongoDB, NOW)).toBe('shop-backup-20260928-000509.archive.gz');
   });
 
   it('CockroachDB、TiDB 走兼容的连接类型，但不给备份入口；MySQL 没填库名也不给', () => {
@@ -24,7 +25,8 @@ describe('backupName', () => {
     expect(backupSupported({ db_type: DatabaseType.MySQL, options: { server: 'mariadb' }, database: 'shop' })).toBe(true);
     expect(backupSupported({ db_type: DatabaseType.MySQL, options: { server: 'tidb' }, database: 'test' })).toBe(false);
     expect(backupSupported({ db_type: DatabaseType.MySQL, options: {}, database: ' ' })).toBe(false);
-    expect(backupSupported({ db_type: DatabaseType.MongoDB, options: {}, database: 'shop' })).toBe(false);
+    // MongoDB 按库备份，入口在对象树的库上，不走「备份这个连接」
+    expect(backupSupported({ db_type: DatabaseType.MongoDB, options: {}, database: 'admin' })).toBe(false);
     expect(backupSupported({ db_type: DatabaseType.SQLite, options: {} })).toBe(true);
   });
 

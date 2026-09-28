@@ -246,7 +246,7 @@ MySQL 一组 22 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
   对话框带真实输出预览；`INSERT` 的字面量与标识符按当前连接的数据库写，七种关系库都实际灌回去验过
 - 备份：SQLite 用 `VACUUM INTO` 写一份一致的库文件，DuckDB 用 `EXPORT DATABASE` 导成 Parquet 目录，
   PostgreSQL 用本机的 `pg_dump`（custom 格式），MySQL / MariaDB 用本机的 `mysqldump`（一致性快照的 SQL 文本）；
-  密码不进命令行，经 SSH 隧道也行；走后台任务。MongoDB 还没接
+  MongoDB 按库用本机的 `mongodump`（gzip 归档，对象树上右键）；密码不进命令行，经 SSH 隧道也行；走后台任务
 - 整表流式导出：行从数据库直接落盘，不受行数上限截断，带进度、可取消、失败可
   重试；中途停下不会留下一份看上去完整的文件
 
@@ -519,7 +519,7 @@ bun install
 - ✨ AI 设计新表（Anthropic / OpenAI 兼容，默认关，Cargo feature `ai`）；MongoDB 上设计集合与 `$jsonSchema` 校验规则；
   Neo4j 上把图模型画出来并建唯一约束与索引
 - 📚 ER 图导出数据字典（Markdown）与 Agent Skill（`SKILL.md`）
-- 💾 SQLite / DuckDB / PostgreSQL / MySQL 备份（连接信息与命令面板）
+- 💾 SQLite / DuckDB / PostgreSQL / MySQL 备份（连接信息与命令面板），MongoDB 按库备份（对象树右键）
 
 ### v0.4.0（首个发布版）
 

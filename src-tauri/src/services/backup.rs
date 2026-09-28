@@ -5,14 +5,16 @@
 //! DuckDB 得到一个目录（`IMPORT DATABASE` 恢复），格式用 Parquet：类型原样保留，CSV 做不到。
 //!
 //! PostgreSQL 用它自己的 `pg_dump`（custom 格式，`pg_restore` 恢复），MySQL / MariaDB 用 `mysqldump`
-//! （SQL 文本，`mysql` 恢复）：找得到才给，找不到就说装什么。
-//! 密码只经 `PGPASSWORD` / `MYSQL_PWD` 传，不进命令行（命令行在 `ps` 里谁都看得见）。
+//! （SQL 文本，`mysql` 恢复），MongoDB 用 `mongodump`（gzip 的归档，`mongorestore` 恢复）：
+//! 找得到才给，找不到就说装什么。
+//! 密码只经 `PGPASSWORD` / `MYSQL_PWD` / 标准输入传，不进命令行（命令行在 `ps` 里谁都看得见）。
 
 use crate::models::{ConnectionProfile, DatabaseType, TlsMode};
 use crate::services::query_executor::PoolRef;
 use crate::services::{QueryError, SessionConnection};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 pub const BACKUP_UNSUPPORTED: &str = "DATAOMNI_BACKUP_UNSUPPORTED";
 /// DuckDB 的备份是个目录；目标已经存在时不去覆盖，免得和一份旧备份的文件混在一起
@@ -38,6 +40,7 @@ pub enum BackupKind {
   DuckdbDirectory,
   PostgresDump,
   MysqlDump,
+  MongoArchive,
 }
 
 /// 先写到旁边的 `.part`，写完再改名：和导出一样，让「目标存在」等于「备份完整」。
@@ -77,16 +80,23 @@ pub async fn backup_embedded<'a>(
   Ok(kind)
 }
 
-/// 用服务端自己的工具备份：PostgreSQL 走 `pg_dump`，MySQL / MariaDB 走 `mysqldump`。
+/// 用服务端自己的工具备份：PostgreSQL 走 `pg_dump`，MySQL / MariaDB 走 `mysqldump`，MongoDB 走 `mongodump`。
 /// `profile` 是已经补上凭据的那一份（`ConnectionService::resolve_for_connection`），
-/// `tunnel_port` 是活着的 SSH 隧道的本地端口
+/// `tunnel_port` 是活着的 SSH 隧道的本地端口。
+///
+/// `mongo_database` 是 MongoDB 要备份的库：它的表单上「数据库」那格是认证库，不是备份对象。
+/// 不备份整个部署——那要读 `admin.system.users`，只有某几个库权限的普通账号（包括 X.509 的）
+/// 一开始就失败（8.0 上实测：`not authorized on admin to execute command { count: "system.users" }`）
 pub async fn backup_with_tool(
   profile: &ConnectionProfile,
   tunnel_port: Option<u16>,
   target: &Path,
+  mongo_database: Option<&str>,
 ) -> Result<BackupKind, QueryError> {
   let server = profile.options.get("server").map(String::as_str);
   let part = part_path(target);
+  // 只有 mongodump 从标准输入读密码；另两个不许等输入（没有终端时等于卡死）
+  let mut stdin: Option<String> = None;
   let (kind, program, mut command) = match profile.db_type {
     DatabaseType::PostgreSQL => {
       if server == Some("cockroachdb") {
@@ -111,16 +121,36 @@ pub async fn backup_with_tool(
       let command = mysqldump_command(&program, flavor, profile, database, tunnel_port, &part);
       (BackupKind::MysqlDump, program, command)
     }
+    DatabaseType::MongoDB => {
+      let database = mongo_database
+        .filter(|database| !database.is_empty())
+        .ok_or_else(|| QueryError::message(BACKUP_NO_DATABASE))?;
+      let program = require_tool(&["mongodump"])?;
+      let command = mongodump_command(&program, profile, database, tunnel_port, &part);
+      if !profile.mongo_x509() && !profile.mongo_username().is_empty() {
+        stdin = Some(format!("{}\n", profile.password));
+      }
+      (BackupKind::MongoArchive, program, command)
+    }
     _ => return Err(QueryError::message(BACKUP_UNSUPPORTED)),
   };
   remove_path(&part);
+  command.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
+  command.stdout(Stdio::piped()).stderr(Stdio::piped());
   // 工具是个阻塞的子进程，放到阻塞线程池里等，不占着异步运行时
-  let output = tokio::task::spawn_blocking(move || command.output())
-    .await
-    .map_err(|error| QueryError::message(format!("{BACKUP_FAILED}: {error}")))?
-    .map_err(|error| {
-      QueryError::message(format!("{BACKUP_FAILED}: {} · {error}", program.display()))
-    })?;
+  let output = tokio::task::spawn_blocking(move || {
+    let mut child = command.spawn()?;
+    if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
+      // 写完就关上：工具读到换行就开始连，不关它也不会再等
+      pipe.write_all(text.as_bytes())?;
+    }
+    child.wait_with_output()
+  })
+  .await
+  .map_err(|error| QueryError::message(format!("{BACKUP_FAILED}: {error}")))?
+  .map_err(|error| {
+    QueryError::message(format!("{BACKUP_FAILED}: {} · {error}", program.display()))
+  })?;
   if !output.status.success() {
     remove_path(&part);
     return Err(QueryError::message(format!(
@@ -298,6 +328,78 @@ pub(crate) fn mysqldump_command(
     }
   }
   command.arg(database).env("MYSQL_PWD", &profile.password);
+  command
+}
+
+/// 拼 `mongodump` 的调用：一个库（`--db`），写成一个 gzip 的归档。
+///
+/// 连接串里不放凭据：用户名单给，密码由调用方从标准输入喂（它不是终端时 mongodump 读一行）。
+/// 其余照 `services::mongodb::MongoTarget` 的规矩——直连一台、SRV 交给工具解析、
+/// X.509 的认证库是 `$external`、TLS 档位的意思和应用自己的连接一样
+pub(crate) fn mongodump_command(
+  program: &Path,
+  profile: &ConnectionProfile,
+  database: &str,
+  tunnel_port: Option<u16>,
+  output: &Path,
+) -> Command {
+  let encode = |value: &str| urlencoding::encode(value).into_owned();
+  let mut parameters: Vec<String> = Vec::new();
+  let mut uri = if profile.mongo_srv() {
+    format!("mongodb+srv://{}/", profile.host)
+  } else {
+    let (host, port) = match tunnel_port {
+      Some(port) => ("127.0.0.1", port),
+      None => (profile.host.as_str(), profile.port),
+    };
+    parameters.push("directConnection=true".into());
+    format!("mongodb://{host}:{port}/")
+  };
+  let auth_source = profile.database.as_deref().filter(|database| !database.is_empty());
+  let username = profile.mongo_username();
+  if profile.mongo_x509() {
+    parameters.push("authMechanism=MONGODB-X509".into());
+    parameters.push(format!("authSource={}", encode("$external")));
+  } else if !username.is_empty() {
+    // SRV 没填认证库时不写：TXT 记录里的 authSource（Atlas 写在那里）要能生效
+    match (auth_source, profile.mongo_srv()) {
+      (Some(source), _) => parameters.push(format!("authSource={}", encode(source))),
+      (None, false) => parameters.push("authSource=admin".into()),
+      (None, true) => {}
+    }
+  }
+  let tls = profile.effective_tls_mode();
+  match tls {
+    TlsMode::Disabled => parameters.push("tls=false".into()),
+    // 与应用自己的连接一致：MongoDB 没有「能加密就加密」这一档，Preferred 当 Required，只加密不校验
+    TlsMode::Preferred | TlsMode::Required => {
+      parameters.push("tls=true".into());
+      parameters.push("tlsInsecure=true".into());
+    }
+    TlsMode::VerifyCa | TlsMode::VerifyFull => parameters.push("tls=true".into()),
+  }
+  if tls != TlsMode::Disabled {
+    for (option, value) in [
+      ("tlsCAFile", &profile.ca_certificate_path),
+      ("tlsCertificateKeyFile", &profile.client_certificate_path),
+    ] {
+      if let Some(path) = value.as_deref().filter(|path| !path.is_empty()) {
+        parameters.push(format!("{option}={}", encode(path)));
+      }
+    }
+  }
+  uri.push('?');
+  uri.push_str(&parameters.join("&"));
+
+  let mut command = Command::new(program);
+  command
+    .arg(format!("--uri={uri}"))
+    .arg(format!("--db={database}"))
+    .arg(format!("--archive={}", output.display()))
+    .arg("--gzip");
+  if !profile.mongo_x509() && !username.is_empty() {
+    command.arg(format!("--username={username}"));
+  }
   command
 }
 
@@ -517,11 +619,104 @@ mod tests {
   async fn tidb_and_a_profile_without_a_database_are_refused_before_looking_for_the_tool() {
     let mut profile = mysql_profile();
     profile.options.insert("server".into(), "tidb".into());
-    let error = backup_with_tool(&profile, None, Path::new("/tmp/never")).await.expect_err("tidb");
+    let error =
+      backup_with_tool(&profile, None, Path::new("/tmp/never"), None).await.expect_err("tidb");
     assert_eq!(error.message, BACKUP_TIDB);
     let profile = ConnectionProfile { database: Some(String::new()), ..mysql_profile() };
-    let error = backup_with_tool(&profile, None, Path::new("/tmp/never")).await.expect_err("no db");
+    let error =
+      backup_with_tool(&profile, None, Path::new("/tmp/never"), None).await.expect_err("no db");
     assert_eq!(error.message, BACKUP_NO_DATABASE);
+    // MongoDB 的表单上那格是认证库，不能拿来当备份对象：没说备份哪个库就拒绝
+    let error = backup_with_tool(&mongo_profile(), None, Path::new("/tmp/never"), Some(""))
+      .await
+      .expect_err("mongo without a database");
+    assert_eq!(error.message, BACKUP_NO_DATABASE);
+  }
+
+  fn mongo_profile() -> ConnectionProfile {
+    ConnectionProfile {
+      db_type: DatabaseType::MongoDB,
+      host: "mongo.example.com".into(),
+      port: 27018,
+      database: Some(String::new()),
+      username: "app".into(),
+      password: "s3cret pa'ss".into(),
+      tls_mode: Some(TlsMode::Disabled),
+      ..ConnectionProfile::default()
+    }
+  }
+
+  fn uri_of(command: &Command) -> String {
+    args(command)
+      .into_iter()
+      .find_map(|arg| arg.strip_prefix("--uri=").map(str::to_string))
+      .expect("--uri")
+  }
+
+  /// 密码既不在参数里也不在连接串里（由标准输入喂）；直连一台，认证库默认 admin
+  #[test]
+  fn mongodump_keeps_the_password_out_of_the_command_line() {
+    let command = mongodump_command(
+      Path::new("/x/mongodump"),
+      &mongo_profile(),
+      "shop",
+      None,
+      Path::new("/tmp/o.part"),
+    );
+    let arguments = args(&command);
+    assert!(arguments.iter().all(|arg| !arg.contains("s3cret")), "{arguments:?}");
+    assert!(command
+      .get_envs()
+      .all(|(_, value)| value.is_none_or(|value| !value.to_string_lossy().contains("s3cret"))));
+    assert_eq!(
+      uri_of(&command),
+      "mongodb://mongo.example.com:27018/?directConnection=true&authSource=admin&tls=false"
+    );
+    for expected in ["--username=app", "--db=shop", "--archive=/tmp/o.part", "--gzip"] {
+      assert!(arguments.contains(&expected.to_string()), "{expected} 不在 {arguments:?}");
+    }
+  }
+
+  /// X.509：不带用户名，认证库是 `$external`，证书路径按 URI 编码；经隧道连本地端口
+  #[test]
+  fn an_x509_mongodump_presents_the_certificate_instead_of_a_user() {
+    let mut profile = ConnectionProfile {
+      tls_mode: Some(TlsMode::VerifyFull),
+      ca_certificate_path: Some("/certs/my ca.pem".into()),
+      client_certificate_path: Some("/certs/client.pem".into()),
+      ..mongo_profile()
+    };
+    profile
+      .options
+      .insert(crate::models::MONGO_AUTH_MECHANISM_OPTION.into(), crate::models::MONGO_X509.into());
+    let command = mongodump_command(
+      Path::new("/x/mongodump"),
+      &profile,
+      "shop",
+      Some(40123),
+      Path::new("/tmp/o"),
+    );
+    assert!(
+      args(&command).iter().all(|arg| !arg.starts_with("--username")),
+      "{:?}",
+      args(&command)
+    );
+    assert_eq!(
+      uri_of(&command),
+      "mongodb://127.0.0.1:40123/?directConnection=true&authMechanism=MONGODB-X509&authSource=%24external\
+       &tls=true&tlsCAFile=%2Fcerts%2Fmy%20ca.pem&tlsCertificateKeyFile=%2Fcerts%2Fclient.pem"
+    );
+  }
+
+  /// SRV 交给工具解析；没填认证库时不写，TXT 里的 authSource 才生效。Required 只加密不校验
+  #[test]
+  fn an_srv_mongodump_leaves_the_auth_source_to_the_txt_record() {
+    let mut profile = ConnectionProfile { tls_mode: Some(TlsMode::Required), ..mongo_profile() };
+    profile.host = "cluster0.example.net".into();
+    profile.options.insert(crate::models::MONGO_SRV_OPTION.into(), "true".into());
+    let command =
+      mongodump_command(Path::new("/x/mongodump"), &profile, "shop", None, Path::new("/tmp/o"));
+    assert_eq!(uri_of(&command), "mongodb+srv://cluster0.example.net/?tls=true&tlsInsecure=true");
   }
 
   #[tokio::test]
@@ -529,7 +724,7 @@ mod tests {
     let mut profile = pg_profile();
     profile.options.insert("server".into(), "cockroachdb".into());
     let error =
-      backup_with_tool(&profile, None, Path::new("/tmp/never")).await.expect_err("refuse");
+      backup_with_tool(&profile, None, Path::new("/tmp/never"), None).await.expect_err("refuse");
     assert_eq!(error.message, BACKUP_COCKROACH);
   }
 
