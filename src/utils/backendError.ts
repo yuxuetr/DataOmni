@@ -48,6 +48,8 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_BACKUP_TOOL_MISSING: 'error.backend.backupToolMissing',
   DATAOMNI_BACKUP_TOOL_FAILED: 'error.backend.backupToolFailed',
   DATAOMNI_BACKUP_COCKROACH: 'error.backend.backupCockroach',
+  DATAOMNI_BACKUP_TIDB: 'error.backend.backupTidb',
+  DATAOMNI_BACKUP_NO_DATABASE: 'error.backend.backupNoDatabase',
   DATAOMNI_AI_NOT_IN_BUILD: 'error.backend.aiNotInBuild',
   DATAOMNI_AI_REQUEST_FAILED: 'error.backend.aiRequestFailed',
   DATAOMNI_AI_BAD_RESPONSE: 'error.backend.aiBadResponse',

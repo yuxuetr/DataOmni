@@ -6,14 +6,20 @@ import { isFileDatabase } from './databaseFiles';
 import { serverPresetOf } from './serverPresets';
 
 /**
- * 能不能在这里备份：嵌入式库用库里自带的办法；PostgreSQL 用本机的 pg_dump（找不到时任务里说装什么）。
- * CockroachDB 走 PostgreSQL 连接类型，但 pg_dump 对它不管用——它有自己的 `BACKUP` 语句
+ * 能不能在这里备份：嵌入式库用库里自带的办法；PostgreSQL / MySQL 用本机的 pg_dump / mysqldump
+ * （找不到时任务里说装什么）。CockroachDB、TiDB 走兼容的连接类型，但那两个工具对它们不管用，
+ * 各有自己的办法（`BACKUP`、Dumpling）；mysqldump 一次备份一个库，连接上没填库名就不给入口
  */
-export function backupSupported(connection: Pick<ConnectionProfile, 'db_type' | 'options'>): boolean {
+export function backupSupported(connection: Pick<ConnectionProfile, 'db_type' | 'options' | 'database'>): boolean {
   if (isFileDatabase(connection.db_type)) {
     return true;
   }
-  return connection.db_type === DatabaseType.PostgreSQL && serverPresetOf(connection) !== 'cockroachdb';
+  if (connection.db_type === DatabaseType.PostgreSQL) {
+    return serverPresetOf(connection) !== 'cockroachdb';
+  }
+  return connection.db_type === DatabaseType.MySQL
+    && serverPresetOf(connection) !== 'tidb'
+    && !!connection.database?.trim();
 }
 
 /**
@@ -21,17 +27,20 @@ export function backupSupported(connection: Pick<ConnectionProfile, 'db_type' | 
  * DuckDB 的备份是个目录，不带扩展名——带 `.duckdb` 会让人以为它能直接打开
  */
 export function backupName(databasePath: string, dbType: DatabaseType, now: Date = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+    + `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  // 网络库的 database 是库名不是路径，库名里的点也不是扩展名；pg_dump 的 custom 格式惯用 .dump
+  if (dbType === DatabaseType.PostgreSQL) {
+    return `${databasePath}-backup-${stamp}.dump`;
+  }
+  if (dbType === DatabaseType.MySQL) {
+    return `${databasePath}-backup-${stamp}.sql`;
+  }
   const fileName = databasePath.split(/[\\/]/).pop() || 'database';
   const dot = fileName.lastIndexOf('.');
   const base = dot > 0 ? fileName.slice(0, dot) : fileName;
   const extension = dot > 0 ? fileName.slice(dot) : '.db';
-  const pad = (value: number) => String(value).padStart(2, '0');
-  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
-    + `-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  if (dbType === DatabaseType.PostgreSQL) {
-    // 网络库的 database 是库名不是路径；pg_dump 的 custom 格式惯用 .dump
-    return `${base}-backup-${stamp}.dump`;
-  }
   return dbType === DatabaseType.DuckDB ? `${base}-backup-${stamp}` : `${base}-backup-${stamp}${extension}`;
 }
 

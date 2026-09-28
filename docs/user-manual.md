@@ -883,7 +883,7 @@ TiDB 上同时改列和改表名会拆成两条语句（它不收一条 ALTER �
 流式导出在后台任务里跑，有进度、能取消、失败能重试。取消或中途失败不会留下一份
 看上去完整的文件。
 
-### 备份（SQLite、DuckDB、PostgreSQL）
+### 备份（SQLite、DuckDB、PostgreSQL、MySQL）
 
 连接信息（工作台头部的「信息」）底部，或命令面板「备份数据库…」。选好位置后在后台任务里跑：
 
@@ -896,8 +896,14 @@ TiDB 上同时改列和改表名会拆成两条语句（它不收一条 ALTER �
   `pg_restore -d <目标库> <文件>`。要先装 PostgreSQL 客户端（macOS：`brew install libpq`）；找不到时任务里会说。
   密码只经环境变量交给 pg_dump，不出现在命令行上；配了 SSH 隧道的连接照样能备份。
   CockroachDB 不行，请用它自己的 `BACKUP` 语句。
+- **MySQL / MariaDB**：调用本机的 `mysqldump`，备份连接上填的那一个库，写成 SQL 文本（`.sql`）；
+  用一致性快照（`--single-transaction`），不锁表，存储过程、触发器、二进制列都在里面。恢复：先建好目标库，再
+  `mysql <目标库> < <文件>`。要先装 MySQL 客户端（macOS：`brew install mysql-client`）；MariaDB 自己的
+  `mariadb-dump` 也认。连接上没填库名时不给这个按钮。密码同样只经环境变量传，SSH 隧道照样能用。
+  用的是 MariaDB 的客户端时，「要求 TLS」会按「验证证书」处理：它没有「只加密不验证」这一档，
+  而不验证时连不上 TLS 会悄悄退回明文。TiDB 不行（一致性快照那一步失败），请用它的 Dumpling 或 BR。
 
-备份跑起来就打不断，任务面板上没有取消按钮。MySQL、MongoDB 的备份还没有，请用各家的官方工具。
+备份跑起来就打不断，任务面板上没有取消按钮。MongoDB 的备份还没有，请用 `mongodump`。
 
 ## ER 关系图
 

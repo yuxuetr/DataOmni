@@ -366,7 +366,8 @@ pub async fn export_query_to_file(
   result
 }
 
-/// 备份到 `path`：SQLite 的库文件、DuckDB 的导出目录、PostgreSQL 的 pg_dump（custom 格式）。
+/// 备份到 `path`：SQLite 的库文件、DuckDB 的导出目录、PostgreSQL 的 pg_dump（custom 格式）、
+/// MySQL / MariaDB 的 mysqldump（SQL 文本）。
 /// 别的网络库还没有，见 `services::backup` 开头
 // 参数都是 Tauri 注入的 State，理由同 `export_query_to_file`
 #[allow(clippy::too_many_arguments)]
@@ -383,8 +384,8 @@ pub async fn backup_database(
   clickhouse: State<'_, ClickHouseRegistry>,
 ) -> Result<crate::services::backup::BackupKind, QueryError> {
   let tunnel_port = tunnels.local_port(&connection_id).await;
-  // PostgreSQL 走 pg_dump：要的是补上凭据的 profile（主机、用户、TLS），不是连接池
-  let (connection_string, postgres_profile) = {
+  // PostgreSQL / MySQL 走外部工具：要的是补上凭据的 profile（主机、用户、TLS），不是连接池
+  let (connection_string, tool_profile) = {
     let connection_service_guard = connection_service_state
       .lock()
       .map_err(|e| QueryError::message(format!("{SERVICE_STATE_UNAVAILABLE}: {e}")))?;
@@ -393,7 +394,10 @@ pub async fn backup_database(
     let profile = service
       .get_connection(&connection_id)
       .ok_or_else(|| QueryError::message(CONNECTION_NOT_FOUND))?;
-    let postgres_profile = if profile.db_type == crate::models::DatabaseType::PostgreSQL {
+    let tool_profile = if matches!(
+      profile.db_type,
+      crate::models::DatabaseType::PostgreSQL | crate::models::DatabaseType::MySQL
+    ) {
       Some(service.resolve_for_connection(profile).map_err(QueryError::message)?)
     } else {
       None
@@ -401,10 +405,10 @@ pub async fn backup_database(
     let connection_string = service
       .resolve_connection_string(&connection_id, tunnel_port)
       .map_err(QueryError::message)?;
-    (connection_string, postgres_profile)
+    (connection_string, tool_profile)
   };
-  if let Some(profile) = postgres_profile {
-    return crate::services::backup::backup_postgres(
+  if let Some(profile) = tool_profile {
+    return crate::services::backup::backup_with_tool(
       &profile,
       tunnel_port,
       std::path::Path::new(&path),

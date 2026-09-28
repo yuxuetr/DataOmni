@@ -278,7 +278,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
 
   const runBackup = async (id: string, payload: BackupTaskPayload) => {
     try {
-      const kind = await invoke<'sqlite-file' | 'duckdb-directory' | 'postgres-dump'>('backup_database', {
+      const kind = await invoke<'sqlite-file' | 'duckdb-directory' | 'postgres-dump' | 'mysql-dump'>('backup_database', {
         connectionId: payload.connectionId,
         path: payload.path
       });
@@ -289,7 +289,9 @@ export const useTaskStore = create<TaskState>((set, get) => {
             ? 'backup.restoreSqlite'
             : kind === 'postgres-dump'
               ? 'backup.restorePostgres'
-              : 'backup.restoreDuckdb'
+              : kind === 'mysql-dump'
+                ? 'backup.restoreMysql'
+                : 'backup.restoreDuckdb'
         ))
       ]);
       // 备份写的是新文件 / 新目录，重跑不会往库里重复写东西

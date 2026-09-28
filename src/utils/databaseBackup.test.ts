@@ -11,14 +11,20 @@ describe('backupName', () => {
     expect(backupName('/data/noext', DatabaseType.SQLite, NOW)).toBe('noext-backup-20260928-000509.db');
   });
 
-  it('PostgreSQL 用库名，扩展名是 .dump（库名里带点也不当扩展名）', () => {
+  it('网络库用库名，库名里带点也不当扩展名：PostgreSQL 是 .dump，MySQL 是 .sql', () => {
     expect(backupName('shop', DatabaseType.PostgreSQL, NOW)).toBe('shop-backup-20260928-000509.dump');
+    expect(backupName('shop.v2', DatabaseType.PostgreSQL, NOW)).toBe('shop.v2-backup-20260928-000509.dump');
+    expect(backupName('shop.v2', DatabaseType.MySQL, NOW)).toBe('shop.v2-backup-20260928-000509.sql');
   });
 
-  it('CockroachDB 走 PostgreSQL 连接类型，但不给备份入口', () => {
+  it('CockroachDB、TiDB 走兼容的连接类型，但不给备份入口；MySQL 没填库名也不给', () => {
     expect(backupSupported({ db_type: DatabaseType.PostgreSQL, options: {} })).toBe(true);
     expect(backupSupported({ db_type: DatabaseType.PostgreSQL, options: { server: 'cockroachdb' } })).toBe(false);
-    expect(backupSupported({ db_type: DatabaseType.MySQL, options: {} })).toBe(false);
+    expect(backupSupported({ db_type: DatabaseType.MySQL, options: {}, database: 'shop' })).toBe(true);
+    expect(backupSupported({ db_type: DatabaseType.MySQL, options: { server: 'mariadb' }, database: 'shop' })).toBe(true);
+    expect(backupSupported({ db_type: DatabaseType.MySQL, options: { server: 'tidb' }, database: 'test' })).toBe(false);
+    expect(backupSupported({ db_type: DatabaseType.MySQL, options: {}, database: ' ' })).toBe(false);
+    expect(backupSupported({ db_type: DatabaseType.MongoDB, options: {}, database: 'shop' })).toBe(false);
     expect(backupSupported({ db_type: DatabaseType.SQLite, options: {} })).toBe(true);
   });
 

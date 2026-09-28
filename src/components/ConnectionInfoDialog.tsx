@@ -108,7 +108,9 @@ export function ConnectionInfoDialog({ connection, session, onClose }: Connectio
                 ? 'backup.hintDuckdb'
                 : connection.db_type === 'postgresql'
                   ? 'backup.hintPostgres'
-                  : 'backup.hintSqlite')}
+                  : connection.db_type === 'mysql'
+                    ? 'backup.hintMysql'
+                    : 'backup.hintSqlite')}
             </p>
             <button
               type="button"

@@ -4575,7 +4575,7 @@ async fn postgres_backup_with_pg_dump_keeps_the_rows() {
   let dir = std::env::temp_dir().join(format!("dataomni-pgdump-{}", std::process::id()));
   std::fs::create_dir_all(&dir).expect("temp dir");
   let target = dir.join("backup.dump");
-  match dataomni_lib::services::backup::backup_postgres(&profile, None, &target).await {
+  match dataomni_lib::services::backup::backup_with_tool(&profile, None, &target).await {
     Err(error)
       if error.message.starts_with(dataomni_lib::services::backup::BACKUP_TOOL_MISSING) =>
     {
@@ -4603,4 +4603,96 @@ async fn postgres_backup_with_pg_dump_keeps_the_rows() {
   assert!(text.contains("O'Brien") && text.contains("中文"), "{text}");
   std::fs::remove_dir_all(&dir).ok();
   sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+}
+
+/// mysqldump 备份后用 `mysql` 灌进一个新库，值原样回来才算备份成立（TODOs A6c）。
+/// TiDB 上钉住的是「为什么拒绝」：`--single-transaction` 的 SAVEPOINT 失败，哪天它好了这条会红
+#[tokio::test]
+async fn mysql_backup_with_mysqldump_restores_into_a_new_database() {
+  use dataomni_lib::services::backup;
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  let flavor = mysql_flavor(&pool).await;
+  let table = "dataomni_backup_probe";
+  for statement in [
+    format!("DROP TABLE IF EXISTS {table}"),
+    format!("CREATE TABLE {table} (id int PRIMARY KEY, label varchar(20), data varbinary(4))"),
+    format!("INSERT INTO {table} VALUES (1, 'O''Brien', 0x00ff), (2, '中文', NULL)"),
+  ] {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare backup fixture");
+  }
+
+  // mysql://user:password@host:port/database（密码里的特殊字符按百分号编码）
+  let rest = url.split_once("://").map(|(_, rest)| rest).expect("scheme");
+  let (credentials, address) = rest.rsplit_once('@').expect("credentials");
+  let (username, password) = credentials.split_once(':').unwrap_or((credentials, ""));
+  let (host_port, database) = address.split_once('/').expect("database");
+  let database = database.split('?').next().unwrap_or_default().to_string();
+  let (host, port) = host_port.rsplit_once(':').expect("port");
+  let profile = dataomni_lib::models::ConnectionProfile {
+    db_type: dataomni_lib::models::DatabaseType::MySQL,
+    host: host.to_string(),
+    port: port.parse().expect("port number"),
+    database: Some(database.clone()),
+    username: urlencoding::decode(username).expect("user").into_owned(),
+    password: urlencoding::decode(password).expect("password").into_owned(),
+    tls_mode: Some(dataomni_lib::models::TlsMode::Preferred),
+    ..Default::default()
+  };
+
+  let dir = std::env::temp_dir().join(format!("dataomni-mysqldump-{}", std::process::id()));
+  std::fs::create_dir_all(&dir).expect("temp dir");
+  let target = dir.join("backup.sql");
+  let result = backup::backup_with_tool(&profile, None, &target).await;
+  if let Err(error) = &result {
+    if error.message.starts_with(backup::BACKUP_TOOL_MISSING) {
+      eprintln!("本机没有 mysqldump，跳过");
+      return;
+    }
+  }
+  if flavor == MysqlFlavor::TiDb {
+    let error = result.expect_err("TiDB 上 mysqldump 能跑通了，回来重估 BACKUP_TIDB");
+    assert!(error.message.contains("SAVEPOINT"), "{}", error.message);
+    assert!(!target.exists() && !dir.join("backup.sql.part").exists(), "失败时不留半份备份");
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+    return;
+  }
+  assert_eq!(result.expect("backup"), backup::BackupKind::MysqlDump);
+  let text = std::fs::read_to_string(&target).expect("read dump");
+  assert!(text.contains(&format!("CREATE TABLE `{table}`")), "{}", &text[..text.len().min(400)]);
+
+  // 用 mysql 客户端恢复进一个新库：和手册里写的恢复步骤是同一条路
+  let restored = "dataomni_backup_restored";
+  sqlx::query(&format!("DROP DATABASE IF EXISTS {restored}")).execute(&pool).await.expect("drop");
+  sqlx::query(&format!("CREATE DATABASE {restored}")).execute(&pool).await.expect("create");
+  let client = backup::find_tool("mysql")
+    .or_else(|| backup::find_tool("mariadb"))
+    .expect("mysql 客户端与 mysqldump 装在一起");
+  let status = std::process::Command::new(client)
+    .arg("--no-defaults")
+    .arg(format!("--host={host}"))
+    .arg(format!("--port={port}"))
+    .arg("--protocol=TCP")
+    .arg(format!("--user={}", profile.username))
+    .arg(restored)
+    .env("MYSQL_PWD", &profile.password)
+    .stdin(std::fs::File::open(&target).expect("open dump"))
+    .status()
+    .expect("run mysql");
+  assert!(status.success(), "恢复失败");
+  let rows: Vec<(i32, Option<String>, Option<String>)> =
+    sqlx::query_as(&format!("SELECT id, label, HEX(data) FROM {restored}.{table} ORDER BY id"))
+      .fetch_all(&pool)
+      .await
+      .expect("read restored");
+  assert_eq!(
+    rows,
+    vec![(1, Some("O'Brien".into()), Some("00FF".into())), (2, Some("中文".into()), None)]
+  );
+  sqlx::query(&format!("DROP DATABASE IF EXISTS {restored}")).execute(&pool).await.ok();
+  sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  std::fs::remove_dir_all(&dir).ok();
 }
