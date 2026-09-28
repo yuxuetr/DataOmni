@@ -119,7 +119,10 @@
   - 门：三条单测（密码不在参数与环境里、X.509 的 URI、SRV 不写 authSource）与无库名拒绝；真库用例备份后 `mongorestore`
     换库名灌回、文档相同，口令错被服务端拒，X.509 备份得出；不喂密码变红。打包版（`open --env PATH=…` 启动）
     右键备份 `dataomni_test`，恢复到新库 30 个集合文档数逐一相同。
-  - 未验：MariaDB 客户端的 mysqldump 只在容器里手跑过参数，没经过应用本身（本机装的是 Oracle 版）。
+  - MariaDB 客户端（2026-09-28 补验）：mariadb-dump 13.0.2（Homebrew bottle 只解压、改写 openssl 路径，不安装）放在 PATH 最前，
+    真库用例经 `backup_with_tool` 对 MariaDB 11.4、MySQL 8.4 备份灌回都过，TiDB 上同样钉住 SAVEPOINT 失败。
+    反向：把版本识别改成永远 Oracle，MariaDB 11.4 上红（`unknown variable 'set-gtid-purged=OFF'`）。
+    要这么跑：MySQL 8 的 `caching_sha2_password` 插件在 bottle 的 `lib/plugin`，得设 `MARIADB_PLUGIN_DIR`（装好的 Homebrew 版不需要）。
 - [ ] ~~A7 框架代码生成（Prisma / TypeORM / JPA）~~ **当前版本不做**
   - 确定性映射，不用 AI；重估条件：A2 落地后先只做 Prisma 一种
 - [ ] ~~A8 DataOmni 作为 MCP 服务~~ **当前版本不做**
