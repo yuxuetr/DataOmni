@@ -45,7 +45,7 @@ pub fn ai_save_key(key: String) -> Result<(), String> {
   #[cfg(feature = "ai")]
   {
     use crate::services::connection_service::{
-      credential_entry, CREDENTIAL_DELETE_FAILED, CREDENTIAL_SAVE_FAILED,
+      credential_entry, describe_credential_write_failure, CREDENTIAL_DELETE_FAILED,
     };
     let entry = credential_entry(AI_KEY_ACCOUNT)?;
     let key = key.trim();
@@ -55,7 +55,7 @@ pub fn ai_save_key(key: String) -> Result<(), String> {
         Err(error) => Err(format!("{CREDENTIAL_DELETE_FAILED}: {error}")),
       };
     }
-    entry.set_password(key).map_err(|error| format!("{CREDENTIAL_SAVE_FAILED}: {error}"))
+    entry.set_password(key).map_err(|error| describe_credential_write_failure(&error))
   }
   #[cfg(not(feature = "ai"))]
   {

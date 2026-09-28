@@ -42,6 +42,10 @@ pub const SSH_TUNNEL_NOT_ESTABLISHED: &str = "DATAOMNI_SSH_TUNNEL_NOT_ESTABLISHE
 /// 系统钥匙串打不开：Linux 上没装 Secret Service、或者会话不带钥匙串
 pub const CREDENTIAL_STORE_UNAVAILABLE: &str = "DATAOMNI_CREDENTIAL_STORE_UNAVAILABLE";
 pub const CREDENTIAL_SAVE_FAILED: &str = "DATAOMNI_CREDENTIAL_SAVE_FAILED";
+/// 钥匙串在，但这次用不了：锁着而解锁框被取消，或者（Linux）还没有默认的密钥环。
+/// 与 [`CREDENTIAL_STORE_UNAVAILABLE`] 分开，是因为该做的事不同：这里再连一次、在弹框里
+/// 解锁就行，不用重启应用（Ubuntu 24.04 + gnome-keyring 上验过）
+pub const CREDENTIAL_STORE_LOCKED: &str = "DATAOMNI_CREDENTIAL_STORE_LOCKED";
 pub const CREDENTIAL_DELETE_FAILED: &str = "DATAOMNI_CREDENTIAL_DELETE_FAILED";
 /// 钥匙串里没有这条连接的密码。保存过密码的连接才会走到这里
 pub const CREDENTIAL_MISSING: &str = "DATAOMNI_CREDENTIAL_MISSING";
@@ -70,7 +74,16 @@ pub(crate) fn describe_credential_read_failure(error: &keyring::Error) -> String
   match error {
     keyring::Error::NoEntry => CREDENTIAL_MISSING.to_string(),
     keyring::Error::PlatformFailure(cause) => format!("{CREDENTIAL_STORE_REJECTED}: {cause}"),
+    keyring::Error::NoStorageAccess(cause) => format!("{CREDENTIAL_STORE_LOCKED}: {cause}"),
     other => format!("{CREDENTIAL_STORE_UNAVAILABLE}: {other}"),
+  }
+}
+
+/// 写入失败同理：锁着 / 没有默认密钥环单独说，其余照原话
+pub(crate) fn describe_credential_write_failure(error: &keyring::Error) -> String {
+  match error {
+    keyring::Error::NoStorageAccess(cause) => format!("{CREDENTIAL_STORE_LOCKED}: {cause}"),
+    other => format!("{CREDENTIAL_SAVE_FAILED}: {other}"),
   }
 }
 
@@ -80,7 +93,7 @@ impl CredentialStore for SystemCredentialStore {
   fn set_password(&self, profile_id: &str, password: &str) -> Result<(), String> {
     credential_entry(profile_id)?
       .set_password(password)
-      .map_err(|error| format!("{CREDENTIAL_SAVE_FAILED}: {error}"))
+      .map_err(|error| describe_credential_write_failure(&error))
   }
 
   fn get_password(&self, profile_id: &str) -> Result<String, String> {
@@ -936,6 +949,23 @@ mod tests {
     assert!(message.starts_with(CREDENTIAL_STORE_UNAVAILABLE), "{message}");
     assert!(message.contains("org.freedesktop.secrets was not provided"), "{message}");
     assert!(!message.contains("No default store"), "{message}");
+  }
+
+  // gnome-keyring 锁着而解锁框被取消（原话 "prompt dismissed"），或者还没有默认的
+  // 密钥环（原话 "result not returned from SS API"）：读和写都归到「锁着」那一条
+  #[test]
+  fn a_locked_store_is_told_apart_from_a_missing_one() {
+    let locked =
+      || keyring::Error::NoStorageAccess(Box::new(std::io::Error::other("prompt dismissed")));
+
+    let read = describe_credential_read_failure(&locked());
+    let write = describe_credential_write_failure(&locked());
+
+    assert!(read.starts_with(CREDENTIAL_STORE_LOCKED), "{read}");
+    assert!(write.starts_with(CREDENTIAL_STORE_LOCKED), "{write}");
+    assert!(read.contains("prompt dismissed"), "{read}");
+    let other = keyring::Error::BadEncoding(vec![0xff]);
+    assert!(describe_credential_write_failure(&other).starts_with(CREDENTIAL_SAVE_FAILED));
   }
 
   #[test]

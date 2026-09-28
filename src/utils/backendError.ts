@@ -40,6 +40,7 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_SERVICE_NOT_READY: 'error.backend.serviceNotReady',
   DATAOMNI_CREDENTIAL_STORE_UNAVAILABLE: 'error.backend.credentialStoreUnavailable',
   DATAOMNI_CREDENTIAL_SAVE_FAILED: 'error.backend.credentialSaveFailed',
+  DATAOMNI_CREDENTIAL_STORE_LOCKED: 'error.backend.credentialStoreLocked',
   DATAOMNI_CREDENTIAL_DELETE_FAILED: 'error.backend.credentialDeleteFailed',
   DATAOMNI_CREDENTIAL_MISSING: 'error.backend.credentialMissing',
   DATAOMNI_BACKUP_UNSUPPORTED: 'error.backend.backupUnsupported',

@@ -1052,6 +1052,7 @@ export const en: Translations = {
   'error.backend.serviceInitFailed': 'The connection service failed to start; the config directory may be unwritable or the config file corrupted. Details: {detail}',
   'error.backend.serviceNotReady': 'The connection service is not ready yet; try again in a moment.',
   'error.backend.credentialStoreUnavailable': 'Could not open the system keychain. On Linux a Secret Service provider such as gnome-keyring must be installed and unlocked, and DataOmni restarted afterwards. You can also leave the password unsaved and enter it on each connect. Details: {detail}',
+  'error.backend.credentialStoreLocked': 'The system keychain is locked, or unlocking it was cancelled. Try again and unlock it in the dialog that appears; there is no need to restart DataOmni. On Linux, if no dialog appears at all, there is probably no default keyring yet: create one in Passwords and Keys (Seahorse) and set it as the default. You can also leave the password unsaved and enter it on each connect. Details: {detail}',
   'error.backend.credentialSaveFailed': 'The password could not be saved to the system keychain and will not be remembered. Details: {detail}',
   'error.backend.credentialDeleteFailed': 'The password could not be removed from the system keychain and may still be stored there. Details: {detail}',
   'error.backend.credentialMissing': 'The system keychain has no password for this connection; enter it again.',
