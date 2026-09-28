@@ -271,7 +271,19 @@
 
 - [-] Windows、macOS、Linux 完成安装、升级和卸载验证
   - 未做：Windows 三件事，必须真机 / 虚拟机（MSI/NSIS 注册表、开始菜单、SmartScreen）。
-  - macOS 缺口：ad-hoc 签名被 Gatekeeper 拒（需 Developer ID + 公证）、只有 arm64、无 updater；Linux 缺口：`.rpm` 未装过、AppImage 只 extract-and-run 过、未在真实桌面会话跑。
+  - macOS 缺口：ad-hoc 签名被 Gatekeeper 拒（需 Developer ID + 公证）、只有 arm64、无 updater。
+  - Linux（2026-09-28，本机 Docker 以 amd64 模拟构建与运行，包与发版的同一份配置，带 Instant Client）：
+    - rpm（Fedora 42）：`dnf` 自动装上 `libaio`、webkit2gtk4.1；0.4.0 装好能起窗口，升到 0.4.1（Instant Client 9 个文件都在）
+      再起一次，卸载干净。**修了一处**：卸载后留下 `/usr/lib/DataOmni/instantclient` 两层空目录（tauri 的 rpm 不登记子目录），
+      加 `postRemoveScript`（`d4a6fb5`）。包名是 `data-omni`（`dnf remove data-omni`）。deb（Ubuntu 24.04）装卸干净，`libaio1t64` 自动带进来。
+    - 真实桌面会话（Ubuntu 24.04 + xfce4-session + 会话总线 + gnome-keyring，deb）：存密码进 login 密钥环、重启后免输入连上；
+      密钥环锁着时连接弹出系统解锁框，取消后再连会重新弹出，解锁即连上。**修了一处**：锁着 / 没有默认密钥环的提示
+      原先叫人「装好后重启」，实际不用重启，改成单独一条说明（`af9f7c4`）。
+    - 已知缺口（不修）：Secret Service 守护进程在应用运行中退出重启后，keyring 缓存的会话失效（`NoSession`），
+      读报的是按 macOS 写的「签名身份」那句，要重启应用。重估条件：有人报告。
+    - 没验到：AppImage 直接（FUSE）运行——Rosetta 的 binfmt 认不出 type-2 AppImage（ELF 头第 8 字节的 `AI\x02`），
+      shell 当脚本跑；这是本机模拟的限制。v0.4.0 本来就不发 AppImage（见下条），要验得在原生 x86 上跑。
+    - 仍未做：GNOME / Wayland 会话（xfce 是 X11）；CJK 与彩色 emoji 字体靠发行版桌面自带（容器里是方块）。
   - 带 Oracle 的 AppImage 不发；重估条件：AppImage 打包可排除目录不改 ELF，且 `sha256sum` 比对 AppDir 与 `src-tauri/vendor/instantclient` 一致。
 
 ## 发布里程碑
