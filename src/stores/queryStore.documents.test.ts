@@ -215,6 +215,30 @@ describe('SQL 文档分片', () => {
     expect(selectSqlDocumentHasUnsavedContent(useQueryStore.getState(), 'missing')).toBe(false);
   });
 
+  /**
+   * 「执行当前 / 执行选中」拿到的是编辑器里的原文（不带分号），解析出的语句带分号。
+   * 两边原来直接比字符串，永远对不上，于是每执行一次就在列表末尾多挂一条同样的语句：
+   * 计数多一，而那条结果在下一次编辑时因为对不上又被丢掉。
+   */
+  it('执行编辑器里已解析的语句时复用那一条，不另挂一条', async () => {
+    invokeMock.mockResolvedValue({ kind: 'affected', affected_rows: 0, execution_time: 1 });
+    const store = useQueryStore.getState();
+    store.openDocument('tab-a');
+    store.setSqlInput('select 1;\nselect 2;');
+    store.parseStatements();
+
+    await useQueryStore.getState().executeSql('select 1');
+
+    const { statements } = selectActiveSqlDocument(useQueryStore.getState());
+    expect(statements.map((statement) => statement.sql)).toEqual(['select 1;', 'select 2;']);
+    expect(statements[0].result).toBeDefined();
+
+    // 再编辑一次：结果要跟着那条语句留下来
+    useQueryStore.getState().setSqlInput('select 1;\nselect 3;');
+    useQueryStore.getState().parseStatements();
+    expect(selectActiveSqlDocument(useQueryStore.getState()).statements[0].result).toBeDefined();
+  });
+
   it('没有活动文档时不执行也不崩溃', async () => {
     useQueryStore.setState({ activeDocumentId: null });
 

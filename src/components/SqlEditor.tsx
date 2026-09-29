@@ -46,6 +46,7 @@ import {
   getSqlStatementRanges,
   splitSqlStatements
 } from '../utils/sqlStatements';
+import { withTrailingSemicolon } from '../utils/queryStatements';
 import { planFormat, sqlFormatterLanguage } from '../utils/formatSql';
 import { SQL_FILE_FILTER, linkSqlFile, planSqlSave, suggestSqlFileName } from '../utils/sqlFile';
 import { useWorkspaceStore } from '../stores/workspaceStore';
@@ -230,7 +231,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
 
     runGuarded([current.sql], () => {
       const parsedStatement = statements[current.index];
-      void (parsedStatement?.sql === current.sql
+      void (parsedStatement?.sql === withTrailingSemicolon(current.sql)
         ? executeStatement(parsedStatement.id)
         : executeSql(current.sql));
     });

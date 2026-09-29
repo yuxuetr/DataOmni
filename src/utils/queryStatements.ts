@@ -96,6 +96,10 @@ export function clearSqlStatementResult(statement: SqlStatement): SqlStatement {
   };
 }
 
-function withTrailingSemicolon(sql: string): string {
+/**
+ * 语句在列表里的规范写法：以分号结尾。解析出的语句是这个写法，拿编辑器原文去找
+ * 列表里的那一条之前也要先过一遍，否则永远对不上。
+ */
+export function withTrailingSemicolon(sql: string): string {
   return sql.endsWith(';') ? sql : `${sql};`;
 }

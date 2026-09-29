@@ -37,7 +37,8 @@ import {
   clearSqlStatementResult,
   completeSqlStatement,
   failSqlStatement,
-  reconcileSqlStatements
+  reconcileSqlStatements,
+  withTrailingSemicolon
 } from '../utils/queryStatements';
 import { describeResultEditability, parseSingleTableSelect } from '../utils/resultEditability';
 import { loadTableMetadata } from '../utils/tableMetadata';
@@ -656,10 +657,11 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   },
 
   executeSql: async (sql: string) => {
-    const normalizedSql = sql.trim();
-    if (!normalizedSql) {
+    const trimmedSql = sql.trim();
+    if (!trimmedSql) {
       return false;
     }
+    const normalizedSql = withTrailingSemicolon(trimmedSql);
 
     const documentId = get().activeDocumentId;
     if (!documentId) {
