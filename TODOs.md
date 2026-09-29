@@ -283,7 +283,11 @@
       读报的是按 macOS 写的「签名身份」那句，要重启应用。重估条件：有人报告。
     - 没验到：AppImage 直接（FUSE）运行——Rosetta 的 binfmt 认不出 type-2 AppImage（ELF 头第 8 字节的 `AI\x02`），
       shell 当脚本跑；这是本机模拟的限制。v0.4.0 本来就不发 AppImage（见下条），要验得在原生 x86 上跑。
-    - 仍未做：GNOME / Wayland 会话（xfce 是 X11）；CJK 与彩色 emoji 字体靠发行版桌面自带（容器里是方块）。
+    - GNOME Wayland 会话（2026-09-29，Fedora 42 + GNOME Shell 48 无头 Wayland，rpm 0.4.1 → 0.4.4 连升三次）：应用是原生 Wayland
+      客户端（不走 XWayland），GTK 客户端侧标题栏的最大化 / 还原可用；GTK 文件对话框（无 portal）打开 SQLite 文件；Wayland 剪贴板
+      粘贴中文 SQL 并执行；外观「跟随系统」随 GNOME 的深色设置实时切换。**修了两处**（都不是 Wayland 特有的）：
+      「执行当前 / 选中」每执行一次多挂一条同样的语句（`28f6210`）；1200 宽窗口里结果头与表数据工具栏折字（`855fdc7`）。
+    - 仍未做：真实输入法（虚拟键盘注入不了键位表之外的字，中文是经剪贴板进去的）；CJK 与彩色 emoji 字体靠发行版桌面自带。
   - 带 Oracle 的 AppImage 不发；重估条件：AppImage 打包可排除目录不改 ELF，且 `sha256sum` 比对 AppDir 与 `src-tauri/vendor/instantclient` 一致。
 
 ## 发布里程碑
