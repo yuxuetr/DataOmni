@@ -903,7 +903,8 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
           )}
         </div>
         
-        <div className="flex items-center space-x-2">
+        {/* 不许被挤：左边的 SQL 一长，按钮里的「执行」会被压成两行 */}
+        <div className="flex shrink-0 items-center space-x-2">
           {/* 执行状态指示器 */}
           {statement.isExecuting && (
             <Loader className="animate-spin text-accent" size={16} />
