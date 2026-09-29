@@ -94,7 +94,7 @@ export function AiSettingsSection() {
           <input
             value={ai.model}
             onChange={(event) => setAi({ model: event.target.value })}
-            placeholder={ai.protocol === 'anthropic' ? 'claude-sonnet-5' : 'deepseek-chat'}
+            placeholder={ai.protocol === 'anthropic' ? 'claude-sonnet-5' : 'deepseek-flash'}
             className={INPUT_CLASS}
             {...PLAIN_TEXT_INPUT}
           />

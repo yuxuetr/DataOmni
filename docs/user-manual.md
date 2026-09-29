@@ -941,7 +941,7 @@ TiDB 与 OceanBase 上同时改列和改表名会拆成两条语句（它们不�
 可选功能，默认关。先到「设置 → AI 设计」：
 
 - 勾上「启用 AI 设计」；「接口」选 **OpenAI 兼容**（DeepSeek、通义千问、智谱、Kimi、本地 Ollama）或
-  **Anthropic**；「地址」写到 `/chat/completions` 之前那一段（DeepSeek 是 `https://api.deepseek.com`，
+  **Anthropic**；「地址」写到 `/chat/completions` 之前那一段（DeepSeek 是 `https://api.deepseek.com`、模型 `deepseek-flash`，
   Ollama 是 `http://localhost:11434/v1`；Anthropic 写 `https://api.anthropic.com`）；「模型」填模型名。
 - 「API Key」填了按保存，存进系统钥匙串，界面上只显示「已存在钥匙串里」。清空那一格再按就是删除。
 

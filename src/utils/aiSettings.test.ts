@@ -32,8 +32,8 @@ describe('aiSettings', () => {
   });
 
   it('开着且填了地址与模型才算配好', () => {
-    expect(aiConfigured({ ...DEFAULT_AI_SETTINGS, enabled: true, model: 'deepseek-chat' })).toBe(true);
+    expect(aiConfigured({ ...DEFAULT_AI_SETTINGS, enabled: true, model: 'deepseek-flash' })).toBe(true);
     expect(aiConfigured({ ...DEFAULT_AI_SETTINGS, enabled: true, model: ' ' })).toBe(false);
-    expect(aiConfigured({ ...DEFAULT_AI_SETTINGS, model: 'deepseek-chat' })).toBe(false);
+    expect(aiConfigured({ ...DEFAULT_AI_SETTINGS, model: 'deepseek-flash' })).toBe(false);
   });
 });
