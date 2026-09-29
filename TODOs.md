@@ -287,7 +287,13 @@
       客户端（不走 XWayland），GTK 客户端侧标题栏的最大化 / 还原可用；GTK 文件对话框（无 portal）打开 SQLite 文件；Wayland 剪贴板
       粘贴中文 SQL 并执行；外观「跟随系统」随 GNOME 的深色设置实时切换。**修了两处**（都不是 Wayland 特有的）：
       「执行当前 / 选中」每执行一次多挂一条同样的语句（`28f6210`）；1200 宽窗口里结果头与表数据工具栏折字（`855fdc7`）。
-    - 仍未做：真实输入法（虚拟键盘注入不了键位表之外的字，中文是经剪贴板进去的）；CJK 与彩色 emoji 字体靠发行版桌面自带。
+    - 真实输入法（2026-09-29，ibus-libpinyin，Wayland 与 X11 两条路径各测一遍）：SQL 编辑器里拼音上屏、候选框跟随、选字中的回车只上屏字母
+      不换行；行编辑与筛选框里选字中的回车不提交 / 不应用，平常的回车照常提交与应用；命令面板里选字中的 Esc 只取消选字。
+      Linux 本来就不受影响（Wayland 下按键在合成器里就交给了输入法，X11 下 WebKitGTK 不把它报成 Enter）。**修了一处**（`e2216b7`）：
+      全仓库没有一处问过输入法，而 macOS 的 WKWebView 会把确认候选那一下报成 `key: 'Enter'`、`isComposing: false`、`keyCode: 229`
+      （WebKit bug 311717，新版已修）——选字时会提交单元格、执行命令、关掉对话框。加 `isImeKeyEvent`，36 个文件的 Enter / Esc 先问它，
+      门在 `shortcuts.test.ts`（判断这两个键的文件必须调用它）。macOS 上没有用真输入法复现（要改本机输入源），靠 229 的单测钉住。
+    - 仍未做：CJK 与彩色 emoji 字体靠发行版桌面自带。
   - 带 Oracle 的 AppImage 不发；重估条件：AppImage 打包可排除目录不改 ELF，且 `sha256sum` 比对 AppDir 与 `src-tauri/vendor/instantclient` 一致。
 
 ## 发布里程碑
