@@ -41,6 +41,14 @@ describe('十六进制', () => {
     expect(isCompleteHex('de ad be ef')).toBe(true);
   });
 
+  it('认网格里显示的 0x 前缀：照着显示的值抄进来不该被说成「位数不对」', () => {
+    expect(normalizeHex('0xDEAD beef')).toBe('DEADbeef');
+    expect(isCompleteHex('0xdeadbeef')).toBe(true);
+    expect(binaryLiteral('0xCAFE', 'oracle')).toBe("HEXTORAW('cafe')");
+    // 只认开头那一个：中间的 x 仍然不是十六进制
+    expect(isCompleteHex('de0xad')).toBe(false);
+  });
+
   it('奇数位不算完整', () => {
     // 最后半个字节该补高位还是低位说不清，两种补法是两个不同的值
     expect(isCompleteHex('abc')).toBe(false);

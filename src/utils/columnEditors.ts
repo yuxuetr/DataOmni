@@ -47,9 +47,12 @@ export function columnEditorKind(dataType: string, dialect?: SqlIdentifierDialec
   return EDITOR_BY_TOKEN[token] ?? 'text';
 }
 
-/** 十六进制里允许用空白分组，`de ad be ef` 和 `deadbeef` 是同一个值 */
+/**
+ * 十六进制里允许用空白分组，`de ad be ef` 和 `deadbeef` 是同一个值；
+ * 开头的 `0x` 也认——网格里就是这么显示的，照着抄进来不该被拒
+ */
 export function normalizeHex(text: string): string {
-  return text.replace(/\s+/g, '');
+  return text.replace(/\s+/g, '').replace(/^0x/i, '');
 }
 
 /**
