@@ -4,6 +4,7 @@ import {
   appendLog,
   describeTask,
   formatTaskElapsed,
+  importOutcome,
   MAX_LOG_ENTRIES,
   TASK_STATUSES,
   type BackgroundTask
@@ -181,5 +182,30 @@ describe('formatTaskElapsed', () => {
 
   it('超过一分钟补零，不写成 3m 5s', () => {
     expect(formatTaskElapsed(185_000)).toBe('3m 05s');
+  });
+});
+
+describe('importOutcome', () => {
+  const summary = { cancelled: false, rolledBack: false, rowsFailed: 0 };
+
+  it('整份退回的那次是失败，不是「已完成」', () => {
+    expect(importOutcome({ ...summary, rolledBack: true, rowsFailed: 1 }, 'abort')).toBe('failed');
+  });
+
+  it('分批提交时遇错停下也是失败：文件没导完', () => {
+    expect(importOutcome({ ...summary, rowsFailed: 1 }, 'abort')).toBe('failed');
+  });
+
+  it('选了跳过，跳过几行仍算做完了', () => {
+    expect(importOutcome({ ...summary, rowsFailed: 2 }, 'skip')).toBe('succeeded');
+    expect(importOutcome({ ...summary, rowsFailed: 2 })).toBe('succeeded');
+  });
+
+  it('取消优先于退回', () => {
+    expect(importOutcome({ ...summary, cancelled: true, rolledBack: true }, 'abort')).toBe('cancelled');
+  });
+
+  it('一行没错就是成功', () => {
+    expect(importOutcome(summary, 'abort')).toBe('succeeded');
   });
 });

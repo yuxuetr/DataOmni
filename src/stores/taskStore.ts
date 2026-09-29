@@ -3,6 +3,7 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import type { ExportOptions } from '../utils/exportResult';
 import {
   appendLog,
+  importOutcome,
   isTaskActive,
   type BackgroundTask,
   type TaskKind,
@@ -211,7 +212,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
 
       finish(
         id,
-        summary.cancelled ? 'cancelled' : 'succeeded',
+        importOutcome(summary, 'mongo' in payload ? undefined : payload.onError),
         translateNow('task.detail.import', {
           read: summary.rowsRead,
           inserted: summary.rowsInserted,

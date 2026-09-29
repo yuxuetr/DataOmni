@@ -116,6 +116,24 @@ export function isTaskActive(status: TaskStatus): boolean {
 }
 
 /**
+ * 一次导入跑完之后算什么结局。
+ *
+ * 导入命令只有在连不上、读不了文件这类情况才报错；被数据库拒掉一行时它照常返回一份
+ * 总结。只看「取消了没有」就会把整份退回的那次画成绿勾的「已完成」，而日志里写着
+ * 「库里一行都没有留下」。`onError` 是 CSV 的「遇到错误行」；MongoDB 没有这个选项，
+ * 坏行本来就是跳过的
+ */
+export function importOutcome(
+  summary: { cancelled: boolean; rolledBack: boolean; rowsFailed: number },
+  onError?: 'abort' | 'skip'
+): 'succeeded' | 'failed' | 'cancelled' {
+  if (summary.cancelled) {
+    return 'cancelled';
+  }
+  return summary.rolledBack || (onError === 'abort' && summary.rowsFailed > 0) ? 'failed' : 'succeeded';
+}
+
+/**
  * 一个任务此刻能做什么。
  *
  * 两条规则值得单独说：
