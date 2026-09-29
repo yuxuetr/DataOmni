@@ -224,6 +224,14 @@ export default function TableDataViewer({
   const [commitNotice, setCommitNotice] = useState<string | null>(null);
   
   const { database, connectionId } = useQueryStore();
+  // 读走的是 SQL 标签那条会话连接。PostgreSQL 的事务一旦失败，这条连接在回滚前
+  // 什么都不执行，报出来的却是 sqlx 描述列时的一长串原话，看着像表坏了
+  const describeReadError = (err: unknown): string => {
+    const message = describeError(err);
+    return useQueryStore.getState().session?.transaction.status === 'failed'
+      ? `${t('table.readInFailedTransaction')}\n${message}`
+      : message;
+  };
   const currentTableKey = tableEditKey(connection.id, schema, tableName);
 
   /** 待提交的变更。改动不再一改一提交，全部先落在这里 */
@@ -413,7 +421,7 @@ export default function TableDataViewer({
       return loadedSchema;
     } catch (err) {
       console.error('加载表结构失败:', err);
-      setError(describeError(err));
+      setError(describeReadError(err));
       return null;
     }
   };
@@ -488,7 +496,7 @@ export default function TableDataViewer({
     } catch (err) {
       console.error('加载表数据失败:', err);
       // 原始错误必须可见，否则无从判断是类型解码、权限还是语法问题
-      setError(describeError(err));
+      setError(describeReadError(err));
     } finally {
       setLoading(false);
     }
@@ -1203,7 +1211,7 @@ export default function TableDataViewer({
         <div className="p-4 bg-danger-soft border-b border-danger-line">
           <div className="flex items-center space-x-2">
             <Info className="text-danger" size={16} />
-            <span className="text-danger text-sm">{error}</span>
+            <span className="whitespace-pre-line text-danger text-sm">{error}</span>
           </div>
         </div>
       )}

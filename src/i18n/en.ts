@@ -544,6 +544,7 @@ export const en: Translations = {
   'table.tab.data': 'Data',
   'table.tab.data.desc': 'Table rows',
   'table.sessionUnavailable': 'The database session is unavailable; reconnect first',
+  'table.readInFailedTransaction': 'The transaction in the SQL tab has failed, and this connection runs nothing more until it is rolled back. Press Roll back in the SQL tab, then refresh here.',
   'table.connectionInactive': 'This tab is bound to "{name}", which is not active. Select that connection on the left first.',
   'table.saveFailed': 'Save failed',
   'table.deleteFailed': 'Delete failed',

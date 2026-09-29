@@ -564,6 +564,7 @@ export const zh = {
   'table.tab.data': '数据',
   'table.tab.data.desc': '表数据内容',
   'table.sessionUnavailable': '数据库会话不可用，请先重新连接',
+  'table.readInFailedTransaction': 'SQL 标签里的事务已经失败，这条连接在回滚之前不再执行任何语句。到 SQL 标签按「回滚」，再刷新这里。',
   'table.connectionInactive': '此标签绑定的连接「{name}」当前未激活，请在左侧重新选择该连接后再操作',
   'table.saveFailed': '保存失败',
   'table.deleteFailed': '删除失败',
