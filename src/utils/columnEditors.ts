@@ -27,6 +27,8 @@ const EDITOR_BY_TOKEN: Record<string, ColumnEditorKind> = {
   bytea: 'binary',
   binary: 'binary',
   varbinary: 'binary',
+  // Oracle
+  raw: 'binary',
   date: 'date',
   time: 'time',
   timetz: 'time',

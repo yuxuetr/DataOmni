@@ -62,6 +62,13 @@ describe('Oracle 的 DATE', () => {
   });
 });
 
+describe('Oracle 的 RAW', () => {
+  it('是二进制：当文本写进去，Oracle 把它当十六进制转，0x 前缀直接报 ORA-01465', () => {
+    expect(columnEditorKind('RAW(8)', 'oracle')).toBe('binary');
+    expect(columnEditorKind('BLOB', 'oracle')).toBe('binary');
+  });
+});
+
 describe('binaryLiteral', () => {
   it('MySQL 与 SQLite 用 X\'...\'', () => {
     expect(binaryLiteral('DEADBEEF', 'mysql')).toBe("X'deadbeef'");
