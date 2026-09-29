@@ -647,7 +647,8 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                   key={startIndex + rowIndex}
                   className={clsx(
                     'hover:bg-surface-hover',
-                    pending?.kind === 'delete' && 'bg-danger-soft line-through opacity-70',
+                    // 划线只给数据格：操作列（最后一格）是这一行唯一还能点的撤销，划掉像是不能点
+                    pending?.kind === 'delete' && 'bg-danger-soft [&>td:not(:last-child)]:line-through [&>td:not(:last-child)]:opacity-70',
                     pending?.kind === 'update' && 'bg-accent-soft'
                   )}
                 >

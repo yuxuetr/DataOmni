@@ -1666,7 +1666,8 @@ export default function TableDataViewer({
                                 'hover:bg-surface-hover',
                                 // 排了队的行要看得见：否则「待提交 3 项」和网格上
                                 // 这几行毫无关系，用户只能靠预览去对
-                                pending?.kind === 'delete' && 'bg-danger-soft line-through opacity-70',
+                                // 划线只给数据格：操作列（最后一格）是这一行唯一还能点的撤销，划掉像是不能点
+                                pending?.kind === 'delete' && 'bg-danger-soft [&>td:not(:last-child)]:line-through [&>td:not(:last-child)]:opacity-70',
                                 pending?.kind === 'update' && 'bg-accent-soft'
                               )}
                             >
