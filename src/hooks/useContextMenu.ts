@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { clampMenuPosition } from '../utils/menuPosition';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 /**
  * 右键菜单的定位与关闭。
@@ -40,7 +41,7 @@ export function useContextMenu<T extends HTMLElement>(
     };
     const dismiss = () => onDismiss();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         onDismiss();
       }
     };

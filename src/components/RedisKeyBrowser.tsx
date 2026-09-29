@@ -23,6 +23,7 @@ import {
   type RedisScanPage,
   type RedisValue
 } from '../utils/redisKeys';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface RedisKeyBrowserProps {
   /** 逻辑库号 */
@@ -270,7 +271,7 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
                 value={patternDraft}
                 onChange={(event) => setPatternDraft(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
+                  if (event.key === 'Enter' && !isImeKeyEvent(event.nativeEvent)) {
                     event.preventDefault();
                     apply();
                   }

@@ -3,7 +3,7 @@
  */
 import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CellInputEditor } from './CellInputEditor';
 import { useLanguageStore } from '../stores/languageStore';
 import type { CellInput } from '../utils/cellInput';
@@ -65,5 +65,39 @@ describe('CellInputEditor', () => {
     act(() => typeInto(input, 'a'));
     expect(container.querySelector('input')).toBe(input);
     expect(document.activeElement).toBe(input);
+  });
+
+  // macOS 的 WKWebView 里，确认输入法候选的那一下 Enter 到的时候合成已经结束，
+  // 只剩 keyCode 229 能认出来。那一下提交的话，选字就把单元格改掉了
+  it('输入法确认候选的 Enter 不提交，平常的 Enter 提交', () => {
+    const onCommit = vi.fn();
+    const onCancel = vi.fn();
+    act(() =>
+      root.render(
+        <CellInputEditor
+          value={{ kind: 'value', value: '北京' }}
+          onChange={() => {}}
+          onCommit={onCommit}
+          onCancel={onCancel}
+          dataType="text"
+        />
+      )
+    );
+    const input = container.querySelector('input');
+    if (!input) {
+      throw new Error('no input');
+    }
+    const press = (key: string, keyCode: number) =>
+      act(() => {
+        input.dispatchEvent(new KeyboardEvent('keydown', { key, keyCode, bubbles: true }));
+      });
+
+    press('Enter', 229);
+    press('Escape', 229);
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
+
+    press('Enter', 13);
+    expect(onCommit).toHaveBeenCalledTimes(1);
   });
 });

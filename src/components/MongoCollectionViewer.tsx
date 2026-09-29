@@ -27,7 +27,7 @@ import {
   type MongoValueKind
 } from '../utils/mongoDocuments';
 import { PLAIN_TEXT_INPUT, SegmentedControl } from './FormControls';
-import { SHORTCUTS, formatShortcut, matchesShortcut } from '../utils/shortcuts';
+import { SHORTCUTS, formatShortcut, matchesShortcut, isImeKeyEvent } from '../utils/shortcuts';
 import { MongoDocumentPanel } from './MongoDocumentPanel';
 import { useConfirmPrompt } from './ConfirmPrompt';
 import { MongoExportDialog } from './MongoExportDialog';
@@ -443,7 +443,7 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
   const range = mongoPageRange(page, pageSize, documents.length, result?.has_more ?? false, aggregating ? null : total);
 
   const onQueryKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && !isImeKeyEvent(event.nativeEvent)) {
       event.preventDefault();
       applyQuery();
     }

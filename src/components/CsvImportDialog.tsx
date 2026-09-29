@@ -22,6 +22,7 @@ import { useTaskStore } from '../stores/taskStore';
 import type { TranslationKey } from '../i18n/translate';
 import { Checkbox, Field, SegmentedControl } from './FormControls';
 import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface CsvImportDialogProps {
   connectionId: string;
@@ -107,7 +108,7 @@ export function CsvImportDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         event.preventDefault();
         onClose();
       }

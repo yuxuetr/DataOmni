@@ -11,6 +11,7 @@ import {
   type FilterOperator
 } from '../utils/tableFilters';
 import type { TranslationKey } from '../i18n/translate';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface TableFilterBarProps {
   columns: ColumnInfo[];
@@ -141,7 +142,7 @@ export function TableFilterBar({
                     value={filter.value}
                     onChange={(event) => update(filter.id, { value: event.target.value })}
                     onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
+                      if (event.key === 'Enter' && !isImeKeyEvent(event.nativeEvent)) {
                         event.preventDefault();
                         onApply(filters);
                       }

@@ -4,6 +4,7 @@ import { clsx } from 'clsx';
 import { PLAIN_TEXT_INPUT } from './FormControls';
 import { useLanguageStore } from '../stores/languageStore';
 import { isRedisScore as validScore, type RedisBytes, type RedisValue } from '../utils/redisKeys';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 type Translate = ReturnType<typeof useLanguageStore.getState>['t'];
 
@@ -81,10 +82,10 @@ export function RedisValueTable({ value, encode, onChange }: RedisValueTableProp
           value={editing.draft}
           onChange={(event) => setEditing({ row, draft: event.target.value })}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && ok) {
+            if (event.key === 'Enter' && !isImeKeyEvent(event.nativeEvent) && ok) {
               event.preventDefault();
               onSubmit(editing.draft);
-            } else if (event.key === 'Escape') {
+            } else if (event.key === 'Escape' && !isImeKeyEvent(event.nativeEvent)) {
               event.preventDefault();
               event.stopPropagation();
               setEditing(null);
@@ -329,7 +330,7 @@ function StreamAddRow({ t, busy, onAdd }: { t: Translate; busy: boolean; onAdd: 
               value={text}
               onChange={(event) => update(row, column as 0 | 1, event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === 'Enter') {
+                if (event.key === 'Enter' && !isImeKeyEvent(event.nativeEvent)) {
                   event.preventDefault();
                   void add();
                 }
@@ -405,7 +406,7 @@ function AddRow({ t, busy, fields, choices, onAdd }: AddRowProps) {
           value={values[index]}
           onChange={(event) => setValues((current) => current.map((value, position) => (position === index ? event.target.value : value)))}
           onKeyDown={(event) => {
-            if (event.key === 'Enter') {
+            if (event.key === 'Enter' && !isImeKeyEvent(event.nativeEvent)) {
               event.preventDefault();
               void add();
             }

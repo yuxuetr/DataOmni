@@ -16,6 +16,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import type { TranslationKey } from '../i18n/translate';
 import { HighlightedCode } from './HighlightedCode';
 import type { CodeLanguage } from '../utils/codeHighlight';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface QueryHistoryDialogProps {
   onClose: () => void;
@@ -75,7 +76,7 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab, openLanguage = nul
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         onClose();
       }
     };
@@ -438,7 +439,7 @@ function AnnotationEditor({ entry, onSubmit, onCancel }: AnnotationEditorProps) 
         onSubmit({ name, tags: normalizeTags(tags) });
       }}
       onKeyDown={(event) => {
-        if (event.key === 'Escape') {
+        if (event.key === 'Escape' && !isImeKeyEvent(event.nativeEvent)) {
           event.stopPropagation();
           onCancel();
         }

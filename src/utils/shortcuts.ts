@@ -90,6 +90,18 @@ export function shortcutKeyEvent(
   };
 }
 
+/**
+ * 这一下是输入法的（选字、确认、取消），不是给应用的。
+ *
+ * Enter 与 Escape 在中日韩输入法里是「确认 / 取消选字」。只看 `isComposing` 不够：
+ * WebKit（macOS 的 WKWebView）先发 compositionend、再发确认那一下的 keydown，
+ * 于是那一下 `isComposing` 是 false、`key` 是 'Enter'，只有 `keyCode` 是 229
+ * （WebKit bug 311717，新版已修，旧系统上还在）。React 的合成事件传 `event.nativeEvent`。
+ */
+export function isImeKeyEvent(event: Pick<KeyboardEvent, 'isComposing' | 'keyCode'>): boolean {
+  return event.isComposing || event.keyCode === 229;
+}
+
 /** 方向键这类要和 Shift 自由组合的，只问命令键按没按 */
 export function hasCommandModifier(
   event: Pick<ShortcutEvent, 'metaKey' | 'ctrlKey'>,

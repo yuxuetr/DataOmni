@@ -6,6 +6,7 @@ import { suggestExportFileName } from '../utils/exportResult';
 import { useLanguageStore } from '../stores/languageStore';
 import { useTaskStore, type MongoExportTaskPayload } from '../stores/taskStore';
 import { Field, SegmentedControl } from './FormControls';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 type ExtendedJsonFormat = MongoExportTaskPayload['mongo']['format'];
 
@@ -46,7 +47,7 @@ export function MongoExportDialog({
   useEffect(() => {
     cancelRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         event.preventDefault();
         onClose();
       }

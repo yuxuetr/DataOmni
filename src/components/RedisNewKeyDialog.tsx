@@ -6,6 +6,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import { describeError } from '../utils/describeError';
 import { bytesToBase64 } from '../utils/redisCommandLine';
 import { REDIS_KEY_KINDS, isRedisScore, parseTtlSeconds } from '../utils/redisKeys';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 type Kind = (typeof REDIS_KEY_KINDS)[number];
 
@@ -44,7 +45,7 @@ export function RedisNewKeyDialog({ connectionString, database, timeoutMs, onClo
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !running) {
+      if (event.key === 'Escape' && !isImeKeyEvent(event) && !running) {
         event.preventDefault();
         onClose();
       }

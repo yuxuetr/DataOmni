@@ -16,6 +16,7 @@ import {
 } from '../utils/tableDdl';
 import { ColumnDraftTable } from './ColumnDraftTable';
 import { DdlPreviewDialog } from './DdlPreviewDialog';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface CreateTableDialogProps {
   connectionId: string;
@@ -87,7 +88,7 @@ export function CreateTableDialog({
   // 而语句已经发出去了
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !running) {
+      if (event.key === 'Escape' && !isImeKeyEvent(event) && !running) {
         event.preventDefault();
         onClose();
       }

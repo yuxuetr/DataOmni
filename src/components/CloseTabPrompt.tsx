@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useLanguageStore } from '../stores/languageStore';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 export type CloseTabChoice = 'retain' | 'discard' | 'cancel';
 
@@ -26,7 +27,7 @@ export function CloseTabPrompt({ tabTitle, onChoose }: CloseTabPromptProps) {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       // Esc 等同取消：最保守的结果，不关也不丢
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         event.preventDefault();
         onChoose('cancel');
       }

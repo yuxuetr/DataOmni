@@ -12,6 +12,7 @@ import { ddlRequest, type SchemaMetadataQueries } from '../utils/catalogQueries'
 import { extractDdlStatements, joinDdlStatements } from '../utils/schemaObjects';
 import { identifierDialectFor } from '../utils/sqlIdentifiers';
 import { HighlightedCode } from './HighlightedCode';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface ObjectDefinitionDialogProps {
   object: DatabaseObject;
@@ -52,7 +53,7 @@ export function ObjectDefinitionDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         event.preventDefault();
         onClose();
       }

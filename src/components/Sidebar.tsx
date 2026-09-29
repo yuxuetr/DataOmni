@@ -23,6 +23,7 @@ import { useConfirmPrompt } from './ConfirmPrompt';
 import { useProfileConnector } from '../hooks/useProfileConnector';
 import { describeError } from '../utils/describeError';
 import { useLanguageStore, translateNow } from '../stores/languageStore';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface SidebarProps {
   activeConnectionId?: string | null;
@@ -109,7 +110,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       }
     };
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         setShowConnectionMenu(false);
       }
     };

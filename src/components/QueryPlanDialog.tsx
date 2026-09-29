@@ -7,6 +7,7 @@ import { useQueryStore } from '../stores/queryStore';
 import { describeError } from '../utils/describeError';
 import { formatPlanMs, formatPlanRows, worstEstimate, type QueryPlan } from '../utils/planInsights';
 import { PlanTree } from './PlanTree';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface QueryPlanDialogProps {
   sql: string;
@@ -50,7 +51,7 @@ export function QueryPlanDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         event.preventDefault();
         onClose();
       }

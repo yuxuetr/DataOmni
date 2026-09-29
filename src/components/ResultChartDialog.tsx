@@ -15,6 +15,7 @@ import {
 import { useLanguageStore } from '../stores/languageStore';
 import { SegmentedControl } from './FormControls';
 import type { TranslationKey } from '../i18n/translate';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 /**
  * 结果集的快速图表。
@@ -52,7 +53,7 @@ export function ResultChartDialog({ columns, rows, onClose }: ResultChartDialogP
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         event.preventDefault();
         onClose();
       }

@@ -6,6 +6,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import { describeError } from '../utils/describeError';
 import { explainVerdict, planLine, type MongoExplain } from '../utils/mongoExplain';
 import { HighlightedCode } from './HighlightedCode';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface MongoExplainDialogProps {
   connectionString: string;
@@ -61,7 +62,7 @@ export function MongoExplainDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         event.preventDefault();
         onClose();
       }

@@ -19,6 +19,7 @@ import { Checkbox, Field, PLAIN_TEXT_INPUT, SegmentedControl } from './FormContr
 import { useLanguageStore } from '../stores/languageStore';
 import { useTaskStore } from '../stores/taskStore';
 import type { TranslationKey } from '../i18n/translate';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 /**
  * 一个可选的导出范围。
@@ -129,7 +130,7 @@ export function ExportResultDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !writing) {
+      if (event.key === 'Escape' && !isImeKeyEvent(event) && !writing) {
         event.preventDefault();
         onClose();
       }

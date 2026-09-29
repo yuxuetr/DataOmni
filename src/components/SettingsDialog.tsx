@@ -16,6 +16,7 @@ import {
 import { useLanguageStore } from '../stores/languageStore';
 import { AiSettingsSection } from './AiSettingsSection';
 import type { TranslationKey } from '../i18n/translate';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface SettingsDialogProps {
   onClose: () => void;
@@ -41,7 +42,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         onClose();
       }
     };

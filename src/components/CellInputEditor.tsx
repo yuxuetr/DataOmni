@@ -16,6 +16,7 @@ import {
   type ColumnEditorKind
 } from '../utils/columnEditors';
 import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 const KIND_LABEL: Record<CellInputKind, TranslationKey> = {
   value: 'cellInput.kind.value',
@@ -124,10 +125,10 @@ export function CellInputEditor({
   };
 
   const onKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && !isImeKeyEvent(event.nativeEvent)) {
       event.preventDefault();
       onCommit?.();
-    } else if (event.key === 'Escape') {
+    } else if (event.key === 'Escape' && !isImeKeyEvent(event.nativeEvent)) {
       event.preventDefault();
       onCancel?.();
     }

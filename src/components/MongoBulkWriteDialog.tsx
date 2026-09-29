@@ -7,6 +7,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import { describeError } from '../utils/describeError';
 import { shellString } from '../utils/mongoCommandText';
 import { HighlightedCode } from './HighlightedCode';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 export type MongoBulkWriteMode = 'update' | 'delete';
 
@@ -60,7 +61,7 @@ export function MongoBulkWriteDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !running) {
+      if (event.key === 'Escape' && !isImeKeyEvent(event) && !running) {
         event.preventDefault();
         onClose();
       }
@@ -161,7 +162,7 @@ export function MongoBulkWriteDialog({
                 value={update}
                 onChange={(event) => setUpdate(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
+                  if (event.key === 'Enter' && !isImeKeyEvent(event.nativeEvent)) {
                     event.preventDefault();
                     void run();
                   }

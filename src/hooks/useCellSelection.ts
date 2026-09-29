@@ -13,7 +13,7 @@ import {
 } from '../utils/cellSelection';
 import { describeError } from '../utils/describeError';
 import { translateNow } from '../stores/languageStore';
-import { SHORTCUTS, hasCommandModifier, matchesShortcut } from '../utils/shortcuts';
+import { SHORTCUTS, hasCommandModifier, matchesShortcut, isImeKeyEvent } from '../utils/shortcuts';
 
 /** 按键来自一个能打字的元素（输入框、文本域、下拉框、可编辑区域） */
 export function isTextEntry(target: EventTarget | null): boolean {
@@ -146,7 +146,7 @@ export function useCellSelection(
       return;
     }
 
-    if (event.key === 'Escape') {
+    if (event.key === 'Escape' && !isImeKeyEvent(event.nativeEvent)) {
       setSelection(null);
       return;
     }

@@ -9,6 +9,7 @@ import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
 import { HighlightedCode } from './HighlightedCode';
 import type { CodeLanguage } from '../utils/codeHighlight';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface DestructiveStatementPromptProps {
   sql: string;
@@ -102,7 +103,7 @@ export function DestructiveStatementPrompt({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         event.preventDefault();
         onCancel();
       }

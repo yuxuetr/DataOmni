@@ -7,6 +7,7 @@ import {
   detectPlatform,
   formatShortcut,
   hasCommandModifier,
+  isImeKeyEvent,
   matchesShortcut,
   shortcutKeyEvent,
   tabShortcut,
@@ -272,3 +273,28 @@ describe('切标签的快捷键', () => {
   });
 });
 
+
+describe('输入法的按键不归应用', () => {
+  it('合成中的按键、以及 WebKit 在 compositionend 之后补发的确认键都认成输入法的', () => {
+    expect(isImeKeyEvent({ isComposing: true, keyCode: 13 })).toBe(true);
+    // macOS 的 WKWebView：确认候选的那一下 Enter 到的时候合成已经结束，只剩 229
+    expect(isImeKeyEvent({ isComposing: false, keyCode: 229 })).toBe(true);
+  });
+
+  it('平常的 Enter / Escape 不受影响', () => {
+    expect(isImeKeyEvent({ isComposing: false, keyCode: 13 })).toBe(false);
+    expect(isImeKeyEvent({ isComposing: false, keyCode: 27 })).toBe(false);
+  });
+
+  it('按 Enter / Escape 做事的地方都先问过输入法', () => {
+    // 这两个键在输入法里是「确认 / 取消选字」。没问过就会在选字时提交单元格、
+    // 执行命令、关掉填了一半的对话框。树与标签栏上的导航不在文本框里，不算。
+    const offenders = sourceFiles()
+      .filter(([file]) => !/\.test\.tsx?$/.test(file))
+      .filter(([file]) => !/^src\/utils\/(shortcuts|tabListNavigation|treeNavigation)\.ts$/.test(file))
+      .filter(([, source]) => /key [!=]== '(Enter|Escape)'|case '(Enter|Escape)'/.test(source))
+      .filter(([, source]) => !source.includes('isImeKeyEvent('))
+      .map(([file]) => file);
+    expect(offenders).toEqual([]);
+  });
+});

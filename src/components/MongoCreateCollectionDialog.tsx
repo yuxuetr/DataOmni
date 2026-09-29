@@ -6,6 +6,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import { describeError } from '../utils/describeError';
 import { createCollectionCommand } from '../utils/mongoCommandText';
 import { HighlightedCode } from './HighlightedCode';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface MongoCreateCollectionDialogProps {
   connectionString: string;
@@ -45,7 +46,7 @@ export function MongoCreateCollectionDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !running) {
+      if (event.key === 'Escape' && !isImeKeyEvent(event) && !running) {
         event.preventDefault();
         onClose();
       }
@@ -81,7 +82,7 @@ export function MongoCreateCollectionDialog({
   };
 
   const submitOnEnter = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && !isImeKeyEvent(event.nativeEvent)) {
       event.preventDefault();
       void run();
     }

@@ -8,6 +8,7 @@ import { describeError } from '../utils/describeError';
 import { createIndexSql, suggestIndexName } from '../utils/objectDdl';
 import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
 import { HighlightedCode } from './HighlightedCode';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface CreateIndexDialogProps {
   connectionId: string;
@@ -51,7 +52,7 @@ export function CreateIndexDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !running) {
+      if (event.key === 'Escape' && !isImeKeyEvent(event) && !running) {
         event.preventDefault();
         onClose();
       }

@@ -6,6 +6,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import { describeError } from '../utils/describeError';
 import { shellString } from '../utils/mongoCommandText';
 import { HighlightedCode } from './HighlightedCode';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface MongoCreateIndexDialogProps {
   connectionString: string;
@@ -46,7 +47,7 @@ export function MongoCreateIndexDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !running) {
+      if (event.key === 'Escape' && !isImeKeyEvent(event) && !running) {
         event.preventDefault();
         onClose();
       }
@@ -84,7 +85,7 @@ export function MongoCreateIndexDialog({
   };
 
   const submitOnEnter = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && !isImeKeyEvent(event.nativeEvent)) {
       event.preventDefault();
       void run();
     }

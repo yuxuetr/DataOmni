@@ -5,6 +5,7 @@ import { describeError } from '../utils/describeError';
 import { useLanguageStore } from '../stores/languageStore';
 import { useTaskStore, type MongoImportTaskPayload } from '../stores/taskStore';
 import { Field, SegmentedControl } from './FormControls';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 type ImportMode = MongoImportTaskPayload['mongo']['mode'];
 
@@ -33,7 +34,7 @@ export function MongoImportDialog({ connectionString, database, collection, onCl
   useEffect(() => {
     cancelRef.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         event.preventDefault();
         onClose();
       }

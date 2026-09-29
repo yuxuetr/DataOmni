@@ -5,6 +5,7 @@ import type { TranslationKey } from '../i18n/translate';
 import type { DdlAction, DdlPlan } from '../utils/tableDdl';
 import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
 import { HighlightedCode } from './HighlightedCode';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface DdlPreviewDialogProps {
   plan: DdlPlan;
@@ -51,7 +52,7 @@ export function DdlPreviewDialog({
   // 而语句已经发出去了
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !running) {
+      if (event.key === 'Escape' && !isImeKeyEvent(event) && !running) {
         event.preventDefault();
         onClose();
       }

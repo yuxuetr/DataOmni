@@ -7,6 +7,7 @@ import { describeError } from '../utils/describeError';
 import { createSchemaSql } from '../utils/objectDdl';
 import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
 import { HighlightedCode } from './HighlightedCode';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface CreateSchemaDialogProps {
   connectionId: string;
@@ -39,7 +40,7 @@ export function CreateSchemaDialog({
   // 和另外几个弹窗一样：Esc 与点遮罩都关，跑着的时候都不关
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !running) {
+      if (event.key === 'Escape' && !isImeKeyEvent(event) && !running) {
         event.preventDefault();
         onClose();
       }

@@ -16,6 +16,7 @@ import {
   splitCommandLine,
   type RedisReply
 } from '../utils/redisCommandLine';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface RedisConsoleProps {
   database: number;
@@ -153,6 +154,10 @@ export function RedisConsole({ database, onRan }: RedisConsoleProps) {
             setHistoryIndex(-1);
           }}
           onKeyDown={(event) => {
+            // 选字时的上下键与回车是输入法的，不翻历史、不执行
+            if (isImeKeyEvent(event.nativeEvent)) {
+              return;
+            }
             if (event.key === 'Enter') {
               event.preventDefault();
               void run();

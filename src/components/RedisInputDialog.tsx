@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Loader2, X } from 'lucide-react';
 import { PLAIN_TEXT_INPUT } from './FormControls';
 import { useLanguageStore } from '../stores/languageStore';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface RedisInputDialogProps {
   title: string;
@@ -41,7 +42,7 @@ export function RedisInputDialog({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !running) {
+      if (event.key === 'Escape' && !isImeKeyEvent(event) && !running) {
         event.preventDefault();
         onClose();
       }
@@ -97,7 +98,7 @@ export function RedisInputDialog({
               value={text}
               onChange={(event) => setText(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === 'Enter') {
+                if (event.key === 'Enter' && !isImeKeyEvent(event.nativeEvent)) {
                   event.preventDefault();
                   void submit();
                 }

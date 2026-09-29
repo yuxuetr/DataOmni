@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useLanguageStore } from '../stores/languageStore';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 export interface ConfirmOptions {
   title: string;
@@ -43,7 +44,7 @@ export function ConfirmPrompt({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         event.preventDefault();
         onCancel();
       }

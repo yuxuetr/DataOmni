@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useLanguageStore } from '../stores/languageStore';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 export type LeaveTransactionChoice = 'commit' | 'rollback' | 'cancel';
 
@@ -40,7 +41,7 @@ export function UncommittedTransactionPrompt({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         event.preventDefault();
         onChoose('cancel');
       }

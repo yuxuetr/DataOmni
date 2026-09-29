@@ -7,6 +7,7 @@ import { serverLabel } from '../utils/serverPresets';
 import { serverAddress } from '../utils/mongoConnection';
 import { isFileDatabase } from '../utils/databaseFiles';
 import { backupSupported, startDatabaseBackup } from '../utils/databaseBackup';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface ConnectionInfoDialogProps {
   connection: ConnectionProfile;
@@ -37,7 +38,7 @@ export function ConnectionInfoDialog({ connection, session, onClose }: Connectio
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         onClose();
       }
     };

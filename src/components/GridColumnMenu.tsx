@@ -4,6 +4,7 @@ import { Check, Columns3, Pin } from 'lucide-react';
 import { useLanguageStore } from '../stores/languageStore';
 import type { TranslationKey } from '../i18n/translate';
 import { GRID_DENSITIES, type GridDensity } from '../utils/gridColumns';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface GridColumnMenuProps {
   columns: readonly string[];
@@ -38,7 +39,7 @@ export function GridColumnMenu({
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isImeKeyEvent(event)) {
         onClose();
       }
     };

@@ -6,6 +6,7 @@ import { draftOf, entityWrite, type DraftProblem, type EditableEntity, type Enti
 import { cypherName, formatCypherValue } from '../utils/cypherValue';
 import type { TranslationKey, TranslationParams } from '../i18n/translate';
 import { HighlightedCode } from './HighlightedCode';
+import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface CypherEntityEditorProps {
   /** `null` 是建一个新节点 */
@@ -83,7 +84,7 @@ export function CypherEntityEditor({ entity, busy, error, onSave, onDelete, onCl
             value={labelInput}
             onChange={(event) => setLabelInput(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === 'Enter') {
+              if (event.key === 'Enter' && !isImeKeyEvent(event.nativeEvent)) {
                 event.preventDefault();
                 addLabel();
               }

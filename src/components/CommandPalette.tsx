@@ -4,7 +4,7 @@ import { clsx } from 'clsx';
 import { Search } from 'lucide-react';
 import { rankFuzzy } from '../utils/fuzzyMatch';
 import { useLanguageStore } from '../stores/languageStore';
-import { formatShortcut, type Shortcut } from '../utils/shortcuts';
+import { formatShortcut, isImeKeyEvent, type Shortcut } from '../utils/shortcuts';
 
 export interface PaletteCommand {
   id: string;
@@ -72,6 +72,11 @@ export function CommandPalette({ commands, onDismiss }: CommandPaletteProps) {
   }, [activeIndex]);
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
+    // 选字时的上下键、回车、Esc 都是输入法的
+    if (isImeKeyEvent(event.nativeEvent)) {
+      return;
+    }
+
     if (event.key === 'Escape') {
       event.preventDefault();
       onDismiss();
