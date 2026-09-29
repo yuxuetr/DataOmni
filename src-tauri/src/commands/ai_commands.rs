@@ -15,6 +15,24 @@ pub const AI_NOT_IN_BUILD: &str = "DATAOMNI_AI_NOT_IN_BUILD";
 #[cfg(feature = "ai")]
 const AI_KEY_ACCOUNT: &str = "#ai";
 
+/// 钥匙串里没有 Key：还没在设置里填。连接那句 `CREDENTIAL_MISSING` 说的是「这个连接的密码」，
+/// 放在这里指错了地方
+#[cfg(feature = "ai")]
+pub const AI_KEY_MISSING: &str = "DATAOMNI_AI_KEY_MISSING";
+/// Key 没存进钥匙串。和连接的密码不同：密码存不进去，这次还能照用；Key 存不进去，
+/// AI 就用不了，也没有「不保存、每次输入」这条退路
+#[cfg(feature = "ai")]
+pub const AI_KEY_SAVE_FAILED: &str = "DATAOMNI_AI_KEY_SAVE_FAILED";
+
+/// 读 Key 失败的说明：没有条目单说，其余（锁着、被拒）与连接的密码是同一回事
+#[cfg(feature = "ai")]
+fn describe_key_read_failure(error: &keyring::Error) -> String {
+  match error {
+    keyring::Error::NoEntry => AI_KEY_MISSING.to_string(),
+    other => crate::services::connection_service::describe_credential_read_failure(other),
+  }
+}
+
 #[tauri::command]
 pub fn ai_available() -> bool {
   cfg!(feature = "ai")
@@ -23,11 +41,9 @@ pub fn ai_available() -> bool {
 #[cfg(feature = "ai")]
 #[tauri::command]
 pub async fn ai_complete(request: crate::services::ai::AiRequest) -> Result<String, QueryError> {
-  use crate::services::connection_service::{credential_entry, describe_credential_read_failure};
+  use crate::services::connection_service::credential_entry;
   let key = credential_entry(AI_KEY_ACCOUNT)
-    .and_then(|entry| {
-      entry.get_password().map_err(|error| describe_credential_read_failure(&error))
-    })
+    .and_then(|entry| entry.get_password().map_err(|error| describe_key_read_failure(&error)))
     .map_err(QueryError::message)?;
   crate::services::ai::complete(&request, &key).await
 }
@@ -44,9 +60,7 @@ pub async fn ai_complete(request: serde_json::Value) -> Result<String, QueryErro
 pub fn ai_save_key(key: String) -> Result<(), String> {
   #[cfg(feature = "ai")]
   {
-    use crate::services::connection_service::{
-      credential_entry, describe_credential_write_failure, CREDENTIAL_DELETE_FAILED,
-    };
+    use crate::services::connection_service::{credential_entry, CREDENTIAL_DELETE_FAILED};
     let entry = credential_entry(AI_KEY_ACCOUNT)?;
     let key = key.trim();
     if key.is_empty() {
@@ -55,7 +69,7 @@ pub fn ai_save_key(key: String) -> Result<(), String> {
         Err(error) => Err(format!("{CREDENTIAL_DELETE_FAILED}: {error}")),
       };
     }
-    entry.set_password(key).map_err(|error| describe_credential_write_failure(&error))
+    entry.set_password(key).map_err(|error| format!("{AI_KEY_SAVE_FAILED}: {error}"))
   }
   #[cfg(not(feature = "ai"))]
   {
@@ -79,5 +93,15 @@ pub fn ai_has_key() -> Result<bool, String> {
   #[cfg(not(feature = "ai"))]
   {
     Ok(false)
+  }
+}
+
+#[cfg(all(test, feature = "ai"))]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn a_missing_key_says_so_instead_of_blaming_a_connection_password() {
+    assert_eq!(describe_key_read_failure(&keyring::Error::NoEntry), AI_KEY_MISSING);
   }
 }

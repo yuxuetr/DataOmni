@@ -43,6 +43,8 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_CREDENTIAL_STORE_LOCKED: 'error.backend.credentialStoreLocked',
   DATAOMNI_CREDENTIAL_DELETE_FAILED: 'error.backend.credentialDeleteFailed',
   DATAOMNI_CREDENTIAL_MISSING: 'error.backend.credentialMissing',
+  DATAOMNI_AI_KEY_MISSING: 'error.backend.aiKeyMissing',
+  DATAOMNI_AI_KEY_SAVE_FAILED: 'error.backend.aiKeySaveFailed',
   DATAOMNI_BACKUP_UNSUPPORTED: 'error.backend.backupUnsupported',
   DATAOMNI_BACKUP_TARGET_EXISTS: 'error.backend.backupTargetExists',
   DATAOMNI_BACKUP_FAILED: 'error.backend.backupFailed',
