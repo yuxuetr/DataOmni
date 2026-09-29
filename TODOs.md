@@ -293,6 +293,8 @@
       全仓库没有一处问过输入法，而 macOS 的 WKWebView 会把确认候选那一下报成 `key: 'Enter'`、`isComposing: false`、`keyCode: 229`
       （WebKit bug 311717，新版已修）——选字时会提交单元格、执行命令、关掉对话框。加 `isImeKeyEvent`，36 个文件的 Enter / Esc 先问它，
       门在 `shortcuts.test.ts`（判断这两个键的文件必须调用它）。macOS 上没有用真输入法复现（要改本机输入源），靠 229 的单测钉住。
+    - 同一轮顺带修的（`acc1a7e`）：表数据网格里排了队的改动原先仍画加载时的值（只有行底色变蓝），而那一行只给撤销、不能再编辑，
+      按下回车后看不到自己改成了什么。现在画新值，悬停另起一行写原值；待删的行照旧是原值加删除线。
     - 仍未做：CJK 与彩色 emoji 字体靠发行版桌面自带。
   - 带 Oracle 的 AppImage 不发；重估条件：AppImage 打包可排除目录不改 ELF，且 `sha256sum` 比对 AppDir 与 `src-tauri/vendor/instantclient` 一致。
 
