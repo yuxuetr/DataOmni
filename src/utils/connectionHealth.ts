@@ -57,3 +57,18 @@ export function connectionHealth(inputs: ConnectionHealthInputs): ConnectionHeal
 export function offersReconnect(health: ConnectionHealth): boolean {
   return health === 'lost' || health === 'failed';
 }
+
+/**
+ * 要连的就是眼下这条、而且它好好的：不用再连一次。
+ *
+ * 和界面上「已连接」用同一个判断。此前这里只看应用侧接线做完了没有，而驱动报
+ * 连接没了的时候接线标记还是真的——于是「重新连接」按下去直接返回，按钮成了
+ * 摆设，只能断开再连。
+ */
+export function alreadyConnectedTo(
+  activeProfileId: string | undefined,
+  targetProfileId: string,
+  health: ConnectionHealthInputs
+): boolean {
+  return activeProfileId === targetProfileId && connectionHealth(health) === 'connected';
+}

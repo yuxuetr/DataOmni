@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  alreadyConnectedTo,
   connectionHealth,
   offersReconnect,
   type ConnectionHealthInputs
@@ -62,5 +63,28 @@ describe('offersReconnect', () => {
     expect(offersReconnect('connected')).toBe(false);
     expect(offersReconnect('connecting')).toBe(false);
     expect(offersReconnect('disconnected')).toBe(false);
+  });
+});
+
+describe('alreadyConnectedTo', () => {
+  const healthy: ConnectionHealthInputs = {
+    isConnecting: false,
+    connectionLost: false,
+    hasSession: true,
+    connectionReady: true,
+    error: null
+  };
+
+  it('同一条、好好的：不用再连', () => {
+    expect(alreadyConnectedTo('pg', 'pg', healthy)).toBe(true);
+  });
+
+  it('驱动说连接没了：接线标记还是真的，也得重连', () => {
+    expect(alreadyConnectedTo('pg', 'pg', { ...healthy, connectionLost: true })).toBe(false);
+  });
+
+  it('换一条连接总要连', () => {
+    expect(alreadyConnectedTo('pg', 'mysql', healthy)).toBe(false);
+    expect(alreadyConnectedTo(undefined, 'pg', healthy)).toBe(false);
   });
 });

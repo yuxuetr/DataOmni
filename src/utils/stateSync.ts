@@ -13,6 +13,7 @@ import {
   transitionConnectionLifecycle,
   type ConnectionFailureKind
 } from '../contracts/connectionLifecycle';
+import { alreadyConnectedTo } from './connectionHealth';
 import { describeError } from './describeError';
 import { translateNow } from '../stores/languageStore';
 
@@ -260,7 +261,13 @@ export class SessionManager {
     const queryStore = useQueryStore.getState();
 
     // 1. 检查是否需要切换
-    if (appStore.activeConnection?.config.id === connection.id && appStore.connectionReady) {
+    if (alreadyConnectedTo(appStore.activeConnection?.config.id, connection.id, {
+      isConnecting: false,
+      connectionLost: queryStore.connectionLost,
+      hasSession: queryStore.database !== null,
+      connectionReady: appStore.connectionReady,
+      error: queryStore.error
+    })) {
       console.log('✅ 连接已存在且就绪:', connection.id);
       return;
     }
