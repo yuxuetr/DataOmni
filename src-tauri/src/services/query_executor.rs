@@ -1143,10 +1143,12 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, QueryError> {
   let type_name = type_info.name();
   match type_name {
     "JSON" => tagged_json_value(ValueRef::to_owned(&value).try_decode::<JsonValue>()),
-    "DECIMAL" => tagged_display_value(
-      "decimal",
-      ValueRef::to_owned(&value).try_decode::<sqlx::types::BigDecimal>(),
-    ),
+    "DECIMAL" => {
+      let decimal = ValueRef::to_owned(&value)
+        .try_decode::<sqlx::types::BigDecimal>()
+        .map_err(QueryError::from)?;
+      Ok(tagged_value("decimal", decimal_text(&decimal)))
+    }
     "TINYINT UNSIGNED" | "SMALLINT UNSIGNED" | "INT UNSIGNED" | "MEDIUMINT UNSIGNED"
     | "BIGINT UNSIGNED" | "YEAR" => {
       tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<u64>())
@@ -1225,7 +1227,7 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
         Some(scale) => decimal.with_scale(scale),
         None => decimal,
       };
-      Ok(tagged_value("decimal", decimal.to_string()))
+      Ok(tagged_value("decimal", decimal_text(&decimal)))
     }
     "FLOAT4" => json_value(ValueRef::to_owned(&value).try_decode::<f32>()),
     "FLOAT8" => json_value(ValueRef::to_owned(&value).try_decode::<f64>()),
@@ -1283,6 +1285,15 @@ pub(crate) fn format_time(time: Time) -> String {
 
 pub(crate) fn format_datetime(value: PrimitiveDateTime) -> String {
   format!("{} {}", format_date(value.date()), format_time(value.time()))
+}
+
+/// 十进制数照数据库自己的文本输出写：不用科学计数法，标度里的 0 一个不少。
+///
+/// `BigDecimal` 的 `Display` 两处不照：零不管标度一律写成 `0`（`NUMERIC(10,2)` 的
+/// `0.00` 在网格里是 `0`，而同一列别的行都带两位小数），小数点后前导 0 多了改写成
+/// `1E-8`。
+fn decimal_text(value: &sqlx::types::BigDecimal) -> String {
+  value.to_plain_string()
 }
 
 /// PostgreSQL 二进制 NUMERIC 头里的 `dscale`：声明的（或字面量自带的）小数位数。
