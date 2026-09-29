@@ -201,7 +201,7 @@ export const zh = {
   'plan.button': '执行计划',
   'plan.buttonTitle': '看这条语句会怎么执行；不执行它',
   'plan.analyze': '真的执行一遍',
-  'plan.analyzeHint': '打开之后这条语句会**真的跑**：写语句会真的写进去。它换来的是每一步的实际行数与耗时，而那正是判断计划对不对的唯一依据。想安全地试，先关掉自动提交，跑完回滚。',
+  'plan.analyzeHint': '打开之后这条语句会真的跑：写语句会真的写进去。它换来的是每一步的实际行数与耗时，而那正是判断计划对不对的唯一依据。想安全地试，先关掉自动提交，跑完回滚。',
   'plan.analyzeUnsupported': '{database} 不提供真实执行的执行计划。',
   'plan.analyzeWillRun': '这条语句会被真的执行一遍。',
   'plan.analyzeWillCommit': '这条语句会被真的执行一遍，而自动提交开着——它写进去的东西当场就提交了。',

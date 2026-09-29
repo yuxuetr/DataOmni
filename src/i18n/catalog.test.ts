@@ -114,6 +114,15 @@ describe('翻译目录', () => {
     expect(problems).toEqual([]);
   });
 
+  it('文案里不写 Markdown 的加粗', () => {
+    // 界面不渲染 Markdown：`plan.analyzeHint` 写过 `**真的跑**`，放进 title 里
+    // 悬停时就印着两对星号
+    for (const key of KEYS) {
+      expect(zh[key].includes('**'), `${key} 的中文里有 **: ${zh[key]}`).toBe(false);
+      expect(en[key].includes('**'), `${key} 的英文里有 **: ${en[key]}`).toBe(false);
+    }
+  });
+
   it('没有空文案', () => {
     for (const key of KEYS) {
       expect(zh[key].trim(), `${key} 的中文为空`).not.toBe('');
