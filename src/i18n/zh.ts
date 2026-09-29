@@ -573,6 +573,7 @@ export const zh = {
   'changes.preview': '预览',
   'changes.revert': '撤销',
   'changes.revertAll': '全部撤销',
+  'changes.cellWas': '原值：{value}',
   'changes.commit': '提交 {count} 项',
   'changes.commit.one': '提交 1 项',
   'changes.previewTitle': '待提交的 {count} 项变更',

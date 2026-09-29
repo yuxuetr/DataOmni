@@ -11,13 +11,21 @@ import { formatResultValue } from '../utils/resultValues';
  * 约定区分 NULL / 空字符串 / 空白 / 二进制，两边分头写必然会漂移成两套约定，
  * 而这恰恰是用户最需要能靠直觉认出来的一处。
  */
-export function GridCellValue({ value }: { value: SerializedResultValue }) {
+export function GridCellValue({
+  value,
+  note
+}: {
+  value: SerializedResultValue;
+  /** 接在悬停提示后面另起一行，比如待提交格子的原值 */
+  note?: string;
+}) {
   const t = useLanguageStore((state) => state.t);
   const display = describeCellDisplay(value);
+  const withNote = (title: string) => (note ? `${title}\n${note}` : title);
 
   if (display.kind === 'value') {
     return (
-      <span className="block truncate" title={formatResultValue(value)}>
+      <span className="block truncate" title={withNote(formatResultValue(value))}>
         {display.text}
       </span>
     );
@@ -39,7 +47,7 @@ export function GridCellValue({ value }: { value: SerializedResultValue }) {
         // 而字面上写着 NULL 的那个**字符串**走的是上面的常规样式
         display.kind === 'binary' ? 'text-fg-muted' : 'italic text-fg-subtle'
       )}
-      title={title}
+      title={withNote(title)}
     >
       {display.text}
     </span>

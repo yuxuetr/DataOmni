@@ -69,6 +69,18 @@ export function pendingForRow(
   );
 }
 
+/**
+ * 网格里这一格该画排队的新值还是加载时的值：返回新值，没改的列与待删的行返回 undefined。
+ *
+ * 排了队的行只给撤销、不能再编辑，格子里要是还画着旧值，用户就看不到自己改成了什么。
+ */
+export function pendingCellInput(
+  pending: PendingUpdate | PendingDelete | undefined,
+  column: string
+): CellInput | undefined {
+  return pending?.kind === 'update' ? pending.values[column] : undefined;
+}
+
 /** 只留下真的变了的列 */
 function changedOnly(
   values: Readonly<Record<string, CellInput>>,

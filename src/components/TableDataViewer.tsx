@@ -87,6 +87,8 @@ import { describeRowIdentity, primaryKeyColumns, wholeRowIdentity, type IndexMet
 import type { RowKey, TableTarget } from '../utils/rowStatements';
 import {
   cellInputFromValue,
+  describeBoundValue,
+  describeCellInput,
   missingRequiredColumns,
   type BoundValue,
   type CellInput
@@ -95,6 +97,7 @@ import { CellInputEditor } from './CellInputEditor';
 import { PendingChangesBar } from './PendingChangesBar';
 import { ChangeDiffDialog, type CommitFailure } from './ChangeDiffDialog';
 import {
+  pendingCellInput,
   pendingForRow,
   pendingStatements,
   canStageAnother,
@@ -1012,6 +1015,7 @@ export default function TableDataViewer({
   // 第二个字就打进了别的列
   const renderEditableCell = ({
     value,
+    pending,
     field,
     isEditing,
     autoFocus = false,
@@ -1027,6 +1031,8 @@ export default function TableDataViewer({
     onContextMenu
   }: {
     value: any;
+    /** 这一行排着的改动：改了的列画新值，悬停看原值 */
+    pending?: ReturnType<typeof pendingForRow>;
     field: string;
     isEditing: boolean;
     /** 进入编辑时光标落在哪一格：只给一行里第一个可改的格子 */
@@ -1050,6 +1056,10 @@ export default function TableDataViewer({
     onContextMenu?: (event: React.MouseEvent) => void;
   }) => {
     if (!isEditing || readOnly) {
+      const staged = pendingCellInput(pending, field);
+      const wasNote = staged && pending
+        ? t('changes.cellWas', { value: describeBoundValue(pending.original[field] ?? null) })
+        : undefined;
       // 非编辑状态或改不了的列，显示只读
       // 自建执行器把 BigInt / Decimal / 二进制等包成 tagged value 以保住精度，
       // 显示时统一交给 formatResultValue 还原成人能读的形式
@@ -1073,7 +1083,16 @@ export default function TableDataViewer({
         >
           {/* 单行形态、NULL / 空串 / 空白 / 二进制的区分都在 GridCellValue 里，
               与 SQL 结果表共用同一套约定 */}
-          <GridCellValue value={(value ?? null) as SerializedResultValue} />
+          {staged === undefined ? (
+            <GridCellValue value={(value ?? null) as SerializedResultValue} />
+          ) : staged.kind === 'value' || staged.kind === 'null' ? (
+            <GridCellValue value={staged.kind === 'null' ? null : staged.value} note={wasNote} />
+          ) : (
+            // DEFAULT 与表达式的结果由数据库算，这里只能照写
+            <span className="block truncate italic text-fg-muted" title={wasNote}>
+              {describeCellInput(staged)}
+            </span>
+          )}
         </td>
       );
     }
@@ -1652,6 +1671,7 @@ export default function TableDataViewer({
                                 <React.Fragment key={colIndex}>
                                 {renderEditableCell({
                                   value: row[column.name],
+                                  pending,
                                   field: column.name,
                                   isEditing: editState.mode === 'edit' && editState.rowIndex === rowIndex,
                                   autoFocus: column.name === firstEditableColumn,

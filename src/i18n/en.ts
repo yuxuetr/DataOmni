@@ -553,6 +553,7 @@ export const en: Translations = {
   'changes.preview': 'Preview',
   'changes.revert': 'Revert',
   'changes.revertAll': 'Revert all',
+  'changes.cellWas': 'Was: {value}',
   'changes.commit': 'Commit {count}',
   'changes.commit.one': 'Commit 1',
   'changes.previewTitle': '{count} pending changes',

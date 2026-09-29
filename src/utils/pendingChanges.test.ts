@@ -5,6 +5,7 @@ import type { RowKey, TableTarget } from './rowStatements';
 import {
   canStageAnother,
   changedColumns,
+  pendingCellInput,
   pendingForRow,
   pendingStatements,
   revertChange,
@@ -197,5 +198,21 @@ describe('ClickHouse：一项改动是「数一遍 → 执行 → 核对」', ()
     expect(canStageAnother(one, null, 'clickhouse')).toBe(false);
     expect(canStageAnother([], null, 'clickhouse')).toBe(true);
     expect(canStageAnother(one, null, 'mysql')).toBe(true);
+  });
+});
+
+describe('pendingCellInput', () => {
+  // 排了队的行只给撤销、不能再编辑，格子里要是还画着加载时的值，
+  // 用户按下回车后就再也看不到自己改成了什么——只有打开预览才对得上
+  it('改了的列显示排队的新值，没改的列与待删的行照旧', () => {
+    const updated = stageUpdate([], key(1), ORIGINAL, { name: value('b'), note: { kind: 'null' } });
+    const update = pendingForRow(updated, rowIdOf(key(1)));
+    expect(pendingCellInput(update, 'name')).toEqual(value('b'));
+    expect(pendingCellInput(update, 'note')).toEqual({ kind: 'null' });
+    expect(pendingCellInput(update, 'id')).toBeUndefined();
+
+    const deleted = pendingForRow(stageDelete([], key(1), ORIGINAL), rowIdOf(key(1)));
+    expect(pendingCellInput(deleted, 'name')).toBeUndefined();
+    expect(pendingCellInput(undefined, 'name')).toBeUndefined();
   });
 });
