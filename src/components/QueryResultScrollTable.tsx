@@ -393,18 +393,22 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
     // 占满而撑出空白把后面的推出视野
   }, [result]);
 
+  const copyHint = t('result.copyHint', { shortcut: formatShortcut(SHORTCUTS.copySelection) });
+
   return (
     <div className="border rounded-panel overflow-hidden bg-surface relative">
       {/* 头部信息栏 */}
       <div className="px-4 py-3 bg-surface-sunken border-b flex items-center justify-between">
-        <div className="flex items-center space-x-4 text-sm text-fg-muted">
+        {/* 窄窗口（半屏笔记本）里：行数、耗时这类事实不许折行，提示文字截成一行、
+            全文放 title，按钮组不让位——此前「3 rows」折成两行、复制提示折成五行 */}
+        <div className="mr-4 flex min-w-0 flex-1 items-center gap-4 text-sm text-fg-muted">
           {/* 返回行的语句说行数，不返回的说影响了几行——此前两句一起印，SELECT 上
               「影响行数」就是行数本身（前端拿 rows.length 填的），DML 上「0 行」是噪音 */}
           {result.columns.length > 0
-            ? <span>{t('result.rowCount', { count: totalRows })}</span>
-            : <span>{t('result.affectedRows', { count: result.affected_rows })}</span>}
+            ? <span className="shrink-0 whitespace-nowrap">{t('result.rowCount', { count: totalRows })}</span>
+            : <span className="shrink-0 whitespace-nowrap">{t('result.affectedRows', { count: result.affected_rows })}</span>}
           {result.truncated && (
-            <span className="text-warning">
+            <span className="shrink-0 whitespace-nowrap text-warning">
               {result.truncation_reason === 'byte_limit'
                 ? t('result.truncatedByBytes', {
                     limit: Math.round((result.byte_limit ?? 0) / 1024 / 1024)
@@ -414,19 +418,19 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                   })}
             </span>
           )}
-          <span>{t('result.executionTime', { time: formatExecutionTime(result.execution_time) })}</span>
-          {canEdit && <span className="text-fg-subtle">{t('result.doubleClickToEdit')}</span>}
+          <span className="shrink-0 whitespace-nowrap">{t('result.executionTime', { time: formatExecutionTime(result.execution_time) })}</span>
+          {canEdit && <span className="min-w-0 truncate text-fg-subtle" title={t('result.doubleClickToEdit')}>{t('result.doubleClickToEdit')}</span>}
           {/* 不能改就说清为什么。只把编辑入口收起来，用户会以为这个版本没有这个功能 */}
           {readOnlyReason && (
-            <span className="flex items-center gap-1 text-fg-subtle" title={readOnlyReason}>
-              <Lock size={12} />
+            <span className="flex min-w-0 items-center gap-1 text-fg-subtle" title={readOnlyReason}>
+              <Lock size={12} className="shrink-0" />
               <span className="max-w-[28rem] truncate">{readOnlyReason}</span>
             </span>
           )}
-          <span className="text-fg-subtle">{t('result.copyHint', { shortcut: formatShortcut(SHORTCUTS.copySelection) })}</span>
+          <span className="min-w-0 truncate text-fg-subtle" title={copyHint}>{copyHint}</span>
         </div>
-        
-        <div className="flex items-center gap-2">
+
+        <div className="flex shrink-0 items-center gap-2">
           {canEdit && (
             <button
               onClick={showAddRowForm}

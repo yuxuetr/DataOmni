@@ -1275,8 +1275,8 @@ export default function TableDataViewer({
         {/* 数据标签页 */}
         {activeTab === 'data' && (
           <div className="h-full flex flex-col">
-            <div className="p-4 border-b bg-surface-sunken flex items-center justify-between">
-              <div>
+            <div className="p-4 border-b bg-surface-sunken flex items-center justify-between gap-4">
+              <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-fg">{t('table.dataTitle')}</h2>
                 <p className="text-xs text-fg-muted mt-1">
                   {t('table.rowCount', { count: totalRows })}
@@ -1287,8 +1287,9 @@ export default function TableDataViewer({
                   </p>
                 )}
               </div>
-              
-              <div className="flex items-center space-x-2">
+
+              {/* 按钮上的字不折行（窄窗口里「导入 CSV」「每页」曾各折成两行）；放不下时整个按钮换到下一排 */}
+              <div className="flex flex-wrap items-center justify-end gap-2 whitespace-nowrap">
                 {/* 编辑操作按钮 */}
                 {editState.mode === 'view' && (
                   <>
@@ -1410,17 +1411,20 @@ export default function TableDataViewer({
                     </button>
                   </>
                 )}
-                
-                <span className="text-sm text-fg-muted">{t('table.pageSizeLabel')}</span>
-                <select
-                  value={pageSize}
-                  onChange={(e) => handlePageSizeChange(Number(e.target.value))}
-                  className="text-sm border border-line-strong rounded-control px-2 py-1"
-                >
-                  {GRID_PAGE_SIZE_OPTIONS.map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
+
+                {/* 标签和下拉框一起换行，不能一个在上一排、一个在下一排 */}
+                <label className="flex items-center gap-2">
+                  <span className="text-sm text-fg-muted">{t('table.pageSizeLabel')}</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                    className="text-sm border border-line-strong rounded-control px-2 py-1"
+                  >
+                    {GRID_PAGE_SIZE_OPTIONS.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
               </div>
             </div>
 
