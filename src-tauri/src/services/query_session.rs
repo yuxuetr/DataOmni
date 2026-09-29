@@ -14,6 +14,8 @@ use tokio::{
 /// 这两条都是前端传错了参数，用户无从下手，但也不该看见中文
 pub const SESSION_ID_EMPTY: &str = "DATAOMNI_SESSION_ID_EMPTY";
 pub const SESSION_BOUND_ELSEWHERE: &str = "DATAOMNI_SESSION_BOUND_ELSEWHERE";
+/// 这条连接的 SQL 会话里有一个没提交的事务，而这次写入走的是另一条连接
+pub const SESSION_TRANSACTION_OPEN: &str = "DATAOMNI_SESSION_TRANSACTION_OPEN";
 
 /// 连接和它的事务状态必须一起锁。
 ///
@@ -156,6 +158,29 @@ impl QuerySessionState {
       Some(entry) => entry.runtime.lock().await.current_transaction(),
       None => TransactionState::default(),
     }
+  }
+
+  /// 连到同一个库（`pool_key` 相同）的会话里，有没有一个开着的事务。
+  ///
+  /// 网格提交、结构变更与导入走池里另一条连接：事务开着时它们写在事务外面——
+  /// 状态栏说在事务里，回滚却撤不掉它们；还会去等那个事务手里的锁（SQLite
+  /// 五秒后报 `database is locked`，PostgreSQL 一直等）。
+  pub async fn transaction_open_on(&self, pool_key: &str) -> bool {
+    // 先放掉表锁再逐个等：会话锁可能正被一条跑着的语句拿着
+    let entries: Vec<_> = self
+      .sessions
+      .lock()
+      .await
+      .values()
+      .filter(|entry| entry.pool_key == pool_key)
+      .cloned()
+      .collect();
+    for entry in entries {
+      if entry.runtime.lock().await.current_transaction().in_transaction() {
+        return true;
+      }
+    }
+    false
   }
 
   pub async fn execute_streaming(
@@ -427,6 +452,24 @@ mod tests {
     // "cannot start a transaction within a transaction"
     run(&sessions, &pool, "BEGIN", false).await.expect("自己写的 BEGIN 前面不该再补一条");
     assert_eq!(sessions.transaction("s1").await.status, TransactionStatus::Active);
+  }
+
+  /// 另开连接的写入要先问这一句：只认同一个库上的会话，事务结束就放行。
+  #[tokio::test]
+  async fn reports_an_open_transaction_only_for_the_same_pool() {
+    let pool = memory_pool().await;
+    let sessions = QuerySessionState::default();
+    assert!(!sessions.transaction_open_on("sqlite::memory:").await, "还没有会话");
+
+    run(&sessions, &pool, "CREATE TABLE t (v TEXT)", true).await.expect("create");
+    assert!(!sessions.transaction_open_on("sqlite::memory:").await, "自动提交的语句不留事务");
+
+    run(&sessions, &pool, "BEGIN", true).await.expect("begin");
+    assert!(sessions.transaction_open_on("sqlite::memory:").await);
+    assert!(!sessions.transaction_open_on("sqlite:other.db").await, "别的库不受影响");
+
+    run(&sessions, &pool, "ROLLBACK", true).await.expect("rollback");
+    assert!(!sessions.transaction_open_on("sqlite::memory:").await);
   }
 
   #[tokio::test]

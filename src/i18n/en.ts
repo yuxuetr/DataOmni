@@ -1119,6 +1119,7 @@ export const en: Translations = {
   'error.backend.explainNotXml': 'The execution plan is not valid XML and cannot be expanded into a tree: {detail}',
   'error.backend.sessionIdEmpty': 'The database session id is empty; disconnect and connect again.',
   'error.backend.sessionBoundElsewhere': 'This database session is already bound to another connection; disconnect and connect again.',
+  'error.backend.sessionTransactionOpen': 'A transaction is still open in the SQL tab. This write would go over another connection and land outside it — rolling back would not undo it, and it would wait on the transaction\'s locks. Commit or roll back in the SQL tab first, then try again.',
   'error.backend.unsupportedColumnType': 'This column type cannot be decoded: {detail}. Cast it to text in the query to read it.',
   'error.backend.unsupportedParameterType': 'This value type cannot be sent to the database as a parameter: {detail}',
   'error.backend.queryTimeout': 'The query exceeded the {detail} ms timeout and was stopped. Raise the timeout in the toolbar, or narrow the query first.',

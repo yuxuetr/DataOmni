@@ -1134,6 +1134,7 @@ export const zh = {
   'error.backend.explainNotXml': '执行计划不是合法的 XML，无法展开成树：{detail}',
   'error.backend.sessionIdEmpty': '数据库会话编号为空，请断开后重新连接。',
   'error.backend.sessionBoundElsewhere': '这个数据库会话已经绑定到另一个连接，请断开后重新连接。',
+  'error.backend.sessionTransactionOpen': 'SQL 标签里有一个没提交的事务。这次写入走的是另一条连接，会落在事务外面——回滚撤不掉它，还要等事务手里的锁。先在 SQL 标签里提交或回滚，再来一次。',
   'error.backend.unsupportedColumnType': '这一列的类型读不出来：{detail}。可以在查询里把它转成文本再取。',
   'error.backend.unsupportedParameterType': '这个值的类型没法作为参数发给数据库：{detail}',
   'error.backend.queryTimeout': '查询执行超过了 {detail} 毫秒的超时上限，已经中止。可以在工具栏调高超时，或者先给查询加上限制条件。',

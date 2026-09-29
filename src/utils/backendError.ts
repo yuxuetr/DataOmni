@@ -90,6 +90,7 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_EXPLAIN_NOT_XML: 'error.backend.explainNotXml',
   DATAOMNI_SESSION_ID_EMPTY: 'error.backend.sessionIdEmpty',
   DATAOMNI_SESSION_BOUND_ELSEWHERE: 'error.backend.sessionBoundElsewhere',
+  DATAOMNI_SESSION_TRANSACTION_OPEN: 'error.backend.sessionTransactionOpen',
   DATAOMNI_UNSUPPORTED_COLUMN_TYPE: 'error.backend.unsupportedColumnType',
   DATAOMNI_UNSUPPORTED_PARAMETER_TYPE: 'error.backend.unsupportedParameterType',
   DATAOMNI_QUERY_TIMEOUT: 'error.backend.queryTimeout',

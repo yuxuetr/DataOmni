@@ -4,7 +4,7 @@ use crate::services::{
   csv_import, export_writer, write_batch, CsvPreview, ExportOptions, ExportProgress, ExportSummary,
   ImportProgress, ImportRequest, ImportSummary, QueryExecutionSummary, QueryResultBatch,
   QuerySessionState, StreamingQueryOptions, WriteBatchError, WriteStatement,
-  DEFAULT_QUERY_BATCH_SIZE,
+  DEFAULT_QUERY_BATCH_SIZE, SESSION_TRANSACTION_OPEN,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -253,6 +253,7 @@ pub async fn execute_write_batch(
   connection_service_state: State<'_, ConnectionServiceState>,
   tunnels: State<'_, TunnelRegistry>,
   database_instances: State<'_, DbInstances>,
+  query_session_state: State<'_, QuerySessionState>,
   sql_server: State<'_, SqlServerRegistry>,
   oracle: State<'_, OracleRegistry>,
   duckdb: State<'_, DuckDbRegistry>,
@@ -268,6 +269,9 @@ pub async fn execute_write_batch(
       connection_service_guard.as_ref().ok_or_else(|| batch_error(SERVICE_NOT_READY))?;
     service.resolve_connection_string(&connection_id, tunnel_port).map_err(batch_error)?
   };
+  if query_session_state.transaction_open_on(&connection_string).await {
+    return Err(batch_error(SESSION_TRANSACTION_OPEN));
+  }
 
   let resolved = ResolvedPool::resolve(
     connection_string,
@@ -524,6 +528,7 @@ pub async fn import_csv_file(
   database_instances: State<'_, DbInstances>,
   cancellation_state: State<'_, QueryCancellationState>,
   pause_state: State<'_, ImportPauseState>,
+  query_session_state: State<'_, QuerySessionState>,
   sql_server: State<'_, SqlServerRegistry>,
   oracle: State<'_, OracleRegistry>,
   duckdb: State<'_, DuckDbRegistry>,
@@ -541,6 +546,10 @@ pub async fn import_csv_file(
       .resolve_connection_string(&request.connection_id, tunnel_port)
       .map_err(QueryError::message)?
   };
+  // 导入与网格提交一样另开连接，事务开着时同样写在它外面
+  if query_session_state.transaction_open_on(&connection_string).await {
+    return Err(QueryError::message(SESSION_TRANSACTION_OPEN));
+  }
 
   let resolved = ResolvedPool::resolve(
     connection_string,

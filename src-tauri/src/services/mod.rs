@@ -57,7 +57,7 @@ pub use query_executor::{
   DEFAULT_QUERY_BATCH_SIZE, DEFAULT_QUERY_BYTE_LIMIT, DEFAULT_QUERY_ROW_LIMIT, NON_QUERY_MESSAGE,
   QUERY_TIMEOUT_CODE, USE_STATEMENT_REFUSED,
 };
-pub use query_session::{QuerySessionState, StreamingQueryOptions};
+pub use query_session::{QuerySessionState, StreamingQueryOptions, SESSION_TRANSACTION_OPEN};
 pub use schema_metadata::{schema_metadata_queries, DdlQuery, SchemaMetadataQueries};
 pub use session_target::{session_target_query, SessionTargetQuery};
 pub use sql_server::{SqlServerPool, SqlServerRegistry, SqlServerTarget, SQL_SERVER_SCHEME};
