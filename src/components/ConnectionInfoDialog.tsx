@@ -35,6 +35,7 @@ function Row({ label, value }: { label: string; value: string }) {
  */
 export function ConnectionInfoDialog({ connection, session, onClose }: ConnectionInfoDialogProps) {
   const t = useLanguageStore((state) => state.t);
+  const fileDatabase = isFileDatabase(connection.db_type);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -77,23 +78,30 @@ export function ConnectionInfoDialog({ connection, session, onClose }: Connectio
           <div className="pb-2">
             <Row label={t('info.name')} value={connection.name} />
             <Row label={t('info.type')} value={serverLabel(connection)} />
-            {!isFileDatabase(connection.db_type) && (
+            {!fileDatabase && (
               <Row label={t('info.address')} value={serverAddress(connection)} />
             )}
             <Row label={t('info.database')} value={connection.database || t('info.unspecified')} />
-            <Row label={t('info.user')} value={connection.username || t('info.unspecified')} />
+            {!fileDatabase && (
+              <Row label={t('info.user')} value={connection.username || t('info.unspecified')} />
+            )}
           </div>
 
           <div className="py-2">
             <Row label={t('info.environment')} value={connection.environment} />
-            <Row
-              label="TLS"
-              value={connection.tls_mode ?? (connection.ssl ? t('info.tlsEnabledUnspecified') : t('info.tlsDisabled'))}
-            />
-            <Row
-          label={t('info.savePassword')}
-          value={connection.save_password ? t('info.savePasswordYes') : t('info.savePasswordNo')}
-        />
+            {/* 文件库没有传输层也没有密码，配置里的默认值（ssl、save_password）写出来只会误导 */}
+            {!fileDatabase && (
+              <>
+                <Row
+                  label="TLS"
+                  value={connection.tls_mode ?? (connection.ssl ? t('info.tlsEnabledUnspecified') : t('info.tlsDisabled'))}
+                />
+                <Row
+                  label={t('info.savePassword')}
+                  value={connection.save_password ? t('info.savePasswordYes') : t('info.savePasswordNo')}
+                />
+              </>
+            )}
           </div>
 
           <div className="pt-2">
