@@ -1088,7 +1088,9 @@ fn decode(oracle_type: &OracleType, value: &SqlValue) -> Result<JsonValue, Query
     OracleType::Number(_, 0) | OracleType::Int64 | OracleType::UInt64 => {
       let digits = text()?;
       match digits.parse::<i64>() {
-        Ok(integer) if integer.abs() <= MAX_SAFE_INTEGER => JsonValue::from(integer),
+        Ok(integer) if integer.unsigned_abs() <= MAX_SAFE_INTEGER.unsigned_abs() => {
+          JsonValue::from(integer)
+        }
         _ => tagged_value("bigint", digits),
       }
     }

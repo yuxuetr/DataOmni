@@ -146,6 +146,28 @@ async fn oracle_decodes_values_the_way_the_other_dialects_do() {
   assert_eq!(rows[1]["V"], JsonValue::Null);
 }
 
+/// ClickHouse 回归时查出的同一类：i64 最小值取 `abs()` 溢出，release 里回绕成负数、被当成安全整数，
+/// 以 JSON 数字送到前端，JavaScript 读成 -9223372036854775808 的近似值
+#[tokio::test]
+async fn oracle_keeps_the_most_negative_integer_whole() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool).await;
+  let rows = rows_of(
+    connection
+      .execute(
+        "SELECT CAST(-9223372036854775808 AS NUMBER(19)) AS lo, CAST(-9007199254740991 AS NUMBER(19)) AS safe FROM dual",
+        10,
+      )
+      .await
+      .expect("select"),
+  );
+  assert_eq!(
+    (kind(&rows[0]["LO"]), text(&rows[0]["LO"]).as_str()),
+    ("bigint", "-9223372036854775808")
+  );
+  assert_eq!(rows[0]["SAFE"], json!(-9_007_199_254_740_991_i64));
+}
+
 #[tokio::test]
 async fn oracle_errors_carry_the_ora_code_and_position_and_the_session_survives() {
   let Some(pool) = pool().await else { return };
