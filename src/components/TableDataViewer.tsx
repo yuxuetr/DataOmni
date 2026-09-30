@@ -87,8 +87,6 @@ import { describeRowIdentity, primaryKeyColumns, rowKeyOf, wholeRowIdentity, typ
 import type { RowKey, TableTarget } from '../utils/rowStatements';
 import {
   cellInputFromValue,
-  describeBoundValue,
-  describeCellInput,
   isRequiredColumn,
   missingRequiredColumns,
   type BoundValue,
@@ -98,7 +96,6 @@ import { CellInputEditor } from './CellInputEditor';
 import { PendingChangesBar } from './PendingChangesBar';
 import { ChangeDiffDialog, type CommitFailure } from './ChangeDiffDialog';
 import {
-  pendingCellInput,
   pendingForRow,
   pendingStatements,
   canStageAnother,
@@ -110,7 +107,7 @@ import {
   type PendingChange
 } from '../utils/pendingChanges';
 import { ROW_COUNT_MISMATCH_CODE, toQueryExecutionError } from '../utils/queryError';
-import { GridCellValue } from './GridCellValue';
+import { StagedCellValue } from './GridCellValue';
 import { TableFilterBar } from './TableFilterBar';
 import { GridColumnMenu } from './GridColumnMenu';
 import { GridContextMenu, type GridContextTarget } from './GridContextMenu';
@@ -1056,10 +1053,6 @@ export default function TableDataViewer({
     onContextMenu?: (event: React.MouseEvent) => void;
   }) => {
     if (!isEditing || readOnly) {
-      const staged = pendingCellInput(pending, field);
-      const wasNote = staged && pending
-        ? t('changes.cellWas', { value: describeBoundValue(pending.original[field] ?? null) })
-        : undefined;
       // 非编辑状态或改不了的列，显示只读
       // 自建执行器把 BigInt / Decimal / 二进制等包成 tagged value 以保住精度，
       // 显示时统一交给 formatResultValue 还原成人能读的形式
@@ -1083,16 +1076,7 @@ export default function TableDataViewer({
         >
           {/* 单行形态、NULL / 空串 / 空白 / 二进制的区分都在 GridCellValue 里，
               与 SQL 结果表共用同一套约定 */}
-          {staged === undefined ? (
-            <GridCellValue value={(value ?? null) as SerializedResultValue} />
-          ) : staged.kind === 'value' || staged.kind === 'null' ? (
-            <GridCellValue value={staged.kind === 'null' ? null : staged.value} note={wasNote} />
-          ) : (
-            // DEFAULT 与表达式的结果由数据库算，这里只能照写
-            <span className="block truncate italic text-fg-muted" title={wasNote}>
-              {describeCellInput(staged)}
-            </span>
-          )}
+          <StagedCellValue value={(value ?? null) as SerializedResultValue} pending={pending} column={field} />
         </td>
       );
     }

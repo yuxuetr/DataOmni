@@ -41,7 +41,7 @@ import { useResizableColumns } from '../hooks/useResizableColumns';
 import { ColumnResizeHandle } from './ColumnResizeHandle';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { headerBadgeWidth } from '../utils/columnWidths';
-import { GridCellValue } from './GridCellValue';
+import { StagedCellValue } from './GridCellValue';
 import { GridContextMenu, type GridContextTarget } from './GridContextMenu';
 import { ColumnSortButton } from './ColumnSortButton';
 import { nextColumnSort, sortRowsByColumn, type ColumnSort } from '../utils/resultSorting';
@@ -697,7 +697,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                         ) : (
                           // 每格再挂一个类型标签是重复——表头已经写了 BIGINT · NOT NULL，
                           // 而且标签会占掉列宽，让本来放得下的值反而被截断
-                          <GridCellValue value={cell} />
+                          <StagedCellValue value={cell} pending={pending} column={result.columns[cellIndex]} />
                         )}
                       </td>
                     );

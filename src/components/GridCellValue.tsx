@@ -3,6 +3,8 @@ import { useLanguageStore } from '../stores/languageStore';
 import type { SerializedResultValue } from '../contracts/resultSet';
 import { describeCellDisplay } from '../utils/cellDisplay';
 import { formatResultValue } from '../utils/resultValues';
+import { describeBoundValue, describeCellInput } from '../utils/cellInput';
+import { pendingCellInput, type PendingDelete, type PendingUpdate } from '../utils/pendingChanges';
 
 /**
  * 网格里一个单元格的值。
@@ -50,6 +52,38 @@ export function GridCellValue({
       title={withNote(title)}
     >
       {display.text}
+    </span>
+  );
+}
+
+/**
+ * 这一行排着改动时的格子：改了的列画新值，悬停另起一行写原值；没改的列与待删的行照旧。
+ *
+ * 两张网格都要：排了队的行只给撤销、不能再编辑，格子里要是还画着加载时的值，
+ * 用户按下回车后就再也看不到自己改成了什么——只有打开预览才对得上。
+ */
+export function StagedCellValue({
+  value,
+  pending,
+  column
+}: {
+  value: SerializedResultValue;
+  pending: PendingUpdate | PendingDelete | undefined;
+  column: string;
+}) {
+  const t = useLanguageStore((state) => state.t);
+  const staged = pendingCellInput(pending, column);
+  if (staged === undefined || !pending) {
+    return <GridCellValue value={value} />;
+  }
+  const note = t('changes.cellWas', { value: describeBoundValue(pending.original[column] ?? null) });
+  if (staged.kind === 'value' || staged.kind === 'null') {
+    return <GridCellValue value={staged.kind === 'null' ? null : staged.value} note={note} />;
+  }
+  // DEFAULT 与表达式的结果由数据库算，这里只能照写
+  return (
+    <span className="block truncate italic text-fg-muted" title={note}>
+      {describeCellInput(staged)}
     </span>
   );
 }
