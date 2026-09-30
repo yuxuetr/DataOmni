@@ -524,6 +524,9 @@
       `loadTableMetadata` 吞进 console。冒烟用例名叫「界面实际发的参数」，却自己绑 `Option<String>`、不经应用的 `select`，所以一直是绿的；
       改成走 `sqlx_pool::select` 发界面那组参数，先红后绿。这条路只传名字，改按文本绑；MySQL 8.4 上同一条仍过。
       打包版上 `select * from tickets` 可编辑，改枚举发 `'happy'::mood`，服务端读回一致。
+    - 同一轮看到：SQL 结果网格里排了队的改动仍画加载时的值（`4b5c69e`）——`acc1a7e` 只改了表数据网格。两张网格改用同一个
+      `StagedCellValue`（放在 GridCellValue 旁边，判断仍是 `pendingCellInput` 那条已有单测的纯函数）。组件没有先红的测试；
+      打包版（rpm 0.4.44）上 SQL 结果改中文标题画新值、悬停「登录超时 / Was: 登录失败」，表数据页改枚举同样画新值、悬停「ok / Was: sad」。
   - 看到没修的：
     - DuckDB 的 `COMMENT ON` 注释不进 EXPORT DATABASE 的备份（上游行为），恢复后表与列的注释没了、不报错。
       重估条件：有人靠注释存文档并报告备份后丢失。
