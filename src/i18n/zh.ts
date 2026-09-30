@@ -860,6 +860,8 @@ export const zh = {
   'editor.collapseAllResults': '收起全部结果',
   'editor.expandAllResults': '展开全部结果',
   'editor.staleResult': '当前结果来自上一次执行，编辑后的 SQL 尚未执行。',
+  'editor.cancelledBadge': '已停止',
+  'editor.cancelledKeptResult': '这一次没跑完就停下了；下面是上一次执行的结果。',
   'editor.executionError': '执行错误',
 
   // 工作台

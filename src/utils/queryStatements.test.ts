@@ -4,7 +4,8 @@ import {
   clearSqlStatementResult,
   completeSqlStatement,
   failSqlStatement,
-  reconcileSqlStatements
+  reconcileSqlStatements,
+  statementOutcome
 } from './queryStatements';
 
 const result: QueryResult = {
@@ -112,5 +113,22 @@ describe('query statement lifecycle', () => {
       resultSql: undefined,
       executedAt: undefined
     });
+  });
+});
+
+describe('statementOutcome', () => {
+  it('停下的那次不算成功，哪怕卡片上还留着上一次的结果', () => {
+    // 打包版上看到的：同一条语句再跑一遍、中途停下，卡片照样打绿勾、摊着上一次的行数，
+    // 看上去就是这一次跑完了
+    expect(statementOutcome(executedStatement, 'cancelled')).toBe('cancelled');
+    expect(statementOutcome({ ...executedStatement, result: undefined }, 'cancelled')).toBe('cancelled');
+  });
+
+  it('其余照卡片上的状态', () => {
+    expect(statementOutcome(executedStatement, 'succeeded')).toBe('succeeded');
+    expect(statementOutcome(executedStatement, undefined)).toBe('succeeded');
+    expect(statementOutcome({ ...executedStatement, isExecuting: true }, 'running')).toBe('running');
+    expect(statementOutcome({ ...executedStatement, error: 'boom' }, 'failed')).toBe('failed');
+    expect(statementOutcome({ id: 's', sql: 'SELECT 1;', isExecuting: false }, undefined)).toBe('idle');
   });
 });

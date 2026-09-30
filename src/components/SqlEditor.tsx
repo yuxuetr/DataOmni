@@ -46,7 +46,7 @@ import {
   getSqlStatementRanges,
   splitSqlStatements
 } from '../utils/sqlStatements';
-import { withTrailingSemicolon } from '../utils/queryStatements';
+import { statementOutcome, withTrailingSemicolon } from '../utils/queryStatements';
 import { planFormat, sqlFormatterLanguage } from '../utils/formatSql';
 import { SQL_FILE_FILTER, linkSqlFile, planSqlSave, suggestSqlFileName } from '../utils/sqlFile';
 import { useWorkspaceStore } from '../stores/workspaceStore';
@@ -858,6 +858,7 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
   const t = useLanguageStore((state) => state.t);
   const hasOutput = Boolean(statement.result || statement.error);
   const collapsed = hasOutput && statement.collapsed === true;
+  const outcome = statementOutcome(statement, execution?.status);
 
   return (
     <div className="border border-line rounded-panel overflow-hidden">
@@ -889,7 +890,7 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
             </span>
           )}
           {/* 收起时标题上留一句结果摘要：不摊开也看得出跑完了、拿回多少 */}
-          {collapsed && statement.result && !statement.error && (
+          {collapsed && statement.result && outcome === 'succeeded' && (
             <span className="shrink-0 text-xs text-fg-subtle">
               {statement.result.columns.length > 0
                 ? t('result.rowCount', { count: statement.result.rows.length })
@@ -909,8 +910,11 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
           {statement.isExecuting && (
             <Loader className="animate-spin text-accent" size={16} />
           )}
-          {statement.result && !statement.error && (
+          {outcome === 'succeeded' && (
             <CheckCircle className="text-success" size={16} />
+          )}
+          {outcome === 'cancelled' && (
+            <span className="text-xs text-warning">{t('editor.cancelledBadge')}</span>
           )}
           {statement.error && (
             <AlertCircle className="text-danger" size={16} />
@@ -956,9 +960,9 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
       {/* 执行结果 */}
       {statement.result && !collapsed && (
         <>
-          {statement.resultSql && statement.resultSql !== statement.sql && (
+          {(outcome === 'cancelled' || (statement.resultSql && statement.resultSql !== statement.sql)) && (
             <div className="px-3 py-2 text-xs text-warning bg-warning-soft border-t border-warning-line">
-              {t('editor.staleResult')}
+              {t(outcome === 'cancelled' ? 'editor.cancelledKeptResult' : 'editor.staleResult')}
             </div>
           )}
           <QueryResultScrollTable

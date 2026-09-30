@@ -1,4 +1,4 @@
-import type { QueryExecutionError } from '../contracts/queryExecution';
+import type { QueryExecutionError, QueryExecutionStatus } from '../contracts/queryExecution';
 import type { QueryResult, SqlStatement } from '../contracts/query';
 import type { SqlDialect } from '../contracts/queryExecution';
 import { splitSqlStatements } from './sqlStatements';
@@ -82,6 +82,22 @@ export function failSqlStatement(
     error,
     errorDetails
   };
+}
+
+export type StatementOutcome = 'idle' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+
+/**
+ * 卡片该画成什么样。停下的那次没有错误、却可能留着上一次的结果（失败时也留，那边有红色的
+ * 错误面板说明）：只看 `result` 就会打绿勾，而这一次并没有跑完
+ */
+export function statementOutcome(
+  statement: SqlStatement,
+  executionStatus: QueryExecutionStatus | undefined
+): StatementOutcome {
+  if (statement.isExecuting) return 'running';
+  if (statement.error) return 'failed';
+  if (executionStatus === 'cancelled') return 'cancelled';
+  return statement.result ? 'succeeded' : 'idle';
 }
 
 export function clearSqlStatementResult(statement: SqlStatement): SqlStatement {

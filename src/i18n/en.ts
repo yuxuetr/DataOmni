@@ -839,6 +839,8 @@ export const en: Translations = {
   'editor.collapseAllResults': 'Collapse all results',
   'editor.expandAllResults': 'Expand all results',
   'editor.staleResult': 'This result is from the previous run; the edited SQL has not been executed.',
+  'editor.cancelledBadge': 'Stopped',
+  'editor.cancelledKeptResult': 'This run was stopped before it finished; the result below is from the previous run.',
   'editor.executionError': 'Execution error',
 
   'workbench.connecting': 'Connecting',
