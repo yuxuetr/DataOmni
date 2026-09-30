@@ -534,6 +534,10 @@
     - 解码器不认的 22 种类型改显示服务端文本（`039ee4a`，见 2.4）。连 `select oid, relname from pg_class` 原先都跑不了。
     - `'infinity'::date` 与 `'infinity'::timestamptz` 让 sqlx **panic**（`0fca595`），不带时区的 timestamp 读成 294277 年；
       表数据页读日期列走同一个解码器。二进制值自己换算，两端最值显示 `infinity` / `-infinity`，越界报错；冒烟用例先红后绿。
+    - 浮点的 `Infinity` / `NaN` 显示成 NULL（`baae33a`）：JSON 里没有这几个数，serde_json 给 null。PG 写 `Infinity`，SQLite 的
+      `1e999` 写 `Inf`。同时单精度（`0.1::float4`、MySQL 的 FLOAT）原先放宽成 f64 读成 0.10000000149011612，改按 f32 最短写法。
+      PG / SQLite / MySQL 8.4 各一条用例先红后绿。
+    - numeric 的 `NaN` / `Infinity` 整条报错（`6204723`）：BigDecimal 装不下，按头部符号值认出。先红后绿。
   - 看到没修的：
     - DuckDB 的 `COMMENT ON` 注释不进 EXPORT DATABASE 的备份（上游行为），恢复后表与列的注释没了、不报错。
       重估条件：有人靠注释存文档并报告备份后丢失。
