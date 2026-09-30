@@ -638,7 +638,8 @@ async fn postgres_enum_columns_read_as_their_label() {
 
   let result = execute_query(
     &DbPool::Postgres(pool.clone()),
-    "SELECT 'ok'::smoke_mood AS plain, '开心'::smoke_mood AS wide",
+    "SELECT 'ok'::smoke_mood AS plain, '开心'::smoke_mood AS wide, \
+     ARRAY['开心', NULL, 'sad']::smoke_mood[] AS list",
   )
   .await
   .expect("decode enum columns");
@@ -649,6 +650,8 @@ async fn postgres_enum_columns_read_as_their_label() {
   };
   assert_eq!(rows[0]["plain"], "ok");
   assert_eq!(rows[0]["wide"], "开心");
+  // 和别的数组一样按服务端的文本字面量写
+  assert_eq!(rows[0]["list"], "{开心,NULL,sad}");
 }
 
 /// 数组按 PostgreSQL 自己的文本输出显示：和服务端 `::text` 逐字相同，

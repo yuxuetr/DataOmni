@@ -1268,6 +1268,10 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
       let bytes = value.as_bytes().map_err(display_error)?;
       Ok(JsonValue::String(String::from_utf8_lossy(bytes).into_owned()))
     }
+    // 元素逐个按 String 解，而解码本身不查类型；只是 try_decode 那道兼容检查不认枚举
+    _ if pg_is_enum_array(&type_info) => pg_array_value(
+      ValueRef::to_owned(&value).try_decode_unchecked::<Vec<Option<String>>>(),
+    ),
     _ => Err(QueryError::message(format!("{UNSUPPORTED_COLUMN_TYPE}: {type_name}"))),
   }
 }
@@ -1384,6 +1388,14 @@ fn format_pg_interval(interval: &sqlx::postgres::types::PgInterval) -> String {
 /// 交给界面一个 JSON 数组的话，网格按 `String(value)` 印成 `a,b,c`——分不清
 /// `{a,b}` 和 `{"a,b"}`，也看不出 NULL 元素；改完写回去的也不是数组字面量。
 /// 这个字面量原样绑回去（带 `::text[]` 之类的转换）就是同一个值。
+fn pg_is_enum_array(type_info: &sqlx::postgres::PgTypeInfo) -> bool {
+  matches!(
+    type_info.kind(),
+    sqlx::postgres::PgTypeKind::Array(element)
+      if matches!(element.kind(), sqlx::postgres::PgTypeKind::Enum(_))
+  )
+}
+
 fn pg_array_value<T, E>(value: Result<Vec<Option<T>>, E>) -> Result<JsonValue, QueryError>
 where
   T: ToString,
