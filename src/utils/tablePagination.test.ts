@@ -217,8 +217,29 @@ describe('取表数据的投影', () => {
       '[id], CAST([v] AS nvarchar(max)) AS [v], CAST([g] AS nvarchar(max)) AS [g], '
       + 'CAST([gm] AS nvarchar(max)) AS [gm], CAST([h] AS nvarchar(max)) AS [h]'
     );
-    // 没有这种列时照旧是 *；别家的同名类型不受影响
+    // 没有这种列时照旧是 *
     expect(tableProjection([typed('id', 'int'), typed('x', 'xml')], 'sqlserver')).toBe('*');
-    expect(tableProjection([typed('id', 'int'), typed('g', 'geography')], 'postgresql')).toBe('*');
+  });
+
+  it('PostgreSQL 解码器不认的列转成文本再取：一列 inet 或枚举，整张表就打不开', () => {
+    const typed = (name: string, dataType: string) => ({
+      name, data_type: dataType, is_nullable: true, is_primary_key: false
+    });
+    expect(tableProjection([
+      typed('id', 'bigint'), typed('ip', 'inet'), typed('mood', 'mood'), typed('m', 'public."Money Kind"')
+    ], 'postgresql')).toBe(
+      '"id", "ip"::text AS "ip", "mood"::text AS "mood", "m"::text AS "m"'
+    );
+    // 按整个类型名认，不按首词：timetz 与 float8[] 解码器都不认，首词却是 time 与 double
+    expect(tableProjection([
+      typed('t', 'time with time zone'), typed('f', 'double precision[]')
+    ], 'postgresql')).toBe('"t"::text AS "t", "f"::text AS "f"');
+    // 全是认得的（类型修饰去掉再比）时照旧是 *
+    expect(tableProjection([
+      typed('a', 'character varying(20)'), typed('b', 'numeric(10,2)'),
+      typed('c', 'timestamp(3) with time zone'), typed('d', 'character varying(8)[]'),
+      typed('e', 'double precision'), typed('f', 'time without time zone'), typed('g', 'jsonb'),
+      typed('h', 'bigint[]'), typed('i', 'interval'), typed('j', 'uuid'), typed('k', 'bytea')
+    ], 'postgresql')).toBe('*');
   });
 });

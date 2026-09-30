@@ -173,25 +173,55 @@ export function pageClause(
  */
 const SQL_SERVER_UNREADABLE_TYPES = new Set(['sql_variant', 'geography', 'geometry', 'hierarchyid']);
 
-/** 投影里的一列；驱动读不了的列转成文本，别名仍是列名，网格按列名取值 */
+/**
+ * PostgreSQL 解码器（`query_executor.rs` 的 `decode_postgres`）认得的类型，按 `format_type`
+ * 的写法、去掉类型修饰。白名单：那边少认一种，这里多列一种，整张表就打不开；反过来只是
+ * 那一列按文本显示。枚举、域、扩展类型的名字各不相同，只能这样写。
+ */
+const POSTGRES_READABLE_TYPES = new Set([
+  'smallint', 'integer', 'bigint', 'numeric', 'real', 'double precision', 'boolean',
+  'character', 'character varying', 'text', 'name', 'uuid', 'json', 'jsonb', 'bytea',
+  'date', 'time without time zone', 'timestamp without time zone', 'timestamp with time zone', 'interval',
+  'text[]', 'character varying[]', 'name[]', 'smallint[]', 'integer[]', 'bigint[]'
+]);
+
+/** `numeric(10,2)` → `numeric`，`timestamp(3) with time zone` → `timestamp with time zone`。按整个名字比，不按首词 */
+function postgresTypeName(dataType: string): string {
+  return dataType.replace(/\([^)]*\)/g, '').trim().toLowerCase();
+}
+
+function isUnreadableColumn(column: ColumnInfo, dialect: SqlIdentifierDialect): boolean {
+  if (dialect === 'sqlserver') {
+    return SQL_SERVER_UNREADABLE_TYPES.has(columnTypeToken(column.data_type));
+  }
+  return dialect === 'postgresql' && !POSTGRES_READABLE_TYPES.has(postgresTypeName(column.data_type));
+}
+
+/**
+ * 投影里的一列；驱动读不了的列转成文本，别名仍是列名，网格按列名取值。
+ *
+ * 代价：别名和列名相同，按这一列排序时 `ORDER BY` 认的是别名，排的是文本
+ * （inet 按字符串、枚举按标签而不是声明次序）。筛选在 WHERE 里，仍按原类型比
+ */
 export function projectedColumn(column: ColumnInfo, dialect: SqlIdentifierDialect): string {
   const name = quoteSqlIdentifier(column.name, dialect);
-  return dialect === 'sqlserver' && SQL_SERVER_UNREADABLE_TYPES.has(columnTypeToken(column.data_type))
-    ? `CAST(${name} AS nvarchar(max)) AS ${name}`
-    : name;
+  if (!isUnreadableColumn(column, dialect)) {
+    return name;
+  }
+  return dialect === 'sqlserver' ? `CAST(${name} AS nvarchar(max)) AS ${name}` : `${name}::text AS ${name}`;
 }
 
 /**
  * 取表数据时 SELECT 后面那一段。
  *
- * 多数方言是 `*`。SQL Server 有驱动读不了的列时要点名，好把那几列转成文本。ClickHouse 的 `*` 不含 MATERIALIZED 与 ALIAS 列（网格里那几列会整列是 NULL），
+ * 多数方言是 `*`。SQL Server 与 PostgreSQL 有驱动读不了的列时要点名，好把那几列转成文本。ClickHouse 的 `*` 不含 MATERIALIZED 与 ALIAS 列（网格里那几列会整列是 NULL），
  * 要一个个点名；打开 `asterisk_include_materialized_columns` 也行，但那是个设置，`readonly = 1`
  * 的账号改不了。EPHEMERAL 列不点：它不存值，点名去查报「There is no column」（25.8 上试过）；
  * 网格上那一列是空的，本来也没有值
  */
 export function tableProjection(columns: readonly ColumnInfo[], dialect: SqlIdentifierDialect): string {
-  if (dialect === 'sqlserver') {
-    return columns.some(column => SQL_SERVER_UNREADABLE_TYPES.has(columnTypeToken(column.data_type)))
+  if (dialect === 'sqlserver' || dialect === 'postgresql') {
+    return columns.some(column => isUnreadableColumn(column, dialect))
       ? columns.map(column => projectedColumn(column, dialect)).join(', ')
       : '*';
   }
