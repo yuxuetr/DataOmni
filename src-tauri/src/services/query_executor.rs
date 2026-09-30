@@ -212,15 +212,16 @@ pub enum SessionConnection {
 
 impl SessionConnection {
   pub async fn acquire<'a>(pool: impl Into<PoolRef<'a>>) -> Result<Self, QueryError> {
+    // 走 `QueryError::from`：池已关、socket 断了要带上 CONNECTION_LOST，界面才会说「重连再试」
     match pool.into() {
       PoolRef::Sqlx(DbPool::Sqlite(pool)) => {
-        pool.acquire().await.map(Self::Sqlite).map_err(display_error)
+        pool.acquire().await.map(Self::Sqlite).map_err(QueryError::from)
       }
       PoolRef::Sqlx(DbPool::MySql(pool)) => {
-        pool.acquire().await.map(Self::MySql).map_err(display_error)
+        pool.acquire().await.map(Self::MySql).map_err(QueryError::from)
       }
       PoolRef::Sqlx(DbPool::Postgres(pool)) => {
-        pool.acquire().await.map(Self::Postgres).map_err(display_error)
+        pool.acquire().await.map(Self::Postgres).map_err(QueryError::from)
       }
       PoolRef::SqlServer(pool) => {
         pool.acquire_for_session().await.map(|connection| Self::SqlServer(Box::new(connection)))
@@ -1584,6 +1585,20 @@ mod tests {
     assert_eq!(postgres_logical_type("TIMESTAMPTZ"), "datetime");
     assert_eq!(postgres_logical_type("UUID"), "text");
     assert_eq!(postgres_logical_type("CUSTOM"), "unknown");
+  }
+
+  #[tokio::test]
+  async fn a_session_on_a_closed_pool_reports_the_connection_as_lost() {
+    // 断开之后在任务面板里点「重试」备份 / 导出 / 导入，走的就是这里：
+    // 界面上印的是驱动原话「attempted to acquire a connection on a closed pool」，
+    // 也不会把连接标成断了
+    let pool = SqlitePoolOptions::new().connect("sqlite::memory:").await.expect("connect");
+    pool.close().await;
+    let pool = DbPool::Sqlite(pool);
+    let Err(error) = SessionConnection::acquire(&pool).await else {
+      panic!("a closed pool handed out a connection");
+    };
+    assert_eq!(error.code.as_deref(), Some(crate::services::query_error::CONNECTION_LOST_CODE));
   }
 
   #[tokio::test]
