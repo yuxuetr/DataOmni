@@ -159,8 +159,11 @@ impl ConnectionService {
       return Ok((HashMap::new(), false));
     }
 
-    let content = fs::read_to_string(config_path)?;
-    let mut connections: Vec<ConnectionProfile> = serde_json::from_str(&content)?;
+    // 带上路径：读不出来时用户要去改的就是这个文件，而 serde 的报错只有行列号
+    let content = fs::read_to_string(config_path)
+      .map_err(|error| format!("{}: {error}", config_path.display()))?;
+    let mut connections: Vec<ConnectionProfile> = serde_json::from_str(&content)
+      .map_err(|error| format!("{}: {error}", config_path.display()))?;
     let mut map = HashMap::new();
     let mut migrated = false;
 
@@ -1062,6 +1065,25 @@ mod tests {
       .test_connection(restarted_service.get_connection("profile-1").unwrap())
       .unwrap_err()
       .starts_with(SESSION_PASSWORD_REQUIRED));
+
+    fs::remove_file(config_path).unwrap();
+  }
+
+  #[test]
+  fn an_unreadable_config_names_the_file_to_fix() {
+    let config_path = temporary_config_path();
+    fs::write(
+      &config_path,
+      r#"[{"id":"a","name":"a","db_type":"cockroachdb","host":"h","port":1}]"#,
+    )
+    .unwrap();
+
+    let error = ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default())
+      .err()
+      .unwrap()
+      .to_string();
+    assert!(error.contains(&config_path.display().to_string()), "{error}");
+    assert!(error.contains("unknown variant `cockroachdb`"), "{error}");
 
     fs::remove_file(config_path).unwrap();
   }

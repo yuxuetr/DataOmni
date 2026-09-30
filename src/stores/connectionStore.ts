@@ -25,6 +25,11 @@ export interface ConnectionState {
   isLoading: boolean;
   error: string | null;
   /**
+   * 连接列表读不出来的原因（配置文件坏了之类），给欢迎页画。和 `error` 分开：
+   * 那个是表单的测试 / 保存在用，关掉表单后还留着上一次的报错
+   */
+  loadError: string | null;
+  /**
    * 测试结果。`ok` 是独立的布尔值——此前界面靠 `testResult.includes('成功')`
    * 判断成败，那在翻译之后必然失效，而且失效的方式是「一直显示失败」。
    */
@@ -201,19 +206,20 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   selectedConnectionId: null,
   isLoading: false,
   error: null,
+  loadError: null,
   testResult: null,
 
   // Actions
   loadConnections: async () => {
-    set({ isLoading: true, error: null });
+    set({ isLoading: true });
     try {
       const connections = await invoke<ConnectionConfig[]>('get_connections');
-      set({ connections, isLoading: false });
+      set({ connections, isLoading: false, loadError: null });
     } catch (error) {
       console.error('加载连接配置失败:', error);
-      set({ 
-        error: describeError(error, translateNow('error.loadProfilesFailed')), 
-        isLoading: false 
+      set({
+        loadError: describeError(error, translateNow('error.loadProfilesFailed')),
+        isLoading: false
       });
     }
   },

@@ -49,3 +49,31 @@ describe('测试连接', () => {
     expect(closes()).toEqual([['close_sqlx_pool', { connectionString: LIVE }]]);
   });
 });
+
+/**
+ * 连接列表读不出来（配置文件坏了、从更新的版本退回来遇到不认识的类型）时，
+ * 欢迎页原先是空的、一句话也没有——像是连接全丢了。原因要单独留着给欢迎页画，
+ * 不能和表单的测试 / 保存共用 `error`：那个会在关掉表单后留下上一次测试的报错。
+ */
+describe('读连接列表', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    useConnectionStore.setState({ connections: [], error: null, loadError: null });
+  });
+
+  it('读失败时留下原因，读成功就清掉', async () => {
+    invokeMock.mockRejectedValueOnce('DATAOMNI_SERVICE_INIT_FAILED: unknown variant `cockroachdb`');
+    await useConnectionStore.getState().loadConnections();
+    expect(useConnectionStore.getState().loadError).toContain('unknown variant `cockroachdb`');
+
+    invokeMock.mockResolvedValueOnce([]);
+    await useConnectionStore.getState().loadConnections();
+    expect(useConnectionStore.getState().loadError).toBeNull();
+  });
+
+  it('测试连接失败不算读列表失败', async () => {
+    invokeMock.mockRejectedValue('connection refused');
+    await useConnectionStore.getState().testConnection(CONFIG).catch(() => undefined);
+    expect(useConnectionStore.getState().loadError).toBeNull();
+  });
+});

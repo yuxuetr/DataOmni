@@ -24,6 +24,7 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
   const t = useLanguageStore((state) => state.t);
   const connections = useConnectionStore((state) => state.connections);
   const loadConnections = useConnectionStore((state) => state.loadConnections);
+  const loadError = useConnectionStore((state) => state.loadError);
   const { connect, openDatabaseFile, connectingProfileId, error, clearError } = useProfileConnector();
 
   useEffect(() => {
@@ -43,6 +44,14 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
       <div className="mx-auto flex min-h-0 w-full max-w-lg flex-1 flex-col px-6 pb-10 pt-16">
         <h1 className="shrink-0 text-lg font-semibold text-fg">DataOmni</h1>
         <p className="mt-1 shrink-0 text-xs text-fg-subtle">{t('welcome.hint')}</p>
+
+        {/* 不给关：读不出来时列表是空的，关掉之后就又像是连接全丢了 */}
+        {loadError && (
+          <div className="mt-4 flex shrink-0 items-start gap-2 rounded-control border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
+            <AlertCircle size={14} className="mt-0.5 shrink-0" />
+            <span className="min-w-0 flex-1 break-words">{loadError}</span>
+          </div>
+        )}
 
         {error && (
           <div className="mt-4 flex shrink-0 items-start gap-2 rounded-control border border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
