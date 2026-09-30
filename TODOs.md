@@ -203,7 +203,10 @@
   - 剩余：表结构查询仍走插件，因 `execute_query` 不收绑定参数；84495ab 的 CAST 让它能用，CAST 是否补齐由 `e61654c` 的门比对。
   - 暂不支持：PostgreSQL `BIT` 与 `INET` / `CIDR`（需开 sqlx `bit-vec` / `ipnetwork`，应用 schema 少见）。
     2026-09-30 起表数据页与整表导出不再因此整张打不开（`39bb53d`）：解码器白名单以外的列（这几种之外还有枚举、域、timetz、
-    money、xml、几何、区间……）按 `::text` 取；SQL 标签里的查询仍照原样报错、叫人 CAST。
+    money、xml、几何、区间……）按 `::text` 取。
+    2026-10-01 SQL 标签里的查询也不再报错叫人 CAST（`039ee4a`）：describe 出的列有一列解码器不认，整条改走简单查询协议，
+    认不得的照服务端文本显示（inet、money、timetz、xml、oid、regclass、范围、numeric[] / bool[] 等 22 种逐个与 `::text` 比对）；
+    同一行里认得的列在文本格式下与二进制时逐列相同。PG 16 与 CockroachDB 过。
   - 重估条件：真需要时给 `execute_query` 补绑定参数。
 
 ## P3：数据库管理与数据工程能力
