@@ -438,6 +438,9 @@ impl ConnectionService {
   fn persist_submitted_password(&mut self, config: &mut ConnectionProfile) -> Result<(), String> {
     if config.password.is_empty() {
       config.credential_ref = None;
+      if !config.save_password {
+        self.remember_empty_session_password(&config.id);
+      }
       return Ok(());
     }
 
@@ -464,6 +467,9 @@ impl ConnectionService {
   ) -> Result<(), String> {
     if existing.save_password == config.save_password {
       config.credential_ref = existing.credential_ref.clone();
+      if !config.save_password {
+        self.remember_empty_session_password(&config.id);
+      }
       return Ok(());
     }
 
@@ -484,8 +490,18 @@ impl ConnectionService {
       self.session_passwords.insert(config.id.clone(), password);
       self.credential_store.delete_password(&config.id)?;
     }
+    self.remember_empty_session_password(&config.id);
     config.credential_ref = None;
     Ok(())
+  }
+
+  /// 不保存密码的连接，表单里密码空着提交就是「这次会话用空密码」。
+  ///
+  /// 密码提示打开的就是这张表单：不记下来，没设密码的库（Redis、不开认证的
+  /// MongoDB）连一次弹一次表单，存了再连还是弹，绕不出去。已经输过的会话密码
+  /// 不动——编辑表单不回显密码，空着提交在那种时候是「不改」。
+  fn remember_empty_session_password(&mut self, id: &str) {
+    self.session_passwords.entry(id.to_string()).or_default();
   }
 }
 
@@ -1046,6 +1062,33 @@ mod tests {
       .test_connection(restarted_service.get_connection("profile-1").unwrap())
       .unwrap_err()
       .starts_with(SESSION_PASSWORD_REQUIRED));
+
+    fs::remove_file(config_path).unwrap();
+  }
+
+  #[test]
+  fn an_empty_session_password_submitted_through_the_form_is_used_for_this_session() {
+    let config_path = temporary_config_path();
+    let mut service =
+      ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()).unwrap();
+    let mut config = profile("profile-1", "");
+    config.save_password = false;
+
+    service.create_connection(config).unwrap();
+    assert!(service.test_connection(service.get_connection("profile-1").unwrap()).is_ok());
+
+    // 重启后照旧先问一次；提示打开的就是编辑表单，空着保存等于这次会话用空密码
+    let mut restarted_service =
+      ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()).unwrap();
+    let saved = restarted_service.get_connection("profile-1").unwrap().clone();
+    assert!(restarted_service
+      .test_connection(&saved)
+      .unwrap_err()
+      .starts_with(SESSION_PASSWORD_REQUIRED));
+    restarted_service.update_connection("profile-1", saved).unwrap();
+    assert!(restarted_service
+      .test_connection(restarted_service.get_connection("profile-1").unwrap())
+      .is_ok());
 
     fs::remove_file(config_path).unwrap();
   }
