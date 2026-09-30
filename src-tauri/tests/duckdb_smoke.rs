@@ -364,7 +364,7 @@ async fn duckdb_writes_bind_displayed_text_into_every_column_type() {
       "CREATE TABLE t (id INTEGER PRIMARY KEY, i INTEGER, d DECIMAL(10,2), ts TIMESTAMP, \
         tz TIMESTAMPTZ, dt DATE, tm TIME, b BOOLEAN, u UUID, e ENUM('ok', 'no'), l INTEGER[], \
         st STRUCT(a INTEGER, b VARCHAR), m MAP(VARCHAR, INTEGER), j JSON, h HUGEINT, iv INTERVAL, \
-        bl BLOB)",
+        bl BLOB, un UNION(n INTEGER, t VARCHAR))",
       "INSERT INTO t (id) VALUES (1)",
     ],
   )
@@ -392,6 +392,8 @@ async fn duckdb_writes_bind_displayed_text_into_every_column_type() {
     ("j", json!(r#"{"a":1}"#)),
     ("h", json!("170141183460469231731687303715884105727")),
     ("iv", json!("1 year 2 days 03:04:05")),
+    // 显示成 JSON 的 `"hi"` 填回去，库里存的就是带引号的那五个字
+    ("un", json!("hi")),
   ] {
     let write = |sql: String, params: Vec<JsonValue>| {
       serde_json::from_value::<WriteStatement>(

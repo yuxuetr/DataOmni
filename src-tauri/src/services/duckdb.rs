@@ -659,11 +659,10 @@ fn logical_type(id: LogicalTypeId) -> &'static str {
     | LogicalTypeId::TimestampNs
     | LogicalTypeId::TimestampTZ => "datetime",
     LogicalTypeId::Blob | LogicalTypeId::Geometry => "binary",
-    LogicalTypeId::List | LogicalTypeId::Array | LogicalTypeId::Struct | LogicalTypeId::Union => {
-      "json"
-    }
-    // MAP 按 DuckDB 自己的写法显示（见 `map_text`），不是 JSON
+    LogicalTypeId::List | LogicalTypeId::Array | LogicalTypeId::Struct => "json",
+    // MAP 按 DuckDB 自己的写法显示（见 `map_text`），不是 JSON；UNION 显示当前那个成员
     LogicalTypeId::Map
+    | LogicalTypeId::Union
     | LogicalTypeId::Varchar
     | LogicalTypeId::Enum
     | LogicalTypeId::Uuid
@@ -720,6 +719,8 @@ fn decode(value: &Value, type_id: LogicalTypeId) -> JsonValue {
       tagged_value("binary", bytes.iter().map(|byte| format!("{byte:02x}")).collect())
     }
     Value::Map(entries) => JsonValue::from(map_text(entries)),
+    // 照成员自己的样子显示：写成 JSON 的 `"hi"` 填回去，库里存的就是带引号的五个字
+    Value::Union(inner) => decode(inner, type_id),
     nested => tagged_value("json", plain(nested).to_string()),
   }
 }
