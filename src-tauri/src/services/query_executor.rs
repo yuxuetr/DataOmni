@@ -313,7 +313,9 @@ impl SessionConnection {
     match self {
       Self::Sqlite(connection) => describe_sqlite_columns(connection, sql).await,
       Self::MySql(connection) => describe_mysql_columns(connection, sql).await,
-      Self::Postgres(connection) => describe_postgres_columns(connection, sql).await,
+      Self::Postgres(connection) => {
+        describe_postgres_columns(connection, sql).await.map(|(columns, _)| columns)
+      }
       Self::SqlServer(connection) => connection.describe_columns(sql).await,
       Self::Oracle(connection) => connection.describe_columns(sql).await,
       Self::DuckDb(connection) => connection.describe_columns(sql).await,
@@ -802,12 +804,14 @@ async fn execute_postgres_connection_with_limits(
   summary_with_rows(summary, rows)
 }
 
+/// 列的元数据，外加这些列是不是都能按二进制解（`pg_decodes_binary`）
 async fn describe_postgres_columns(
   connection: &mut PgConnection,
   sql: &str,
-) -> Result<Vec<QueryColumnMetadata>, QueryError> {
+) -> Result<(Vec<QueryColumnMetadata>, bool), QueryError> {
   let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
-  Ok(
+  let binary = description.columns().iter().all(|column| pg_decodes_binary(column.type_info()));
+  Ok((
     description
       .columns()
       .iter()
@@ -820,7 +824,8 @@ async fn describe_postgres_columns(
         nullable: description.nullable(ordinal),
       })
       .collect(),
-  )
+    binary,
+  ))
 }
 
 async fn execute_postgres_connection_streaming(
@@ -835,7 +840,7 @@ async fn execute_postgres_connection_streaming(
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let column_metadata = describe_postgres_columns(connection, sql).await?;
+  let (column_metadata, binary) = describe_postgres_columns(connection, sql).await?;
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
   if columns.is_empty() && !options.explain_plan {
@@ -844,7 +849,10 @@ async fn execute_postgres_connection_streaming(
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let mut stream = (&mut *connection).fetch(sqlx::query(sql));
+  // 不带参数的 `&str` 走简单查询协议，结果是文本格式。能 describe 的只会是一条语句，
+  // 所以这里不会顺带执行别的
+  let mut stream =
+    if binary { (&mut *connection).fetch(sqlx::query(sql)) } else { (&mut *connection).fetch(sql) };
   let mut rows = Vec::with_capacity(options.batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
@@ -1209,6 +1217,20 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
 
   let type_info = value.type_info();
   let type_name = type_info.name();
+  // 文本格式（见 `pg_decodes_binary`）：sqlx 解不了文本的区间、数组与认不得的类型直接用服务端的文本，
+  // 其余的 sqlx 两种格式都认，照下面的分支走
+  if value.format() == sqlx::postgres::PgValueFormat::Text {
+    let text = || value.as_str().map(str::to_owned).map_err(display_error);
+    match type_name {
+      "INTERVAL" => return Ok(tagged_value("time", text()?)),
+      _ if matches!(type_info.kind(), sqlx::postgres::PgTypeKind::Array(_))
+        || !pg_decodes_binary(&type_info) =>
+      {
+        return Ok(JsonValue::String(text()?))
+      }
+      _ => {}
+    }
+  }
   match type_name {
     "INT2" => json_value(ValueRef::to_owned(&value).try_decode::<i16>()),
     "INT4" => json_value(ValueRef::to_owned(&value).try_decode::<i32>()),
@@ -1269,9 +1291,9 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
       Ok(JsonValue::String(String::from_utf8_lossy(bytes).into_owned()))
     }
     // 元素逐个按 String 解，而解码本身不查类型；只是 try_decode 那道兼容检查不认枚举
-    _ if pg_is_enum_array(&type_info) => pg_array_value(
-      ValueRef::to_owned(&value).try_decode_unchecked::<Vec<Option<String>>>(),
-    ),
+    _ if pg_is_enum_array(&type_info) => {
+      pg_array_value(ValueRef::to_owned(&value).try_decode_unchecked::<Vec<Option<String>>>())
+    }
     _ => Err(QueryError::message(format!("{UNSUPPORTED_COLUMN_TYPE}: {type_name}"))),
   }
 }
@@ -1383,11 +1405,42 @@ fn format_pg_interval(interval: &sqlx::postgres::types::PgInterval) -> String {
   text
 }
 
-/// PostgreSQL 数组按它自己的文本输出（`array_out`）写成一个字符串：`{a,"b,c",NULL}`。
-///
-/// 交给界面一个 JSON 数组的话，网格按 `String(value)` 印成 `a,b,c`——分不清
-/// `{a,b}` 和 `{"a,b"}`，也看不出 NULL 元素；改完写回去的也不是数组字面量。
-/// 这个字面量原样绑回去（带 `::text[]` 之类的转换）就是同一个值。
+/// `decode_postgres` 按二进制格式解得了的列。结果里有一列不在这里，整条语句就改走
+/// 简单查询协议：服务端给每一列发文本，认不得的类型照这段文本显示
+fn pg_decodes_binary(type_info: &sqlx::postgres::PgTypeInfo) -> bool {
+  matches!(
+    type_info.name(),
+    "INT2"
+      | "INT4"
+      | "INT8"
+      | "FLOAT4"
+      | "FLOAT8"
+      | "NUMERIC"
+      | "BOOL"
+      | "JSON"
+      | "JSONB"
+      | "CHAR"
+      | "VARCHAR"
+      | "TEXT"
+      | "NAME"
+      | "UUID"
+      | "DATE"
+      | "TIME"
+      | "TIMESTAMP"
+      | "TIMESTAMPTZ"
+      | "INTERVAL"
+      | "BYTEA"
+      | "TEXT[]"
+      | "VARCHAR[]"
+      | "NAME[]"
+      | "INT2[]"
+      | "INT4[]"
+      | "INT8[]"
+      | "VOID"
+  ) || matches!(type_info.kind(), sqlx::postgres::PgTypeKind::Enum(_))
+    || pg_is_enum_array(type_info)
+}
+
 fn pg_is_enum_array(type_info: &sqlx::postgres::PgTypeInfo) -> bool {
   matches!(
     type_info.kind(),
@@ -1396,6 +1449,11 @@ fn pg_is_enum_array(type_info: &sqlx::postgres::PgTypeInfo) -> bool {
   )
 }
 
+/// PostgreSQL 数组按它自己的文本输出（`array_out`）写成一个字符串：`{a,"b,c",NULL}`。
+///
+/// 交给界面一个 JSON 数组的话，网格按 `String(value)` 印成 `a,b,c`——分不清
+/// `{a,b}` 和 `{"a,b"}`，也看不出 NULL 元素；改完写回去的也不是数组字面量。
+/// 这个字面量原样绑回去（带 `::text[]` 之类的转换）就是同一个值。
 fn pg_array_value<T, E>(value: Result<Vec<Option<T>>, E>) -> Result<JsonValue, QueryError>
 where
   T: ToString,

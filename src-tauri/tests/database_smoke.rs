@@ -691,6 +691,96 @@ async fn postgres_arrays_read_as_the_servers_own_literal() {
   }
 }
 
+/// 解码器按二进制认得的类型之外（网络地址、money、timetz、xml、oid、范围、多数数组……），
+/// SQL 标签里的查询原先整条报「不支持的列类型」，叫人 CAST。现在显示服务端自己的文本输出
+#[tokio::test]
+async fn postgres_columns_without_a_binary_decoder_read_as_the_servers_text() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let cases = [
+    "'10.0.0.1/8'::inet",
+    "'10.0.0.0/8'::cidr",
+    "'08:00:2b:01:02:03'::macaddr",
+    "'12.34'::money",
+    "'10:00:00+08'::timetz",
+    "'<a>开心</a>'::xml",
+    "B'101'::bit(3)",
+    "B'101'::varbit",
+    "ARRAY[1.50, NULL]::numeric[]",
+    "ARRAY[true, false]",
+    "ARRAY[1.5]::float8[]",
+    "ARRAY['a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11']::uuid[]",
+    "ARRAY['2020-01-01']::date[]",
+    "ARRAY['2020-01-01 10:00:00+00']::timestamptz[]",
+    "ARRAY['{\"a\": 1}']::jsonb[]",
+    "ARRAY['1 day']::interval[]",
+    "int4range(1, 5)",
+    "'a b'::tsvector",
+    "point(1, 2)",
+    "'x'::\"char\"",
+    "1::oid",
+    "'pg_class'::regclass",
+  ];
+  let mut checked = 0;
+  for expression in cases {
+    // 兼容库不是每种都有（CockroachDB 没有 money、xml、point……），服务端不认的跳过
+    let sql = format!("SELECT {expression} AS v, ({expression})::text AS t");
+    if sqlx::query(&sql).fetch_one(&pool).await.is_err() {
+      continue;
+    }
+    let result = execute_query(&DbPool::Postgres(pool.clone()), &sql)
+      .await
+      .unwrap_or_else(|error| panic!("{expression}: {error:?}"));
+    let QueryExecutionResult::Rows { rows, .. } = result else {
+      panic!("expected a row result");
+    };
+    assert_eq!(rows[0]["v"], rows[0]["t"], "{expression}");
+    checked += 1;
+  }
+  assert!(checked >= 10, "only {checked} cases ran");
+}
+
+/// 一行里只要有一列走文本，整行都是文本格式：认得的类型在文本格式下要和二进制时显示得一样
+#[tokio::test]
+async fn postgres_known_columns_read_the_same_next_to_a_text_only_column() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let known = "1::int2 AS i2, 2::int4 AS i4, 9007199254740993::int8 AS i8, 1.5::float4 AS f4, \
+     2.25::float8 AS f8, 1.50::numeric AS n, true AS b, \
+     '{\"a\": [1]}'::json AS j, '{\"a\": [1]}'::jsonb AS jb, 'x'::text AS t, 'y'::varchar AS vc, \
+     'z'::name AS nm, 'c'::char(2) AS c, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid AS u, \
+     '2020-01-02'::date AS d, '10:00:00.5'::time AS tm, '2020-01-02 03:04:05.6'::timestamp AS ts, \
+     '2020-01-02 03:04:05+08'::timestamptz AS tz, '\\x00ff'::bytea AS by, \
+     ARRAY['a', NULL, 'b,c']::text[] AS ta, ARRAY[1, NULL]::int4[] AS ia, \
+     '1 day 02:03:04.5'::interval AS iv, '-1 mon'::interval AS neg";
+  let binary = execute_query(&DbPool::Postgres(pool.clone()), &format!("SELECT {known}"))
+    .await
+    .expect("binary row");
+  let text = execute_query(
+    &DbPool::Postgres(pool.clone()),
+    &format!("SELECT {known}, '10.0.0.1'::inet AS text_only"),
+  )
+  .await
+  .expect("text row");
+  let (
+    QueryExecutionResult::Rows { rows: binary, .. },
+    QueryExecutionResult::Rows { rows: text, .. },
+  ) = (binary, text)
+  else {
+    panic!("expected row results");
+  };
+  for (column, value) in &binary[0] {
+    assert_eq!(&text[0][column], value, "{column}");
+  }
+  assert_eq!(text[0]["text_only"], "10.0.0.1");
+}
+
 // ---------------------------------------------------------------------------
 // 结构浏览：索引、外键、检查约束
 //
@@ -1235,8 +1325,12 @@ async fn postgres_accepts_the_parameters_the_ui_actually_sends() {
   let cockroach = is_cockroach(&pool).await;
   let handle = DbPool::Postgres(pool.clone());
   for (name, sql) in bound_catalog_queries(&queries) {
-    match dataomni_lib::services::sqlx_pool::select(&handle, sql, ui_catalog_params(&fixture, &queries))
-      .await
+    match dataomni_lib::services::sqlx_pool::select(
+      &handle,
+      sql,
+      ui_catalog_params(&fixture, &queries),
+    )
+    .await
     {
       Err(error) if cockroach && name == "triggers" => {
         assert_cockroach_refuses_the_trigger_catalog(error)
