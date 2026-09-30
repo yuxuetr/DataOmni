@@ -273,7 +273,7 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
 
       {/* 两页都不卸掉，只藏起来：键列表翻到哪、选着哪个，命令行跑过什么，切回来都还在 */}
       <div className={clsx('flex min-h-0 flex-1 flex-col', mode !== 'console' && 'hidden')}>
-        <RedisConsole database={database} onRan={() => setStale(true)} />
+        <RedisConsole database={database} active={mode === 'console'} onRan={() => setStale(true)} />
       </div>
       <div className={clsx('flex min-h-0 flex-1', mode === 'console' && 'hidden')}>
         <div className="flex w-[360px] shrink-0 flex-col border-r border-line">

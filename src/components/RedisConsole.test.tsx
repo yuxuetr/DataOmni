@@ -23,7 +23,7 @@ function typeInto(input: HTMLInputElement, text: string) {
 }
 
 async function submit(text: string): Promise<HTMLInputElement> {
-  act(() => root.render(<RedisConsole database={0} onRan={() => {}} />));
+  act(() => root.render(<RedisConsole database={0} active onRan={() => {}} />));
   const input = container.querySelector('input') as HTMLInputElement;
   act(() => typeInto(input, text));
   await act(async () => {
@@ -64,5 +64,14 @@ describe('RedisConsole', () => {
     const input = await submit('PING');
     expect(input.value).toBe('');
     expect(container.textContent).toContain('PONG');
+  });
+
+  // 打包版回归时撞上的：点「命令行」之后直接敲，字母全落空——框没拿到焦点，而它一直挂着只是藏起来
+  it('切到命令行时输入框拿到焦点', () => {
+    act(() => root.render(<RedisConsole database={0} active={false} onRan={() => {}} />));
+    const input = container.querySelector('input') as HTMLInputElement;
+    expect(document.activeElement).not.toBe(input);
+    act(() => root.render(<RedisConsole database={0} active onRan={() => {}} />));
+    expect(document.activeElement).toBe(input);
   });
 });

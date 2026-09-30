@@ -20,6 +20,8 @@ import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface RedisConsoleProps {
   database: number;
+  /** 这一页正显示着。它一直挂着只是藏起来，所以切过来时要自己把焦点给输入框 */
+  active: boolean;
   /** 跑成了一条：键列表与值可能跟着变了 */
   onRan: () => void;
 }
@@ -36,7 +38,7 @@ interface ConsoleEntry {
  * Redis 的命令行：一行一条命令，写法与 redis-cli 相同（引号、`\xHH`），回答也照它的样子画。
  * 跑在这个标签的库号上；切库用对象树（`SELECT` 在这里会被拒——连接是各处共用的）
  */
-export function RedisConsole({ database, onRan }: RedisConsoleProps) {
+export function RedisConsole({ database, active, onRan }: RedisConsoleProps) {
   const t = useLanguageStore((state) => state.t);
   const connectionString = useQueryStore((state) => state.connectionString);
   const timeoutMs = useQueryStore((state) => state.queryTimeoutMs);
@@ -48,6 +50,11 @@ export function RedisConsole({ database, onRan }: RedisConsoleProps) {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const nextId = useRef(0);
   const outputRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (active) inputRef.current?.focus();
+  }, [active]);
 
   useEffect(() => {
     outputRef.current?.scrollTo({ top: outputRef.current.scrollHeight });
@@ -148,6 +155,7 @@ export function RedisConsole({ database, onRan }: RedisConsoleProps) {
       <div className="flex items-center gap-2 border-t border-line px-4 py-2">
         <span className="shrink-0 font-mono text-[13px] text-fg-muted">{`db${database}>`}</span>
         <input
+          ref={inputRef}
           value={line}
           onChange={(event) => {
             setLine(event.target.value);
