@@ -139,7 +139,7 @@ function App() {
   const t = useLanguageStore((state) => state.t);
   const setLanguagePreference = useLanguageStore((state) => state.setPreference);
   const setThemePreference = useThemeStore((state) => state.setPreference);
-  const { connect, openDatabaseFile } = useProfileConnector();
+  const { connect, openDatabaseFile, error: connectError, clearError: clearConnectError } = useProfileConnector();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
@@ -997,14 +997,17 @@ function App() {
             closedTabCount={closedTabs.length}
           />
         )}
-        {/* 打开文件失败就报在标签栏底下：动作是从这里发起的，
-            提示也该出现在这里，而不是挤进某个标签的内容里 */}
-        {fileError && (
+        {/* 打开文件失败、从命令面板连接失败都报在标签栏底下：动作不是从某个标签里发起的，
+            提示不该挤进某个标签的内容里。命令面板那一路此前没人渲染它的错误，失败时什么也不说 */}
+        {(fileError ?? connectError) && (
           <div className="flex items-start gap-2 border-b border-danger-line bg-danger-soft px-3 py-2">
-            <span className="min-w-0 flex-1 break-words text-xs text-danger">{fileError}</span>
+            <span className="min-w-0 flex-1 break-words text-xs text-danger">{fileError ?? connectError}</span>
             <button
               type="button"
-              onClick={() => setFileError(null)}
+              onClick={() => {
+                setFileError(null);
+                clearConnectError();
+              }}
               aria-label={t('common.close')}
               className="shrink-0 text-danger hover:opacity-80"
             >
