@@ -61,6 +61,24 @@ describe('createTablePaginationOrder', () => {
       stableAcrossChanges: false
     });
   });
+
+  it('SQL Server 没有主键时跳过不能排序的列：ORDER BY 里有一列 xml，整张表就打不开', () => {
+    const typed = (name: string, dataType: string): ColumnInfo => ({
+      name, data_type: dataType, is_nullable: true, is_primary_key: false
+    });
+    const order = createTablePaginationOrder([
+      typed('a', 'int'), typed('x', 'xml'), typed('t', 'text'), typed('nt', 'ntext'),
+      typed('im', 'image'), typed('g', 'geography'), typed('gm', 'geometry'),
+      typed('h', 'hierarchyid'), typed('m', 'nvarchar(max)')
+    ], 'sqlserver');
+    expect(order.clause).toBe('ORDER BY [a], [h], [m]');
+    expect(order.strategy).toBe('all-columns');
+    // 一列都排不了时不抛：分页那一步会补 ORDER BY (SELECT NULL)
+    const none = createTablePaginationOrder([typed('x', 'xml')], 'sqlserver');
+    expect(none.clause).toBe('');
+    expect(pageClause(createSortedOrderClause(none, null, 'sqlserver'), 50, 0, 'sqlserver'))
+      .toBe('ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY');
+  });
 });
 
 describe('用户排序与分页排序的合并', () => {

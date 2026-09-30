@@ -66,6 +66,17 @@ export function createTablePaginationOrder(
     };
   }
 
+  // SQL Server 不许按这几种类型排序（Msg 249 / 305 / 306），ORDER BY 里有一列，
+  // 这张表整张打不开。一列都不剩时给空子句，分页那一步补 ORDER BY (SELECT NULL)
+  if (dialect === 'sqlserver') {
+    const sortable = columns
+      .filter(column => !SQL_SERVER_UNSORTABLE_TYPES.has(columnTypeToken(column.data_type)))
+      .map(column => column.name);
+    return sortable.length > 0
+      ? createOrder(sortable, dialect, 'all-columns', false)
+      : { clause: '', strategy: 'all-columns', columns: [], stableAcrossChanges: false };
+  }
+
   return createOrder(
     columns.map(column => column.name),
     dialect,
@@ -73,6 +84,8 @@ export function createTablePaginationOrder(
     false
   );
 }
+
+const SQL_SERVER_UNSORTABLE_TYPES = new Set(['xml', 'text', 'ntext', 'image', 'geography', 'geometry']);
 
 function createOrder(
   columns: string[],
