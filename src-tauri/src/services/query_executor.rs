@@ -1327,20 +1327,51 @@ fn format_mysql_time(duration: time::Duration) -> String {
 }
 
 /// PostgreSQL 的 interval 由「月 / 日 / 微秒」三段组成，没有统一的标量表示，
-/// 这里按 PostgreSQL 自己的文本形式拼回去。
+/// 这里按 PostgreSQL 默认的文本形式（IntervalStyle `postgres`）拼回去：`1 year 2 mons 3 days 04:05:06.5`。
+///
+/// 照 `EncodeInterval` 的规矩：各段为 0 就不写，只有 1 时用单数（`-1 days` 是复数）；
+/// 前一段为负而这一段为正时带 `+`，否则 `-1 days +02:00:00` 读起来像 `-1 days -02:00:00`。
+/// 此前写成 `1 days 7384 secs`，写回去 PostgreSQL 认，人读得先心算
 fn format_pg_interval(interval: &sqlx::postgres::types::PgInterval) -> String {
-  let mut parts = Vec::new();
-  if interval.months != 0 {
-    parts.push(format!("{} mons", interval.months));
+  let mut text = String::new();
+  let mut previous_negative = false;
+  let date_parts = [
+    (i64::from(interval.months / 12), "year"),
+    (i64::from(interval.months % 12), "mon"),
+    (i64::from(interval.days), "day"),
+  ];
+  for (value, unit) in date_parts {
+    if value == 0 {
+      continue;
+    }
+    let separator = if text.is_empty() { "" } else { " " };
+    let plus = if previous_negative && value > 0 { "+" } else { "" };
+    let plural = if value == 1 { "" } else { "s" };
+    text.push_str(&format!("{separator}{plus}{value} {unit}{plural}"));
+    previous_negative = value < 0;
   }
-  if interval.days != 0 {
-    parts.push(format!("{} days", interval.days));
+
+  let micros = interval.microseconds;
+  if text.is_empty() || micros != 0 {
+    let separator = if text.is_empty() { "" } else { " " };
+    let sign = if micros < 0 {
+      "-"
+    } else if previous_negative {
+      "+"
+    } else {
+      ""
+    };
+    let magnitude = micros.unsigned_abs();
+    let hours = magnitude / 3_600_000_000;
+    let minutes = magnitude / 60_000_000 % 60;
+    let seconds = magnitude / 1_000_000 % 60;
+    let fraction = magnitude % 1_000_000;
+    text.push_str(&format!("{separator}{sign}{hours:02}:{minutes:02}:{seconds:02}"));
+    if fraction != 0 {
+      text.push_str(format!(".{fraction:06}").trim_end_matches('0'));
+    }
   }
-  if interval.microseconds != 0 || parts.is_empty() {
-    let total_seconds = interval.microseconds as f64 / 1_000_000.0;
-    parts.push(format!("{total_seconds} secs"));
-  }
-  parts.join(" ")
+  text
 }
 
 /// PostgreSQL 数组按它自己的文本输出（`array_out`）写成一个字符串：`{a,"b,c",NULL}`。
@@ -1485,6 +1516,36 @@ pub(crate) fn tagged_value(value_type: &str, value: String) -> JsonValue {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  /// 期望值是 PostgreSQL 16 对同一个值的文本输出（默认 IntervalStyle `postgres`），逐条跑过
+  #[test]
+  fn an_interval_reads_the_way_postgres_prints_it() {
+    let cases: [(i32, i32, i64, &str); 15] = [
+      (0, 1, 7_384_000_000, "1 day 02:03:04"),
+      (-3, 0, 0, "-3 mons"),
+      (14, 0, 0, "1 year 2 mons"),
+      (0, 0, 0, "00:00:00"),
+      (0, -1, 7_200_000_000, "-1 days +02:00:00"),
+      (0, 0, -7_384_500_000, "-02:03:04.5"),
+      (0, 2, 0, "2 days"),
+      (-12, 0, 0, "-1 years"),
+      (0, 0, 360_000_000_000, "100:00:00"),
+      (1, 0, 1, "1 mon 00:00:00.000001"),
+      (-14, 0, 0, "-1 years -2 mons"),
+      (0, 1, -1_000_000, "1 day -00:00:01"),
+      (-1, 1, 0, "-1 mons +1 day"),
+      (0, 0, 100_000, "00:00:00.1"),
+      (12, 1, 0, "1 year 1 day"),
+    ];
+    for (months, days, microseconds, expected) in cases {
+      let interval = sqlx::postgres::types::PgInterval { months, days, microseconds };
+      assert_eq!(
+        format_pg_interval(&interval),
+        expected,
+        "{months} mons {days} days {microseconds} µs"
+      );
+    }
+  }
   use sqlx::sqlite::SqlitePoolOptions;
   use std::future::pending;
 
