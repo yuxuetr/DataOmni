@@ -4,6 +4,8 @@ import {
   MONGO_AUTH_MECHANISM_OPTION,
   MONGO_SRV_OPTION,
   MONGO_X509,
+  compactConnectionTarget,
+  connectionTarget,
   isMongoSrv,
   isMongoX509,
   serverAddress,
@@ -54,5 +56,29 @@ describe('mongoConnection', () => {
     expect(isMongoX509({ db_type: DatabaseType.MongoDB, options: on.options })).toBe(true);
     expect(isMongoX509({ db_type: DatabaseType.PostgreSQL, options: on.options })).toBe(false);
     expect(withMongoX509(on, false)).toEqual({ options: { keep: '1' }, tls_mode: 'verify-full', ssl: true });
+  });
+});
+
+describe('connectionTarget', () => {
+  it('文件库写路径，网络库写地址加库名，SRV 不写端口', () => {
+    const base = { host: 'db.example.net', port: 5432, options: {} };
+    expect(connectionTarget({ ...base, db_type: DatabaseType.SQLite, database: '/data/app.db' })).toBe('/data/app.db');
+    expect(connectionTarget({ ...base, db_type: DatabaseType.DuckDB, database: '' })).toBe(':memory:');
+    expect(connectionTarget({ ...base, db_type: DatabaseType.PostgreSQL, database: 'shop' })).toBe('db.example.net:5432/shop');
+    expect(connectionTarget({ ...base, db_type: DatabaseType.MySQL })).toBe('db.example.net:5432');
+    expect(connectionTarget({
+      ...base, db_type: DatabaseType.MongoDB, database: 'admin', options: { [MONGO_SRV_OPTION]: 'true' }
+    })).toBe('db.example.net/admin');
+  });
+});
+
+describe('compactConnectionTarget', () => {
+  it('窄处从尾部截断会把区分两个同名文件的那段截掉：文件库只留上级目录与文件名', () => {
+    const base = { host: 'db.example.net', port: 5432, options: {} };
+    expect(compactConnectionTarget({ ...base, db_type: DatabaseType.SQLite, database: '/home/tester/a/app.db' })).toBe('…/a/app.db');
+    expect(compactConnectionTarget({ ...base, db_type: DatabaseType.DuckDB, database: 'C:\\data\\b\\app.duckdb' })).toBe('…\\b\\app.duckdb');
+    expect(compactConnectionTarget({ ...base, db_type: DatabaseType.SQLite, database: '/app.db' })).toBe('/app.db');
+    expect(compactConnectionTarget({ ...base, db_type: DatabaseType.SQLite, database: 'data/app.db' })).toBe('data/app.db');
+    expect(compactConnectionTarget({ ...base, db_type: DatabaseType.PostgreSQL, database: 'shop' })).toBe('db.example.net:5432/shop');
   });
 });

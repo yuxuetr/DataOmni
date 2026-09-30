@@ -1,34 +1,16 @@
 import { useEffect, useMemo } from 'react';
 import { AlertCircle, Database, FileUp, Loader2, Plus, X } from 'lucide-react';
 import { clsx } from 'clsx';
-import { DatabaseType } from '../contracts';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useProfileConnector } from '../hooks/useProfileConnector';
 import { orderProfilesByRecency } from '../utils/connectionRecency';
 import { serverLabel } from '../utils/serverPresets';
-import { serverAddress } from '../utils/mongoConnection';
+import { connectionTarget } from '../utils/mongoConnection';
 import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
-import { isFileDatabase } from '../utils/databaseFiles';
 
 interface WelcomeScreenProps {
   onConnect: () => void;
-}
-
-/** 连接行上显示的目标，SQLite 与 DuckDB 显示文件名，其余显示 host:port/database */
-function describeTarget(profile: {
-  db_type: DatabaseType;
-  host: string;
-  port: number;
-  database?: string;
-  options: Record<string, string>;
-}): string {
-  if (isFileDatabase(profile.db_type)) {
-    return profile.database || ':memory:';
-  }
-
-  const target = serverAddress(profile);
-  return profile.database ? `${target}/${profile.database}` : target;
 }
 
 /**
@@ -108,7 +90,7 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
                         <EnvironmentBadgeTag environment={profile.environment} compact />
                       </span>
                       <span className="block truncate font-mono text-xs text-fg-subtle">
-                        {describeTarget(profile)}
+                        {connectionTarget(profile)}
                       </span>
                     </span>
                     <span className="shrink-0 text-xs text-fg-subtle">{serverLabel(profile)}</span>

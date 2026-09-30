@@ -24,6 +24,8 @@ import { useProfileConnector } from '../hooks/useProfileConnector';
 import { describeError } from '../utils/describeError';
 import { useLanguageStore, translateNow } from '../stores/languageStore';
 import { isImeKeyEvent } from '../utils/shortcuts';
+import { serverLabel } from '../utils/serverPresets';
+import { compactConnectionTarget, connectionTarget } from '../utils/mongoConnection';
 
 interface SidebarProps {
   activeConnectionId?: string | null;
@@ -190,16 +192,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     className="group flex items-center justify-between px-3 py-2.5 hover:bg-surface-hover cursor-pointer border-b border-line last:border-b-0"
                     onClick={() => handleConnectionSelect(conn)}
                   >
-                    <div className="flex items-center space-x-2">
-                      <Database size={14} className="text-fg-muted" />
-                      <span className="text-sm text-fg">{conn.name}</span>
-                      <EnvironmentBadgeTag environment={conn.environment} compact />
-                      {connectingProfileId === conn.id && (
-                        <span className="text-xs text-accent">{t('connection.connecting')}</span>
-                      )}
-                      {conn.id === activeConnectionId && (
-                        <span className="text-xs text-success font-medium">{t('connection.connected')}</span>
-                      )}
+                    <div className="flex min-w-0 items-center space-x-2">
+                      <Database size={14} className="shrink-0 text-fg-muted" />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate text-sm text-fg">{conn.name}</span>
+                          <EnvironmentBadgeTag environment={conn.environment} compact />
+                          {connectingProfileId === conn.id && (
+                            <span className="shrink-0 text-xs text-accent">{t('connection.connecting')}</span>
+                          )}
+                          {conn.id === activeConnectionId && (
+                            <span className="shrink-0 text-xs text-success font-medium">{t('connection.connected')}</span>
+                          )}
+                        </div>
+                        {/* 名字允许重复：只写名字时两条同名的连接分不出哪条连哪 */}
+                        <div className="truncate font-mono text-xs text-fg-subtle" title={connectionTarget(conn)}>
+                          {serverLabel(conn)} · {compactConnectionTarget(conn)}
+                        </div>
+                      </div>
                     </div>
                     <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button

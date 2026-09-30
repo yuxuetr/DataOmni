@@ -1,4 +1,5 @@
 import { DatabaseType, type ConnectionConfig, type TlsMode } from '../contracts/connection';
+import { isFileDatabase } from './databaseFiles';
 
 /** 与后端 `MONGO_SRV_OPTION` 一致：`options` 里这个键为 `"true"` 就按 SRV 记录连 */
 export const MONGO_SRV_OPTION = 'srv';
@@ -65,4 +66,31 @@ export function withMongoX509(config: SrvToggled, enabled: boolean): SrvToggled 
 /** 界面上写「连到哪」：SRV 只有一个 DNS 名字，端口不用，印出来反而误导 */
 export function serverAddress(profile: SrvFields & Pick<ConnectionConfig, 'host' | 'port'>): string {
   return isMongoSrv(profile) ? profile.host : `${profile.host}:${profile.port}`;
+}
+
+/** 连接列表的一行上写「连的是什么」：文件库写路径，其余写地址加库名 */
+export function connectionTarget(
+  profile: SrvFields & Pick<ConnectionConfig, 'db_type' | 'host' | 'port' | 'database'>
+): string {
+  if (isFileDatabase(profile.db_type)) {
+    return profile.database || ':memory:';
+  }
+  const target = serverAddress(profile);
+  return profile.database ? `${target}/${profile.database}` : target;
+}
+
+/**
+ * 窄处（侧边栏的连接菜单）用的写法。文件路径从尾部截断时，留下的是人人相同的
+ * `/home/<user>/…`，把区分两个同名文件的那一段截掉了——只留上级目录与文件名
+ */
+export function compactConnectionTarget(
+  profile: SrvFields & Pick<ConnectionConfig, 'db_type' | 'host' | 'port' | 'database'>
+): string {
+  const target = connectionTarget(profile);
+  if (!isFileDatabase(profile.db_type)) {
+    return target;
+  }
+  const separator = target.includes('\\') && !target.includes('/') ? '\\' : '/';
+  const segments = target.split(separator);
+  return segments.length > 3 ? `…${separator}${segments.slice(-2).join(separator)}` : target;
 }
