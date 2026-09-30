@@ -772,6 +772,45 @@ async fn clickhouse_grid_writes_count_before_and_verify_after() {
   run(&mut connection, "DROP TABLE smoke_grid SYNC").await;
 }
 
+/// 参数原样到达服务端：字符串里的换行、制表符、反斜杠、`\N` 字样不被当成转义，
+/// Array 的字面量照界面上显示的写法传。写进去、按它定位一行、读回来，三处都要对
+#[tokio::test]
+async fn clickhouse_parameters_carry_strings_byte_for_byte() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool);
+  for sql in [
+    "DROP TABLE IF EXISTS smoke_params SYNC",
+    "CREATE TABLE smoke_params (id UInt64, v String, a Array(String)) ENGINE = MergeTree ORDER BY id",
+  ] {
+    run(&mut connection, sql).await;
+  }
+  let text = "tab\tnl\nbs\\ \\N \\b quote' 中文";
+  let array = "['x\\'y','a\\nb']";
+  let inserted = execute_write_batch(
+    PoolRef::ClickHouse(&pool),
+    &[write(
+      "INSERT INTO smoke_params (id, v, a) VALUES ({p1:UInt64}, {p2:String}, {p3:Array(String)})",
+      vec![json!(1), json!(text), json!(array)],
+      Some(1),
+    )],
+  )
+  .await
+  .expect("insert");
+  assert_eq!(inserted, [1]);
+  let rows = pool
+    .select(
+      "SELECT v, a, length(a) AS n, a[1] AS first FROM smoke_params WHERE v = {p1:String}",
+      &[json!(text)],
+    )
+    .await
+    .expect("read back");
+  assert_eq!(rows.len(), 1, "按原值定位得到这一行");
+  assert_eq!(rows[0]["v"], json!(text));
+  assert_eq!(rows[0]["a"], json!(array));
+  assert_eq!((rows[0]["n"].clone(), rows[0]["first"].clone()), (json!(2), json!("x'y")));
+  run(&mut connection, "DROP TABLE smoke_params SYNC").await;
+}
+
 /// 导出走会话连接：先 DESCRIBE 拿表头（不执行），再流式写完全部行。
 /// 值的写法与另外几家一致：大整数、定点小数按原文，NULL 写成空，二进制写 `0x…`
 #[tokio::test]

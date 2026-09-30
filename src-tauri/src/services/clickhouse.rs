@@ -183,7 +183,10 @@ impl ClickHousePool {
         query.append_pair("session_timeout", SESSION_TIMEOUT_SECONDS);
       }
       for (index, value) in request.params.iter().enumerate() {
-        query.append_pair(&format!("param_p{}", index + 1), &param_text(value));
+        query.append_pair(
+          &format!("param_p{}", index + 1),
+          &param_text(value, param_type(sql, index + 1)),
+        );
       }
       if request.wait_for_mutation {
         query.append_pair("mutations_sync", "2");
@@ -523,13 +526,48 @@ fn is_query(sql: &str) -> bool {
     || sql.trim_start().starts_with('(')
 }
 
-fn param_text(value: &JsonValue) -> String {
+/// 语句里第 `index` 个参数写的类型：`{p1:Nullable(String)}` 里的 `Nullable(String)`
+fn param_type(sql: &str, index: usize) -> Option<&str> {
+  let marker = format!("{{p{index}:");
+  let start = sql.find(&marker)? + marker.len();
+  let length = sql[start..].find('}')?;
+  Some(&sql[start..start + length])
+}
+
+/// 参数值的文本写法。服务端按 TSV 的转义读它：`\\` 是一个反斜杠、`\n` 是换行，原样的换行与制表符
+/// 读不进去——字符串要照这个转义。Array / Map / Tuple 读的是字面量（界面上显示的就是它，
+/// 里面的 `\'` 已经是字面量的转义），再转一层反而读不进去，原样传
+fn param_text(value: &JsonValue, type_name: Option<&str>) -> String {
   match value {
     // 服务端参数的文本写法里 `\N` 是 NULL（参数类型要写成 `Nullable(…)`）
     JsonValue::Null => "\\N".to_string(),
-    JsonValue::String(text) => text.clone(),
+    JsonValue::String(text) if type_name.is_some_and(is_composite_type) => text.clone(),
+    JsonValue::String(text) => {
+      let mut escaped = String::with_capacity(text.len());
+      for character in text.chars() {
+        match character {
+          '\\' => escaped.push_str("\\\\"),
+          '\n' => escaped.push_str("\\n"),
+          '\t' => escaped.push_str("\\t"),
+          '\r' => escaped.push_str("\\r"),
+          '\0' => escaped.push_str("\\0"),
+          other => escaped.push(other),
+        }
+      }
+      escaped
+    }
     other => other.to_string(),
   }
+}
+
+fn is_composite_type(type_name: &str) -> bool {
+  let mut inner = type_name.trim();
+  while let Some(rest) =
+    inner.strip_prefix("Nullable(").or_else(|| inner.strip_prefix("LowCardinality("))
+  {
+    inner = rest;
+  }
+  ["Array(", "Map(", "Tuple(", "Nested("].iter().any(|prefix| inner.starts_with(prefix))
 }
 
 /// 池里拿到一条服务端已经关掉的连接。hyper 的原话，reqwest 不另给判断方法
@@ -1143,6 +1181,24 @@ mod tests {
     assert_eq!(values[11], JsonValue::from("line\nbreak\\x"));
     // 字符串 `\N` 写成 `\\N`，不是 NULL
     assert_eq!(values[12], JsonValue::from("\\N"));
+  }
+
+  /// 打包版上撞到的：服务端按 TSV 转义读参数，原样传时 `a\\b` 存成 `a\b`、`a\b` 存成退格符，
+  /// 换行与制表符直接报 BAD_QUERY_PARAMETER。Array / Map / Tuple 按字面量读，再转义一次反而报错。
+  /// 25.8 上逐个核过
+  #[test]
+  fn string_parameters_are_escaped_the_way_the_server_reads_them() {
+    let sql = "ALTER TABLE t UPDATE s = {p1:String} WHERE a = {p2:Array(Nullable(String))} \
+      AND n = {p3:Nullable(String)} AND m = {p4:Map(String, UInt8)} AND l = {p5:LowCardinality(Nullable(String))}";
+    let text =
+      |index: usize, value: &str| param_text(&JsonValue::from(value), param_type(sql, index));
+    assert_eq!(text(1, "multi\nline\t\\ \\N\r"), "multi\\nline\\t\\\\ \\\\N\\r");
+    assert_eq!(text(2, "['q\\'s',NULL]"), "['q\\'s',NULL]");
+    assert_eq!(text(3, "a\\b"), "a\\\\b");
+    assert_eq!(text(4, "{'k\\'':1}"), "{'k\\'':1}");
+    assert_eq!(text(5, "\n"), "\\n");
+    assert_eq!(param_text(&JsonValue::Null, param_type(sql, 3)), "\\N");
+    assert_eq!(param_text(&JsonValue::from(7), param_type(sql, 1)), "7");
   }
 
   /// 打包版上撞到的：Int128 最小值取 `abs()` 溢出回绕成负数，被当成安全整数截成了 0
