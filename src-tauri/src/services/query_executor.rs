@@ -1277,9 +1277,10 @@ pub(crate) fn format_date(date: Date) -> String {
 
 pub(crate) fn format_time(time: Time) -> String {
   let whole = format!("{:02}:{:02}:{:02}", time.hour(), time.minute(), time.second());
-  match time.microsecond() {
+  // 按纳秒写：MySQL 与 PostgreSQL 只到微秒，去掉末尾的 0 之后一样；SQL Server 到 100 纳秒
+  match time.nanosecond() {
     0 => whole,
-    micros => format!("{whole}.{}", format!("{micros:06}").trim_end_matches('0')),
+    nanos => format!("{whole}.{}", format!("{nanos:09}").trim_end_matches('0')),
   }
 }
 
@@ -1503,6 +1504,10 @@ mod tests {
     assert_eq!(format_time(fractional), "00:00:00.05");
     let micro = Time::from_hms_micro(23, 59, 59, 1).expect("valid time");
     assert_eq!(format_time(micro), "23:59:59.000001");
+    // SQL Server 的 time(7) / datetime2(7) 精确到 100 纳秒：按微秒写就丢了第七位，
+    // 网格与导出里的值和库里的不是同一个
+    let hundred_nanos = Time::from_hms_nano(8, 30, 0, 123_456_700).expect("valid time");
+    assert_eq!(format_time(hundred_nanos), "08:30:00.1234567");
   }
 
   #[test]

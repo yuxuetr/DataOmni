@@ -122,6 +122,8 @@ async fn sql_server_decodes_values_the_way_the_other_dialects_do() {
            CAST('2026-09-20' AS date) AS d,
            CAST('07:04:05' AS time(0)) AS t,
            CAST('2026-09-20 07:04:05 +08:00' AS datetimeoffset(0)) AS dto,
+           CAST('2026-09-20 07:04:05.1234567' AS datetime2(7)) AS dt2_full,
+           CAST('07:04:05.1234567' AS time(7)) AS t_full,
            CAST(1 AS bit) AS flag,
            CAST('6F9619FF-8B86-D011-B42D-00C04FC964FF' AS uniqueidentifier) AS g,
            CAST(0x00FF10 AS varbinary(8)) AS bin,
@@ -160,6 +162,9 @@ async fn sql_server_decodes_values_the_way_the_other_dialects_do() {
     ("d", "date", "2026-09-20"),
     ("t", "time", "07:04:05"),
     ("dto", "datetime", "2026-09-20 07:04:05 +08:00"),
+    // 精确到 100 纳秒，第七位不能丢
+    ("dt2_full", "datetime", "2026-09-20 07:04:05.1234567"),
+    ("t_full", "time", "07:04:05.1234567"),
     ("g", "text", "6F9619FF-8B86-D011-B42D-00C04FC964FF"),
     ("bin", "binary", "00ff10"),
   ] {
