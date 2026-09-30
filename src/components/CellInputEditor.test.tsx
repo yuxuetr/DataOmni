@@ -100,4 +100,35 @@ describe('CellInputEditor', () => {
     press('Enter', 13);
     expect(onCommit).toHaveBeenCalledTimes(1);
   });
+
+  // 打包版上撞到的：单行文本框按规范把值里的换行剥掉，多行文本末尾补一个字，
+  // 存进去的就少了换行，而语句不报错
+  it('多行文本改一个字，换行还在', () => {
+    const onChange = vi.fn();
+    act(() => root.render(
+      <CellInputEditor value={{ kind: 'value', value: '第一行\n第二行' }} onChange={onChange} dataType="VARCHAR" />
+    ));
+    const field = container.querySelector('textarea');
+    if (!field) throw new Error('多行文本没有用 textarea');
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    act(() => {
+      setter?.call(field, `${field.value}!`);
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenLastCalledWith({ kind: 'value', value: '第一行\n第二行!' });
+  });
+
+  it('删掉最后一个换行之后仍是同一个框，焦点不丢', () => {
+    act(() => root.render(<Harness initial={{ kind: 'value', value: 'a\nb' }} />));
+    const field = container.querySelector('textarea');
+    if (!field) throw new Error('多行文本没有用 textarea');
+    field.focus();
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    act(() => {
+      setter?.call(field, 'ab');
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(container.querySelector('textarea')).toBe(field);
+    expect(document.activeElement).toBe(field);
+  });
 });

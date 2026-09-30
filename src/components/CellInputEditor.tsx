@@ -220,6 +220,13 @@ function ValueField({ value, onChange, editor, dialect, autoFocus, onKeyDown }: 
   const setText = (next: string) => onChange(
     value.kind === 'expression' ? { kind: 'expression', sql: next } : { kind: 'value', value: next }
   );
+  // 单行文本框按规范剥掉值里的换行：多行文本放进去，补一个字存回去就少了换行，语句不报错。
+  // 见过换行就一直用 textarea，删掉最后一个换行时不换框、焦点不丢
+  const [sawLineBreak, setSawLineBreak] = useState(false);
+  const hasLineBreak = /[\r\n]/.test(text);
+  if (hasLineBreak && !sawLineBreak) {
+    setSawLineBreak(true);
+  }
 
   if (value.kind === 'expression') {
     return (
@@ -367,6 +374,21 @@ function ValueField({ value, onChange, editor, dialect, autoFocus, onKeyDown }: 
           </button>
         </div>
       </div>
+    );
+  }
+
+  if (hasLineBreak || sawLineBreak) {
+    return (
+      <textarea
+        autoFocus={autoFocus}
+        rows={3}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        // Enter 在这里是换行；Esc 照样取消
+        onKeyDown={(event) => event.key !== 'Enter' && onKeyDown(event)}
+        className="min-w-0 flex-1 rounded-control border border-line-strong bg-surface px-2 py-1 text-sm text-fg"
+        {...PLAIN_TEXT_INPUT}
+      />
     );
   }
 
