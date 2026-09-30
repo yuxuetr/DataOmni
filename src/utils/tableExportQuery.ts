@@ -4,7 +4,7 @@ import { buildFilterClause } from './tableFilters';
 import type { ColumnSort } from './resultSorting';
 import type { SqlIdentifierDialect } from './sqlIdentifiers';
 import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from './sqlIdentifiers';
-import { createSortedOrderClause, type TablePaginationOrder } from './tablePagination';
+import { createSortedOrderClause, projectedColumn, type TablePaginationOrder } from './tablePagination';
 
 export interface TableExportQuery {
   schema: string | null | undefined;
@@ -48,7 +48,10 @@ export function buildTableExportQuery(request: TableExportQuery): string | null 
 
   const projection = request.visibleColumns
     .filter((name) => name.length > 0)
-    .map((name) => quoteSqlIdentifier(name, request.dialect));
+    .map((name) => {
+      const column = request.columns.find((candidate) => candidate.name === name);
+      return column ? projectedColumn(column, request.dialect) : quoteSqlIdentifier(name, request.dialect);
+    });
   if (projection.length === 0) {
     return null;
   }

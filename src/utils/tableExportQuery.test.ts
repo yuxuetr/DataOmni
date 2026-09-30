@@ -24,6 +24,21 @@ function request(overrides: Partial<TableExportQuery> = {}): TableExportQuery {
 }
 
 describe('整表导出的 SQL', () => {
+  it('SQL Server 驱动读不了的列同样转成文本：导出走的是同一个驱动', () => {
+    const columns: ColumnInfo[] = [
+      { name: 'id', data_type: 'int', is_nullable: false, is_primary_key: true },
+      { name: 'g', data_type: 'geography', is_nullable: true, is_primary_key: false }
+    ];
+    const sql = buildTableExportQuery(request({
+      schema: 'dbo',
+      columns,
+      visibleColumns: ['id', 'g'],
+      paginationOrder: createTablePaginationOrder(columns, 'sqlserver'),
+      dialect: 'sqlserver'
+    }));
+    expect(sql).toContain('SELECT [id], CAST([g] AS nvarchar(max)) AS [g] FROM [dbo].[orders]');
+  });
+
   it('投影出去的是可见列，藏起来的列不进文件', () => {
     const sql = buildTableExportQuery(request({ visibleColumns: ['id', 'name'] }));
     expect(sql).toContain('SELECT "id", "name" FROM "public"."orders"');

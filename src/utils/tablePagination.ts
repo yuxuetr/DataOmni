@@ -4,6 +4,7 @@ import type { SqlIdentifierDialect } from './sqlIdentifiers';
 import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from './sqlIdentifiers';
 import { translateNow } from '../stores/languageStore';
 import { primaryKeyColumns } from './rowIdentity';
+import { columnTypeToken } from './columnTypes';
 
 export type TablePaginationOrderStrategy =
   | 'primary-key'
@@ -153,14 +154,34 @@ export function pageClause(
 }
 
 /**
+ * tiberius 解不了的列类型：`sql_variant` 与 CLR 类型的列元数据是 `todo!()`，结果里有一列
+ * 这种类型，整条查询就失败。服务端转成文本再取——四种都认 `CAST(… AS nvarchar(max))`，
+ * 改回去时文本也能隐式转回原类型（2022 上试过）
+ */
+const SQL_SERVER_UNREADABLE_TYPES = new Set(['sql_variant', 'geography', 'geometry', 'hierarchyid']);
+
+/** 投影里的一列；驱动读不了的列转成文本，别名仍是列名，网格按列名取值 */
+export function projectedColumn(column: ColumnInfo, dialect: SqlIdentifierDialect): string {
+  const name = quoteSqlIdentifier(column.name, dialect);
+  return dialect === 'sqlserver' && SQL_SERVER_UNREADABLE_TYPES.has(columnTypeToken(column.data_type))
+    ? `CAST(${name} AS nvarchar(max)) AS ${name}`
+    : name;
+}
+
+/**
  * 取表数据时 SELECT 后面那一段。
  *
- * 多数方言是 `*`。ClickHouse 的 `*` 不含 MATERIALIZED 与 ALIAS 列（网格里那几列会整列是 NULL），
+ * 多数方言是 `*`。SQL Server 有驱动读不了的列时要点名，好把那几列转成文本。ClickHouse 的 `*` 不含 MATERIALIZED 与 ALIAS 列（网格里那几列会整列是 NULL），
  * 要一个个点名；打开 `asterisk_include_materialized_columns` 也行，但那是个设置，`readonly = 1`
  * 的账号改不了。EPHEMERAL 列不点：它不存值，点名去查报「There is no column」（25.8 上试过）；
  * 网格上那一列是空的，本来也没有值
  */
 export function tableProjection(columns: readonly ColumnInfo[], dialect: SqlIdentifierDialect): string {
+  if (dialect === 'sqlserver') {
+    return columns.some(column => SQL_SERVER_UNREADABLE_TYPES.has(columnTypeToken(column.data_type)))
+      ? columns.map(column => projectedColumn(column, dialect)).join(', ')
+      : '*';
+  }
   if (dialect !== 'clickhouse' || !columns.some(column => column.is_generated)) {
     return '*';
   }

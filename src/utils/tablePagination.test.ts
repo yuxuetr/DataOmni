@@ -187,4 +187,20 @@ describe('取表数据的投影', () => {
     expect(tableProjection([column('id'), column('v')], 'clickhouse')).toBe('*');
     expect(tableProjection([column('id'), column('g', 'STORED GENERATED')], 'mysql')).toBe('*');
   });
+
+  it('SQL Server 驱动读不了的列转成文本再取：不然这张表整张打不开，而报错让用户去改一条他看不到的查询', () => {
+    const typed = (name: string, dataType: string) => ({
+      name, data_type: dataType, is_nullable: true, is_primary_key: false
+    });
+    expect(tableProjection([
+      typed('id', 'int'), typed('v', 'sql_variant'), typed('g', 'geography'),
+      typed('gm', 'geometry'), typed('h', 'hierarchyid')
+    ], 'sqlserver')).toBe(
+      '[id], CAST([v] AS nvarchar(max)) AS [v], CAST([g] AS nvarchar(max)) AS [g], '
+      + 'CAST([gm] AS nvarchar(max)) AS [gm], CAST([h] AS nvarchar(max)) AS [h]'
+    );
+    // 没有这种列时照旧是 *；别家的同名类型不受影响
+    expect(tableProjection([typed('id', 'int'), typed('x', 'xml')], 'sqlserver')).toBe('*');
+    expect(tableProjection([typed('id', 'int'), typed('g', 'geography')], 'postgresql')).toBe('*');
+  });
 });
