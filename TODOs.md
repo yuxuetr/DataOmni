@@ -530,6 +530,10 @@
     - 同一轮看到：SQL 结果网格里排了队的改动仍画加载时的值（`4b5c69e`）——`acc1a7e` 只改了表数据网格。两张网格改用同一个
       `StagedCellValue`（放在 GridCellValue 旁边，判断仍是 `pendingCellInput` 那条已有单测的纯函数）。组件没有先红的测试；
       打包版（rpm 0.4.44）上 SQL 结果改中文标题画新值、悬停「登录超时 / Was: 登录失败」，表数据页改枚举同样画新值、悬停「ok / Was: sad」。
+  - 2026-10-01 SQL 标签的类型覆盖（本机 Docker 的 PG 16 与 CockroachDB 25.2，应用的 `execute_query` 直读逐个探）：
+    - 解码器不认的 22 种类型改显示服务端文本（`039ee4a`，见 2.4）。连 `select oid, relname from pg_class` 原先都跑不了。
+    - `'infinity'::date` 与 `'infinity'::timestamptz` 让 sqlx **panic**（`0fca595`），不带时区的 timestamp 读成 294277 年；
+      表数据页读日期列走同一个解码器。二进制值自己换算，两端最值显示 `infinity` / `-infinity`，越界报错；冒烟用例先红后绿。
   - 看到没修的：
     - DuckDB 的 `COMMENT ON` 注释不进 EXPORT DATABASE 的备份（上游行为），恢复后表与列的注释没了、不报错。
       重估条件：有人靠注释存文档并报告备份后丢失。
