@@ -923,6 +923,39 @@ async fn postgres_infinite_dates_and_timestamps_read_as_infinity() {
   assert_eq!(rows[0]["tz"]["value"], "2000-01-01T00:00:00.000001+00:00");
 }
 
+/// `24:00:00` 是 time 的合法值，原先读成 `00:00:00`（sqlx 从午夜加上去就绕回来了）；
+/// 公元前的日期原先写成 `-043-03-15`，psql 写 `0044-03-15 BC`
+#[tokio::test]
+async fn postgres_midnight_end_and_bc_dates_read_as_psql_writes_them() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let cases = [
+    "'24:00:00'::time",
+    "'23:59:59.999999'::time",
+    "'0044-03-15 BC'::date",
+    "'0001-01-01 BC'::date",
+    "'0044-03-15 12:00:00.5 BC'::timestamp",
+  ];
+  for expression in cases {
+    if sqlx::query(&format!("SELECT {expression}")).fetch_one(&pool).await.is_err() {
+      continue;
+    }
+    let columns = format!("{expression} AS v, ({expression})::text AS t");
+    for sql in [format!("SELECT {columns}"), format!("SELECT {columns}, '10.0.0.1'::inet AS ip")] {
+      let result = execute_query(&DbPool::Postgres(pool.clone()), &sql)
+        .await
+        .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+      let QueryExecutionResult::Rows { rows, .. } = result else {
+        panic!("expected a row result");
+      };
+      assert_eq!(rows[0]["v"]["value"], rows[0]["t"], "{sql}");
+    }
+  }
+}
+
 /// 一行里只要有一列走文本，整行都是文本格式：认得的类型在文本格式下要和二进制时显示得一样
 #[tokio::test]
 async fn postgres_known_columns_read_the_same_next_to_a_text_only_column() {
