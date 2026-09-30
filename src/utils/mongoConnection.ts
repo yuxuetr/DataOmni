@@ -68,7 +68,11 @@ export function serverAddress(profile: SrvFields & Pick<ConnectionConfig, 'host'
   return isMongoSrv(profile) ? profile.host : `${profile.host}:${profile.port}`;
 }
 
-/** 连接列表的一行上写「连的是什么」：文件库写路径，其余写地址加库名 */
+/**
+ * 连接列表的一行上写「连的是什么」：文件库写路径，其余写地址加库名。
+ * MongoDB 那一格是认证库（`authSource`，常见的是 `admin`），树里照样列出全部库，
+ * 写成 `host:port/admin` 会被读成「连的是 admin 库」
+ */
 export function connectionTarget(
   profile: SrvFields & Pick<ConnectionConfig, 'db_type' | 'host' | 'port' | 'database'>
 ): string {
@@ -76,7 +80,7 @@ export function connectionTarget(
     return profile.database || ':memory:';
   }
   const target = serverAddress(profile);
-  return profile.database ? `${target}/${profile.database}` : target;
+  return profile.database && profile.db_type !== DatabaseType.MongoDB ? `${target}/${profile.database}` : target;
 }
 
 /**

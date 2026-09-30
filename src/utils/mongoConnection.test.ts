@@ -60,7 +60,7 @@ describe('mongoConnection', () => {
 });
 
 describe('connectionTarget', () => {
-  it('文件库写路径，网络库写地址加库名，SRV 不写端口', () => {
+  it('文件库写路径，网络库写地址加库名，SRV 不写端口；MongoDB 的库名是认证库，不写', () => {
     const base = { host: 'db.example.net', port: 5432, options: {} };
     expect(connectionTarget({ ...base, db_type: DatabaseType.SQLite, database: '/data/app.db' })).toBe('/data/app.db');
     expect(connectionTarget({ ...base, db_type: DatabaseType.DuckDB, database: '' })).toBe(':memory:');
@@ -68,7 +68,8 @@ describe('connectionTarget', () => {
     expect(connectionTarget({ ...base, db_type: DatabaseType.MySQL })).toBe('db.example.net:5432');
     expect(connectionTarget({
       ...base, db_type: DatabaseType.MongoDB, database: 'admin', options: { [MONGO_SRV_OPTION]: 'true' }
-    })).toBe('db.example.net/admin');
+    })).toBe('db.example.net');
+    expect(connectionTarget({ ...base, db_type: DatabaseType.MongoDB, database: 'admin' })).toBe('db.example.net:5432');
   });
 });
 
