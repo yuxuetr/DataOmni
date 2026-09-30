@@ -1124,7 +1124,7 @@ fn decode_sqlite(value: SqliteValueRef<'_>) -> Result<JsonValue, QueryError> {
     "INTEGER" | "NUMERIC" => {
       tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<i64>())
     }
-    "REAL" => json_value(ValueRef::to_owned(&value).try_decode::<f64>()),
+    "REAL" => float_value(ValueRef::to_owned(&value).try_decode::<f64>(), "Inf"),
     "BOOLEAN" => json_value(ValueRef::to_owned(&value).try_decode::<bool>()),
     "DATE" => {
       tagged_formatted_value("date", ValueRef::to_owned(&value).try_decode::<Date>(), format_date)
@@ -1170,8 +1170,9 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, QueryError> {
     "TINYINT" | "SMALLINT" | "INT" | "MEDIUMINT" | "BIGINT" => {
       tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<i64>())
     }
-    "FLOAT" => json_value(ValueRef::to_owned(&value).try_decode::<f32>()),
-    "DOUBLE" => json_value(ValueRef::to_owned(&value).try_decode::<f64>()),
+    // MySQL 存不了 NaN 与无穷
+    "FLOAT" => float_value(ValueRef::to_owned(&value).try_decode::<f32>().map(widen_f32), "Inf"),
+    "DOUBLE" => float_value(ValueRef::to_owned(&value).try_decode::<f64>(), "Inf"),
     "BOOLEAN" => json_value(ValueRef::to_owned(&value).try_decode::<bool>()),
     "DATE" => {
       tagged_formatted_value("date", ValueRef::to_owned(&value).try_decode::<Date>(), format_date)
@@ -1252,8 +1253,10 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
       };
       Ok(tagged_value("decimal", decimal_text(&decimal)))
     }
-    "FLOAT4" => json_value(ValueRef::to_owned(&value).try_decode::<f32>()),
-    "FLOAT8" => json_value(ValueRef::to_owned(&value).try_decode::<f64>()),
+    "FLOAT4" => {
+      float_value(ValueRef::to_owned(&value).try_decode::<f32>().map(widen_f32), "Infinity")
+    }
+    "FLOAT8" => float_value(ValueRef::to_owned(&value).try_decode::<f64>(), "Infinity"),
     "BOOL" => json_value(ValueRef::to_owned(&value).try_decode::<bool>()),
     "DATE" | "TIMESTAMP" | "TIMESTAMPTZ" => pg_instant(&value, type_name),
     "TIME" => {
@@ -1532,6 +1535,27 @@ fn pg_array_element(text: &str) -> String {
   format!("\"{escaped}\"")
 }
 
+/// JSON 里没有 NaN 与无穷，serde_json 把它们变成 null——网格上看着是 NULL。这几个按数据库自己的
+/// 拼法给文本（`infinity` 是正无穷那个词，负的前面加 `-`）
+fn float_value<E: std::fmt::Display>(
+  value: Result<f64, E>,
+  infinity: &str,
+) -> Result<JsonValue, QueryError> {
+  let value = value.map_err(display_error)?;
+  Ok(match serde_json::Number::from_f64(value) {
+    Some(number) => JsonValue::Number(number),
+    None if value.is_nan() => JsonValue::from("NaN"),
+    None if value > 0.0 => JsonValue::from(infinity),
+    None => JsonValue::from(format!("-{infinity}")),
+  })
+}
+
+/// 单精度按它自己的最短写法放宽：直接转 f64 的话 `0.1` 成了 0.10000000149011612，
+/// 而数据库的客户端写的是 0.1。两者是同一个 f32，写回去不变
+fn widen_f32(value: f32) -> f64 {
+  value.to_string().parse().unwrap_or(f64::from(value))
+}
+
 fn json_value<T, E>(value: Result<T, E>) -> Result<JsonValue, QueryError>
 where
   T: Serialize,
@@ -1806,6 +1830,26 @@ mod tests {
       }
       QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
     }
+  }
+
+  /// JSON 里没有无穷，serde_json 给 null：网格上 `1e999` 看着是 NULL
+  #[tokio::test]
+  async fn sqlite_infinite_reals_read_as_sqlites_own_spelling() {
+    let pool = SqlitePoolOptions::new()
+      .max_connections(1)
+      .connect("sqlite::memory:")
+      .await
+      .expect("connect to SQLite");
+    let result =
+      execute_query(&DbPool::Sqlite(pool), "SELECT 1e999 AS up, -1e999 AS down, 0.1 AS x")
+        .await
+        .expect("execute query");
+    let QueryExecutionResult::Rows { rows, .. } = result else {
+      panic!("expected a row result");
+    };
+    assert_eq!(rows[0]["up"], "Inf");
+    assert_eq!(rows[0]["down"], "-Inf");
+    assert_eq!(rows[0]["x"], 0.1);
   }
 
   #[tokio::test]

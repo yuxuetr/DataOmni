@@ -440,6 +440,25 @@ fn network_databases_required() -> bool {
 ///
 /// 这些类型此前只在用户实际点开某张表时才暴露问题（`unsupported datatype: BINARY`），
 /// 这里把它们固定成一道门。
+/// FLOAT 是单精度，直接放宽成 f64 的话 0.1 读成 0.10000000149011612；照 mysql 客户端写成 0.1
+#[tokio::test]
+async fn mysql_single_precision_floats_read_as_the_client_writes_them() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  let result =
+    execute_query(&DbPool::MySql(pool), "SELECT CAST(0.1 AS FLOAT) AS narrow, 0.1e0 AS wide")
+      .await
+      .expect("execute query");
+  let QueryExecutionResult::Rows { rows, .. } = result else {
+    panic!("expected a row result");
+  };
+  assert_eq!(rows[0]["narrow"], 0.1);
+  assert_eq!(rows[0]["wide"], 0.1);
+}
+
 #[tokio::test]
 async fn mysql_decodes_common_column_types() {
   let Some(url) = network_database_url(MYSQL_URL_ENV) else {
@@ -741,6 +760,32 @@ async fn postgres_columns_without_a_binary_decoder_read_as_the_servers_text() {
     checked += 1;
   }
   assert!(checked >= 10, "only {checked} cases ran");
+}
+
+/// 浮点照 psql 的写法：`Infinity` / `NaN` 原先成了 null（JSON 里没有这几个数，网格上看着是 NULL），
+/// `0.1::float4` 放宽成 f64 读成 0.10000000149011612
+#[tokio::test]
+async fn postgres_floats_read_as_psql_writes_them() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let floats = "'Infinity'::float8 AS up, '-Infinity'::float4 AS down, 'NaN'::float8 AS nan, \
+     0.1::float4 AS narrow, 0.1::float8 AS wide";
+  for sql in [format!("SELECT {floats}"), format!("SELECT {floats}, '10.0.0.1'::inet AS ip")] {
+    let result = execute_query(&DbPool::Postgres(pool.clone()), &sql)
+      .await
+      .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    let QueryExecutionResult::Rows { rows, .. } = result else {
+      panic!("expected a row result");
+    };
+    assert_eq!(rows[0]["up"], "Infinity", "{sql}");
+    assert_eq!(rows[0]["down"], "-Infinity", "{sql}");
+    assert_eq!(rows[0]["nan"], "NaN", "{sql}");
+    assert_eq!(rows[0]["narrow"], 0.1, "{sql}");
+    assert_eq!(rows[0]["wide"], 0.1, "{sql}");
+  }
 }
 
 /// `infinity` 是有效期一类的列常见的写法。sqlx 拿它当普通的天数 / 微秒去加：日期与带时区的
