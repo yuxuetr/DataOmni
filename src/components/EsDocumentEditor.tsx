@@ -94,7 +94,9 @@ export function EsDocumentEditor({ connection, address, onWritten, onClose }: Es
     try {
       const path = writePath(address, loaded.version);
       const response = await send(kind === 'save' ? 'PUT' : 'DELETE', path, kind === 'save' ? text.trim() : null);
-      const outcome = writeOutcome(response.status);
+      let outcome = writeOutcome(response.status);
+      // 带着版本去写一份已经没了的文档，ES 回的也是 409（"but no document was found"）：再读一次才分得清
+      if (outcome === 'conflict' && (await send('GET', readPath(address), null)).status === 404) outcome = 'gone';
       if (outcome === 'done') {
         onWritten();
         if (kind === 'delete') {
