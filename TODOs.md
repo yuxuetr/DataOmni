@@ -512,6 +512,9 @@
   - 同一轮看到：PG 的 interval `'1 day 02:03:04'` 显示成 `1 days 7384 secs`（`b83844a`）——注释说按 PostgreSQL 的文本形式拼，实际拼的是秒数，
     单复数也不对。照 `EncodeInterval` 的 postgres 风格重写；15 条期望值是 PG 16 对同一个值的输出，先红后绿。
     打包版（rpm 0.4.41）上与 psql 逐字一致（`-1 days +02:00:00.25`、`1 year 2 mons 3 days 04:05:06`），改成 `2 days 00:00:01` 写回，服务端读回一致。
+  - 同一件事在 MySQL 一侧查过，没有问题（MariaDB 11.8，本机 Docker，应用的 `execute_query` 直读）：`INET6` / `UUID` / `INET4`
+    在协议上报 `BINARY`，内容是可打印文本，按文本显示；`VECTOR` 报 `VARBINARY`，显示十六进制字节。字符串绑定写回前三种，服务端读回一致。
+    timetz 的编辑框只选时刻、不带时区，是有意的：文本框才是权威值，带时区的原值选择器空着，与 timestamptz 用 `datetime-local` 同一做法。
   - 看到没修的：
     - DuckDB 的 `COMMENT ON` 注释不进 EXPORT DATABASE 的备份（上游行为），恢复后表与列的注释没了、不报错。
       重估条件：有人靠注释存文档并报告备份后丢失。
