@@ -197,7 +197,11 @@ impl ConnectionService {
       })
       .collect::<Result<Vec<_>, serde_json::Error>>()?;
     let content = serde_json::to_string_pretty(&connections)?;
-    fs::write(&self.config_path, content)?;
+    // 先写旁边的 .part 再改名：`fs::write` 先截断再写，写到一半崩溃或断电就留下
+    // 一个空文件，所有连接一起没了。改名在同一个目录里是原子的，和导出、备份同一个做法
+    let part = self.config_path.with_extension("json.part");
+    fs::write(&part, content)?;
+    fs::rename(&part, &self.config_path)?;
     Ok(())
   }
 
