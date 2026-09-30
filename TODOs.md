@@ -400,6 +400,26 @@
       单复数的门也认 hits、documents 了。
     三处各有测试先红后绿；打包版 0.4.23 上复现原场景看过：别处删掉 b4 后这边保存，提示「没找到，可能已被删」、服务端没有被重新建出来、
     结果重发后 0 hit；批里一条类型不对时写「1 of 2 items failed」，后面的 `_update_by_query` 没发（服务端 b4 的 score 仍是 1）；别名搜索写「1 hit」。
+  - 2026-09-30 同一套环境连 cu 上的 ClickHouse 25.8（rpm 0.4.23 → 0.4.27，英文界面，经 SSH 隧道）：一张 22 列的类型表
+    （UInt64 / UInt256 上限、Decimal(38,10)、nan / -inf、LowCardinality(Nullable)、非 UTF-8 的 FixedString、带引号的 Enum、Date32、
+    带时区的 DateTime、DateTime64(9) 上限、UUID、IPv4/6、Array / Map / Tuple、多行中文）显示都对；多条语句里的 `SET` 与临时表跨语句有效、
+    自带 `FORMAT` 的结果成一列文本、除零报错带码并停下、执行计划列出各索引筛掉的 granule、取消后服务端随即停下。
+    **表格编辑与筛选修了六处**，都是打包版上撞到的，其中两处会悄悄改错数据或筛错行：
+    - Int128 最小值显示成 0（`8099067`）：`abs()` 溢出回绕，被当成安全整数截断。Oracle 的 NUMBER 整数同一写法，i64 最小值成了近似值（`c29937e`），
+      拿 Oracle Free 23ai 先红后绿。
+    - Decimal 列的行改不了、删不了，Int128 上还会把相邻的值一起比中（`939e2d2`）：整行定位时数值内联成字面量（为 MySQL 做的），
+      ClickHouse 把带小数点的字面量和超过 64 位的整数读成 Float64。ClickHouse 的参数带列类型，不再内联。
+    - 筛选同一个原因：Int128 上筛 …727 把 …728 也筛出来，Decimal 上一行也筛不中（`936a7ff`）。ClickHouse 的数值列按字符串字面量比。
+    - **字符串参数被服务端当成 TSV 转义读**（`d29a96c`）：表格里写 `C:\new\table` 存成换行与制表符，`a\b` 存成退格符；
+      含换行的行整行定位读不进去（BAD_QUERY_PARAMETER）。字符串照 TSV 转义，Array / Map / Tuple 按字面量原样传。
+      `clickhouse_smoke` 新增一条，两半各自反向验证变红。
+    - 行里有非 UTF-8 的字节时改不了、删不了（`781106a`、`d6bd7f4`）：十六进制文本被当参数去比，报 TOO_LARGE_STRING_SIZE。
+      整行定位时二进制值不进条件。第一次只改了纯函数，打包版上照样报错——编辑和删除在取键前已经拆了包；第二次改成从原行取键，
+      TableDataViewer 补了第一条组件测试（改、删各一条，撤掉改动即红）。
+    - 新增一行要求 16 列全填，提示说它们「没有默认值」（`fade551`）：ClickHouse 省略的列得到类型的零值。它没有必填列。
+    打包版 0.4.27 上逐一复现原场景看过：Int128 最小值原样显示；Decimal 那行改成 `-9999999999999999999999999999.9999999999`、
+    服务端一位不差；筛 …727 得 0 行、…728 得 1 行；多行文本加二进制 FixedString 的那行改 note 为 `C:\new\table \\N`，服务端字节一致、
+    其余列未动，再把这行删掉；新增只填 id 与 Enum，其余为零值、note 取列默认值。
   - 看到没修的：
     - 单复数的门只认 `{count}`：还有几条用别的占位符放数量、会印出「1 rows」——`task.detail.export` 的 `{rows}`、`export.shape` 与
       `export.scope.selectionNote` 的 `{rows} × {columns}`（选一格就是「1 rows × 1 columns」）、`export.previewCsv` 的 `{shown}`、
