@@ -177,7 +177,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           {/* 连接下拉菜单 */}
           {showConnectionMenu && (
-            <div className="absolute top-full left-0 right-0 mt-1 bg-surface rounded-panel shadow-lg border border-line z-50 max-h-64 overflow-y-auto">
+            // 只让连接列表滚动：报错与「新建连接」钉在底下。整个面板一起滚的时候，
+            // 连接一多报错就落在视野外，点了连接看上去什么也没发生
+            <div className="absolute top-full left-0 right-0 mt-1 bg-surface rounded-panel shadow-lg border border-line z-50 max-h-64 flex flex-col overflow-hidden">
+              <div className="min-h-0 overflow-y-auto">
               {connections.length === 0 ? (
                 <p className="px-3 py-2 text-xs text-fg-subtle">{t('connection.none')}</p>
               ) : (
@@ -223,12 +226,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
                 ))
               )}
-              
+              </div>
+
               {/* 错误只属于整个面板，不属于某一行连接；
                   此前渲染在 connections.map() 内部，会按连接数重复出现，
                   而且被挤在窄列里换行成一个词一行 */}
               {visibleError && (
-                <div className="flex items-start gap-2 border-t border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
+                <div className="flex shrink-0 items-start gap-2 border-t border-danger-line bg-danger-soft px-3 py-2 text-xs text-danger">
                   <AlertCircle size={14} className="mt-0.5 shrink-0" />
                   <span className="min-w-0 flex-1 break-words">{visibleError}</span>
                   <button
@@ -245,7 +249,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </div>
               )}
 
-              <div className="border-t border-line">
+              <div className="shrink-0 border-t border-line">
                 <button
                   onClick={() => {
                     setShowConnectionMenu(false);
