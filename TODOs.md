@@ -509,6 +509,9 @@
     `time`、`double`，按首词会误认）。单测先红后绿；打包版上 PG 16 一张 17 列的表（inet、cidr、macaddr、枚举、域、timetz、float8[]、
     money、bit、xml、point、tsvector、int4range……）整张打开，改 inet 与枚举发的是 `'10.0.0.11'::inet`、`'ok'::mood`，服务端读回一致；
     CockroachDB 的 `items`（带 INET）同样打开。代价：按这种列排序时排的是文本（别名与列名相同，`ORDER BY` 认别名）。
+  - 同一轮看到：PG 的 interval `'1 day 02:03:04'` 显示成 `1 days 7384 secs`（`b83844a`）——注释说按 PostgreSQL 的文本形式拼，实际拼的是秒数，
+    单复数也不对。照 `EncodeInterval` 的 postgres 风格重写；15 条期望值是 PG 16 对同一个值的输出，先红后绿。
+    打包版（rpm 0.4.41）上与 psql 逐字一致（`-1 days +02:00:00.25`、`1 year 2 mons 3 days 04:05:06`），改成 `2 days 00:00:01` 写回，服务端读回一致。
   - 看到没修的：
     - DuckDB 的 `COMMENT ON` 注释不进 EXPORT DATABASE 的备份（上游行为），恢复后表与列的注释没了、不报错。
       重估条件：有人靠注释存文档并报告备份后丢失。
