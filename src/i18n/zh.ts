@@ -1561,6 +1561,7 @@ export const zh = {
   'cypher.edit.deleteRelationship': '删除关系',
   'cypher.edit.gone': '没找到它，可能已经被删了',
   'cypher.edit.changed': '它在打开之后被别处改过，什么也没写。改动还留在这里，点「还原」看现在的值',
+  'cypher.edit.degreeChanged': '数完之后连着它的关系变了，什么也没删。再点一次删除，看现在要一起删掉几条',
   'cypher.edit.impact.node': '删掉节点 {node}',
   'cypher.edit.impact.relationships': '连着它的 {count} 条关系一并删掉',
   'cypher.edit.impact.relationships.one': '连着它的 {count} 条关系一并删掉',

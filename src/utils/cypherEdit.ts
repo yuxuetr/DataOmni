@@ -217,12 +217,13 @@ export function degreeStatement(node: CypherNodeValue): string {
 }
 
 /**
- * 删一个实体。节点只在确认过「连着的关系一起删」之后才用 `DETACH`：数完到删之间有人
- * 连上了新关系的话，不带 `DETACH` 的删除会报错，而不是悄悄删掉一条没人告诉过你的关系
+ * 删一个实体。节点要求连着的关系还是确认框里说的 `relationships` 条：数完到删之间有人
+ * 连上了新关系的话一行也不匹配、什么也不删，而不是悄悄删掉一条没人告诉过你的关系。
+ * `DETACH` 也只在确认过「连着的关系一起删」之后才用
  */
-export function deleteStatement(entity: EditableEntity, detach: boolean): string {
-  const variable = variableOf(entity);
-  return `${matchClause(entity)}\n${detach && entity.kind === 'node' ? 'DETACH ' : ''}DELETE ${variable}`;
+export function deleteStatement(entity: EditableEntity, relationships: number): string {
+  if (entity.kind === 'relationship') return `${matchClause(entity)}\nDELETE r`;
+  return `${matchClause(entity)}\n  AND COUNT { (n)--() } = ${relationships}\n${relationships > 0 ? 'DETACH ' : ''}DELETE n`;
 }
 
 /** 这个值里（钻进列表、映射、路径）有没有哪一处让 `test` 为真 */

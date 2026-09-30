@@ -1550,6 +1550,7 @@ export const en: Translations = {
   'cypher.edit.deleteRelationship': 'Delete relationship',
   'cypher.edit.gone': 'Not found; it may have been deleted',
   'cypher.edit.changed': 'It changed elsewhere after you opened it, so nothing was written. Your edits are kept here; Revert shows the current values',
+  'cypher.edit.degreeChanged': 'Its relationships changed after they were counted, so nothing was deleted. Click delete again to see how many would go with it now',
   'cypher.edit.impact.node': 'Deletes node {node}',
   'cypher.edit.impact.relationships': 'Also deletes the {count} relationships attached to it',
   'cypher.edit.impact.relationships.one': 'Also deletes the {count} relationship attached to it',

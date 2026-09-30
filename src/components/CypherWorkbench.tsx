@@ -380,12 +380,20 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
       const result = await invoke<CypherResult>('neo4j_run', {
         connectionString,
         database,
-        query: deleteStatement(entity, relationships > 0),
+        query: deleteStatement(entity, relationships),
         limit: 1,
         timeoutMs: queryTimeoutMs
       });
       if (result.summary.counters.length === 0) {
-        setEditError(t('cypher.edit.gone'));
+        // 一行也没匹配上：连着的关系数变了，或者它已经没了
+        const current = await invoke<CypherResult>('neo4j_run', {
+          connectionString,
+          database,
+          query: readStatement(entity),
+          limit: 1,
+          timeoutMs: queryTimeoutMs
+        });
+        setEditError(t(current.rows.length > 0 ? 'cypher.edit.degreeChanged' : 'cypher.edit.gone'));
         return;
       }
       patchRows((rows) => removeEntity(rows, entity));
@@ -621,7 +629,7 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
       {pendingDelete && (
         <DestructiveStatementPrompt
           language="cypher"
-          sql={deleteStatement(pendingDelete.entity, pendingDelete.relationships > 0)}
+          sql={deleteStatement(pendingDelete.entity, pendingDelete.relationships)}
           risk="scoped-write"
           statementCount={1}
           connectionName={connection.name}

@@ -145,3 +145,33 @@ describe('CypherWorkbench 改节点', () => {
     expect(container.textContent).toContain('it may have been deleted');
   });
 });
+
+describe('CypherWorkbench 删节点', () => {
+  it('数完之后别处又连上了关系：什么也没删，说清楚是关系变了', async () => {
+    let deleted = 0;
+    invoke.mockImplementation(async (command: string, args: { query: string }) => {
+      if (command === 'neo4j_query_type') return 'r';
+      if (args.query.startsWith('MATCH (n:Person)')) return result([[alice('30')]]);
+      if (args.query.includes('RETURN COUNT')) {
+        return { ...result([]), columns: ['relationships'], rows: [[{ kind: 'integer', value: '3' }]] };
+      }
+      if (args.query.includes('DELETE')) {
+        // 服务端那边已经是 4 条了：条数对不上的删除一行也不匹配
+        if (args.query.includes('= 3')) return result([]);
+        deleted += 1;
+        return { ...result([]), summary: { ...result([]).summary, counters: [['nodesDeleted', 1]] } };
+      }
+      return result([[alice('30')]]);
+    });
+    await openAndEdit();
+    await click(button('Delete node'));
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((candidate) => candidate.textContent?.trim() === 'Run anyway');
+    if (!confirm) throw new Error('没有确认框');
+    await click(confirm);
+
+    expect(deleted).toBe(0);
+    expect(container.textContent).toContain('nothing was deleted');
+    expect(container.textContent).not.toContain('it may have been deleted');
+  });
+});

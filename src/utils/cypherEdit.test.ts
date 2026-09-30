@@ -207,9 +207,15 @@ describe('别处改过的不覆盖', () => {
 
 describe('删', () => {
   it('节点只在确认过之后才 DETACH；关系从来不需要', () => {
-    expect(deleteStatement(person, false)).toBe("MATCH (n) WHERE elementId(n) = '4:db:1'\nDELETE n");
-    expect(deleteStatement(person, true)).toBe("MATCH (n) WHERE elementId(n) = '4:db:1'\nDETACH DELETE n");
-    expect(deleteStatement(livesIn, true)).toBe("MATCH ()-[r]->() WHERE elementId(r) = '5:db:9'\nDELETE r");
+    expect(deleteStatement(person, 0)).toBe("MATCH (n) WHERE elementId(n) = '4:db:1'\n  AND COUNT { (n)--() } = 0\nDELETE n");
+    expect(deleteStatement(livesIn, 3)).toBe("MATCH ()-[r]->() WHERE elementId(r) = '5:db:9'\nDELETE r");
+  });
+
+  it('连着的关系要求还是确认框里说的那几条：数完之后别处连上的，不跟着一起删', () => {
+    // 打包版回归时撞上的：确认框说「一起删掉 3 条关系」，点下去之前别处又连上一条，删掉的是 4 条
+    expect(deleteStatement(person, 3)).toBe(
+      "MATCH (n) WHERE elementId(n) = '4:db:1'\n  AND COUNT { (n)--() } = 3\nDETACH DELETE n"
+    );
   });
 
   it('数关系用无向的模式', () => {
