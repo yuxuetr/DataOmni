@@ -1263,6 +1263,11 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
       Ok(tagged_value("time", format_pg_interval(&interval)))
     }
     "VOID" => Ok(JsonValue::Null),
+    // 枚举的二进制与文本形式都是标签本身
+    _ if matches!(type_info.kind(), sqlx::postgres::PgTypeKind::Enum(_)) => {
+      let bytes = value.as_bytes().map_err(display_error)?;
+      Ok(JsonValue::String(String::from_utf8_lossy(bytes).into_owned()))
+    }
     _ => Err(QueryError::message(format!("{UNSUPPORTED_COLUMN_TYPE}: {type_name}"))),
   }
 }

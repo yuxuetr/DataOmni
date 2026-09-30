@@ -616,6 +616,41 @@ async fn postgres_decodes_common_column_types() {
   );
 }
 
+/// 枚举列在 SQL 标签里 `SELECT *` 原先整条报错、叫人 CAST。PG 应用里枚举很常见，
+/// 而它的二进制形式就是标签本身。
+#[tokio::test]
+async fn postgres_enum_columns_read_as_their_label() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool = PgPoolOptions::new()
+    .max_connections(1)
+    .connect(&url)
+    .await
+    .expect("connect to PostgreSQL smoke database");
+
+  // CockroachDB 不许在 pg_temp 里建类型，只好建真的，开头清掉上次失败留下的
+  sqlx::query("DROP TYPE IF EXISTS smoke_mood").execute(&pool).await.expect("drop leftover enum");
+  sqlx::query("CREATE TYPE smoke_mood AS ENUM ('sad', 'ok', '开心')")
+    .execute(&pool)
+    .await
+    .expect("create enum type");
+
+  let result = execute_query(
+    &DbPool::Postgres(pool.clone()),
+    "SELECT 'ok'::smoke_mood AS plain, '开心'::smoke_mood AS wide",
+  )
+  .await
+  .expect("decode enum columns");
+  sqlx::query("DROP TYPE smoke_mood").execute(&pool).await.ok();
+
+  let QueryExecutionResult::Rows { rows, .. } = result else {
+    panic!("expected a row result");
+  };
+  assert_eq!(rows[0]["plain"], "ok");
+  assert_eq!(rows[0]["wide"], "开心");
+}
+
 /// 数组按 PostgreSQL 自己的文本输出显示：和服务端 `::text` 逐字相同，
 /// 原样绑回去（界面带 `::text[]` 转换）还是同一个值。
 /// 之前给的是 JSON 数组，网格印成 `a,b,c`，分不清 `{a,b}` 与 `{"a,b"}`。
