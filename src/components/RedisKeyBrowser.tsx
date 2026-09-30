@@ -91,8 +91,12 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
         timeoutMs
       });
       setKeys((previous) => (from === null ? page.keys : [...previous, ...page.keys]));
-      // 选中的那个键又扫到了：剩余时间换成这次的，否则列表写 42 秒、详情还写着 2 分
-      setSelected((current) => (current && page.keys.find((row) => row.key.raw === current.key.raw)) ?? current);
+      // 选中的那个键又扫到了：剩余时间换成这次的，否则列表写 42 秒、详情还写着 2 分。
+      // 从头一次扫完都不见它，就是过期或被删了——模式没变，它在的话一定扫得到
+      setSelected((current) => {
+        const found = current && page.keys.find((row) => row.key.raw === current.key.raw);
+        return found ?? (from === null && page.cursor === null ? null : current);
+      });
       setCursor(page.cursor);
     } catch (caught) {
       setScanError(describeError(caught));

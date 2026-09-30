@@ -127,4 +127,28 @@ describe('RedisKeyBrowser', () => {
     await click(labelled('Cancel')[0]);
     expect(cellTexts()).toContain('z');
   });
+
+  it('从头重扫完了还不见选中的键：它已经没了，右边不再印着它和它过期前的剩余时间', async () => {
+    // 打包版上见过：键过期之后列表刷新了，右边仍是「1 min 30 s 后过期」加一句「刷新一下列表」
+    let present = true;
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'redis_scan') {
+        return { keys: present ? [{ key: text('k'), kind: 'string', ttlMs: 90_000 }] : [], cursor: null };
+      }
+      if (command === 'redis_read_value') {
+        if (!present) throw 'DATAOMNI_REDIS_KEY_GONE';
+        return stringValue('v');
+      }
+      throw new Error(`没料到的命令 ${command}`);
+    });
+    await act(async () => {
+      root.render(<RedisKeyBrowser database={0} />);
+    });
+    await click(button('stringk1 min 30 s'));
+    present = false;
+    await click(button('Refresh'));
+
+    expect(container.textContent).toContain('Pick a key on the left');
+    expect(container.textContent).not.toContain('Expires in');
+  });
 });
