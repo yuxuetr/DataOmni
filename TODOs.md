@@ -202,6 +202,8 @@
 - [-] 元数据与表数据查询改走自建 query_executor，不再用 tauri-plugin-sql 的解码器
   - 剩余：表结构查询仍走插件，因 `execute_query` 不收绑定参数；84495ab 的 CAST 让它能用，CAST 是否补齐由 `e61654c` 的门比对。
   - 暂不支持：PostgreSQL `BIT` 与 `INET` / `CIDR`（需开 sqlx `bit-vec` / `ipnetwork`，应用 schema 少见）。
+    2026-09-30 起表数据页与整表导出不再因此整张打不开（`39bb53d`）：解码器白名单以外的列（这几种之外还有枚举、域、timetz、
+    money、xml、几何、区间……）按 `::text` 取；SQL 标签里的查询仍照原样报错、叫人 CAST。
   - 重估条件：真需要时给 `execute_query` 补绑定参数。
 
 ## P3：数据库管理与数据工程能力
@@ -501,6 +503,12 @@
     store 单测与 Rust 单测（报错里要有路径）都先红后绿；打包版（rpm 0.4.39）上空文件与未知类型两种都看过，写出路径与原因。
     顺带（`b4f1950`）：保存配置原先 `fs::write` 就地截断再写，写到一半崩溃或断电留下的正是空文件；改成和导出、备份同样的
     `.part` + 改名。崩溃中途无法廉价模拟，**没有先红的测试**。
+  - 同一套环境回归 CockroachDB 25.2 与 PostgreSQL 16（rpm 0.4.40，本机 Docker）：表里一列 `inet` 或枚举，表数据页整张打不开
+    （`39bb53d`），报错叫人在查询里 CAST，可表数据页没有查询可改——和 SQL Server 的 `sql_variant` 同一回事，PG 上更常见。
+    同样的做法：解码器白名单以外的列 `::text AS 原名`，按 `format_type` 的整个类型名比（`timetz`、`float8[]` 的首词是
+    `time`、`double`，按首词会误认）。单测先红后绿；打包版上 PG 16 一张 17 列的表（inet、cidr、macaddr、枚举、域、timetz、float8[]、
+    money、bit、xml、point、tsvector、int4range……）整张打开，改 inet 与枚举发的是 `'10.0.0.11'::inet`、`'ok'::mood`，服务端读回一致；
+    CockroachDB 的 `items`（带 INET）同样打开。代价：按这种列排序时排的是文本（别名与列名相同，`ORDER BY` 认别名）。
   - 看到没修的：
     - DuckDB 的 `COMMENT ON` 注释不进 EXPORT DATABASE 的备份（上游行为），恢复后表与列的注释没了、不报错。
       重估条件：有人靠注释存文档并报告备份后丢失。
