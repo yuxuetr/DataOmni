@@ -1490,6 +1490,7 @@ export const en: Translations = {
   'redis.element.pushTail': 'Append to the end',
   'redis.element.pushHead': 'Prepend to the start',
   'redis.element.deleteTitle': 'Delete element',
+  'redis.element.changedNotDeleted': 'It changed elsewhere after you opened it, so nothing was deleted. The current contents are shown now',
   'redis.element.deleteField': 'Delete field {name}? This cannot be undone.',
   'redis.element.deleteItem': 'Delete item {index}? This cannot be undone.',
   'redis.element.deleteMember': 'Delete member {name}? This cannot be undone.',

@@ -12,6 +12,7 @@ import { bytesToBase64 } from '../utils/redisCommandLine';
 import { useLanguageStore } from '../stores/languageStore';
 import { useQueryStore } from '../stores/queryStore';
 import { describeError } from '../utils/describeError';
+import { parseBackendError } from '../utils/backendError';
 import {
   REDIS_KEY_KINDS,
   appendValuePage,
@@ -177,7 +178,14 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
     try {
       await invoke('redis_change_element', { connectionString, database, key: row.key.raw, change, timeoutMs });
     } catch (caught) {
-      setActionError(describeError(caught));
+      // 删除没有草稿可留，「取消后看得到现在的值」对它不成立：直接重读
+      if (destructive) {
+        const changed = parseBackendError(String(caught))?.key === 'error.backend.redisValueChanged';
+        setActionError(changed ? t('redis.element.changedNotDeleted') : describeError(caught));
+        void loadValue(row, null);
+      } else {
+        setActionError(describeError(caught));
+      }
       throw caught;
     }
     void loadValue(row, null);
@@ -465,6 +473,10 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
                         value={value}
                         encode={encodeText}
                         onChange={(change, destructive) => changeElement(selected, change, destructive)}
+                        onCancel={() => {
+                          setActionError(null);
+                          void loadValue(selected, null);
+                        }}
                       />
                     ) : (
                       value && <ValueView value={value} t={t} />

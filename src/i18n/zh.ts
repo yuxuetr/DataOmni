@@ -1501,6 +1501,7 @@ export const zh = {
   'redis.element.pushTail': '加到末尾',
   'redis.element.pushHead': '加到开头',
   'redis.element.deleteTitle': '删除元素',
+  'redis.element.changedNotDeleted': '它在打开之后被别处改过，什么也没删。现在显示的是当前的内容',
   'redis.element.deleteField': '删除字段 {name}？撤不回来。',
   'redis.element.deleteItem': '删除第 {index} 项？撤不回来。',
   'redis.element.deleteMember': '删除成员 {name}？撤不回来。',

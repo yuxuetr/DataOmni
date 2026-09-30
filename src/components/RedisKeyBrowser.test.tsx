@@ -24,6 +24,28 @@ function button(label: string): HTMLButtonElement {
   return found;
 }
 
+function labelled(label: string): HTMLButtonElement[] {
+  return [...container.querySelectorAll<HTMLButtonElement>(`button[aria-label="${label}"]`)];
+}
+
+/** 列表 a、b、c 打开之后，服务端那边在表头插了一个 z */
+function listShiftedElsewhere(onChange: () => never) {
+  let items = ['a', 'b', 'c'];
+  invoke.mockImplementation(async (command: string) => {
+    if (command === 'redis_scan') return { keys: [{ key: text('l'), kind: 'list', ttlMs: -1 }], cursor: null };
+    if (command === 'redis_read_value') {
+      return { kind: 'list', length: items.length, offset: 0, items: items.map(text), next: null };
+    }
+    if (command === 'redis_change_element') {
+      items = ['z', 'a', 'b', 'c'];
+      onChange();
+    }
+    throw new Error(`没料到的命令 ${command}`);
+  });
+}
+
+const cellTexts = () => [...container.querySelectorAll('td')].map((cell) => cell.textContent?.trim()).filter(Boolean);
+
 async function click(target: HTMLElement) {
   await act(async () => {
     target.click();
@@ -68,5 +90,41 @@ describe('RedisKeyBrowser', () => {
     await click(button('Cancel'));
     expect(container.textContent).toContain('changed elsewhere');
     expect(container.textContent).not.toContain('opened');
+  });
+
+  it('按下标删列表元素撞上别处的改动：什么也没删，并且立刻显示现在的内容', async () => {
+    // 删除没有草稿可留，「草稿还在，取消后看得到」对它是句空话——表里照旧印着打开时那份
+    listShiftedElsewhere(() => {
+      throw 'DATAOMNI_REDIS_VALUE_CHANGED';
+    });
+    await act(async () => {
+      root.render(<RedisKeyBrowser database={0} />);
+    });
+    await click(button('listl'));
+    await click(labelled('Delete')[0]);
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button, [role="alertdialog"] button')]
+      .find((candidate) => candidate.textContent?.trim() === 'Delete');
+    if (!confirm) throw new Error('没有确认框');
+    await click(confirm);
+
+    expect(container.textContent).toContain('nothing was deleted');
+    expect(container.textContent).not.toContain('Your draft is kept');
+    expect(cellTexts()).toContain('z');
+  });
+
+  it('改元素撞上别处的改动后，取消会显示现在的内容', async () => {
+    listShiftedElsewhere(() => {
+      throw 'DATAOMNI_REDIS_VALUE_CHANGED';
+    });
+    await act(async () => {
+      root.render(<RedisKeyBrowser database={0} />);
+    });
+    await click(button('listl'));
+    await click(labelled('Edit')[0]);
+    await click(labelled('Save')[0]);
+    expect(container.textContent).toContain('Your draft is kept');
+
+    await click(labelled('Cancel')[0]);
+    expect(cellTexts()).toContain('z');
   });
 });

@@ -30,6 +30,8 @@ interface RedisValueTableProps {
   encode: (text: string) => string;
   /** 发一条改动；成功后由调用方重读。抛出的错误由调用方显示 */
   onChange: (change: ElementChange, destructive?: string) => Promise<void>;
+  /** 放弃正在改的那一格。保存被拒多半是别处改过，调用方借这一下重读 */
+  onCancel: () => void;
 }
 
 
@@ -52,7 +54,7 @@ function Bytes({ bytes }: { bytes: RedisBytes }) {
  * hash / list / set / zset / stream 的表，可以改。改的是一格：点铅笔变成输入框，回车或对勾提交。
  * 二进制的元素只给删不给改——框里是转义过的文字，写回去就不是原来的字节了
  */
-export function RedisValueTable({ value, encode, onChange }: RedisValueTableProps) {
+export function RedisValueTable({ value, encode, onChange, onCancel }: RedisValueTableProps) {
   const t = useLanguageStore((state) => state.t);
   // 正在改哪一行（hash 的字段 / list 的下标 / zset 的成员），和框里的字
   const [editing, setEditing] = useState<{ row: string; draft: string } | null>(null);
@@ -72,6 +74,11 @@ export function RedisValueTable({ value, encode, onChange }: RedisValueTableProp
     }
   };
 
+  const cancel = () => {
+    setEditing(null);
+    onCancel();
+  };
+
   const editor = (row: string, onSubmit: (draft: string) => void, valid: (draft: string) => boolean = () => true) => {
     if (editing?.row !== row) return null;
     const ok = valid(editing.draft);
@@ -88,7 +95,7 @@ export function RedisValueTable({ value, encode, onChange }: RedisValueTableProp
             } else if (event.key === 'Escape' && !isImeKeyEvent(event.nativeEvent)) {
               event.preventDefault();
               event.stopPropagation();
-              setEditing(null);
+              cancel();
             }
           }}
           aria-label={t('redis.element.editing')}
@@ -98,7 +105,7 @@ export function RedisValueTable({ value, encode, onChange }: RedisValueTableProp
         <button type="button" disabled={busy || !ok} onClick={() => onSubmit(editing.draft)} className={iconButton} aria-label={t('redis.action.save')}>
           <Check size={14} />
         </button>
-        <button type="button" disabled={busy} onClick={() => setEditing(null)} className={iconButton} aria-label={t('common.cancel')}>
+        <button type="button" disabled={busy} onClick={cancel} className={iconButton} aria-label={t('common.cancel')}>
           <X size={14} />
         </button>
       </span>
