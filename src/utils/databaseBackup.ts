@@ -51,6 +51,11 @@ export function backupName(databasePath: string, dbType: DatabaseType, now: Date
   return dbType === DatabaseType.DuckDB ? `${base}-backup-${stamp}` : `${base}-backup-${stamp}${extension}`;
 }
 
+/** 任务标题里的名字。MongoDB 一个连接下有多个库，同一连接备份两个库时只写连接名就分不出来 */
+export function backupTaskName(connection: Pick<ConnectionProfile, 'name' | 'db_type'>, database?: string): string {
+  return connection.db_type === DatabaseType.MongoDB && database ? `${connection.name} / ${database}` : connection.name;
+}
+
 /**
  * 选好位置就交给后台任务：大库的 VACUUM INTO 要跑一阵，任务面板里看得到进度与结果。
  * `database` 只给 MongoDB：备份哪个库（它连接上的「数据库」那格是认证库）
@@ -68,7 +73,7 @@ export async function startDatabaseBackup(connection: ConnectionProfile, databas
   }
   useTaskStore.getState().start({
     kind: 'backup',
-    title: translateNow('backup.taskTitle', { name: connection.name }),
+    title: translateNow('backup.taskTitle', { name: backupTaskName(connection, database) }),
     payload: { connectionId: connection.id, path, ...(mongo ? { database } : {}) }
   });
 }

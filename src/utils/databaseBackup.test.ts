@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DatabaseType } from '../contracts';
-import { backupName, backupSupported } from './databaseBackup';
+import { backupName, backupSupported, backupTaskName } from './databaseBackup';
 
 const NOW = new Date(2026, 8, 28, 0, 5, 9);
 
@@ -32,5 +32,12 @@ describe('backupName', () => {
 
   it('DuckDB 的备份是目录，不带扩展名', () => {
     expect(backupName('/data/warehouse.duckdb', DatabaseType.DuckDB, NOW)).toBe('warehouse-backup-20260928-000509');
+  });
+});
+
+describe('backupTaskName', () => {
+  it('MongoDB 按库备份，任务标题要说是哪个库；别的连接只对着一个库，连接名就够', () => {
+    expect(backupTaskName({ name: 'prod', db_type: DatabaseType.MongoDB }, 'shop')).toBe('prod / shop');
+    expect(backupTaskName({ name: 'prod', db_type: DatabaseType.PostgreSQL })).toBe('prod');
   });
 });
