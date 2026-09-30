@@ -580,7 +580,7 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
           connectionName={connection.name}
           environment={connection.environment}
           databaseLabel="Neo4j"
-          reversibility={{ kind: 'autocommit' }}
+          reversibility={{ kind: 'no-transaction' }}
           onConfirm={() => {
             const { edit } = pendingEdit;
             setPendingEdit(null);
@@ -599,7 +599,7 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
           connectionName={connection.name}
           environment={connection.environment}
           databaseLabel="Neo4j"
-          reversibility={{ kind: 'autocommit' }}
+          reversibility={{ kind: 'no-transaction' }}
           alwaysAsks
           impacts={pendingDelete.entity.kind === 'node'
             ? [
@@ -625,7 +625,7 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
           connectionName={connection.name}
           environment={connection.environment}
           databaseLabel="Neo4j"
-          reversibility={{ kind: 'autocommit' }}
+          reversibility={{ kind: 'no-transaction' }}
           riskDescription={CYPHER_RISK_DESCRIPTION_KEYS[pending.risk] && t(CYPHER_RISK_DESCRIPTION_KEYS[pending.risk]!)}
           onConfirm={() => {
             const statements = pending.statements;

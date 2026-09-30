@@ -11,12 +11,15 @@ import { topLevelKeywords } from './sqlStatements';
  *   提交之后同样撤不回来。表结构编辑器走的 `execute_write_batch` 就是这样。
  * - `not-transactional`：这个方言下事务包不住它，怎么跑都撤不回来。
  *   `keyword` 是肇事的那个动词，用来把原因说清楚。
+ * - `no-transaction`：这个工作区根本没有事务（MongoDB、Elasticsearch 的控制台，Neo4j 的逐条执行），
+ *   执行即生效。和 `autocommit` 分开：那一种说的是「自动提交开着」，而这里没有这个开关可关。
  */
 export type ExecutionReversibility =
   | { kind: 'transactional' }
   | { kind: 'autocommit' }
   | { kind: 'atomic-batch' }
-  | { kind: 'not-transactional'; keyword: string };
+  | { kind: 'not-transactional'; keyword: string }
+  | { kind: 'no-transaction' };
 
 /** 要按顺序匹配语句开头的若干个关键字 */
 type KeywordPrefix = readonly string[];

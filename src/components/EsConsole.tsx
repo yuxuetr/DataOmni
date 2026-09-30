@@ -389,7 +389,7 @@ export function EsConsole({ connection }: EsConsoleProps) {
           connectionName={connection.name}
           environment={connection.environment}
           databaseLabel="Elasticsearch"
-          reversibility={{ kind: 'autocommit' }}
+          reversibility={{ kind: 'no-transaction' }}
           riskDescription={ES_RISK_DESCRIPTION_KEYS[pending.risk] && t(ES_RISK_DESCRIPTION_KEYS[pending.risk]!)}
           onConfirm={() => {
             const requests = pending.requests;

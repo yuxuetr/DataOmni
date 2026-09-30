@@ -865,6 +865,7 @@ export const en: Translations = {
   'risk.runAnyway': 'Run anyway',
   'risk.reversible': 'This can be rolled back: the statement joins the open transaction, so Roll back undoes it.',
   'risk.irreversibleAutocommit': 'Autocommit is on, so this is committed the moment it runs and cannot be undone.',
+  'risk.noTransaction': 'There is no transaction here: it takes effect as soon as it runs and cannot be undone.',
   'risk.committedOnRun': 'It is committed as soon as it runs and cannot be undone.',
   'risk.atomicBatch': 'These statements commit as one unit: a failure partway changes nothing, but once committed it cannot be undone.',
   'risk.irreversibleDialect': '{keyword} is not protected by transactions on {database}; opening one will not help.',

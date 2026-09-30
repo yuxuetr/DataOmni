@@ -199,7 +199,7 @@ export function EsDocumentEditor({ connection, address, onWritten, onClose }: Es
           connectionName={connection.name}
           environment={connection.environment}
           databaseLabel="Elasticsearch"
-          reversibility={{ kind: 'autocommit' }}
+          reversibility={{ kind: 'no-transaction' }}
           alwaysAsks={asking === 'delete'}
           impacts={asking === 'delete' ? [t('es.doc.impact', { id: address.id, index: address.index })] : undefined}
           onConfirm={() => {

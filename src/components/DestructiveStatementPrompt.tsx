@@ -93,6 +93,8 @@ export function DestructiveStatementPrompt({
       case 'atomic-batch':
         // 只有一条时「作为一个整体」「中途出错」都无从说起
         return statementCount > 1 ? t('risk.atomicBatch') : t('risk.committedOnRun');
+      case 'no-transaction':
+        return t('risk.noTransaction');
       case 'not-transactional':
         return t('risk.irreversibleDialect', {
           keyword: reversibility.keyword,

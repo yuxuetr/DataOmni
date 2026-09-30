@@ -247,7 +247,7 @@ export function MongoConsole({ connection }: { connection: ConnectionProfile }) 
           connectionName={connection.name}
           environment={connection.environment}
           databaseLabel="MongoDB"
-          reversibility={{ kind: 'autocommit' }}
+          reversibility={{ kind: 'no-transaction' }}
           riskDescription={pending.plan.risk === 'bulk-write' ? t('mongo.console.risk.bulkWrite') : undefined}
           onConfirm={() => {
             const { command, plan, database: target } = pending;

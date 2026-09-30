@@ -888,6 +888,7 @@ export const zh = {
   'risk.runAnyway': '仍然执行',
   'risk.reversible': '执行后可以回滚：语句会进当前这个事务，反悔就按「回滚」。',
   'risk.irreversibleAutocommit': '现在是自动提交，执行完就落库了，撤不回来。',
+  'risk.noTransaction': '这里没有事务：执行即生效，撤不回来。',
   'risk.atomicBatch': '这批语句会作为一个整体提交：中途出错什么都不会改，但提交之后撤不回来。',
   'risk.committedOnRun': '执行即提交，之后撤不回来。',
   'risk.irreversibleDialect': '{keyword} 在 {database} 上不受事务保护，开事务也救不回来。',
