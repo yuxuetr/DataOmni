@@ -538,7 +538,13 @@
       `1e999` 写 `Inf`。同时单精度（`0.1::float4`、MySQL 的 FLOAT）原先放宽成 f64 读成 0.10000000149011612，改按 f32 最短写法。
       PG / SQLite / MySQL 8.4 各一条用例先红后绿。
     - numeric 的 `NaN` / `Infinity` 整条报错（`6204723`）：BigDecimal 装不下，按头部符号值认出。先红后绿。
+    打包版（rpm 0.4.45，同一套 GNOME 容器，PG 16）：一张带 inet、money、date、timestamptz、float4、float8、numeric、bool[] 的表，
+    SQL 标签里 `select *` 整条读出、可编辑，`infinity` / `-infinity`、`0.1`、`NaN`、`Infinity`、`{t,f}` 都照 psql 显示；
+    把 `infinity` 的日期改成 2030-01-01、inet 改掉，预览里乐观检查带 `"valid_to" = 'infinity'::date`，提交后服务端读回一致。
+    `infinity` 的日期格编辑框里是文本 `infinity`、选择器空着（同 timetz 的做法）。表数据页同样显示。
   - 看到没修的：
+    - 表数据页的 inet `::1` 显示成 `::1/128`（`39bb53d` 按 `::text` 取，`text(inet)` 总带掩码；SQL 标签按 `inet_out` 是 `::1`）。
+      同一个值，写回不变。重估条件：有人嫌两处写法不一，届时改用走输出函数的转换。
     - DuckDB 的 `COMMENT ON` 注释不进 EXPORT DATABASE 的备份（上游行为），恢复后表与列的注释没了、不报错。
       重估条件：有人靠注释存文档并报告备份后丢失。
     - DuckDB 的 `-0.0` 在网格与导出里都成了 `0`（JSON 数解析后 `String(-0)` 是 `0`）。`-0.0 = 0` 为真，定位与筛选不受影响，
