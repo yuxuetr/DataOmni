@@ -338,7 +338,21 @@
     - 十六进制输入不认 `0x` 前缀、却说「需要偶数个十六进制字符」（`87371b5`）：只认开头那一个。
     - 「真的执行一遍」的悬停提示印着 `**真的跑**`（`3bb5856`）：文案只进 `title`；`catalog.test.ts` 加门，文案里不许有 `**`（先红后绿）。
       打包版上连 PostgreSQL 悬停看过。
+  - 2026-09-30 同一套环境连 cu 上的 SQL Server 2022（rpm 0.4.18 → 0.4.19，英文界面，经 SSH 隧道，TLS「优先」配自签证书）：
+    DECIMAL(38,10) 与 bigint 上限一位不差、`GO` 分批加过程体、除零报错「跳到出错处」落在编辑器的行上（不是批内行号）、
+    估算执行计划树、结构页（identity、计算列、rowversion、默认值）、升级后从密钥环读回密码重连都正常。**修了三处**：
+    - 表里有一列 `sql_variant` / geography / geometry / hierarchyid，表数据页整张打不开，导出也一样（`d0abc30`）：
+      报错让用户在查询里 CAST，而表数据页没有查询可改。现在按列点名、把这几列 `CAST(… AS nvarchar(max))`；
+      打包版上四种都读出来了，改 `sql_variant` 一格提交后库里是 `edited-v`（nvarchar），rowversion 跟着变。
+    - 无主键表按全部列分页排序，而 SQL Server 不许 ORDER BY xml、text、ntext、image、geography、geometry（`ef062b9`）：
+      这种表同样整张打不开。这几列不进分页排序；打包版上九种类型各一列的无主键表能打开（按设计只读）。
+    - `time(7)` / `datetime2(7)` 丢第七位小数（`80110fe`）：按微秒格式化所致，改成按纳秒。`sql_server_smoke` 补了用例，
+      拿真库跑、去掉修复精确变红；MySQL / PostgreSQL 只到微秒，输出不变。
   - 看到没修的：
+    - 一批返回多个结果集时（过程里两条 SELECT、`sp_help`）只显示第一个，其余读掉丢弃，**界面上不提示**
+      （`stream_first_result` 的注释说与另外几家一致）。最小的做法是在结果摘要里带「另有 N 个结果集没显示」；
+      要动每个后端的 `QueryExecutionSummary`，这一轮不做。重估条件：有人要看过程的第二个结果集，或 `sp_help` 这类系统过程被报告「只出一半」。
+    - SQL Server 的 `PRINT` / 低级别 `RAISERROR` 消息不显示：tiberius 的结果流不给 info 消息。重估条件：换驱动或 tiberius 开放这类消息。
     - 已连上的连接，每执行一条语句都要从钥匙串读一次密码（每个命令都重新 `resolve_connection_string`，会话池以完整连接串为键）。
       钥匙串中途上锁（KDE Wallet 闲置关闭、macOS 设了闲置锁定）时，每条查询都会弹解锁框，取消就报错；解锁一次即恢复。
       重估条件：有人报告查询时反复弹钥匙串，或 macOS 上每条语句的钥匙串读取在耗时里看得出来。
