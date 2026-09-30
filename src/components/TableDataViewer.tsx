@@ -83,7 +83,7 @@ import {
   type DdlQuery,
   type SchemaMetadataQueries
 } from '../utils/catalogQueries';
-import { describeRowIdentity, primaryKeyColumns, wholeRowIdentity, type IndexMetadata } from '../utils/rowIdentity';
+import { describeRowIdentity, primaryKeyColumns, rowKeyOf, wholeRowIdentity, type IndexMetadata } from '../utils/rowIdentity';
 import type { RowKey, TableTarget } from '../utils/rowStatements';
 import {
   cellInputFromValue,
@@ -863,21 +863,8 @@ export default function TableDataViewer({
     dialect
   });
 
-  /**
-   * 取这一行的键值。
-   *
-   * 键列由 `describeRowIdentity` 给出——全部键列，不是第一列。原值要从 tagged
-   * 包装里拆出来：包装只服务于展示，绑进 SQL 的必须是字面量。
-   */
-  const rowKeyFrom = (values: Record<string, unknown>): RowKey => {
-    const keyColumns = rowIdentity.identity?.columns ?? [];
-    return {
-      columns: keyColumns,
-      values: Object.fromEntries(
-        keyColumns.map((name) => [name, unwrapResultValue(values[name] as SerializedResultValue)])
-      )
-    };
-  };
+  /** 这一行的键值：键列由 `describeRowIdentity` 给出——全部键列，不是第一列 */
+  const rowKeyFrom = (values: Record<string, unknown>): RowKey => rowKeyOf(rowIdentity.identity, values);
 
   /**
    * 一次提交整批，在**一个事务**里。

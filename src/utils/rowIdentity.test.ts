@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ColumnInfo } from '../contracts';
 import type { IndexInfo } from './schemaObjects';
-import { describeRowIdentity, primaryKeyColumns, wholeRowIdentity, type IndexMetadata } from './rowIdentity';
+import { describeRowIdentity, primaryKeyColumns, rowKeyOf, wholeRowIdentity, type IndexMetadata } from './rowIdentity';
 
 function column(name: string, overrides: Partial<ColumnInfo> = {}): ColumnInfo {
   return {
@@ -165,5 +165,20 @@ describe('wholeRowIdentity（ClickHouse）', () => {
 
   it('一列都比不了就定位不了', () => {
     expect(wholeRowIdentity([column('score', { data_type: 'Float64' })]).absence).toBe('no-unique-key');
+  });
+});
+
+describe('rowKeyOf', () => {
+  const identity = (source: 'primary-key' | 'whole-row') => ({ columns: ['id', 'fs', 's'], source, indexName: null });
+  const values = { id: 1, fs: { type: 'binary', value: 'ff000102' }, s: 'a', other: 'x' } as const;
+
+  it('按键列取值，拆掉展示用的包装', () => {
+    expect(rowKeyOf(identity('primary-key'), values)).toEqual({ columns: ['id', 'fs', 's'], values: { id: 1, fs: 'ff000102', s: 'a' } });
+  });
+
+  // 打包版上撞到的：FixedString 里是非 UTF-8 的字节，显示成十六进制；拿这串十六进制当参数去比，
+  // 服务端报「值太长」，那一行改不了。整行定位时它不进条件——少比一列只会让「恰好一行」更难成立
+  it('整行定位时，这一行里显示成二进制的值不进条件', () => {
+    expect(rowKeyOf(identity('whole-row'), values)).toEqual({ columns: ['id', 's'], values: { id: 1, s: 'a' } });
   });
 });
