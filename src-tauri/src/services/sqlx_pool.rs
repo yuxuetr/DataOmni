@@ -115,7 +115,10 @@ pub async fn select(
     ($query:ident) => {
       for value in params {
         $query = match value {
-          JsonValue::Null => $query.bind(None::<JsonValue>),
+          // 插件绑的是 `None::<JsonValue>`，PostgreSQL 把它当 jsonb：界面没写 schema 时发的
+          // null 撞上 `COALESCE($2, current_schema())`，报 `COALESCE types jsonb and name
+          // cannot be matched`。这里的参数只有表名、schema 这类名字，按文本绑
+          JsonValue::Null => $query.bind(None::<String>),
           JsonValue::String(text) => $query.bind(text),
           JsonValue::Number(number) => $query.bind(number.as_f64().unwrap_or_default()),
           other => $query.bind(other),

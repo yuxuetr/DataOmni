@@ -1233,12 +1233,11 @@ async fn postgres_accepts_the_parameters_the_ui_actually_sends() {
   .expect("supported");
 
   let cockroach = is_cockroach(&pool).await;
+  let handle = DbPool::Postgres(pool.clone());
   for (name, sql) in bound_catalog_queries(&queries) {
-    let mut query = sqlx::query(sql).bind(&fixture.child);
-    for _ in 1..queries.parameter_count {
-      query = query.bind(Option::<String>::None);
-    }
-    match query.fetch_all(&pool).await {
+    match dataomni_lib::services::sqlx_pool::select(&handle, sql, ui_catalog_params(&fixture, &queries))
+      .await
+    {
       Err(error) if cockroach && name == "triggers" => {
         assert_cockroach_refuses_the_trigger_catalog(error)
       }
@@ -1267,16 +1266,24 @@ async fn mysql_accepts_the_parameters_the_ui_actually_sends() {
     dataomni_lib::services::schema_metadata_queries(&dataomni_lib::models::DatabaseType::MySQL)
       .expect("supported");
 
+  let handle = DbPool::MySql(pool.clone());
   for (name, sql) in bound_catalog_queries(&queries) {
-    let mut query = sqlx::query(sql).bind(&fixture.child);
-    for _ in 1..queries.parameter_count {
-      query = query.bind(Option::<String>::None);
-    }
-    query
-      .fetch_all(&pool)
+    dataomni_lib::services::sqlx_pool::select(&handle, sql, ui_catalog_params(&fixture, &queries))
       .await
       .unwrap_or_else(|error| panic!("MySQL 的 {name} 不接受界面发的参数: {error}"));
   }
+}
+
+/// 界面的 `catalogQueryParams` 发的那一组：表名，没写 schema 时后面跟 JSON 的 null。
+/// 要经 `sqlx_pool::select` 绑——这里此前自己绑 `Option<String>`，而应用把 null
+/// 绑成 jsonb，PostgreSQL 的 `COALESCE($2, current_schema())` 不认，这条一直是绿的。
+fn ui_catalog_params(
+  fixture: &MetaFixture,
+  queries: &dataomni_lib::services::SchemaMetadataQueries,
+) -> Vec<serde_json::Value> {
+  let mut params = vec![serde_json::Value::String(fixture.child.clone())];
+  params.resize(usize::from(queries.parameter_count), serde_json::Value::Null);
+  params
 }
 
 // ---------------------------------------------------------------------------
