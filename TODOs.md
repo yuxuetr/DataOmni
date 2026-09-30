@@ -405,7 +405,6 @@
       `export.scope.selectionNote` 的 `{rows} × {columns}`（选一格就是「1 rows × 1 columns」）、`export.previewCsv` 的 `{shown}`、
       `export.scopeCurrentPage` 的 `{rows}`。两个数的那几条 `.one` 管不了，得换个说法。重估条件：动导出文案时一起改，
       或者把门放宽到「任意占位符后跟复数名词」，让它先红。
-    - 删掉的 `_bulk` 条目在索引不存在时（`delete` 一份没有的文档回 `not_found`）不算失败：那一条没有 `error`，ES 自己也不算。
     - Redis 键列表一页可能远超 200 行：后端 `SCAN` 带 `COUNT 1000`，键密的库里一轮就回来约 1000 个（本轮 3000 个键的库一页 1000），
       「再读一页」再追加约 1000。改成按剩余量给 `COUNT` 会让匹配稀疏的模式多出几倍往返，得先量。
       重估条件：量一次 5000 个键全读出来之后点选一个键的重渲染耗时，明显可感（比如过 100ms）就把 `COUNT` 收到页大小。
