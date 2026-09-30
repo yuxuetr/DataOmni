@@ -98,12 +98,16 @@ function tableReference(target: TableTarget): string {
 
 /**
  * 一个值在比较里该内联还是该绑定。内联返回字面量，绑定返回 null 并由调用方发占位符。
+ *
+ * ClickHouse 不内联：它的参数带着列类型，本来就按列类型比；而它把带小数点的字面量和超过 64 位的
+ * 整数都读成 Float64，和 Decimal / Int128 列比不准（改不了那一行，还会连相邻的值一起比中）
  */
 function inlineComparisonLiteral(
   column: ColumnInfo | undefined,
-  value: BoundValue
+  value: BoundValue,
+  dialect: SqlIdentifierDialect
 ): string | null {
-  if (!column || !isNumericColumnType(column.data_type)) {
+  if (!column || dialect === 'clickhouse' || !isNumericColumnType(column.data_type)) {
     return null;
   }
   const text = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim() : '';
@@ -141,7 +145,7 @@ function keyCondition(
         }
         throw new Error(translateNow('write.nullKeyValue', { column: name }));
       }
-      const literal = inlineComparisonLiteral(byName.get(name), value);
+      const literal = inlineComparisonLiteral(byName.get(name), value, target.dialect);
       if (literal !== null) {
         return `${quoted} = ${literal}`;
       }
@@ -242,7 +246,7 @@ function guardConditions(
       // `= NULL` 恒为未知，一行也匹配不上
       return [`${quoted} IS NULL`];
     }
-    const literal = inlineComparisonLiteral(column, value);
+    const literal = inlineComparisonLiteral(column, value, target.dialect);
     if (literal !== null) {
       return [`${quoted} = ${literal}`];
     }

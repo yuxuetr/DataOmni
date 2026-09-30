@@ -159,11 +159,26 @@ describe('ClickHouse：一项改动是「数一遍 → 执行 → 核对」', ()
     const changes = stageUpdate([], row({ id: 1, name: 'a', note: null }), { id: 1, name: 'a', note: null }, { name: value('b') }, 'c1');
     const statements = pendingStatements(changes, CH);
     expect(statements.map((statement) => [statement.sql, statement.expectRows])).toEqual([
-      ['SELECT count() FROM `db`.`t` WHERE `id` = 1 AND `name` = {p1:LowCardinality(String)} AND `note` IS NULL', 1],
-      ['ALTER TABLE `db`.`t` UPDATE `name` = {p1:LowCardinality(String)} WHERE `id` = 1 AND `name` = {p2:LowCardinality(String)} AND `note` IS NULL', undefined],
-      ['SELECT toUInt64(count() >= 1) FROM `db`.`t` WHERE `id` = 1 AND `name` = {p1:LowCardinality(String)} AND `note` IS NULL', 1]
+      ['SELECT count() FROM `db`.`t` WHERE `id` = {p1:UInt64} AND `name` = {p2:LowCardinality(String)} AND `note` IS NULL', 1],
+      ['ALTER TABLE `db`.`t` UPDATE `name` = {p1:LowCardinality(String)} WHERE `id` = {p2:UInt64} AND `name` = {p3:LowCardinality(String)} AND `note` IS NULL', undefined],
+      ['SELECT toUInt64(count() >= 1) FROM `db`.`t` WHERE `id` = {p1:UInt64} AND `name` = {p2:LowCardinality(String)} AND `note` IS NULL', 1]
     ]);
-    expect(statements.map((statement) => statement.params)).toEqual([['a'], ['b', 'a'], ['b']]);
+    expect(statements.map((statement) => statement.params)).toEqual([[1, 'a'], ['b', 1, 'a'], [1, 'b']]);
+  });
+
+  // 打包版上撞到的：内联的 `-999999999999.0000000000`、超过 64 位的整数在 ClickHouse 里是 Float64，
+  // 和 Decimal / Int128 列比不准——这一行改不了，Int128 上还会连相邻的值一起比中
+  it('Decimal 与大整数也走带列类型的参数，不内联成字面量', () => {
+    const columns: ColumnInfo[] = [
+      { name: 'i128', data_type: 'Int128', is_nullable: false, is_primary_key: true },
+      { name: 'dec', data_type: 'Decimal(38, 10)', is_nullable: false, is_primary_key: false }
+    ];
+    const target: TableTarget = { schema: 'db', table: 't', columns, dialect: 'clickhouse' };
+    const values = { i128: '-170141183460469231731687303715884105727', dec: '-999999999999.0000000000' };
+    const changes = stageDelete([], { columns: ['i128', 'dec'], values }, values, 'd1');
+    const [count] = pendingStatements(changes, target);
+    expect(count.sql).toBe('SELECT count() FROM `db`.`t` WHERE `i128` = {p1:Int128} AND `dec` = {p2:Decimal(38, 10)}');
+    expect(count.params).toEqual(['-170141183460469231731687303715884105727', '-999999999999.0000000000']);
   });
 
   it('删：执行前恰好一行，DELETE，删完零行', () => {
@@ -187,7 +202,7 @@ describe('ClickHouse：一项改动是「数一遍 → 执行 → 核对」', ()
   it('写成表达式的列新值算不出来，不进改完之后的那次核对', () => {
     const changes = stageUpdate([], row({ id: 1, name: 'a', note: 'x' }), { id: 1, name: 'a', note: 'x' }, { note: { kind: 'expression', sql: "concat(note, '!')" } }, 'c1');
     expect(pendingStatements(changes, CH)[2].sql)
-      .toBe('SELECT toUInt64(count() >= 1) FROM `db`.`t` WHERE `id` = 1 AND `name` = {p1:LowCardinality(String)}');
+      .toBe('SELECT toUInt64(count() >= 1) FROM `db`.`t` WHERE `id` = {p1:UInt64} AND `name` = {p2:LowCardinality(String)}');
   });
 
   it('一次只排一项：同一行接着改算同一项，别的行和新增都要先提交', () => {
