@@ -515,6 +515,15 @@
   - 同一件事在 MySQL 一侧查过，没有问题（MariaDB 11.8，本机 Docker，应用的 `execute_query` 直读）：`INET6` / `UUID` / `INET4`
     在协议上报 `BINARY`，内容是可打印文本，按文本显示；`VECTOR` 报 `VARBINARY`，显示十六进制字节。字符串绑定写回前三种，服务端读回一致。
     timetz 的编辑框只选时刻、不带时区，是有意的：文本框才是权威值，带时区的原值选择器空着，与 timestamptz 用 `datetime-local` 同一做法。
+  - SQL 标签一侧（rpm 0.4.42 → 0.4.43，本机 Docker 的 PG 16）：
+    - `SELECT *` 一张带枚举列的表整条报错、叫人 CAST（`3587a7b`）；枚举数组同样（`8b08596`）。枚举的二进制与文本形式都是标签，
+      按 `PgTypeKind::Enum` 认出直接取字节；数组逐个元素按 String 解（解码不查类型，只是 `try_decode` 的兼容检查不认，走 `unchecked`），
+      输出和别的数组同为服务端的文本字面量。冒烟用例在 PG 16 与 CockroachDB 25.2 上先红后绿。
+    - **SQL 结果只要没写 schema 就永远不能就地编辑**（`bb3ec1a`），提示说「读不到索引与约束」，连不带枚举的表也一样。
+      目录查询的 null 照插件绑成 `None::<JsonValue>`，PG 当 jsonb，`COALESCE($2, current_schema())` 报类型不匹配，错误被
+      `loadTableMetadata` 吞进 console。冒烟用例名叫「界面实际发的参数」，却自己绑 `Option<String>`、不经应用的 `select`，所以一直是绿的；
+      改成走 `sqlx_pool::select` 发界面那组参数，先红后绿。这条路只传名字，改按文本绑；MySQL 8.4 上同一条仍过。
+      打包版上 `select * from tickets` 可编辑，改枚举发 `'happy'::mood`，服务端读回一致。
   - 看到没修的：
     - DuckDB 的 `COMMENT ON` 注释不进 EXPORT DATABASE 的备份（上游行为），恢复后表与列的注释没了、不报错。
       重估条件：有人靠注释存文档并报告备份后丢失。
