@@ -140,6 +140,19 @@ fn inspect_database_file(database: Option<&str>, format: &FileFormat) -> Diagnos
   }
 }
 
+/// 按文件头认一个库文件是哪一种。`.db` 两家都有人用，只看扩展名会把 DuckDB 的 `.db`
+/// 当 SQLite 打开：sqlx 打开时不读文件头，界面写着「已连接」，对象树才报
+/// 「file is not a database」。认不出（空文件、读不到、两个都不像）返回 `None`，由调用方按扩展名定
+pub fn database_file_type(path: &str) -> Option<DatabaseType> {
+  [(DatabaseType::SQLite, &SQLITE_FILE), (DatabaseType::DuckDB, &DUCKDB_FILE)].into_iter().find_map(
+    |(db_type, format)| {
+      let mut header = vec![0u8; format.magic_offset + format.magic.len()];
+      let read = read_header(path, &mut header).ok()?;
+      (read == header.len() && &header[format.magic_offset..] == format.magic).then_some(db_type)
+    },
+  )
+}
+
 fn read_header(path: &str, buffer: &mut [u8]) -> std::io::Result<usize> {
   use std::io::Read;
 
@@ -412,6 +425,31 @@ mod tests {
 
     std::fs::remove_file(real).expect("cleanup");
     std::fs::remove_file(sqlite).expect("cleanup");
+  }
+
+  #[test]
+  fn a_database_file_is_recognised_by_its_header_not_its_extension() {
+    let mut duckdb = vec![0u8; DUCKDB_MAGIC_OFFSET];
+    duckdb.extend_from_slice(DUCKDB_MAGIC);
+    duckdb.extend_from_slice(&[0u8; 32]);
+    let duck = temporary_path(".db");
+    std::fs::write(&duck, &duckdb).expect("write duckdb header");
+    let mut sqlite = SQLITE_MAGIC.to_vec();
+    sqlite.extend_from_slice(&[0u8; 32]);
+    let lite = temporary_path(".duckdb");
+    std::fs::write(&lite, &sqlite).expect("write sqlite header");
+    let empty = temporary_path(".db");
+    std::fs::write(&empty, b"").expect("write empty");
+
+    assert_eq!(database_file_type(&duck.to_string_lossy()), Some(DatabaseType::DuckDB));
+    assert_eq!(database_file_type(&lite.to_string_lossy()), Some(DatabaseType::SQLite));
+    // 空文件是新库，归哪家由扩展名定
+    assert_eq!(database_file_type(&empty.to_string_lossy()), None);
+    assert_eq!(database_file_type(&temporary_path(".db").to_string_lossy()), None);
+
+    for path in [duck, lite, empty] {
+      std::fs::remove_file(path).expect("cleanup");
+    }
   }
 
   /// 空文件是「新建一个库」的正常起点，不能报成选错文件

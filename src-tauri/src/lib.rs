@@ -58,6 +58,7 @@ pub fn run() {
       sqlx_select,
       close_sqlx_pool,
       diagnose_connection,
+      database_file_type,
       close_ssh_tunnel,
       sql_server_select,
       close_sql_server,

@@ -9,7 +9,12 @@ import { useSessionManager } from '../utils/stateSync';
 import { recordConnectionUse } from '../utils/connectionRecency';
 import { withTimeout } from '../utils/withTimeout';
 import { describeError } from '../utils/describeError';
-import { connectionNameFromFile, databaseFileExtensions, databaseTypeOfFile } from '../utils/databaseFiles';
+import {
+  connectionNameFromFile,
+  databaseFileExtensions,
+  databaseTypeOfFile,
+  type FileDatabaseType
+} from '../utils/databaseFiles';
 import { useLanguageStore } from '../stores/languageStore';
 
 /**
@@ -108,7 +113,10 @@ export function useProfileConnector(): ProfileConnector {
     if (typeof selected !== 'string') {
       return;
     }
-    const type = databaseTypeOfFile(selected);
+    // 文件头说了算：`.db` 两家都有人用。空文件（新库）或读不到时才按扩展名
+    const sniffed = await invoke<FileDatabaseType | null>('database_file_type', { path: selected })
+      .catch(() => null);
+    const type = sniffed ?? databaseTypeOfFile(selected);
 
     try {
       const { connections, createConnection, loadConnections } = useConnectionStore.getState();

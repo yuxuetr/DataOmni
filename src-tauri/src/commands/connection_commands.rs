@@ -101,6 +101,12 @@ pub async fn diagnose_connection(
   Ok(crate::services::diagnose(&config).await)
 }
 
+/// 打开一个库文件前，按文件头认它是 SQLite 还是 DuckDB（见 `database_file_type`）
+#[tauri::command]
+pub fn database_file_type(path: String) -> Option<crate::models::DatabaseType> {
+  crate::services::connection_probe::database_file_type(&path)
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn test_connection(

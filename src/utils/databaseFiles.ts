@@ -1,11 +1,12 @@
 import { DatabaseType } from '../contracts/connection';
 
 /**
- * 「库就是一个文件」的两种：SQLite 与 DuckDB。选文件时按类型过滤，打开一个文件时
- * 按扩展名认它是哪一种。
+ * 「库就是一个文件」的两种：SQLite 与 DuckDB。选文件时按类型过滤。
  *
- * 只看扩展名，不读文件头：`.db` 两家都有人用，这里归 SQLite（历史上这一格只有它）。
- * 认错了也不会写坏什么——驱动打开时报「不是这种库」，诊断那一步会指出文件头不对。
+ * 打开一个文件时先由后端读文件头（`database_file_type`）：`.db` 两家都有人用，
+ * 只看扩展名会把 DuckDB 的 `.db` 当 SQLite 打开，而 sqlx 打开时不读文件头，
+ * 界面写着「已连接」、对象树才报「file is not a database」。
+ * 扩展名只在认不出时用（空文件是新库），`.db` 归 SQLite（历史上这一格只有它）。
  */
 const EXTENSIONS: Readonly<Record<DatabaseType.SQLite | DatabaseType.DuckDB, readonly string[]>> = {
   [DatabaseType.SQLite]: ['db', 'sqlite', 'sqlite3', 'db3'],
