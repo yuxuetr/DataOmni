@@ -1050,7 +1050,9 @@ fn decode(field: &[u8], kind: ColumnKind) -> JsonValue {
       .map(JsonValue::from)
       .unwrap_or_else(|_| JsonValue::String(text.to_string())),
     ColumnKind::BigInteger => match text.parse::<i128>() {
-      Ok(value) if value.abs() <= MAX_SAFE_INTEGER => JsonValue::from(value as i64),
+      Ok(value) if value.unsigned_abs() <= MAX_SAFE_INTEGER.unsigned_abs() => {
+        JsonValue::from(value as i64)
+      }
       _ => tagged_value("bigint", text.to_string()),
     },
     // `nan`、`inf` 原样是文字：JSON 里没有这两个数
@@ -1141,6 +1143,16 @@ mod tests {
     assert_eq!(values[11], JsonValue::from("line\nbreak\\x"));
     // 字符串 `\N` 写成 `\\N`，不是 NULL
     assert_eq!(values[12], JsonValue::from("\\N"));
+  }
+
+  /// 打包版上撞到的：Int128 最小值取 `abs()` 溢出回绕成负数，被当成安全整数截成了 0
+  #[test]
+  fn the_most_negative_integers_stay_whole() {
+    let kind = ColumnKind::of("Int128");
+    for text in ["-170141183460469231731687303715884105728", "-9007199254740992"] {
+      assert_eq!(decode(text.as_bytes(), kind), tagged_value("bigint", text.into()));
+    }
+    assert_eq!(decode(b"-9007199254740991", kind), JsonValue::from(-9_007_199_254_740_991_i64));
   }
 
   #[test]
