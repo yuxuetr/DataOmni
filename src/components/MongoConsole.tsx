@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import CodeMirror from '@uiw/react-codemirror';
 import { EditorState } from '@codemirror/state';
@@ -61,6 +61,9 @@ export function MongoConsole({ connection }: { connection: ConnectionProfile }) 
   const resolvedTheme = useThemeStore((state) => state.resolved);
   const editorViewRef = useRef<EditorView | null>(null);
   const nextRunId = useRef(0);
+  const outputRef = useRef<HTMLDivElement>(null);
+  // 新的一条追加在最后；上一条回复很长时它在视口外面，按了执行像是没反应
+  const scrollToRun = useRef<number | null>(null);
   const [database, setDatabase] = useState(connection.database || 'admin');
   const [runs, setRuns] = useState<ConsoleRun[]>([]);
   const [pending, setPending] = useState<{ command: string; plan: CommandPlan; database: string } | null>(null);
@@ -83,7 +86,19 @@ export function MongoConsole({ connection }: { connection: ConnectionProfile }) 
 
   const update = (id: number, next: ConsoleRun) =>
     setRuns((previous) => previous.map((run) => (run.id === id ? next : run)));
-  const append = (run: ConsoleRun) => setRuns((previous) => [...previous, run].slice(-MAX_RUNS));
+  const append = (run: ConsoleRun) => {
+    scrollToRun.current = run.id;
+    setRuns((previous) => [...previous, run].slice(-MAX_RUNS));
+  };
+
+  useEffect(() => {
+    const section = outputRef.current?.querySelector<HTMLElement>(`[data-run-id="${scrollToRun.current}"]`);
+    if (!section) return;
+    scrollToRun.current = null;
+    // 滚到这一条的开头而不是底部：回复长的时候先看到的该是命令和它的第一行。
+    // 不用 scrollIntoView：它会连外层能滚的祖先一起滚
+    outputRef.current?.scrollTo({ top: section.offsetTop });
+  }, [runs]);
 
   const execute = async (command: string, plan: CommandPlan, target: string) => {
     if (!connectionString) return;
@@ -211,10 +226,10 @@ export function MongoConsole({ connection }: { connection: ConnectionProfile }) 
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto border-t border-line bg-surface-sunken px-4 py-3">
+      <div ref={outputRef} className="relative min-h-0 flex-1 overflow-y-auto border-t border-line bg-surface-sunken px-4 py-3">
         {runs.length === 0 && <p className="text-sm text-fg-muted">{t('mongo.console.intro')}</p>}
         {runs.map((run) => (
-          <div key={run.id} className="mb-4">
+          <div key={run.id} data-run-id={run.id} className="mb-4">
             <p className="flex items-center gap-2 font-mono text-xs text-fg-muted">
               <span className="truncate">{`${run.database}> ${run.command.replace(/\s+/g, ' ').trim()}`}</span>
               {run.state === 'running' && <Loader2 size={12} className="shrink-0 animate-spin" />}
