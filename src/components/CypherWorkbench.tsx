@@ -40,6 +40,7 @@ import { formatPlanRows, worstEstimate, type QueryPlan } from '../utils/planInsi
 import {
   degreeStatement,
   deleteStatement,
+  readStatement,
   removeEntity,
   replaceEntity,
   type EditableEntity
@@ -135,6 +136,8 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
   const [editRevision, setEditRevision] = useState(0);
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  // 保存撞上别处的改动后再读回来的样子：草稿先留着，点「还原」才换成它
+  const [newer, setNewer] = useState<Inspected | null>(null);
   const [pendingEdit, setPendingEdit] = useState<{ edit: EntityEdit; risk: StatementRisk } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<{ entity: EditableEntity; database: string | null; relationships: number } | null>(null);
   const editorPanel = useResizablePanel({
@@ -252,12 +255,14 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
     setInspecting({ value, database });
     setCreating(false);
     setEditError(null);
+    setNewer(null);
   };
 
   const closeInspector = () => {
     setInspecting(null);
     setCreating(false);
     setEditError(null);
+    setNewer(null);
   };
 
   const inspectedEntity = inspecting?.value.kind === 'node' || inspecting?.value.kind === 'relationship' ? inspecting.value : null;
@@ -296,9 +301,26 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
       });
       const written = result.rows[0]?.[0];
       if (written?.kind !== 'node' && written?.kind !== 'relationship') {
-        setEditError(t('cypher.edit.gone'));
+        // 一行也没匹配上：要动的属性被别处改过，或者整个没了。再读一次分清是哪种
+        const current = target
+          ? (await invoke<CypherResult>('neo4j_run', {
+            connectionString,
+            database,
+            query: readStatement(target),
+            limit: 1,
+            timeoutMs: queryTimeoutMs
+          })).rows[0]?.[0]
+          : undefined;
+        if (current?.kind === 'node' || current?.kind === 'relationship') {
+          patchRows((rows) => replaceEntity(rows, current));
+          setNewer({ value: current, database });
+          setEditError(t('cypher.edit.changed'));
+        } else {
+          setEditError(t('cypher.edit.gone'));
+        }
         return;
       }
+      setNewer(null);
       if (target) {
         patchRows((rows) => replaceEntity(rows, written));
       } else {
@@ -552,6 +574,12 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
             busy={editBusy}
             error={editError}
             onSave={saveEntity}
+            onRevert={newer ? () => {
+              setInspecting(newer);
+              setNewer(null);
+              setEditError(null);
+              setEditRevision((revision) => revision + 1);
+            } : undefined}
             onDelete={() => void askDelete()}
             onClose={closeInspector}
           />

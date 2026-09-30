@@ -5,6 +5,7 @@ import {
   deleteStatement,
   draftOf,
   entityWrite,
+  readStatement,
   removeEntity,
   replaceEntity,
   type EntityDraft
@@ -78,7 +79,7 @@ describe('entityWrite', () => {
 
   it('改一个值只设那一个，按 elementId 定位', () => {
     expect(statementOf(edited((draft) => { draft.properties[0].value = '43'; }))).toBe(
-      "MATCH (n) WHERE elementId(n) = '4:db:1'\nSET n.age = 43\nRETURN n"
+      "MATCH (n) WHERE elementId(n) = '4:db:1'\n  AND n.age = 42\nSET n.age = 43\nRETURN n"
     );
   });
 
@@ -90,7 +91,7 @@ describe('entityWrite', () => {
     });
     expect(write).toEqual({
       kind: 'write',
-      statement: "MATCH (n) WHERE elementId(n) = '4:db:1'\nREMOVE n.age, n:Person\nSET n.born = date('1980-01-01'), n:Actor:`Star Man`\nRETURN n",
+      statement: "MATCH (n) WHERE elementId(n) = '4:db:1'\n  AND n.age = 42\n  AND n.born IS NULL\nREMOVE n.age, n:Person\nSET n.born = date('1980-01-01'), n:Actor:`Star Man`\nRETURN n",
       labelsChanged: true
     });
   });
@@ -100,7 +101,9 @@ describe('entityWrite', () => {
       draft.properties[0].key = 'years';
       draft.properties.push({ originalKey: null, key: 'age', value: "'old'" });
     }));
-    expect(statement).toBe("MATCH (n) WHERE elementId(n) = '4:db:1'\nREMOVE n.age\nSET n.years = 42, n.age = 'old'\nRETURN n");
+    expect(statement).toBe(
+      "MATCH (n) WHERE elementId(n) = '4:db:1'\n  AND n.age = 42\n  AND n.years IS NULL\nREMOVE n.age\nSET n.years = 42, n.age = 'old'\nRETURN n"
+    );
     expect(statement.indexOf('REMOVE')).toBeLessThan(statement.indexOf('SET'));
   });
 
@@ -126,7 +129,7 @@ describe('entityWrite', () => {
     expect(statementOf(edited((draft) => {
       draft.properties[0].value = '2021';
       draft.labels = ['Ignored'];
-    }, livesIn))).toBe("MATCH ()-[r]->() WHERE elementId(r) = '5:db:9'\nSET r.since = 2021\nRETURN r");
+    }, livesIn))).toBe("MATCH ()-[r]->() WHERE elementId(r) = '5:db:9'\n  AND r.since = 2020\nSET r.since = 2021\nRETURN r");
   });
 
   it('建节点：标签与属性写进 CREATE；什么都不填也能建', () => {
@@ -139,6 +142,66 @@ describe('entityWrite', () => {
       labelsChanged: true
     });
     expect(statementOf(entityWrite(null, draftOf(null)))).toBe('CREATE (n)\nRETURN n');
+  });
+});
+
+describe('别处改过的不覆盖', () => {
+  // 打包版回归时撞上的：打开之后别处把 age 改成了 99，这边改成 31 一保存，99 悄无声息地没了。
+  // 只比对要动的那几个键：语句只 SET / REMOVE 它们，别处改的其余属性本来就留得住
+  it('改的、删的键要求还是打开时的值；新加的键要求还不存在', () => {
+    const statement = statementOf(edited((draft) => {
+      draft.properties[0].value = '43';
+      draft.properties.splice(2, 1);
+      draft.properties.push({ originalKey: null, key: 'born', value: '1980' });
+    }));
+    expect(statement.split('\n').slice(0, 4)).toEqual([
+      "MATCH (n) WHERE elementId(n) = '4:db:1'",
+      "  AND n.name = 'Tom\\'s'",
+      '  AND n.age = 42',
+      '  AND n.born IS NULL'
+    ]);
+  });
+
+  it('没动到的键不比对，只加摘标签时一条也不比', () => {
+    expect(statementOf(edited((draft) => { draft.properties[0].value = '43'; }))).not.toContain('n.name');
+    expect(statementOf(edited((draft) => { draft.labels = ['Actor']; }))).toBe(
+      "MATCH (n) WHERE elementId(n) = '4:db:1'\nREMOVE n:Person\nSET n:Actor\nRETURN n"
+    );
+  });
+
+  it('改名：旧键要求是原值，新键要求还不存在', () => {
+    expect(statementOf(edited((draft) => { draft.properties[0].key = 'years'; }))).toContain(
+      '  AND n.age = 42\n  AND n.years IS NULL'
+    );
+  });
+
+  it('NaN 不等于任何值，包括它自己：改用 isNaN，否则这个属性永远存不进去', () => {
+    const measured: CypherNodeValue = { ...person, properties: [['ratio', { kind: 'float', value: 'NaN' }]] };
+    expect(statementOf(edited((draft) => { draft.properties[0].value = '1.0'; }, measured))).toContain('  AND isNaN(n.ratio)');
+  });
+
+  it('比对不出来的原值不比：字节串写不成字面量，列表里有 NaN 的相等恒不成立', () => {
+    const odd: CypherNodeValue = {
+      ...person,
+      properties: [
+        ['avatar', { kind: 'bytes', value: 'AAE=' }],
+        ['samples', { kind: 'list', items: [{ kind: 'float', value: 'NaN' }] }]
+      ]
+    };
+    expect(statementOf(edited((draft) => {
+      draft.properties = [];
+    }, odd))).toBe("MATCH (n) WHERE elementId(n) = '4:db:1'\nREMOVE n.avatar, n.samples\nRETURN n");
+  });
+
+  it('关系用 r 比对', () => {
+    expect(statementOf(edited((draft) => { draft.properties[0].value = '2021'; }, livesIn))).toBe(
+      "MATCH ()-[r]->() WHERE elementId(r) = '5:db:9'\n  AND r.since = 2020\nSET r.since = 2021\nRETURN r"
+    );
+  });
+
+  it('再读一次用同一个定位，拿回现在的样子', () => {
+    expect(readStatement(person)).toBe("MATCH (n) WHERE elementId(n) = '4:db:1'\nRETURN n");
+    expect(readStatement(livesIn)).toBe("MATCH ()-[r]->() WHERE elementId(r) = '5:db:9'\nRETURN r");
   });
 });
 

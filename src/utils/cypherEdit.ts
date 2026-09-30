@@ -14,7 +14,7 @@ import {
  * 原样不动就是不改，改成 `43` 就是整数、`'43'` 就是字符串。
  *
  * 用 `elementId` 定位，一条语句只动一个实体；语句以 `RETURN` 结尾，拿回改完的样子，
- * 结果里的旧值按它换掉。
+ * 结果里的旧值按它换掉。要动的键还要求是打开时的值，别处改过就一行也不匹配、什么也不写。
  */
 
 export type EditableEntity = CypherNodeValue | CypherRelationshipValue;
@@ -148,20 +148,28 @@ export function entityWrite(entity: EditableEntity | null, input: EntityDraft): 
 
   const variable = variableOf(entity);
   const originals = new Map(entity.properties.map(([key, value]) => [key, cypherLiteral(value)]));
+  const touched: string[] = [];
   const kept = new Set(draft.properties.map((property) => property.originalKey));
   const removals: string[] = [];
   const assignments: string[] = [];
   for (const key of originals.keys()) {
-    if (!kept.has(key)) removals.push(`${variable}.${cypherName(key)}`);
+    if (!kept.has(key)) {
+      removals.push(`${variable}.${cypherName(key)}`);
+      touched.push(key);
+    }
   }
   for (const property of draft.properties) {
     const { key, value } = effective(property);
     // 写不成字面量的原值不能改，改了键也不算（界面上那一格是只读的）
     if (value === null) continue;
     const renamedFrom = property.originalKey !== null && property.originalKey !== key ? property.originalKey : null;
-    if (renamedFrom !== null) removals.push(`${variable}.${cypherName(renamedFrom)}`);
+    if (renamedFrom !== null) {
+      removals.push(`${variable}.${cypherName(renamedFrom)}`);
+      touched.push(renamedFrom);
+    }
     if (renamedFrom !== null || property.originalKey === null || originals.get(key) !== value) {
       assignments.push(`${variable}.${cypherName(key)} = ${value}`);
+      touched.push(key);
     }
   }
   let labelsChanged = false;
@@ -174,11 +182,33 @@ export function entityWrite(entity: EditableEntity | null, input: EntityDraft): 
   }
   if (removals.length === 0 && assignments.length === 0) return { kind: 'unchanged' };
 
-  const lines = [matchClause(entity)];
+  const opened = new Map(entity.properties);
+  const guards = [...new Set(touched)].map((key) => unchangedSince(`${variable}.${cypherName(key)}`, opened.get(key)));
+  const lines = [matchClause(entity), ...guards.filter((guard) => guard !== null).map((guard) => `  AND ${guard}`)];
   if (removals.length > 0) lines.push(`REMOVE ${removals.join(', ')}`);
   if (assignments.length > 0) lines.push(`SET ${assignments.join(', ')}`);
   lines.push(`RETURN ${variable}`);
   return { kind: 'write', statement: lines.join('\n'), labelsChanged };
+}
+
+/**
+ * 「这个属性还是打开时的样子」的条件；原来没有这个键就是「现在也还没有」。
+ *
+ * 字面量的相等在服务端上逐种验过（浮点的最短写法、带时区名的时间、三维点、时长、
+ * 极值整数都成立）。比不出来的返回 `null`，不比：字节串写不成字面量；列表里有 NaN
+ * 时相等恒不成立，比了的话这个属性就再也存不进去
+ */
+function unchangedSince(property: string, opened: CypherValue | undefined): string | null {
+  if (opened === undefined) return `${property} IS NULL`;
+  if (opened.kind === 'float' && opened.value === 'NaN') return `isNaN(${property})`;
+  const literal = cypherLiteral(opened);
+  if (literal === null || literal.includes("toFloat('NaN')")) return null;
+  return `${property} = ${literal}`;
+}
+
+/** 写被拒之后再读一次，分清是被删了还是被改了，并拿回现在的样子 */
+export function readStatement(entity: EditableEntity): string {
+  return `${matchClause(entity)}\nRETURN ${variableOf(entity)}`;
 }
 
 /** 删之前先数一下连着几条关系：自环只算一条（服务端上验过） */

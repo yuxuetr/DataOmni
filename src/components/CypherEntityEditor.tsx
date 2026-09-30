@@ -14,6 +14,8 @@ interface CypherEntityEditorProps {
   busy: boolean;
   error: string | null;
   onSave: (statement: string, labelsChanged: boolean) => void;
+  /** 有了比打开时更新的样子（保存被拒后读回来的）才给：「还原」还原到它，而不是打开时那份 */
+  onRevert?: () => void;
   onDelete: () => void;
   onClose: () => void;
 }
@@ -26,7 +28,7 @@ interface CypherEntityEditorProps {
  * 将要运行的语句一直摆在下面——这里的值是 Cypher 表达式，看一眼语句最能看出写对了没有。
  * 换了实体时由调用方换 `key`，草稿从头来。
  */
-export function CypherEntityEditor({ entity, busy, error, onSave, onDelete, onClose }: CypherEntityEditorProps) {
+export function CypherEntityEditor({ entity, busy, error, onSave, onRevert, onDelete, onClose }: CypherEntityEditorProps) {
   const t = useLanguageStore((state) => state.t);
   const [draft, setDraft] = useState<EntityDraft>(() => draftOf(entity));
   const [labelInput, setLabelInput] = useState('');
@@ -166,8 +168,8 @@ export function CypherEntityEditor({ entity, busy, error, onSave, onDelete, onCl
         {entity && (
           <button
             type="button"
-            onClick={() => setDraft(draftOf(entity))}
-            disabled={busy || write.kind === 'unchanged'}
+            onClick={() => (onRevert ? onRevert() : setDraft(draftOf(entity)))}
+            disabled={busy || (write.kind === 'unchanged' && !onRevert)}
             className="rounded-control border border-line-strong px-3 py-1 text-xs text-fg hover:bg-surface-hover disabled:opacity-50"
           >
             {t('cypher.edit.revert')}
