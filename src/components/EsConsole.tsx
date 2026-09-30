@@ -528,7 +528,7 @@ function ResponseView({
   const search = searchFacts(parsed);
   const bulk = useMemo(() => bulkFailures(parsed), [parsed]);
   const facts = [
-    search?.total ? t(search.atLeast ? 'es.hitsAtLeast' : 'es.hits', { total: search.total }) : null,
+    search?.total ? t(search.atLeast ? 'es.hitsAtLeast' : 'es.hits', { count: Number(search.total) }) : null,
     search?.tookMs ? t('es.took', { ms: search.tookMs }) : null,
     t('es.elapsed', { ms: response.elapsedMs })
   ].filter((fact): fact is string => fact !== null);

@@ -580,7 +580,7 @@ export default function DatabaseExplorer({
       const key = object.kind === 'index' ? 'object.impact.dropIndex' : 'object.impact.dropDataStream';
       return documentCount === null || documentCount === undefined
         ? t(key, { name })
-        : `${t(key, { name })}${t('object.impact.documentCount', { total: documentCount })}`;
+        : `${t(key, { name })}${t('object.impact.documentCount', { count: Number(documentCount) })}`;
     }
     if (action === 'truncate') {
       return connection && identifierDialectFor(connection.db_type) === 'sqlite'

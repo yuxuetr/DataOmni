@@ -100,4 +100,19 @@ describe('EsConsole', () => {
     expect(container.textContent).toContain('Not sent: an earlier request failed');
     expect(useHistoryStore.getState().entries[0]?.status).toBe('failed');
   });
+
+  it('只命中一份时写「1 hit」', async () => {
+    useQueryStore.getState().setSqlInput('GET rg/_search');
+    invoke.mockResolvedValue({
+      status: 200,
+      elapsedMs: 1,
+      body: JSON.stringify({ took: 2, hits: { total: { value: 1, relation: 'eq' }, hits: [{ _index: 'rg', _id: 'a', _source: { n: 1 } }] } })
+    });
+    await act(async () => {
+      root.render(<EsConsole connection={connection} />);
+    });
+    await click(button('Send all'));
+
+    expect(container.textContent).toContain('1 hit ·');
+  });
 });
