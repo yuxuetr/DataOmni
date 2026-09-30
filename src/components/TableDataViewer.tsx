@@ -89,6 +89,7 @@ import {
   cellInputFromValue,
   describeBoundValue,
   describeCellInput,
+  isRequiredColumn,
   missingRequiredColumns,
   type BoundValue,
   type CellInput
@@ -827,6 +828,7 @@ export default function TableDataViewer({
     // 三档起点，对应三件不同的事：有默认值（含自增主键）的列交给数据库；
     // 可空的列先摆成 NULL；非空又没有默认值的列留成「未填写」，
     // 由 `missingRequiredColumns` 在提交前点名，而不是让数据库去拒绝
+    //（ClickHouse 没有这种列：省略的列得到类型的零值，同样交给数据库）
     const newRowData: Record<string, CellInput> = {};
     for (const column of tableSchema?.columns ?? []) {
       if (column.default_value != null || column.is_generated) {
@@ -834,7 +836,7 @@ export default function TableDataViewer({
       } else if (column.is_nullable) {
         newRowData[column.name] = { kind: 'null' };
       } else {
-        newRowData[column.name] = { kind: 'unset' };
+        newRowData[column.name] = { kind: isRequiredColumn(column, dialect) ? 'unset' : 'default' };
       }
     }
 
@@ -948,7 +950,7 @@ export default function TableDataViewer({
 
     try {
       if (editState.mode === 'add') {
-        const missing = missingRequiredColumns(editState.editedData, tableSchema?.columns ?? []);
+        const missing = missingRequiredColumns(editState.editedData, tableSchema?.columns ?? [], dialect);
         if (missing.length > 0) {
           setEditingError(t('cellInput.requiredMissing', {
             columns: missing.join(', '),
@@ -1519,9 +1521,7 @@ export default function TableDataViewer({
                         {column.is_generated && (
                           <span className="ml-1 text-success">{t('table.generatedTag')}</span>
                         )}
-                        {!column.is_nullable
-                          && column.default_value == null
-                          && !column.is_generated && (
+                        {isRequiredColumn(column, dialect) && (
                           <span className="ml-1 text-danger">*</span>
                         )}
                         <span className="ml-1 font-normal text-fg-subtle">{column.data_type}</span>

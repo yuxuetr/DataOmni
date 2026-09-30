@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   cellInputFromValue,
+  isRequiredColumn,
   isUnchangedInput,
   missingRequiredColumns,
   type CellInput
@@ -72,6 +73,14 @@ describe('missingRequiredColumns', () => {
 
   it('填了就不点名，空字符串也算填了', () => {
     expect(missingRequiredColumns({ name: { kind: 'value', value: '' } }, columns)).toEqual([]);
+  });
+
+  // 打包版上撞到的：插一行要把 16 列全填上，提示还说这些列「没有默认值」——
+  // ClickHouse 省略的列得到类型的零值（0、''、1970-01-01、[]），25.8 上核过
+  it('ClickHouse 没有必填列：每一列都有类型的零值', () => {
+    expect(missingRequiredColumns({ name: { kind: 'unset' } }, columns, 'clickhouse')).toEqual([]);
+    expect(isRequiredColumn({ name: 'name', is_nullable: false }, 'clickhouse')).toBe(false);
+    expect(isRequiredColumn({ name: 'name', is_nullable: false }, 'mysql')).toBe(true);
   });
 
   it('自增与计算列不点名——它们非空、没有默认值，却不能由用户填', () => {

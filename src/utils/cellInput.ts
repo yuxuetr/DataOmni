@@ -1,3 +1,5 @@
+import type { SqlIdentifierDialect } from './sqlIdentifiers';
+
 /** 能绑定进语句的值。`null` 是 SQL 的 NULL，不是「没有值」 */
 export type BoundValue = string | number | boolean | null;
 
@@ -81,11 +83,12 @@ export function willWrite(input: CellInput): boolean {
  */
 export function missingRequiredColumns(
   inputs: Readonly<Record<string, CellInput>>,
-  columns: readonly RequirableColumn[]
+  columns: readonly RequirableColumn[],
+  dialect?: SqlIdentifierDialect
 ): string[] {
   return columns
     .filter((column) => {
-      if (!isRequiredColumn(column)) {
+      if (!isRequiredColumn(column, dialect)) {
         return false;
       }
       const input = inputs[column.name];
@@ -108,10 +111,12 @@ export interface RequirableColumn {
  * `GENERATED ALWAYS AS IDENTITY` 与 `AUTO_INCREMENT` 的默认值都是 null，
  * 同时又是非空列，单看前两个条件它们全都像必填项。
  *
+ * ClickHouse 没有必填列：省略的列得到类型的零值（0、''、1970-01-01、[]），目录里却不写默认值。
+ *
  * 新增行与 CSV 导入问的是同一个问题，所以规则只有这一处。
  */
-export function isRequiredColumn(column: RequirableColumn): boolean {
-  return !column.is_nullable && column.default_value == null && !column.is_generated;
+export function isRequiredColumn(column: RequirableColumn, dialect?: SqlIdentifierDialect): boolean {
+  return !column.is_nullable && column.default_value == null && !column.is_generated && dialect !== 'clickhouse';
 }
 
 /**
