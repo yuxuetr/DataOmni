@@ -438,7 +438,39 @@
       执行中也同时画着转圈和绿勾。卡片状态收进 `statementOutcome`（先红后绿），停下的标「已停止」并写明结果是上一次的。
     打包版 0.4.29 上复现原场景看过：两行文本补 `!`、回车再加一行 `x`、UNION 改 `bye`，CLI 读回 23 个字两处换行、`bye` 三个字；
     靠 `SET VARIABLE` 让同一条 SQL 变慢再停下，卡片是「Stopped」加说明、没有绿勾。
+  - 2026-09-30 同一套环境回归备份（rpm 0.4.29 → 0.4.34，英文界面）。PostgreSQL 16、MySQL 8.4（TLS 必需）、MongoDB 8.2 用本机
+    Docker 起在同一网络里，客户端工具装的是 Fedora 自带的 pg_dump 16 / mysqldump 8.0 与 MongoDB 官方的 mongodump 100.13；
+    备份路径带撇号、空格与中文。四家各备份一次再用各自的工具恢复进新库，与原库逐项比对一致（PG 的 numeric(38,10)、bytea、
+    timestamptz、数组、jsonb 大整数、视图与函数；MySQL 的 bigint unsigned 上限、DECIMAL(38,10)、多行与反斜杠、varbinary、
+    datetime(6)、过程与触发器，dump 里没有 GTID_PURGED；MongoDB 的 Long 上限、Decimal128、Binary、`-0.0`、索引）。
+    SQLite 副本 `integrity_check` 为 ok、索引 / 视图 / 触发器都在；SQL 标签开着事务、有一行没提交时备份，副本里没有那一行。
+    挪走 mongodump 后重试，任务里说没找到并给出安装办法。**修了七处**，都是打包版上撞到的：
+    - 断开连接后在任务面板点「重试」备份，日志印的是驱动原话「attempted to acquire a connection on a closed pool」（`92d4fe9`）：
+      会话连接取不到时把 sqlx 的错误压成一句话，丢了 CONNECTION_LOST；执行中断线后重新取连接失败的查询同样没被认成断线。
+      改走 `QueryError::from`，单测先红后绿；重连后重试照常成功。
+    - 扩展名是 `.db` 的 DuckDB 文件被当成 SQLite 打开（`3b47a17`）：工作台写着「已连接」，对象树报「file is not a database」，
+      备份入口说的是 VACUUM INTO。打开文件时按文件头认（新增 `database_file_type`），空文件或读不到时才看扩展名；单测先红后绿。
+    - 找不到备份工具时，Linux 那段只写了 Debian 的包名（`b4a64cf`）：rpm 装在 Fedora 上，照着 `dnf install postgresql-client`
+      找不到包。分开写 Debian/Ubuntu 与 Fedora/RHEL。
+    - **DuckDB 的备份显示成功、却恢复不回去**（`8b51a74`）：ENUM 取值里有撇号时，DuckDB 自己的 EXPORT DATABASE 在 `CREATE TYPE` 里
+      不转义它（列类型里转义了；1.5.5 与 CLI 1.5.6 都如此），`IMPORT DATABASE` 报语法错误。视图、宏、序列、schema、索引、
+      默认值与 CHECK 里的撇号逐个试过都没问题，只有这一处。导出后在空的内存库里重放 `schema.sql`（只有建表语句，开销与库大小无关），
+      失败就删掉这份备份并说明原因；单测先红后绿。
+    - 上一条修好之前存下的 SQLite 配置、或手动建的 SQLite 连接指着 DuckDB 的库，重新打开照样「已连接」加原始报错（`6959b13`）：
+      插件打开时不读文件头。`test_connection` 对有内容、开头却不是 SQLite 文件头的文件直接拒绝，并说 DuckDB 的库怎么连；
+      空文件（新库）与相对路径照旧。单测先红后绿。
+    - 验上一条时撞到：侧边栏连接失败的报错排在可滚动菜单的最后，7 条连接时落在视野外，点了像没反应（`e673c4b`）；
+      从命令面板连接失败则根本没人渲染它的错误（`7952d70`）。前者只让连接列表滚动、报错钉在底部，后者接到标签栏下已有的报错条。
+      两处都是布局 / 接线，happy-dom 量不出，也没有 App 级的组件测试可放——靠打包版前后对照（修前截图里都看不到报错）。
+    七处在打包版上复现原场景看过：断开后重试写「The connection to the database was lost … Reconnect and try again」，重连后重试成功；
+    `.db` 的 DuckDB 文件按 DuckDB 打开、对象树与备份入口都对；缺 pg_dump 时提示分出 Debian/Ubuntu 与 Fedora/RHEL；
+    带撇号 ENUM 的库备份被拒、说明原因且没留下目录，换成不带撇号的同一套结构备份后 `IMPORT DATABASE` 进新库，
+    HUGEINT 上限、DECIMAL(38,10)、多行中文、BLOB、LIST / STRUCT / MAP / UNION、ENUM、TIMESTAMP_NS、视图、宏、序列、
+    另一个 schema 逐项一致；旧的 SQLite 类型配置重新打开时报「不是 SQLite 数据库…用 DuckDB 类型连它」，
+    从侧边栏连时报错就在菜单底部看得见，从命令面板连时报在标签栏下。
   - 看到没修的：
+    - DuckDB 的 `COMMENT ON` 注释不进 EXPORT DATABASE 的备份（上游行为），恢复后表与列的注释没了、不报错。
+      重估条件：有人靠注释存文档并报告备份后丢失。
     - DuckDB 的 `-0.0` 在网格与导出里都成了 `0`（JSON 数解析后 `String(-0)` 是 `0`）。`-0.0 = 0` 为真，定位与筛选不受影响，
       只是显示与导出丢了符号。重估条件：有人要靠导出区分负零。
     - Redis 键列表一页可能远超 200 行：后端 `SCAN` 带 `COUNT 1000`，键密的库里一轮就回来约 1000 个（本轮 3000 个键的库一页 1000），
