@@ -440,6 +440,63 @@ fn network_databases_required() -> bool {
 ///
 /// 这些类型此前只在用户实际点开某张表时才暴露问题（`unsupported datatype: BINARY`），
 /// 这里把它们固定成一道门。
+/// 旧库里常见的零日期（`0000-00-00`）与部分为零的日期（`2020-00-15`）：sqlx 当日历日期去构造，
+/// 整条语句报错、这种表整张打不开；零 TIMESTAMP 读成 NULL，而服务端存的不是 NULL
+#[tokio::test]
+async fn mysql_zero_dates_read_as_mysql_writes_them() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  sqlx::query("DROP TABLE IF EXISTS dataomni_zero_dates").execute(&pool).await.expect("drop");
+  sqlx::query(
+    "CREATE TABLE dataomni_zero_dates (id INT PRIMARY KEY, d DATE, dt DATETIME(3), ts TIMESTAMP NULL)",
+  )
+  .execute(&pool)
+  .await
+  .expect("create table");
+  {
+    let mut connection = pool.acquire().await.expect("acquire");
+    // 默认的 sql_mode 不许写零日期；旧库是在宽松模式下写进去的
+    sqlx::query("SET SESSION sql_mode = ''").execute(&mut *connection).await.expect("sql_mode");
+    sqlx::query(
+      "INSERT INTO dataomni_zero_dates VALUES \
+       (1, '0000-00-00', '0000-00-00 00:00:00', '0000-00-00 00:00:00'), \
+       (2, '2020-00-15', '2020-02-00 10:00:00', NULL), \
+       (3, '2020-01-02', '2020-01-02 03:04:05.5', '2020-01-02 03:04:05')",
+    )
+    .execute(&mut *connection)
+    .await
+    .expect("insert zero dates");
+    sqlx::query("SET SESSION sql_mode = DEFAULT").execute(&mut *connection).await.expect("reset");
+  }
+  let result = execute_query(
+    &DbPool::MySql(pool.clone()),
+    "SELECT d, dt, ts FROM dataomni_zero_dates ORDER BY id",
+  )
+  .await
+  .expect("read zero dates");
+  sqlx::query("DROP TABLE dataomni_zero_dates").execute(&pool).await.ok();
+  let QueryExecutionResult::Rows { rows, .. } = result else {
+    panic!("expected a row result");
+  };
+  let shown = rows
+    .iter()
+    .map(|row| {
+      ["d", "dt", "ts"].map(|column| row[column]["value"].as_str().unwrap_or("NULL").to_string())
+    })
+    .collect::<Vec<_>>();
+  assert_eq!(
+    shown,
+    [
+      ["0000-00-00", "0000-00-00 00:00:00", "0000-00-00 00:00:00"],
+      ["2020-00-15", "2020-02-00 10:00:00", "NULL"],
+      ["2020-01-02", "2020-01-02 03:04:05.5", "2020-01-02 03:04:05"],
+    ]
+  );
+}
+
 /// FLOAT 是单精度，直接放宽成 f64 的话 0.1 读成 0.10000000149011612；照 mysql 客户端写成 0.1
 #[tokio::test]
 async fn mysql_single_precision_floats_read_as_the_client_writes_them() {

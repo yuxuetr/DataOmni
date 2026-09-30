@@ -11,7 +11,7 @@ use sqlx::{
 };
 use std::future::Future;
 use tauri_plugin_sql::DbPool;
-use time::{Date, OffsetDateTime, PrimitiveDateTime, Time};
+use time::{Date, PrimitiveDateTime, Time};
 use tokio::time::{timeout, Duration};
 
 /// 查询超时。数据是配置的毫秒数——`code` 字段另有 `QUERY_TIMEOUT_CODE`，
@@ -1144,12 +1144,15 @@ fn decode_sqlite(value: SqliteValueRef<'_>) -> Result<JsonValue, QueryError> {
 }
 
 fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, QueryError> {
+  // sqlx 的 `is_null` 把零日期也算作 NULL，日期类的列得先于它认
+  let type_info = value.type_info();
+  let type_name = type_info.name();
+  if matches!(type_name, "DATE" | "DATETIME" | "TIMESTAMP") {
+    return mysql_date_time(&value, type_name);
+  }
   if value.is_null() {
     return Ok(JsonValue::Null);
   }
-
-  let type_info = value.type_info();
-  let type_name = type_info.name();
   match type_name {
     "JSON" => tagged_json_value(ValueRef::to_owned(&value).try_decode::<JsonValue>()),
     "DECIMAL" => {
@@ -1174,31 +1177,11 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, QueryError> {
     "FLOAT" => float_value(ValueRef::to_owned(&value).try_decode::<f32>().map(widen_f32), "Inf"),
     "DOUBLE" => float_value(ValueRef::to_owned(&value).try_decode::<f64>(), "Inf"),
     "BOOLEAN" => json_value(ValueRef::to_owned(&value).try_decode::<bool>()),
-    "DATE" => {
-      tagged_formatted_value("date", ValueRef::to_owned(&value).try_decode::<Date>(), format_date)
-    }
     // MySQL 的 TIME 是时长而非时刻（-838:59:59 ~ 838:59:59），装不进 time::Time
     "TIME" => {
       let duration =
         ValueRef::to_owned(&value).try_decode::<time::Duration>().map_err(QueryError::from)?;
       Ok(tagged_value("time", format_mysql_time(duration)))
-    }
-    "DATETIME" => tagged_formatted_value(
-      "datetime",
-      ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>(),
-      format_datetime,
-    ),
-    "TIMESTAMP" => {
-      // sqlx 连接时把会话时区设成 +00:00，读出来的就是 UTC；按 MySQL 自己的文本
-      // 形式不带时区写出，写回时同一个会话按同一个时区解释，往返不变
-      tagged_formatted_value(
-        "datetime",
-        ValueRef::to_owned(&value).try_decode::<OffsetDateTime>(),
-        |value| {
-          let utc = value.to_offset(time::UtcOffset::UTC);
-          format_datetime(PrimitiveDateTime::new(utc.date(), utc.time()))
-        },
-      )
     }
     "TINYBLOB" | "MEDIUMBLOB" | "BLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => {
       let bytes = ValueRef::to_owned(&value).try_decode::<Vec<u8>>().map_err(display_error)?;
@@ -1209,6 +1192,41 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, QueryError> {
     "NULL" => Ok(JsonValue::Null),
     _ => Err(QueryError::message(format!("{UNSUPPORTED_COLUMN_TYPE}: {type_name}"))),
   }
+}
+
+/// 日期、DATETIME 与 TIMESTAMP 照协议里的字段拼成 MySQL 自己的写法，不经日历类型。
+///
+/// 旧库里常见零日期 `0000-00-00` 与部分为零的 `2020-00-15`（宽松的 sql_mode 下写得进去）。
+/// sqlx 拿它们去构造日历日期，整条语句报错、这种表整张打不开；全零的还被 `is_null` 当成 NULL。
+/// TIMESTAMP 不必换时区：sqlx 连接时把会话时区设成 +00:00，字段就是 UTC，写回时同一个会话
+/// 按同一个时区解释，往返不变。
+///
+/// 二进制格式是长度字节加 0、4、7 或 11 个字节：年（u16 小端）、月、日、时、分、秒、微秒（u32 小端），
+/// 省掉的尾部都是 0。文本格式本来就是服务端的写法，最短的 `0000-00-00` 也有 10 字节，
+/// 和二进制的总长（1、5、8、12）不会撞；sqlx 不公开值的格式，只好按这个认
+fn mysql_date_time(value: &MySqlValueRef<'_>, type_name: &str) -> Result<JsonValue, QueryError> {
+  let tag = if type_name == "DATE" { "date" } else { "datetime" };
+  // 只是拿字节，不按类型解，所以绕过兼容检查。拿不到字节只有一种情形：协议里这一格就是 NULL
+  // （零日期有值，是一个 0 长度字节）
+  let Ok(bytes) = ValueRef::to_owned(value).try_decode_unchecked::<Vec<u8>>() else {
+    return Ok(JsonValue::Null);
+  };
+  let binary = matches!(
+    bytes.as_slice(),
+    [length @ (0 | 4 | 7 | 11), rest @ ..] if usize::from(*length) == rest.len()
+  );
+  if !binary {
+    return Ok(tagged_value(tag, String::from_utf8_lossy(&bytes).into_owned()));
+  }
+  let field = |index: usize| bytes.get(index).copied().unwrap_or(0);
+  let year = u16::from_le_bytes([field(1), field(2)]);
+  let date = format!("{year:04}-{:02}-{:02}", field(3), field(4));
+  if type_name == "DATE" {
+    return Ok(tagged_value(tag, date));
+  }
+  let micros = u32::from_le_bytes([field(8), field(9), field(10), field(11)]);
+  let time = Time::from_hms_micro(field(5), field(6), field(7), micros).map_err(display_error)?;
+  Ok(tagged_value(tag, format!("{date} {}", format_time(time))))
 }
 
 fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
