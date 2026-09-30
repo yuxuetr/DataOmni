@@ -1086,6 +1086,7 @@ export const en: Translations = {
   'error.backend.backupUnsupported': "This kind of database cannot be backed up here yet.",
   'error.backend.backupTargetExists': "The target already exists and was not overwritten: {detail}",
   'error.backend.backupFailed': "The backup could not be written to the target: {detail}",
+  'error.backend.notSqliteFile': "{detail} is not a SQLite database: the file has content but does not start with the SQLite header. If it is a DuckDB database, connect to it as DuckDB (Open a database file picks the type from the header).",
   'error.backend.backupNotRestorable': "The schema DuckDB exported does not replay, so this backup could not be restored and was not kept. The usual cause is a single quote in an ENUM value (DuckDB does not escape it when exporting). DuckDB said: {detail}",
   'error.driver.saslUnsupported': 'The server asks for an authentication method the standard PostgreSQL driver does not support, most likely the sha256 authentication openGauss / GaussDB use by default. Ask an administrator to set password_encryption_type = 1 (which also stores an md5 hash) and reset this user\'s password, or to use md5 for this client in pg_hba.conf. Original message: {detail}',
   'backup.hintPostgres': "Exports with the local pg_dump (custom format, restore with pg_restore); the PostgreSQL client tools must be installed.",

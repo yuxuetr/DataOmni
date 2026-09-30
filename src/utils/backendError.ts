@@ -48,6 +48,7 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_BACKUP_UNSUPPORTED: 'error.backend.backupUnsupported',
   DATAOMNI_BACKUP_TARGET_EXISTS: 'error.backend.backupTargetExists',
   DATAOMNI_BACKUP_FAILED: 'error.backend.backupFailed',
+  DATAOMNI_NOT_SQLITE_FILE: 'error.backend.notSqliteFile',
   DATAOMNI_BACKUP_NOT_RESTORABLE: 'error.backend.backupNotRestorable',
   DATAOMNI_BACKUP_TOOL_MISSING: 'error.backend.backupToolMissing',
   DATAOMNI_BACKUP_TOOL_FAILED: 'error.backend.backupToolFailed',

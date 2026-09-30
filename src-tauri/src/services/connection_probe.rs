@@ -153,6 +153,19 @@ pub fn database_file_type(path: &str) -> Option<DatabaseType> {
   )
 }
 
+/// SQLite 连接指着的文件有内容、开头却不是 SQLite 的文件头时的错误码。数据是路径
+pub const NOT_SQLITE_FILE: &str = "DATAOMNI_NOT_SQLITE_FILE";
+
+/// 有内容、开头却不是 SQLite 文件头的文件。sqlx 打开时不读文件头，这种文件照样「连上」，
+/// 界面写着「已连接」，对象树才报「file is not a database」。空文件是新库，读不到的交给驱动去报
+pub fn is_non_sqlite_file(path: &str) -> bool {
+  let mut header = [0u8; SQLITE_MAGIC.len()];
+  match read_header(path, &mut header) {
+    Ok(0) | Err(_) => false,
+    Ok(read) => header[..read] != *SQLITE_MAGIC,
+  }
+}
+
 fn read_header(path: &str, buffer: &mut [u8]) -> std::io::Result<usize> {
   use std::io::Read;
 
@@ -448,6 +461,33 @@ mod tests {
     assert_eq!(database_file_type(&temporary_path(".db").to_string_lossy()), None);
 
     for path in [duck, lite, empty] {
+      std::fs::remove_file(path).expect("cleanup");
+    }
+  }
+
+  #[test]
+  fn a_file_with_content_but_no_sqlite_header_is_not_opened_as_sqlite() {
+    let mut duckdb = vec![0u8; DUCKDB_MAGIC_OFFSET];
+    duckdb.extend_from_slice(DUCKDB_MAGIC);
+    duckdb.extend_from_slice(&[0u8; 32]);
+    let duck = temporary_path(".db");
+    std::fs::write(&duck, &duckdb).expect("write duckdb header");
+    let csv = temporary_path(".db");
+    std::fs::write(&csv, b"id\n1\n").expect("write csv");
+    let mut sqlite = SQLITE_MAGIC.to_vec();
+    sqlite.extend_from_slice(&[0u8; 32]);
+    let lite = temporary_path(".db");
+    std::fs::write(&lite, &sqlite).expect("write sqlite header");
+    let empty = temporary_path(".db");
+    std::fs::write(&empty, b"").expect("write empty");
+
+    assert!(is_non_sqlite_file(&duck.to_string_lossy()));
+    assert!(is_non_sqlite_file(&csv.to_string_lossy()));
+    assert!(!is_non_sqlite_file(&lite.to_string_lossy()));
+    assert!(!is_non_sqlite_file(&empty.to_string_lossy()));
+    assert!(!is_non_sqlite_file(&temporary_path(".db").to_string_lossy()));
+
+    for path in [duck, csv, lite, empty] {
       std::fs::remove_file(path).expect("cleanup");
     }
   }

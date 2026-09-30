@@ -210,6 +210,15 @@ pub async fn test_connection(
     let target = crate::services::clickhouse::ClickHouseTarget::from_profile(&resolved, local_port);
     let pool = crate::services::clickhouse::connect(target).await?;
     clickhouse_registry.insert(connection_string.clone(), pool);
+  } else if resolved.db_type == DatabaseType::SQLite {
+    // 插件打开时不读文件头，DuckDB 的库、CSV 都能「连上」。相对路径由插件按应用目录解析，这里不猜
+    if let Some(path) =
+      resolved.database.as_deref().filter(|path| std::path::Path::new(path).is_absolute())
+    {
+      if crate::services::connection_probe::is_non_sqlite_file(path) {
+        return Err(format!("{}: {path}", crate::services::connection_probe::NOT_SQLITE_FILE));
+      }
+    }
   }
   Ok(connection_string)
 }
