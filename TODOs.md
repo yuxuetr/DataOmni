@@ -542,6 +542,10 @@
     SQL 标签里 `select *` 整条读出、可编辑，`infinity` / `-infinity`、`0.1`、`NaN`、`Infinity`、`{t,f}` 都照 psql 显示；
     把 `infinity` 的日期改成 2030-01-01、inet 改掉，预览里乐观检查带 `"valid_to" = 'infinity'::date`，提交后服务端读回一致。
     `infinity` 的日期格编辑框里是文本 `infinity`、选择器空着（同 timetz 的做法）。表数据页同样显示。
+  - 2026-10-01 接着探边界值：
+    - MySQL 的零日期 `0000-00-00` 与部分为零的 `2020-00-15` 整条报错（`dacdb77`），这样的旧表整张打不开；全零的还被 sqlx 的
+      `is_null` 当成 NULL（零 TIMESTAMP 显示 NULL，服务端存的不是）。三种日期类型照协议字段直接拼，先于 NULL 判断。
+      MySQL 8.4 先红后绿，MariaDB 11.8 同样过。
   - 看到没修的：
     - 表数据页的 inet `::1` 显示成 `::1/128`（`39bb53d` 按 `::text` 取，`text(inet)` 总带掩码；SQL 标签按 `inet_out` 是 `::1`）。
       同一个值，写回不变。重估条件：有人嫌两处写法不一，届时改用走输出函数的转换。
