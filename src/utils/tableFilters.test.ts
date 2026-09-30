@@ -86,6 +86,22 @@ describe('buildFilterClause', () => {
     ).toBe('WHERE `id` > 9223372036854775806');
   });
 
+  it('ClickHouse 的数值列反而要加引号', () => {
+    // 它把带小数点的字面量和超过 64 位的整数读成 Float64：Int128 上 …727 会把 …728 也筛出来，
+    // Decimal 上 -999999999999.0000000000 一行也筛不中。字符串字面量按列类型转，25.8 上逐个核过
+    const columns = [column('i128', 'Int128'), column('dec', 'Decimal(38, 10)')];
+    expect(
+      buildFilterClause(
+        [
+          filter({ column: 'i128', operator: 'eq', value: '-170141183460469231731687303715884105727' }),
+          filter({ column: 'dec', operator: 'lt', value: '-999999999999.0000000000' })
+        ],
+        columns,
+        'clickhouse'
+      )
+    ).toBe("WHERE `i128` = '-170141183460469231731687303715884105727' AND `dec` < '-999999999999.0000000000'");
+  });
+
   it('文本列上的数字仍然加引号', () => {
     // '007' 和 7 不是一回事
     expect(

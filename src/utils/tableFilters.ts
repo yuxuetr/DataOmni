@@ -60,13 +60,16 @@ export function isCompleteFilter(filter: ColumnFilter): boolean {
  * 数值列上的数字不加引号，不是为了好看：MySQL 把字符串和数字比较时会把
  * **两边**都转成 DOUBLE，超过 2^53 的 BIGINT 因此会和邻近的几个值比成相等，
  * 筛出来的行是错的而语句本身不报错。其余一律按字符串字面量交给数据库去转换。
+ *
+ * ClickHouse 反过来：它把带小数点的字面量和超过 64 位的整数读成 Float64，Decimal、Int128 比不准；
+ * 字符串字面量它按列类型转，反而是准的。
  */
 function comparisonLiteral(
   filter: ColumnFilter,
   column: ColumnInfo | undefined,
   dialect: SqlIdentifierDialect
 ): string {
-  if (column && isNumericColumnType(column.data_type) && NUMERIC_LITERAL.test(filter.value.trim())) {
+  if (column && dialect !== 'clickhouse' && isNumericColumnType(column.data_type) && NUMERIC_LITERAL.test(filter.value.trim())) {
     return filter.value.trim();
   }
   return quoteSqlStringLiteral(filter.value, dialect);
