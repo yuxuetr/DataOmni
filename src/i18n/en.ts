@@ -392,6 +392,8 @@ export const en: Translations = {
   'result.range': 'Showing {from}-{to} of {total} rows',
   'result.pageSizeOption': '{size} / page',
   'result.pageOf': 'Page {page} of {total}',
+  'result.previousPage': 'Previous page',
+  'result.nextPage': 'Next page',
 
   // --- Background tasks ---
   'task.center': 'Background tasks',

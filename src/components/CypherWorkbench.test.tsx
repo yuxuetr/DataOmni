@@ -8,6 +8,7 @@ import { DatabaseType, type ConnectionProfile } from '../contracts/connection';
 import { useLanguageStore } from '../stores/languageStore';
 import { useQueryStore } from '../stores/queryStore';
 import type { CypherNodeValue } from '../utils/cypherValue';
+import { MAX_UNVIRTUALIZED_ROWS } from '../utils/gridPagination';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
@@ -173,5 +174,32 @@ describe('CypherWorkbench 删节点', () => {
     expect(deleted).toBe(0);
     expect(container.textContent).toContain('nothing was deleted');
     expect(container.textContent).not.toContain('it may have been deleted');
+  });
+});
+
+describe('CypherWorkbench 结果表', () => {
+  it('一页不超过 MAX_UNVIRTUALIZED_ROWS 行，翻页看后面的', async () => {
+    // 打包版回归时量的：行数上限选 10,000 时 5 万个单元格一次画完，结果晚几秒才出来。
+    // 网格那边早就定了「分页把 DOM 规模钉死」，这张表漏掉了
+    const numbers = Array.from({ length: 450 }, (_, index) => [{ kind: 'integer', value: String(index + 1) }]);
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'neo4j_query_type') return 'r';
+      return { ...result([]), columns: ['x'], rows: numbers };
+    });
+    await act(async () => {
+      root.render(<CypherWorkbench connection={connection} />);
+    });
+    await click(button('Run all'));
+    const cells = () => [...container.querySelectorAll('td')].map((cell) => cell.textContent);
+
+    expect(cells()).toHaveLength(MAX_UNVIRTUALIZED_ROWS);
+    expect(container.textContent).toContain('450 rows');
+    expect(container.textContent).toContain('Page 1 of 3');
+
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Next page"]') ?? button('missing'));
+    expect(cells()[0]).toBe('201');
+    await click(container.querySelector<HTMLButtonElement>('button[aria-label="Next page"]') ?? button('missing'));
+    expect(cells()).toHaveLength(50);
+    expect(cells()[49]).toBe('450');
   });
 });

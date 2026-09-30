@@ -7,7 +7,7 @@ import { cypher } from '@codemirror/legacy-modes/mode/cypher';
 import { oneDark } from '@codemirror/theme-one-dark';
 import type { EditorView } from '@codemirror/view';
 import { clsx } from 'clsx';
-import { AlertCircle, Loader2, Play, Plus, X } from 'lucide-react';
+import { AlertCircle, ChevronLeft, ChevronRight, Loader2, Play, Plus, X } from 'lucide-react';
 import type { ConnectionProfile } from '../contracts/connection';
 import { selectActiveSqlDocument, useQueryStore } from '../stores/queryStore';
 import { useLanguageStore } from '../stores/languageStore';
@@ -46,6 +46,7 @@ import {
   type EditableEntity
 } from '../utils/cypherEdit';
 import { requiresConfirmation, type StatementRisk } from '../utils/statementRisk';
+import { MAX_UNVIRTUALIZED_ROWS } from '../utils/gridPagination';
 import type { TranslationKey } from '../i18n/translate';
 import { HighlightedCode } from './HighlightedCode';
 
@@ -753,6 +754,12 @@ function ResultView({
   });
   const [chosen, setView] = useState<ResultViewOption | null>(null);
   const view = chosen !== null && views.includes(chosen) ? chosen : views[0] ?? 'table';
+  // 表一页至多 MAX_UNVIRTUALIZED_ROWS 行：行数上限可以选到 10,000，一次画完要好几秒。
+  // 删了实体行会变少，页码跟着收回来
+  const [chosenPage, setPage] = useState(0);
+  const pages = Math.max(1, Math.ceil(result.rows.length / MAX_UNVIRTUALIZED_ROWS));
+  const page = Math.min(chosenPage, pages - 1);
+  const shownRows = result.rows.slice(page * MAX_UNVIRTUALIZED_ROWS, (page + 1) * MAX_UNVIRTUALIZED_ROWS);
   const worst = plan ? worstEstimate(plan) : null;
   const facts = [
     explainedOnly ? t('cypher.explainedOnly') : null,
@@ -825,7 +832,7 @@ function ResultView({
               </tr>
             </thead>
             <tbody>
-              {result.rows.map((row, rowIndex) => (
+              {shownRows.map((row, rowIndex) => (
                 <tr key={rowIndex} className="hover:bg-surface-hover">
                   {row.map((value, columnIndex) => (
                     <td
@@ -844,6 +851,36 @@ function ResultView({
               ))}
             </tbody>
           </table>
+          {pages > 1 && (
+            <div className="flex items-center justify-end gap-1 border-t border-line bg-surface-sunken px-2 py-1 text-xs text-fg-muted">
+              <span className="mr-2">
+                {t('result.range', {
+                  from: page * MAX_UNVIRTUALIZED_ROWS + 1,
+                  to: page * MAX_UNVIRTUALIZED_ROWS + shownRows.length,
+                  total: result.rows.length
+                })}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage(page - 1)}
+                disabled={page === 0}
+                aria-label={t('result.previousPage')}
+                className="rounded-control p-0.5 hover:bg-surface-hover disabled:opacity-50"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span>{t('result.pageOf', { page: page + 1, total: pages })}</span>
+              <button
+                type="button"
+                onClick={() => setPage(page + 1)}
+                disabled={page === pages - 1}
+                aria-label={t('result.nextPage')}
+                className="rounded-control p-0.5 hover:bg-surface-hover disabled:opacity-50"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
