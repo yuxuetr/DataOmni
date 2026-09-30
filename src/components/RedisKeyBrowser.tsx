@@ -437,6 +437,8 @@ export function RedisKeyBrowser({ database }: RedisKeyBrowserProps) {
                         onClick={() => {
                           setStringDraft(null);
                           setActionError(null);
+                          // 保存被拒多半是别处改过：重读才看得到现在的值，下次改也才拿它去比对
+                          void loadValue(selected, null);
                         }}
                         disabled={savingString}
                         className="rounded-control border border-line-strong px-3 py-1 text-sm text-fg hover:bg-surface-hover"
