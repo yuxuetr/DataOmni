@@ -135,6 +135,8 @@ interface EditState {
   rowIndex?: number;
   /** 这一行加载时的值，用来判断哪些列真的改了，并回到 WHERE 里 */
   originalData?: Record<string, BoundValue>;
+  /** 这一行的键：打开编辑时从带包装的原行取（`rowKeyOf` 要看出哪些值是二进制） */
+  key?: RowKey;
   /** 每一列「要写什么」；空串和 NULL 在这里是两件事 */
   editedData?: Record<string, CellInput>;
 }
@@ -814,6 +816,7 @@ export default function TableDataViewer({
       mode: 'edit',
       rowIndex,
       originalData: { ...rowData },
+      key: rowKeyFrom(tableData[rowIndex] ?? {}),
       // NULL 回到 `null` 档而不是空文本：否则打开编辑框再直接关掉，
       // 就把一个 NULL 变成了空字符串
       editedData: Object.fromEntries(
@@ -964,9 +967,9 @@ export default function TableDataViewer({
           return;
         }
         setChanges((current) => stageInsert(current, values));
-      } else if (editState.mode === 'edit' && editState.originalData) {
+      } else if (editState.mode === 'edit' && editState.originalData && editState.key) {
         const original = editState.originalData;
-        const key = rowKeyFrom(original);
+        const key = editState.key;
         if (!canStageAnother(changes, rowIdOf(key), dialect)) {
           setEditingError(t('changes.oneAtATime'));
           return;
@@ -995,7 +998,7 @@ export default function TableDataViewer({
       ])
     );
     try {
-      const key = rowKeyFrom(original);
+      const key = rowKeyFrom(row);
       if (!canStageAnother(changes, rowIdOf(key), dialect)) {
         setEditingError(t('changes.oneAtATime'));
         return;
