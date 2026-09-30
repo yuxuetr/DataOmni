@@ -233,7 +233,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
       patch(id, (task) => ({
         ...task,
         detail: translateNow('task.detail.export', {
-          rows: progress.rowsWritten,
+          count: progress.rowsWritten,
           bytes: formatBytes(progress.bytesWritten)
         })
       }));
@@ -261,7 +261,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
         id,
         'succeeded',
         translateNow('task.detail.export', {
-          rows: summary.rowsWritten,
+          count: summary.rowsWritten,
           bytes: formatBytes(summary.bytesWritten)
         }),
         // 导出写的是文件，再跑一遍只是覆盖它；不存在「重复写入」

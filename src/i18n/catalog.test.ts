@@ -204,6 +204,26 @@ describe('单复数', () => {
       expect(KEYS, `${key} 是「{count} 复数名词」但没有 ${key}.one`).toContain(`${key}.one`);
     }
   });
+
+  it('英文里放数量的占位符只能是 {count}', () => {
+    // 只有 `count` 决定取不取 `.one`：`{rows} rows` 在 1 行时印「1 rows」，上一条门也看不见它。
+    // 一句里两个数（`{rows} × {columns}`）时 `.one` 管不了，得换成不跟名词的说法
+    const OTHER_PLACEHOLDER_NOUN =
+      /\{(?!count\})\w+\}\s+(?:[a-z]+\s+)?(rows|entries|statements|tabs|items|matches|days|files|columns|tables|bytes|characters|hits|documents)\b/;
+    // 这几个数到不了 1：超过上限才显示（chart、es.tableCapped）、多于一页才显示（result.range）、是常量（两个截断提示）、
+    // 选项只有 7/30/90/365（settings）、比预期多才报（clickhouseRowAmbiguous，预期至少 1 行）
+    const NEVER_ONE = [
+      'chart.reject.tooManyRows',
+      'result.range',
+      'es.tableCapped',
+      'es.jsonCapped',
+      'mongo.console.truncated',
+      'settings.history.days',
+      'error.backend.clickhouseRowAmbiguous'
+    ];
+    const offending = KEYS.filter((key) => !NEVER_ONE.includes(key) && OTHER_PLACEHOLDER_NOUN.test(en[key]));
+    expect(offending).toEqual([]);
+  });
   it('两份目录里没有被编码弄坏的文案', () => {
     // 真的发生过：一次批量改文案把 UTF-8 当 latin-1 解了一遍，
     // 「—」变成「â€"」写进了 en.ts。typecheck、lint、i18n 的其余检查

@@ -345,7 +345,7 @@ export function ExportResultDialog({
                       total: activeRows.length
                     })
                   : t('export.previewCsv', {
-                      shown: Math.min(PREVIEW_ROWS, activeRows.length),
+                      count: Math.min(PREVIEW_ROWS, activeRows.length),
                       total: activeRows.length
                     })}
             </p>
