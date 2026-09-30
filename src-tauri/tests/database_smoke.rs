@@ -743,6 +743,53 @@ async fn postgres_columns_without_a_binary_decoder_read_as_the_servers_text() {
   assert!(checked >= 10, "only {checked} cases ran");
 }
 
+/// `infinity` 是有效期一类的列常见的写法。sqlx 拿它当普通的天数 / 微秒去加：日期与带时区的
+/// 时间戳 panic，不带时区的读成 294277 年
+#[tokio::test]
+async fn postgres_infinite_dates_and_timestamps_read_as_infinity() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let infinite = "'infinity'::date AS d, '-infinity'::date AS nd, \
+     'infinity'::timestamp AS ts, '-infinity'::timestamp AS nts, \
+     'infinity'::timestamptz AS tz, '-infinity'::timestamptz AS ntz";
+  // 第二条带一列只能走文本的，文本格式也要认得
+  for sql in [format!("SELECT {infinite}"), format!("SELECT {infinite}, '10.0.0.1'::inet AS ip")] {
+    let result = execute_query(&DbPool::Postgres(pool.clone()), &sql)
+      .await
+      .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    let QueryExecutionResult::Rows { rows, .. } = result else {
+      panic!("expected a row result");
+    };
+    for (column, expected) in [
+      ("d", "infinity"),
+      ("nd", "-infinity"),
+      ("ts", "infinity"),
+      ("nts", "-infinity"),
+      ("tz", "infinity"),
+      ("ntz", "-infinity"),
+    ] {
+      assert_eq!(rows[0][column]["value"], expected, "{sql}: {column}");
+    }
+  }
+  // 有限的值不受影响
+  let result = execute_query(
+    &DbPool::Postgres(pool.clone()),
+    "SELECT '1999-12-31'::date AS d, '1999-12-31 23:59:59.5'::timestamp AS ts, \
+     '2000-01-01 00:00:00.000001+00'::timestamptz AS tz",
+  )
+  .await
+  .expect("finite values");
+  let QueryExecutionResult::Rows { rows, .. } = result else {
+    panic!("expected a row result");
+  };
+  assert_eq!(rows[0]["d"]["value"], "1999-12-31");
+  assert_eq!(rows[0]["ts"]["value"], "1999-12-31 23:59:59.5");
+  assert_eq!(rows[0]["tz"]["value"], "2000-01-01T00:00:00.000001+00:00");
+}
+
 /// 一行里只要有一列走文本，整行都是文本格式：认得的类型在文本格式下要和二进制时显示得一样
 #[tokio::test]
 async fn postgres_known_columns_read_the_same_next_to_a_text_only_column() {

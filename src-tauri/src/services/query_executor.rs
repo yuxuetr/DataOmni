@@ -1255,21 +1255,9 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
     "FLOAT4" => json_value(ValueRef::to_owned(&value).try_decode::<f32>()),
     "FLOAT8" => json_value(ValueRef::to_owned(&value).try_decode::<f64>()),
     "BOOL" => json_value(ValueRef::to_owned(&value).try_decode::<bool>()),
-    "DATE" => {
-      tagged_formatted_value("date", ValueRef::to_owned(&value).try_decode::<Date>(), format_date)
-    }
+    "DATE" | "TIMESTAMP" | "TIMESTAMPTZ" => pg_instant(&value, type_name),
     "TIME" => {
       tagged_formatted_value("time", ValueRef::to_owned(&value).try_decode::<Time>(), format_time)
-    }
-    "TIMESTAMP" => tagged_formatted_value(
-      "datetime",
-      ValueRef::to_owned(&value).try_decode::<PrimitiveDateTime>(),
-      format_datetime,
-    ),
-    "TIMESTAMPTZ" => {
-      let value =
-        ValueRef::to_owned(&value).try_decode::<DateTime<Utc>>().map_err(QueryError::from)?;
-      Ok(tagged_value("datetime", value.to_rfc3339()))
     }
     "BYTEA" => tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>()),
     "TEXT[]" | "VARCHAR[]" | "NAME[]" => {
@@ -1297,6 +1285,67 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
     _ => Err(QueryError::message(format!("{UNSUPPORTED_COLUMN_TYPE}: {type_name}"))),
   }
 }
+
+/// 日期是 2000-01-01 起的天数（i32），时间戳是同一刻起的微秒数（i64），两端的最值是 `infinity` /
+/// `-infinity`。sqlx 拿它们当普通的数去加：日期与带时区的时间戳 panic（`overflow adding duration
+/// to date`），不带时区的读成 294277 年。这里自己加，越出 `time` / `chrono` 的范围就报错
+fn pg_instant(value: &PgValueRef<'_>, type_name: &str) -> Result<JsonValue, QueryError> {
+  let tag = if type_name == "DATE" { "date" } else { "datetime" };
+  if value.format() == sqlx::postgres::PgValueFormat::Text {
+    let text = value.as_str().map_err(display_error)?;
+    if matches!(text, "infinity" | "-infinity") {
+      return Ok(tagged_value(tag, text.to_owned()));
+    }
+    // 其余的文本 sqlx 是解析而不是去加，不会越界
+    let owned = ValueRef::to_owned(value);
+    return match type_name {
+      "DATE" => tagged_formatted_value(tag, owned.try_decode::<Date>(), format_date),
+      "TIMESTAMP" => {
+        tagged_formatted_value(tag, owned.try_decode::<PrimitiveDateTime>(), format_datetime)
+      }
+      _ => {
+        tagged_formatted_value(tag, owned.try_decode::<DateTime<Utc>>(), |value| value.to_rfc3339())
+      }
+    };
+  }
+  let out_of_range = || QueryError::message(format!("{type_name} out of range"));
+  let bytes = value.as_bytes().map_err(display_error)?;
+  if type_name == "DATE" {
+    let days = i32::from_be_bytes(bytes.try_into().map_err(display_error)?);
+    return Ok(tagged_value(
+      tag,
+      match days {
+        i32::MAX => "infinity".to_owned(),
+        i32::MIN => "-infinity".to_owned(),
+        days => {
+          let julian_day = PG_EPOCH_JULIAN_DAY.checked_add(days).ok_or_else(out_of_range)?;
+          format_date(Date::from_julian_day(julian_day).map_err(|_| out_of_range())?)
+        }
+      },
+    ));
+  }
+  let micros = i64::from_be_bytes(bytes.try_into().map_err(display_error)?);
+  let text = match micros {
+    i64::MAX => "infinity".to_owned(),
+    i64::MIN => "-infinity".to_owned(),
+    micros if type_name == "TIMESTAMP" => {
+      let epoch = Date::from_julian_day(PG_EPOCH_JULIAN_DAY).map_err(display_error)?.midnight();
+      format_datetime(
+        epoch.checked_add(time::Duration::microseconds(micros)).ok_or_else(out_of_range)?,
+      )
+    }
+    micros => DateTime::<Utc>::from_timestamp_micros(
+      micros.checked_add(PG_EPOCH_UNIX_MICROS).ok_or_else(out_of_range)?,
+    )
+    .ok_or_else(out_of_range)?
+    .to_rfc3339(),
+  };
+  Ok(tagged_value(tag, text))
+}
+
+/// PostgreSQL 日期与时间戳的起点 2000-01-01（UTC）
+const PG_EPOCH_JULIAN_DAY: i32 = 2_451_545;
+const PG_EPOCH_UNIX_MICROS: i64 = 946_684_800_000_000;
 
 /// `time` 的 Display 是给人读的调试形态：`7:04:05.0`——小时不补零、秒后面恒带
 /// 小数，`OffsetDateTime` 还挂一段 ` +00:00:00`。数据库自己不这么写，日期选择器
