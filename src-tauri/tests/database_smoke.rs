@@ -788,6 +788,37 @@ async fn postgres_floats_read_as_psql_writes_them() {
   }
 }
 
+/// numeric 的 `NaN`（PG 14 起还有 `Infinity`）BigDecimal 装不下，整条语句原先报错
+#[tokio::test]
+async fn postgres_numeric_nan_and_infinity_read_as_psql_writes_them() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let mut specials = vec![("nan", "NaN")];
+  // PG 13 及以前、兼容库不一定有 numeric 的无穷
+  if sqlx::query("SELECT 'Infinity'::numeric").fetch_one(&pool).await.is_ok() {
+    specials.extend([("up", "Infinity"), ("down", "-Infinity")]);
+  }
+  let columns = specials
+    .iter()
+    .map(|(column, literal)| format!("'{literal}'::numeric AS {column}"))
+    .collect::<Vec<_>>()
+    .join(", ");
+  for sql in [format!("SELECT {columns}"), format!("SELECT {columns}, '10.0.0.1'::inet AS ip")] {
+    let result = execute_query(&DbPool::Postgres(pool.clone()), &sql)
+      .await
+      .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    let QueryExecutionResult::Rows { rows, .. } = result else {
+      panic!("expected a row result");
+    };
+    for (column, literal) in &specials {
+      assert_eq!(rows[0][*column]["value"], *literal, "{sql}");
+    }
+  }
+}
+
 /// `infinity` 是有效期一类的列常见的写法。sqlx 拿它当普通的天数 / 微秒去加：日期与带时区的
 /// 时间戳 panic，不带时区的读成 294277 年
 #[tokio::test]

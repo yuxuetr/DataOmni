@@ -1244,6 +1244,9 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
     "UUID" => tagged_display_value("text", ValueRef::to_owned(&value).try_decode::<uuid::Uuid>()),
     "INT8" => tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<i64>()),
     "NUMERIC" => {
+      if let Some(special) = pg_numeric_special(&value) {
+        return Ok(tagged_value("decimal", special.to_owned()));
+      }
       let decimal = ValueRef::to_owned(&value)
         .try_decode::<sqlx::types::BigDecimal>()
         .map_err(QueryError::from)?;
@@ -1379,6 +1382,22 @@ pub(crate) fn format_datetime(value: PrimitiveDateTime) -> String {
 /// `1E-8`。
 fn decimal_text(value: &sqlx::types::BigDecimal) -> String {
   value.to_plain_string()
+}
+
+/// `NaN`（PG 14 起还有 `Infinity` / `-Infinity`）BigDecimal 装不下。二进制头部第三个 16 位整数是符号，
+/// 这几个值各有一个专用的符号值；文本格式就是这几个词
+fn pg_numeric_special(value: &PgValueRef<'_>) -> Option<&'static str> {
+  if value.format() == sqlx::postgres::PgValueFormat::Text {
+    return ["NaN", "Infinity", "-Infinity"]
+      .into_iter()
+      .find(|word| value.as_str().ok() == Some(*word));
+  }
+  match value.as_bytes().ok()? {
+    [_, _, _, _, 0xC0, 0x00, ..] => Some("NaN"),
+    [_, _, _, _, 0xD0, 0x00, ..] => Some("Infinity"),
+    [_, _, _, _, 0xF0, 0x00, ..] => Some("-Infinity"),
+    _ => None,
+  }
 }
 
 /// PostgreSQL 二进制 NUMERIC 头里的 `dscale`：声明的（或字面量自带的）小数位数。
