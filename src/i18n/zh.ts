@@ -1101,6 +1101,7 @@ export const zh = {
   'error.backend.backupUnsupported': "这种数据库在这里还不能备份。",
   'error.backend.backupTargetExists': "目标已经存在，没有覆盖：{detail}",
   'error.backend.backupFailed': "备份没能写到目标位置：{detail}",
+  'error.backend.backupNotRestorable': "DuckDB 导出的建表语句自己重放不回去，这份备份恢复不了，所以没有保留。常见原因是 ENUM 的取值里有单引号（DuckDB 导出时不转义它）。DuckDB 的原话：{detail}",
   'error.driver.saslUnsupported': '服务端要求的认证方式标准 PostgreSQL 驱动不支持——多半是 openGauss / GaussDB 默认的 sha256 认证。请管理员把 password_encryption_type 设为 1（同时存 md5），再给这个用户重设一次密码；或在 pg_hba.conf 里对这个来源用 md5。原始信息：{detail}',
   'backup.hintPostgres': "用本机的 pg_dump 导出（custom 格式，pg_restore 恢复）；要先装好 PostgreSQL 客户端。",
   'backup.restorePostgres': "恢复：pg_restore -d <目标库> <这个文件>（目标库先建好）。",

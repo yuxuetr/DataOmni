@@ -20,6 +20,8 @@ pub const BACKUP_UNSUPPORTED: &str = "DATAOMNI_BACKUP_UNSUPPORTED";
 /// DuckDB 的备份是个目录；目标已经存在时不去覆盖，免得和一份旧备份的文件混在一起
 pub const BACKUP_TARGET_EXISTS: &str = "DATAOMNI_BACKUP_TARGET_EXISTS";
 pub const BACKUP_FAILED: &str = "DATAOMNI_BACKUP_FAILED";
+/// DuckDB 导出的建表语句自己重放不回去（数据是 DuckDB 的报错）。备份不留：恢复不回去的备份比没有更危险
+pub const BACKUP_NOT_RESTORABLE: &str = "DATAOMNI_BACKUP_NOT_RESTORABLE";
 /// 找不到外部工具。数据是工具名
 pub const BACKUP_TOOL_MISSING: &str = "DATAOMNI_BACKUP_TOOL_MISSING";
 /// 外部工具跑了但失败了。数据是它 stderr 的末尾（版本不配、权限不够都在这里说）
@@ -71,6 +73,12 @@ pub async fn backup_embedded<'a>(
   if let Err(error) = connection.execute_unprepared(&statement).await {
     remove_path(&part);
     return Err(error);
+  }
+  if kind == BackupKind::DuckdbDirectory {
+    if let Err(error) = replay_duckdb_schema(&part) {
+      remove_path(&part);
+      return Err(error);
+    }
   }
   // 文件的改名会顶掉同名的旧文件（保存对话框已经问过要不要替换）；目录走到这里时目标一定不存在
   std::fs::rename(&part, target).map_err(|error| {
@@ -427,6 +435,18 @@ pub fn find_tool(name: &str) -> Option<PathBuf> {
   from_path.into_iter().chain(known).map(|dir| dir.join(name)).find(|candidate| candidate.is_file())
 }
 
+/// 在一个空的内存库里重放 EXPORT 写出的 `schema.sql`。DuckDB 1.5 的 EXPORT 把 ENUM 取值里的
+/// 撇号原样写进 `CREATE TYPE`，那份备份 `IMPORT DATABASE` 时才报语法错误。
+/// 只重放建表语句、不读数据，开销与库的大小无关
+fn replay_duckdb_schema(directory: &Path) -> Result<(), QueryError> {
+  let schema = std::fs::read_to_string(directory.join("schema.sql")).map_err(|error| {
+    QueryError::message(format!("{BACKUP_FAILED}: {} · {error}", directory.display()))
+  })?;
+  duckdb::Connection::open_in_memory()
+    .and_then(|connection| connection.execute_batch(&schema))
+    .map_err(|error| QueryError::message(format!("{BACKUP_NOT_RESTORABLE}: {error}")))
+}
+
 fn part_path(target: &Path) -> PathBuf {
   let mut name = target.file_name().map(|name| name.to_os_string()).unwrap_or_default();
   name.push(".part");
@@ -767,6 +787,28 @@ mod tests {
         .await
         .expect("read");
     assert_eq!(rows, vec![(1, "O'Brien".into(), Some(vec![0, 255])), (2, "中文".into(), None)]);
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  /// DuckDB 1.5 的 EXPORT DATABASE 把 ENUM 取值里的撇号原样写进 `CREATE TYPE`：
+  /// 备份写成了，`IMPORT DATABASE` 却报语法错误——要恢复的时候才发现备份没用
+  #[tokio::test]
+  async fn a_duckdb_backup_that_would_not_import_back_is_not_kept() {
+    let dir = temp_dir("duckdb-enum");
+    let file = dir.join("source.duckdb");
+    let pool = crate::services::duckdb::open(&file.to_string_lossy()).await.expect("open duckdb");
+    let mut connection =
+      SessionConnection::acquire(PoolRef::DuckDb(&pool)).await.expect("connection");
+    connection
+      .execute_unprepared("CREATE TYPE mood AS ENUM ('it''s', 'b'); CREATE TABLE t (m mood);")
+      .await
+      .expect("seed");
+    drop(connection);
+
+    let target = dir.join("backup");
+    let error = backup_embedded(PoolRef::DuckDb(&pool), &target).await.expect_err("not restorable");
+    assert!(error.message.starts_with(BACKUP_NOT_RESTORABLE), "{}", error.message);
+    assert!(!target.exists() && !part_path(&target).exists());
     std::fs::remove_dir_all(&dir).ok();
   }
 
