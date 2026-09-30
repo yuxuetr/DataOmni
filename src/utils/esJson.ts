@@ -248,3 +248,18 @@ export function searchFacts(value: JsonValue | null): { total: string | null; at
     timedOut: timedOut?.kind === 'boolean' && timedOut.value
   };
 }
+
+/**
+ * `_bulk` 的回答里有几条没写成。一批里有条目失败，状态码照样是 200，只有 `errors: true`
+ * 和那几条自己的 `error` 说明问题；一批几千条时，它埋在几万行 JSON 里。全写成了是 `null`
+ */
+export function bulkFailures(value: JsonValue | null): { failed: number; total: number } | null {
+  const errors = jsonField(value ?? undefined, 'errors');
+  const items = jsonField(value ?? undefined, 'items');
+  if (errors?.kind !== 'boolean' || !errors.value || items?.kind !== 'array') return null;
+  // 每一条是 `{ 动作: { …, error? } }`
+  const failed = items.items.filter((item) => (
+    item.kind === 'object' && item.entries.some(([, result]) => jsonField(result, 'error') !== undefined)
+  )).length;
+  return { failed, total: items.items.length };
+}

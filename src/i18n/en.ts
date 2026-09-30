@@ -1579,6 +1579,7 @@ export const en: Translations = {
   'es.took': 'server {ms} ms',
   'es.elapsed': '{ms} ms in total',
   'es.timedOut': 'The search timed out on the server; results are partial',
+  'es.bulkFailed': '{failed} of {total} items failed; each one\'s error says why',
   'es.view.table': 'Table',
   'es.view.json': 'JSON',
   'es.view.aggs': 'Aggregations',

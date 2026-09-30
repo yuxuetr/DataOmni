@@ -38,6 +38,7 @@ import {
 } from '../utils/esConsole';
 import {
   MISSING,
+  bulkFailures,
   formatJsonCell,
   parseJson,
   searchFacts,
@@ -166,8 +167,11 @@ export function EsConsole({ connection }: EsConsoleProps) {
           timeoutMs: queryTimeoutMs
         });
         setRuns((previous) => previous.map((run) => (run.id === id ? { id, request, state: 'done', response } : run)));
-        remember(request, started, response.status < 400 ? 'succeeded' : 'failed', response.status < 400 ? undefined : `HTTP ${response.status}`);
-        if (response.status >= 400) {
+        // 一批里有条目没写成，状态码照样是 200：也算失败，后面的多半依赖它
+        const bulk = response.status < 400 && request.path.includes('_bulk') ? bulkFailures(parseJson(response.body)) : null;
+        const problem = response.status >= 400 ? `HTTP ${response.status}` : bulk ? t('es.bulkFailed', bulk) : undefined;
+        remember(request, started, problem === undefined ? 'succeeded' : 'failed', problem);
+        if (problem !== undefined) {
           stopAfter(id);
           break;
         }
@@ -522,6 +526,7 @@ function ResponseView({
   // 有命中先看命中；`size: 0` 只要聚合的，先看聚合
   const view = chosen ?? (table && table.rows.length > 0 ? 'table' : aggTables.length > 0 ? 'aggs' : 'json');
   const search = searchFacts(parsed);
+  const bulk = useMemo(() => bulkFailures(parsed), [parsed]);
   const facts = [
     search?.total ? t(search.atLeast ? 'es.hitsAtLeast' : 'es.hits', { total: search.total }) : null,
     search?.tookMs ? t('es.took', { ms: search.tookMs }) : null,
@@ -542,6 +547,7 @@ function ResponseView({
         <p className="text-xs text-fg-muted">
           {facts.join(' · ')}
           {search?.timedOut && <span className="ml-2 text-warning">{t('es.timedOut')}</span>}
+          {bulk && <span className="ml-2 text-warning">{t('es.bulkFailed', bulk)}</span>}
         </p>
         <div className="flex shrink-0 items-center gap-2">
           {view === 'json' && pretty !== '' && (

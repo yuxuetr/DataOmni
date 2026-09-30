@@ -1590,6 +1590,7 @@ export const zh = {
   'es.took': '服务端 {ms} 毫秒',
   'es.elapsed': '共 {ms} 毫秒',
   'es.timedOut': '服务端的搜索超时了，结果不全',
+  'es.bulkFailed': '{total} 条里有 {failed} 条没写成，各条的 error 写着原因',
   'es.view.table': '表格',
   'es.view.json': 'JSON',
   'es.view.aggs': '聚合',

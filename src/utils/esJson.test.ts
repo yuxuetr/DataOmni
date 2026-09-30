@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatJsonCell, parseJson, prettyBody, searchFacts, stringifyJson, toEsTable } from './esJson';
+import { bulkFailures, formatJsonCell, parseJson, prettyBody, searchFacts, stringifyJson, toEsTable } from './esJson';
 
 const search = JSON.stringify({
   took: 3,
@@ -89,5 +89,27 @@ describe('searchFacts', () => {
     expect(searchFacts(parseJson(search))).toEqual({ total: '10000', atLeast: true, tookMs: '3', timedOut: false });
     expect(searchFacts(parseJson('{"hits":{"total":7,"hits":[]}}'))?.total).toBe('7');
     expect(searchFacts(parseJson('{"acknowledged":true}'))).toBeNull();
+  });
+});
+
+describe('bulkFailures', () => {
+  // 打包版回归时撞上的：一批里有一条字段类型不对，回答照样是 200，徽标是绿的，后面的请求照发
+  it('counts the items that carry an error, out of all items', () => {
+    const answer = parseJson(JSON.stringify({
+      errors: true,
+      took: 0,
+      items: [
+        { index: { _index: 'rg', _id: 'b2', status: 201, result: 'created' } },
+        { index: { _index: 'rg', _id: 'b3', status: 400, error: { type: 'document_parsing_exception' } } },
+        { delete: { _index: 'rg', _id: 'nope', status: 404, result: 'not_found' } }
+      ]
+    }));
+    expect(bulkFailures(answer)).toEqual({ failed: 1, total: 3 });
+  });
+
+  it('is null for a batch that went through, and for answers that are not a batch', () => {
+    expect(bulkFailures(parseJson('{"errors":false,"items":[{"index":{"status":201}}]}'))).toBeNull();
+    expect(bulkFailures(parseJson(search))).toBeNull();
+    expect(bulkFailures(null)).toBeNull();
   });
 });
