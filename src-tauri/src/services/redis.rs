@@ -53,8 +53,25 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// 字符串值最多带多少字节过来。整份要看得另想办法（导出），界面上是一眼
 const STRING_PREVIEW_BYTES: usize = 512 * 1024;
 
-/// `SCAN` 一次让服务端看多少个槽位。`COUNT` 只是提示，服务端每次返回的个数不定
+/// `SCAN` 一次最多让服务端看多少个槽位。`COUNT` 只是提示，服务端每次返回的个数不定
 const SCAN_COUNT: u64 = 1_000;
+
+/// 下一轮 `SCAN` 的 `COUNT`：按到目前为止的匹配密度，估「还差的个数要看多少槽位」。
+///
+/// 固定给 1000 时，键密的库里一轮就回来约 1000 个，一页远超前端的页大小；
+/// 固定给页大小时，匹配很稀的模式又要多跑几倍的往返。第一轮当作全都匹配，
+/// 之后按密度放大，一轮都没匹配上就直接给上限
+fn next_scan_count(page: usize, collected: usize, scanned: u64) -> u64 {
+  let remaining = page.saturating_sub(collected).max(1) as u64;
+  let ceiling = SCAN_COUNT.max(remaining);
+  if scanned == 0 {
+    return remaining.min(ceiling);
+  }
+  if collected == 0 {
+    return ceiling;
+  }
+  (remaining.saturating_mul(scanned) / collected as u64).clamp(remaining, ceiling)
+}
 
 pub type RedisRegistry = PoolRegistry<RedisPool>;
 
@@ -353,9 +370,12 @@ pub async fn scan(pool: &RedisPool, request: ScanRequest) -> Result<ScanPage, St
   let work = async {
     let mut cursor: u64 = request.cursor.parse().unwrap_or(0);
     let mut keys: Vec<Vec<u8>> = Vec::new();
+    let mut scanned: u64 = 0;
     loop {
+      let count = next_scan_count(request.page, keys.len(), scanned);
+      scanned += count;
       let mut command = redis::cmd("SCAN");
-      command.arg(cursor).arg("MATCH").arg(&request.pattern).arg("COUNT").arg(SCAN_COUNT);
+      command.arg(cursor).arg("MATCH").arg(&request.pattern).arg("COUNT").arg(count);
       if let Some(kind) = &request.kind {
         command.arg("TYPE").arg(kind);
       }
@@ -1158,6 +1178,26 @@ pub async fn execute(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn the_scan_count_follows_how_densely_the_pattern_matches() {
+    // 第一轮当作全都匹配：只要一页
+    assert_eq!(next_scan_count(200, 0, 0), 200);
+    // 全都匹配：还差多少要多少
+    assert_eq!(next_scan_count(200, 150, 150), 50);
+    // 四个里中三个：还差 50 个，看 66 个
+    assert_eq!(next_scan_count(200, 150, 200), 66);
+    // 十个里中一个：还差 190 个，看 1900 个槽位，封顶 1000
+    assert_eq!(next_scan_count(200, 10, 200), 1_000);
+    // 五个里中一个：还差 160 个，看 800 个
+    assert_eq!(next_scan_count(200, 40, 200), 800);
+    // 一个没中：直接上限
+    assert_eq!(next_scan_count(200, 0, 200), 1_000);
+    // 已经够了（循环会先停下）也至少给 1，不发 COUNT 0
+    assert_eq!(next_scan_count(200, 200, 200), 1);
+    // 页比上限还大：不压到页以下
+    assert_eq!(next_scan_count(5_000, 0, 0), 5_000);
+  }
 
   #[test]
   fn bytes_that_are_not_utf8_are_escaped_and_flagged() {

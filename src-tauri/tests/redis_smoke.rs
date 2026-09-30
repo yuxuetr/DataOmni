@@ -9,7 +9,7 @@
 //! TLS 那一条另设 `DATAOMNI_REDIS_TLS_TEST_URL`（一台只开 TLS 端口的服务端）与
 //! `DATAOMNI_REDIS_TLS_TEST_CA`（签它证书的 CA 文件路径；证书上写着 127.0.0.1）。
 //!
-//! 用例各占一个库号（6–15，并行跑时互不干扰），开头 `FLUSHDB` 清掉残留——那几个库号只给这里用。
+//! 用例各占一个库号（5–15，并行跑时互不干扰），开头 `FLUSHDB` 清掉残留——那几个库号只给这里用。
 
 use dataomni_lib::models::ConnectionProfile;
 use dataomni_lib::models::TlsMode;
@@ -197,6 +197,45 @@ async fn scanning_page_by_page_sees_every_key_exactly_once() {
   .await
   .expect("typed scan");
   assert!(only_hashes.keys.iter().all(|row| row.kind == "hash"), "{:?}", only_hashes.keys);
+}
+
+/// 键密的库里一页不该远超页大小：`COUNT` 固定 1000 时，一轮就回来约 1000 个，
+/// 前端一次画上千行。`COUNT` 只是提示，给两倍余量
+#[tokio::test]
+async fn a_dense_keyspace_comes_back_about_one_page_at_a_time() {
+  let Some(profile) = profile(5) else { return };
+  let mut seed = seed_connection(&profile).await;
+  let mut pipe = redis::pipe();
+  for n in 0..3000 {
+    pipe.cmd("SET").arg(format!("dense:{n}")).arg(n).ignore();
+  }
+  pipe.query_async::<()>(&mut seed).await.expect("seed");
+  let pool = pool(&profile).await;
+
+  let mut seen = 0;
+  let mut cursor = "0".to_string();
+  loop {
+    let page = store::scan(
+      &pool,
+      ScanRequest {
+        database: 5,
+        pattern: "*".into(),
+        cursor,
+        kind: None,
+        page: 200,
+        timeout: TIMEOUT,
+      },
+    )
+    .await
+    .expect("scan");
+    assert!(page.keys.len() <= 400, "一页回来 {} 个", page.keys.len());
+    seen += page.keys.len();
+    match page.cursor {
+      Some(next) => cursor = next,
+      None => break,
+    }
+  }
+  assert_eq!(seen, 3000);
 }
 
 /// 每种类型翻页都不重不漏；集合类的总数是服务端的，不是这一页的
