@@ -128,6 +128,10 @@ impl SqlServerTarget {
     // tiberius 0.13 起默认每个往返最多等 30 秒，到了就报 TimedOut。执行多久由界面上的
     // 超时设置管（可以选不限），驱动这一层不另设上限
     config.command_timeout(None);
+    // NVARCHAR 不检查代理对是否成对（`LEFT` 截在 emoji 中间就存下半个），严格解码的话
+    // 一个这样的值让整条查询失败。解不出的部分换成 U+FFFD，与 SQLite 的非 UTF-8 文本同一个做法；
+    // 改这一格时守卫拿替换过的值去比、比不上，整批回滚，不会写错
+    config.lossy_utf16_decoding(true);
     config.authentication(AuthMethod::sql_server(&self.username, &self.password));
     let (encryption, verify) = tls_settings(self.tls);
     config.encryption(encryption);

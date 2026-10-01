@@ -534,6 +534,24 @@ async fn sql_server_statements_may_run_past_the_drivers_own_default_timeout() {
   assert_eq!(rows[0]["late"], json!(1));
 }
 
+/// NVARCHAR 不检查 UTF-16 是否成对：`LEFT` 截在 emoji 的代理对中间，存下来的就是半个。
+/// 驱动默认严格解码，一个这样的值整条查询报「invalid UTF-16 sequence」，同一张表、同一份结果
+/// 别的行也看不到。解不出的部分换成 U+FFFD，与 SQLite 存了非 UTF-8 字节时一样。
+#[tokio::test]
+async fn sql_server_reads_a_half_surrogate_pair_as_a_replacement_character() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool).await;
+  let rows = rows_of(
+    connection
+      .execute("SELECT LEFT(N'😀x', 1) + N'!' AS cut, N'fine' AS good", 10)
+      .await
+      .expect("a half surrogate pair does not fail the whole result"),
+  );
+  assert_eq!((&rows[0]["cut"], &rows[0]["good"]), (&json!("\u{fffd}!"), &json!("fine")));
+  let catalog = pool.select("SELECT LEFT(N'😀x', 1) AS cut", &[]).await.expect("catalog path");
+  assert_eq!(catalog[0]["cut"], json!("\u{fffd}"));
+}
+
 /// 图表的伪列（`$node_id`、`$edge_id`、`$from_id`、`$to_id`）在列元数据里带着一个 TDS 没有
 /// 定义的标志位，tiberius 0.12 遇到不认识的位整个结果报「column metadata: invalid flags」——
 /// 节点表与边表 `SELECT *` 都读不出来。0.13 起忽略不认识的位。
