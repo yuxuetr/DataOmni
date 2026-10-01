@@ -221,6 +221,15 @@ describe('取表数据的投影', () => {
     expect(tableProjection([typed('id', 'int'), typed('x', 'xml')], 'sqlserver')).toBe('*');
   });
 
+  it('SQL Server 的 money 转成 decimal 再取：驱动按 f64 解，九千亿以上末几位不对，守卫拿它比也永远比不上', () => {
+    const typed = (name: string, dataType: string) => ({
+      name, data_type: dataType, is_nullable: true, is_primary_key: false
+    });
+    expect(tableProjection([typed('id', 'int'), typed('m', 'money'), typed('s', 'smallmoney')], 'sqlserver')).toBe(
+      '[id], CAST([m] AS decimal(19,4)) AS [m], [s]'
+    );
+  });
+
   it('PostgreSQL 解码器不认的列转成文本再取：一列 inet 或枚举，整张表就打不开', () => {
     const typed = (name: string, dataType: string) => ({
       name, data_type: dataType, is_nullable: true, is_primary_key: false

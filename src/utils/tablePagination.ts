@@ -197,9 +197,16 @@ function postgresTypeName(dataType: string): string {
  */
 const ORACLE_ZONED_TIMESTAMP = /^TIMESTAMP(\(\d+\))? WITH TIME ZONE$/i;
 
+/**
+ * tiberius 把 money 拼成 f64 再除以 1e4：五千亿往上第四位小数就不对了（`922337203685477.5807` 读成
+ * `…477.625`），并发守卫拿这个原值去比，那一行永远改不了。smallmoney 只有 32 位，f64 装得下
+ */
+const SQL_SERVER_MONEY = 'money';
+
 function isUnreadableColumn(column: ColumnInfo, dialect: SqlIdentifierDialect): boolean {
   if (dialect === 'sqlserver') {
-    return SQL_SERVER_UNREADABLE_TYPES.has(columnTypeToken(column.data_type));
+    const token = columnTypeToken(column.data_type);
+    return token === SQL_SERVER_MONEY || SQL_SERVER_UNREADABLE_TYPES.has(token);
   }
   if (dialect === 'oracle') {
     return ORACLE_ZONED_TIMESTAMP.test(column.data_type.trim());
@@ -208,7 +215,7 @@ function isUnreadableColumn(column: ColumnInfo, dialect: SqlIdentifierDialect): 
 }
 
 /**
- * 投影里的一列；驱动读不了的列转成文本，别名仍是列名，网格按列名取值。
+ * 投影里的一列；驱动读不了的列转成文本（SQL Server 的 money 是读不准，转成 decimal），别名仍是列名，网格按列名取值。
  *
  * 代价：别名和列名相同，按这一列排序时 `ORDER BY` 认的是别名，排的是文本
  * （inet 按字符串、枚举按标签而不是声明次序）。筛选在 WHERE 里，仍按原类型比
@@ -219,7 +226,10 @@ export function projectedColumn(column: ColumnInfo, dialect: SqlIdentifierDialec
     return name;
   }
   if (dialect === 'sqlserver') {
-    return `CAST(${name} AS nvarchar(max)) AS ${name}`;
+    // money 的范围与小数位恰好是 decimal(19,4)
+    return columnTypeToken(column.data_type) === SQL_SERVER_MONEY
+      ? `CAST(${name} AS decimal(19,4)) AS ${name}`
+      : `CAST(${name} AS nvarchar(max)) AS ${name}`;
   }
   if (dialect === 'oracle') {
     // 照驱动的写法：小数秒去掉末尾的 0（`.000` 连点一起去掉），时区写成偏移——会话的

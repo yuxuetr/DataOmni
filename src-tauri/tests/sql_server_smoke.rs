@@ -202,6 +202,57 @@ async fn sql_server_reals_read_as_ssms_writes_them() {
   assert_eq!(rows[0]["wide"], json!(0.1));
 }
 
+/// tiberius 把 money 解成 f64：大额的末几位不对，拿它当守卫比，那一行永远改不了。
+/// 表数据页转成 decimal(19,4) 再取（`tableProjection`），这里用的是它生成的那条投影
+#[tokio::test]
+async fn sql_server_large_money_reads_exactly_through_the_table_projection() {
+  let Some(pool) = pool().await else { return };
+  run_all(
+    &pool,
+    &[
+      "IF OBJECT_ID('dbo.om_money') IS NOT NULL DROP TABLE dbo.om_money",
+      "CREATE TABLE dbo.om_money (id int PRIMARY KEY, m money, note nvarchar(20))",
+      "INSERT INTO dbo.om_money (id, m) VALUES (1, 922337203685477.5807), (2, -922337203685477.5808),
+       (3, 123456789012345.6789)",
+    ],
+  )
+  .await;
+  let mut connection = session(&pool).await;
+  let driver = rows_of(
+    connection.execute("SELECT * FROM dbo.om_money ORDER BY id", 100).await.expect("select *"),
+  );
+  let projected = rows_of(
+    connection
+      .execute(
+        "SELECT [id], CAST([m] AS decimal(19,4)) AS [m], [note] FROM dbo.om_money ORDER BY [id]",
+        100,
+      )
+      .await
+      .expect("projection"),
+  );
+  assert_eq!(text(&projected[0]["m"]), "922337203685477.5807");
+  assert_eq!(text(&projected[1]["m"]), "-922337203685477.5808");
+  assert_eq!(text(&projected[2]["m"]), "123456789012345.6789");
+  assert_ne!(text(&driver[2]["m"]), "123456789012345.6789", "驱动若已改成精确读，投影可以去掉");
+
+  // 最大值那一行读成的 f64 已经超出 money 的范围，写回去报的是溢出（8115）；这里用范围内的那一行
+  let guarded = |value: &JsonValue| {
+    vec![write(
+      "UPDATE [dbo].[om_money] SET [note] = N'x' WHERE [id] = 3 AND [m] = @P1",
+      vec![json!(text(value))],
+      Some(1),
+    )]
+  };
+  let error = execute_write_batch(PoolRef::SqlServer(&pool), &guarded(&driver[2]["m"]))
+    .await
+    .expect_err("驱动读出的值比不上");
+  assert_eq!(error.error.code.as_deref(), Some(ROW_COUNT_MISMATCH_CODE));
+  execute_write_batch(PoolRef::SqlServer(&pool), &guarded(&projected[2]["m"]))
+    .await
+    .expect("投影读出的值比得上");
+  run_all(&pool, &["DROP TABLE dbo.om_money"]).await;
+}
+
 #[tokio::test]
 async fn sql_server_reports_affected_rows_and_runs_batches_that_must_stand_alone() {
   let Some(pool) = pool().await else { return };
