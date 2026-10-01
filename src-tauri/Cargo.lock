@@ -1525,6 +1525,7 @@ dependencies = [
  "chrono",
  "csv",
  "duckdb",
+ "encoding_rs",
  "futures-util",
  "indexmap 2.14.2",
  "keyring",

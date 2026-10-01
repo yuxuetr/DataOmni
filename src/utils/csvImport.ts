@@ -12,6 +12,8 @@ export interface CsvPreview {
   totalBytes: number;
   more: boolean;
   ragged: Array<{ line: number; fields: number }>;
+  /** 按哪种编码读的：`UTF-8`，或开头不是 UTF-8 时的 `gb18030` */
+  encoding: string;
 }
 
 /**
@@ -258,6 +260,11 @@ export function validateImport(
       key: 'import.issue.ragged',
       params: { count: preview.ragged.length, line: preview.ragged[0]?.line ?? 0 }
     });
+  }
+
+  if (preview.encoding !== 'UTF-8') {
+    // 多半是 Excel 另存的 GBK，读对了；也可能是别的编码、读出了乱码——样例里看得出来
+    issues.push({ level: 'warning', key: 'import.issue.notUtf8' });
   }
 
   for (const mismatch of sampleMismatches(mappings, columns, preview.rows, nullText, dialect)) {

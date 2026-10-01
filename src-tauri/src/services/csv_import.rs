@@ -117,6 +117,8 @@ pub struct CsvPreview {
   pub more: bool,
   /// 字段数与表头对不上的行。选错分隔符时这一项会立刻铺满。
   pub ragged: Vec<RaggedRow>,
+  /// 按哪种编码读的：`UTF-8`，或开头不是 UTF-8 时的 `gb18030`
+  pub encoding: String,
 }
 
 /// 猜分隔符。
@@ -180,23 +182,19 @@ pub fn preview_csv(
     })?
     .len();
 
+  // 只读开头这一段来认编码与嗅探：几百 MB 的文件不该为了猜一个字符整份读进内存
+  let head = read_head(path, 64 * 1024)?;
+  let encoding = detect_encoding(&head);
   let delimiter = match delimiter {
     Some(delimiter) => delimiter,
-    None => {
-      // 只读开头这一段来嗅探：几百 MB 的文件不该为了猜一个字符整份读进内存
-      let sample = read_head(path, 64 * 1024)?;
-      sniff_delimiter(&sample)
-    }
+    None => sniff_delimiter(encoding.decode_without_bom_handling(&head).0.as_bytes()),
   };
 
   let mut reader = csv::ReaderBuilder::new()
     .delimiter(delimiter)
     .has_headers(has_header)
     .flexible(true)
-    .from_path(path)
-    .map_err(|error| {
-      QueryError::message(format!("{FILE_OPEN_FAILED}: {} · {error}", path.display()))
-    })?;
+    .from_reader(open_decoded(path, encoding)?);
 
   let headers = if has_header {
     reader.headers().map_err(csv_error)?.iter().map(|field| field.to_string()).collect::<Vec<_>>()
@@ -238,7 +236,74 @@ pub fn preview_csv(
     total_bytes,
     more,
     ragged,
+    encoding: encoding.name().to_string(),
   })
+}
+
+/// 开头这一段是 UTF-8（末尾截断了半个字符也算）就按 UTF-8 读，否则按 GB18030。
+///
+/// 中文 Windows 上 Excel 另存的「CSV（逗号分隔）」是 GBK，GB18030 是它的超集。
+/// 别的单字节编码（Latin-1 之类）也会落到这里，读出来是乱码——预览里写着编码名，
+/// 看得出来；而原来是在第一行就报错，同样导不进去
+fn detect_encoding(head: &[u8]) -> &'static encoding_rs::Encoding {
+  match std::str::from_utf8(head) {
+    Ok(_) => encoding_rs::UTF_8,
+    Err(error) if error.error_len().is_none() => encoding_rs::UTF_8,
+    Err(_) => encoding_rs::GB18030,
+  }
+}
+
+/// csv 只认 UTF-8：别的编码边读边转。预览与导入都从这里打开文件，认编码的规矩只有一份
+fn open_decoded(
+  path: &Path,
+  encoding: &'static encoding_rs::Encoding,
+) -> Result<Box<dyn std::io::Read + Send>, QueryError> {
+  let file = std::fs::File::open(path).map_err(|error| {
+    QueryError::message(format!("{FILE_OPEN_FAILED}: {} · {error}", path.display()))
+  })?;
+  if encoding == encoding_rs::UTF_8 {
+    return Ok(Box::new(file));
+  }
+  Ok(Box::new(DecodingReader {
+    inner: file,
+    decoder: encoding.new_decoder_without_bom_handling(),
+    decoded: Vec::new(),
+    position: 0,
+    finished: false,
+  }))
+}
+
+struct DecodingReader<R> {
+  inner: R,
+  decoder: encoding_rs::Decoder,
+  /// 上一块转出来、还没交出去的 UTF-8
+  decoded: Vec<u8>,
+  position: usize,
+  finished: bool,
+}
+
+impl<R: std::io::Read> std::io::Read for DecodingReader<R> {
+  fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    while self.position == self.decoded.len() {
+      if self.finished {
+        return Ok(0);
+      }
+      let mut chunk = [0u8; 8192];
+      let read = self.inner.read(&mut chunk)?;
+      let last = read == 0;
+      // 输出给足最坏情况的长度，一次就把这块输入吃完；跨块的半个字由解码器自己记着
+      let capacity = self.decoder.max_utf8_buffer_length(read).unwrap_or(read * 3 + 16);
+      self.decoded.resize(capacity, 0);
+      let (_, _, written, _) = self.decoder.decode_to_utf8(&chunk[..read], &mut self.decoded, last);
+      self.decoded.truncate(written);
+      self.position = 0;
+      self.finished = last;
+    }
+    let count = buf.len().min(self.decoded.len() - self.position);
+    buf[..count].copy_from_slice(&self.decoded[self.position..self.position + count]);
+    self.position += count;
+    Ok(count)
+  }
 }
 
 fn read_head(path: &Path, limit: usize) -> Result<Vec<u8>, QueryError> {
@@ -634,14 +699,12 @@ pub async fn import_csv<'a>(
 
   let delimiter = request.csv.delimiter_byte()?;
   let path = std::path::PathBuf::from(&request.path);
+  let encoding = detect_encoding(&read_head(&path, 64 * 1024)?);
   let mut reader = csv::ReaderBuilder::new()
     .delimiter(delimiter)
     .has_headers(request.csv.has_header)
     .flexible(true)
-    .from_path(&path)
-    .map_err(|error| {
-      QueryError::message(format!("{FILE_OPEN_FAILED}: {} · {error}", path.display()))
-    })?;
+    .from_reader(open_decoded(&path, encoding)?);
 
   let mut connection = SessionConnection::acquire(pool).await?;
   let dialect = Dialect::of(&connection)?;
@@ -1298,6 +1361,28 @@ mod tests {
     path
   }
 
+  /// 中文 Windows 上 Excel 另存的「CSV（逗号分隔）」是 GBK：按 UTF-8 读的话第一行就报错，
+  /// 嗅探也全军覆没。开头不是 UTF-8 就按 GB18030（GBK 的超集）读，预览里说明
+  #[test]
+  fn a_gbk_file_from_excel_previews_as_chinese() {
+    let path = std::env::temp_dir().join("dataomni-csv-gbk.csv");
+    // id;名称 / 1;张三（分号分隔，顺带看嗅探）
+    std::fs::write(&path, b"id;\xc3\xfb\xb3\xc6\r\n1;\xd5\xc5\xc8\xfd\r\n").expect("write fixture");
+    let preview = preview_csv(&path, None, true, 10).expect("preview");
+    assert_eq!(preview.encoding, "gb18030");
+    assert_eq!(preview.delimiter, ";");
+    assert_eq!(preview.headers, vec!["id", "名称"]);
+    assert_eq!(preview.rows, vec![vec!["1", "张三"]]);
+  }
+
+  #[test]
+  fn a_utf8_file_with_a_bom_stays_utf8() {
+    let path = write_csv("bom", "\u{feff}id,名称\r\n1,a\r\n");
+    let preview = preview_csv(&path, None, true, 10).expect("preview");
+    assert_eq!(preview.encoding, "UTF-8");
+    assert_eq!(preview.headers, vec!["id", "名称"]);
+  }
+
   #[test]
   fn the_preview_keeps_quoted_commas_and_newlines_in_one_field() {
     let path = write_csv("quoted", "id,note\n1,\"a,b\"\n2,\"line1\nline2\"\n");
@@ -1386,6 +1471,23 @@ mod tests {
       rows_in(&pool).await,
       vec![(1, "alice".into()), (2, "bob".into()), (3, "carol".into())]
     );
+  }
+
+  /// 导入与预览按同一个规矩认编码：预览里看着对，导进去的也得是那几个字。
+  /// 一个字段跨过读缓冲的边界时也不能被切坏
+  #[tokio::test]
+  async fn a_gbk_file_imports_as_chinese() {
+    let pool = sqlite_pool().await;
+    let path = std::env::temp_dir().join("dataomni-csv-gbk-import.csv");
+    let mut contents = b"id,name\r\n1,\xd5\xc5\xc8\xfd\r\n".to_vec();
+    let long = b"\xc0\xee".repeat(10_000); // 李 × 10000，20000 字节
+    contents.extend_from_slice(b"2,");
+    contents.extend_from_slice(&long);
+    contents.extend_from_slice(b"\r\n");
+    std::fs::write(&path, contents).expect("write fixture");
+    let summary = run(&pool, &request(&path, 10)).await;
+    assert_eq!(summary.rows_failed, 0, "{:?}", summary.errors);
+    assert_eq!(rows_in(&pool).await, vec![(1, "张三".into()), (2, "李".repeat(10_000))]);
   }
 
   #[tokio::test]

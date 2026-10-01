@@ -485,6 +485,7 @@ export const zh = {
   'import.issue.generatedTarget': '{columns} 的值由数据库产生，往里写值会被拒绝。',
   'import.issue.ragged': '有 {count} 行的字段数与表头对不上（从第 {line} 行起）——多半是分隔符选错了。',
   'import.issue.ragged.one': '有 {count} 行的字段数与表头对不上（第 {line} 行）——多半是分隔符选错了。',
+  'import.issue.notUtf8': '文件不是 UTF-8，按 GB18030（GBK）读取——中文 Windows 上 Excel 另存的 CSV 就是这样。样例里若是乱码，先把文件另存为「CSV UTF-8」。',
   'import.issue.typeMismatch': '{column} 是 {type}，而样例里有「{value}」。',
   'import.issue.nullInNotNull': '{column} 不能为空，而样例里有空值。',
   'import.runsInBackground': '按下之后这个框就关了。进度、暂停与失败的行都在右下角的后台任务里。',

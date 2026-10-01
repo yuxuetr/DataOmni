@@ -29,6 +29,7 @@ function preview(overrides: Partial<CsvPreview> = {}): CsvPreview {
     totalBytes: 0,
     more: false,
     ragged: [],
+    encoding: 'UTF-8',
     ...overrides
   };
 }
@@ -133,6 +134,15 @@ describe('sampleMismatches', () => {
 });
 
 describe('validateImport', () => {
+  it('不是 UTF-8、按 GB18030 读的文件提醒一句，不拦', () => {
+    const columns = [column({ name: 'note' })];
+    const mappings = [{ target: 'note', source: 0 }];
+    const issue = (encoding: string) => validateImport(mappings, columns, preview({ rows: [['张三']], encoding }), '')
+      .find((found) => found.key === 'import.issue.notUtf8');
+    expect(issue('gb18030')?.level).toBe('warning');
+    expect(issue('UTF-8')).toBeUndefined();
+  });
+
   it('必填列没映射是 error，不是提醒', () => {
     // 不给值就一行都插不进去，报出来的是一句方言各异的约束错误
     const columns = [column({ name: 'id', is_nullable: false }), column({ name: 'note' })];
