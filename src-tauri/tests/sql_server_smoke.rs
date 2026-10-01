@@ -529,6 +529,47 @@ fn find<'a>(rows: &'a [QueryRow], column: &str, value: &str) -> Vec<&'a QueryRow
   rows.iter().filter(|row| text(&row[column]) == value).collect()
 }
 
+/// 系统版本表的时间段列（`GENERATED ALWAYS AS ROW START / END`）由服务端写，显式给值是
+/// 13536——和 identity 一样不能由调用方赋值，算作 `is_generated`。不算的话它们 NOT NULL
+/// 又没有默认值，新增行时被当成必填项，导出的 INSERT 也带着它们、每一行都执行不回去。
+#[tokio::test]
+async fn sql_server_period_columns_count_as_generated() {
+  let Some(pool) = pool().await else { return };
+  let drop = [
+    "IF OBJECT_ID(N'dbo.smoke_temporal') IS NOT NULL ALTER TABLE dbo.smoke_temporal SET (SYSTEM_VERSIONING = OFF)",
+    "DROP TABLE IF EXISTS dbo.smoke_temporal",
+    "DROP TABLE IF EXISTS dbo.smoke_temporal_history",
+  ];
+  run_all(&pool, &drop).await;
+  run_all(
+    &pool,
+    &["CREATE TABLE dbo.smoke_temporal (id int PRIMARY KEY, \
+       vf datetime2 GENERATED ALWAYS AS ROW START NOT NULL, \
+       vt datetime2 GENERATED ALWAYS AS ROW END HIDDEN NOT NULL, \
+       PERIOD FOR SYSTEM_TIME (vf, vt)) \
+       WITH (SYSTEM_VERSIONING = ON (HISTORY_TABLE = dbo.smoke_temporal_history))"],
+  )
+  .await;
+  let queries = schema_metadata_queries(&DatabaseType::SqlServer).expect("supported");
+  let columns =
+    pool.select(queries.columns, &[json!("smoke_temporal"), json!("dbo")]).await.expect("columns");
+  let generated: Vec<(String, JsonValue, JsonValue)> = columns
+    .iter()
+    .map(|row| {
+      (text(&row["column_name"]), row["is_generated"].clone(), row["identity_generation"].clone())
+    })
+    .collect();
+  run_all(&pool, &drop).await;
+  assert_eq!(
+    generated,
+    [
+      ("id".to_string(), json!(false), JsonValue::Null),
+      ("vf".to_string(), json!(true), JsonValue::Null),
+      ("vt".to_string(), json!(true), JsonValue::Null),
+    ]
+  );
+}
+
 /// 这一条把所有目录查询一次跑完：它们共用一个夹具，而建夹具本身要十几条 DDL。
 #[tokio::test]
 async fn sql_server_catalog_queries_describe_the_fixture() {

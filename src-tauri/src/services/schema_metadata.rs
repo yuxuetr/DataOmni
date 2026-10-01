@@ -568,7 +568,8 @@ ORDER BY name
 /// `column_default` 是 `sys.default_constraints.definition` 的原文，外面带着
 /// SQL Server 自己加的括号：`((0))`、`('it''s')`、`(getdate())`。是 SQL 表达式，
 /// 不是值；改结构那一阶段要按表达式重述它，现在只用于显示。
-/// `rowversion`（旧名 `timestamp`）的值由服务端写，算作 `is_generated`。
+/// `rowversion`（旧名 `timestamp`）的值由服务端写，算作 `is_generated`；系统版本表的时间段列
+/// 与账本表的事务列（`generated_always_type <> 0`，显式给值是 13536）同样如此。
 ///
 /// `column_extra` 记 `ALTER COLUMN` 会静默摘掉的两样：`SPARSE`，与写成 SQL 原文的
 /// `MASKED WITH (FUNCTION = N'…')`（字面量在这里转义好，改结构时原样拼回去）。
@@ -585,6 +586,7 @@ SELECT
   CAST(CASE WHEN pk.key_ordinal IS NULL THEN 0 ELSE 1 END AS bit) AS is_primary_key,
   CAST(pk.key_ordinal AS int) AS primary_key_ordinal,
   CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR ty.name = 'timestamp'
+    OR c.generated_always_type <> 0
     THEN 1 ELSE 0 END AS bit) AS is_generated,
   CAST(CASE WHEN c.is_identity = 1 THEN 'ALWAYS' END AS nvarchar(10)) AS identity_generation,
   c.collation_name AS collation,
