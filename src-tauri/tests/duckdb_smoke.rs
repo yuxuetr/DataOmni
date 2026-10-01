@@ -81,7 +81,8 @@ async fn duckdb_decodes_values_the_way_the_other_dialects_do() {
           '\\xAA\\x01'::BLOB AS b, '中文' AS s, true AS flag, NULL::INTEGER AS nothing, \
           [1, 2, NULL] AS list, {'a': 1, 'b': 'x'} AS st, MAP {'k': 1} AS m, \
           'ok'::ENUM('ok', 'no') AS e, '00000000-0000-0000-0000-000000000001'::UUID AS u, \
-          '{\"a\":1}'::JSON AS j, BITSTRING '0101' AS bits, 'infinity'::DATE AS forever",
+          '{\"a\":1}'::JSON AS j, BITSTRING '0101' AS bits, 'infinity'::DATE AS forever, \
+          0.1::FLOAT AS narrow, [0.1::FLOAT] AS narrow_list",
         10,
       )
       .await
@@ -111,6 +112,9 @@ async fn duckdb_decodes_values_the_way_the_other_dialects_do() {
   assert_eq!(row["j"], json!(r#"{"a":1}"#));
   assert_eq!(row["bits"], json!("0101"));
   assert_eq!(text(&row["forever"]), "infinity");
+  // 单精度照 DuckDB 自己的写法，不是放宽成 f64 之后的 0.10000000149011612
+  assert_eq!(row["narrow"], json!(0.1));
+  assert_eq!(text(&row["narrow_list"]), "[0.1]");
 }
 
 #[tokio::test]

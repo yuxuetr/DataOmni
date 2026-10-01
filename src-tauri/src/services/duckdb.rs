@@ -22,8 +22,8 @@ use crate::services::query_error::QueryErrorDetails;
 use crate::services::query_error::{CONNECTION_LOST, CONNECTION_LOST_CODE};
 use crate::services::query_executor::{
   admit_row_bytes, flush_full_batch, flush_remaining_batch, number_duplicate_columns, tagged_value,
-  QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow, QueryTruncationReason,
-  StreamOptions,
+  widen_f32, QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow,
+  QueryTruncationReason, StreamOptions,
 };
 use crate::services::write_batch::{
   WriteBatchError, WriteStatement, ROW_COUNT_MISMATCH, ROW_COUNT_MISMATCH_CODE,
@@ -696,7 +696,7 @@ fn decode(value: &Value, type_id: LogicalTypeId) -> JsonValue {
       Ok(value) => integer(value),
       Err(_) => tagged_value("bigint", value.to_string()),
     },
-    Value::Float(value) => float(f64::from(*value)),
+    Value::Float(value) => float(widen_f32(*value)),
     Value::Double(value) => float(*value),
     Value::Decimal(decimal) => tagged_value("decimal", decimal.to_string()),
     Value::Timestamp(unit, value) => {
@@ -763,7 +763,7 @@ fn plain(value: &Value) -> JsonValue {
   match value {
     Value::Null => JsonValue::Null,
     Value::Boolean(value) => JsonValue::from(*value),
-    Value::Float(value) => float(f64::from(*value)),
+    Value::Float(value) => float(widen_f32(*value)),
     Value::Double(value) => float(*value),
     Value::List(items) | Value::Array(items) => JsonValue::Array(items.iter().map(plain).collect()),
     Value::Struct(fields) => {
