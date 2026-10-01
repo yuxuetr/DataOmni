@@ -569,6 +569,10 @@ ORDER BY name
 /// SQL Server 自己加的括号：`((0))`、`('it''s')`、`(getdate())`。是 SQL 表达式，
 /// 不是值；改结构那一阶段要按表达式重述它，现在只用于显示。
 /// `rowversion`（旧名 `timestamp`）的值由服务端写，算作 `is_generated`。
+///
+/// `column_extra` 记 `ALTER COLUMN` 会静默摘掉的两样：`SPARSE`，与写成 SQL 原文的
+/// `MASKED WITH (FUNCTION = N'…')`（字面量在这里转义好，改结构时原样拼回去）。
+/// `sys.masked_columns` 是 2016 起才有的。
 const SQL_SERVER_COLUMNS: &str = concat!(
   r#"
 SELECT
@@ -585,12 +589,18 @@ SELECT
   CAST(CASE WHEN c.is_identity = 1 THEN 'ALWAYS' END AS nvarchar(10)) AS identity_generation,
   c.collation_name AS collation,
   CAST(NULL AS nvarchar(1)) AS comment,
-  CAST(NULL AS nvarchar(1)) AS column_extra
+  CAST(NULLIF(
+    CASE WHEN c.is_sparse = 1 THEN N'SPARSE' ELSE N'' END
+    + CASE WHEN mc.masking_function IS NULL THEN N''
+      ELSE CASE WHEN c.is_sparse = 1 THEN N' ' ELSE N'' END
+        + N'MASKED WITH (FUNCTION = N''' + REPLACE(mc.masking_function, N'''', N'''''') + N''')'
+    END, N'') AS nvarchar(max)) AS column_extra
 FROM sys.objects o
 JOIN sys.schemas s ON s.schema_id = o.schema_id
 JOIN sys.columns c ON c.object_id = o.object_id
 JOIN sys.types ty ON ty.user_type_id = c.user_type_id
 LEFT JOIN sys.default_constraints dc ON dc.object_id = c.default_object_id
+LEFT JOIN sys.masked_columns mc ON mc.object_id = c.object_id AND mc.column_id = c.column_id
 LEFT JOIN (
   SELECT ic.object_id, ic.column_id, ic.key_ordinal
   FROM sys.indexes i

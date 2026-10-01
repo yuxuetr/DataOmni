@@ -836,6 +836,125 @@
       ]
     },
     {
+      "name": "sqlserver-restating-a-column-keeps-sparse-and-its-mask",
+      "why": "ALTER COLUMN 重述类型与可空性时，不写 SPARSE 就不再是稀疏列，动态数据掩码则无论如何都被摘掉（只改可空性也一样），语句都照样成功——SQL Server 2022 上核对过。SPARSE 写在 COLLATE 之后、NULL 之前（写在 NULL 后面是语法错误）；掩码在 ALTER COLUMN 里写不进去，另起一句 ADD MASKED 加回去。",
+      "dialect": "sqlserver",
+      "schema": "dbo",
+      "table": "ddl_conf_ms_extra",
+      "newTableName": "ddl_conf_ms_extra",
+      "fixture": [
+        "IF OBJECT_ID(N'dbo.ddl_conf_ms_extra') IS NOT NULL DROP TABLE dbo.ddl_conf_ms_extra",
+        "CREATE TABLE dbo.ddl_conf_ms_extra (id int NOT NULL CONSTRAINT pk_ddl_conf_ms_extra PRIMARY KEY, sp int SPARSE NULL, m varchar(20) COLLATE Latin1_General_CS_AS MASKED WITH (FUNCTION = 'partial(1,\"x\",0)') NULL, e nvarchar(50) COLLATE Latin1_General_CS_AS SPARSE MASKED WITH (FUNCTION = 'email()') NULL)"
+      ],
+      "origin": [
+        {
+          "name": "id",
+          "dataType": "int",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": false
+        },
+        {
+          "name": "sp",
+          "dataType": "int",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "extra": "SPARSE"
+        },
+        {
+          "name": "m",
+          "dataType": "varchar(20)",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "collation": "Latin1_General_CS_AS",
+          "extra": "MASKED WITH (FUNCTION = N'partial(1, \"x\", 0)')"
+        },
+        {
+          "name": "e",
+          "dataType": "nvarchar(50)",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "collation": "Latin1_General_CS_AS",
+          "extra": "SPARSE MASKED WITH (FUNCTION = N'email()')"
+        }
+      ],
+      "draft": [
+        {
+          "origin": "id"
+        },
+        {
+          "origin": "sp",
+          "dataType": "bigint"
+        },
+        {
+          "origin": "m",
+          "nullable": false
+        },
+        {
+          "origin": "e",
+          "dataType": "nvarchar(80)"
+        }
+      ],
+      "statements": [
+        "ALTER TABLE [dbo].[ddl_conf_ms_extra] ALTER COLUMN [sp] bigint SPARSE NULL",
+        "ALTER TABLE [dbo].[ddl_conf_ms_extra] ALTER COLUMN [m] varchar(20) COLLATE Latin1_General_CS_AS NOT NULL",
+        "ALTER TABLE [dbo].[ddl_conf_ms_extra] ALTER COLUMN [m] ADD MASKED WITH (FUNCTION = N'partial(1, \"x\", 0)')",
+        "ALTER TABLE [dbo].[ddl_conf_ms_extra] ALTER COLUMN [e] nvarchar(80) COLLATE Latin1_General_CS_AS SPARSE NULL",
+        "ALTER TABLE [dbo].[ddl_conf_ms_extra] ALTER COLUMN [e] ADD MASKED WITH (FUNCTION = N'email()')"
+      ],
+      "refusals": [],
+      "impacts": [],
+      "after": [
+        {
+          "name": "id",
+          "dataType": "int",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": false
+        },
+        {
+          "name": "sp",
+          "dataType": "bigint",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "extra": "SPARSE"
+        },
+        {
+          "name": "m",
+          "dataType": "varchar(20)",
+          "nullable": false,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "collation": "Latin1_General_CS_AS",
+          "extra": "MASKED WITH (FUNCTION = N'partial(1, \"x\", 0)')"
+        },
+        {
+          "name": "e",
+          "dataType": "nvarchar(80)",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "collation": "Latin1_General_CS_AS",
+          "extra": "SPARSE MASKED WITH (FUNCTION = N'email()')"
+        }
+      ],
+      "cleanup": [
+        "IF OBJECT_ID(N'dbo.ddl_conf_ms_extra') IS NOT NULL DROP TABLE dbo.ddl_conf_ms_extra"
+      ]
+    },
+    {
       "name": "sqlserver-create-with-identity-key",
       "kind": "create",
       "dialect": "sqlserver",

@@ -474,6 +474,9 @@ function sqlServerDropDefault(table: string, column: string): string {
  * - 默认值不能 `SET DEFAULT`，只能删约束再加一个；删列前同样要先删它。
  * - 改名走 `sp_rename`，新名字**不带方括号**（带了就成了名字的一部分）。
  * - 自增、计算列与 rowversion 除了改名什么都不能改，点名拒绝。
+ * - 同样会被 `ALTER COLUMN` 静默摘掉的还有 SPARSE 与动态数据掩码（只改可空性也一样）：
+ *   SPARSE 写在 COLLATE 之后、NULL 之前，掩码另起一句 `ADD MASKED` 加回去。
+ *   两样都从列目录的 `column_extra` 来。
  *
  * DDL 在 SQL Server 里是事务性的，一批语句由 `execute_write_batch` 兜住，
  * 所以每个动作单独一句，不用像 MySQL 那样挤进一条。
@@ -532,9 +535,17 @@ function buildSqlServerTableDdl(request: TableDdlRequest): DdlPlan {
         && SQL_SERVER_CHARACTER_TYPES.has(columnTypeToken(dataType))
         ? ` COLLATE ${origin.collation}`
         : '';
+      const extra = origin.column_extra ?? '';
+      const sparse = /^SPARSE\b/.test(extra) ? ' SPARSE' : '';
       alters.push(
-        `ALTER TABLE ${current} ALTER COLUMN ${quoted} ${dataType}${collation} ${column.nullable ? 'NULL' : 'NOT NULL'}`
+        `ALTER TABLE ${current} ALTER COLUMN ${quoted} ${dataType}${collation}${sparse} ${column.nullable ? 'NULL' : 'NOT NULL'}`
       );
+      // 掩码写不进 ALTER COLUMN，而 ALTER COLUMN 一定会把它摘掉：另起一句加回去。
+      // 这段是列目录里服务端自己转义好的 SQL 原文
+      const mask = /MASKED WITH \(FUNCTION = N'.*'\)$/.exec(extra);
+      if (mask) {
+        alters.push(`ALTER TABLE ${current} ALTER COLUMN ${quoted} ADD ${mask[0]}`);
+      }
     }
     if (change.defaultChanged) {
       alters.push(sqlServerDropDefault(current, column.name));
