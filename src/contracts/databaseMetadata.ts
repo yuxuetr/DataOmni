@@ -19,6 +19,11 @@ export interface ColumnInfo {
    */
   is_generated?: boolean;
   /**
+   * `is_generated` 里的自增 / identity 那一种（MySQL 的 AUTO_INCREMENT 也算）。
+   * 计算列的值写不进去，自增列的值可以、而且导出再导回时要原样带过去
+   */
+  is_identity?: boolean;
+  /**
    * 以下三项只有 MySQL 有值。
    *
    * 改一列的类型或可空性在 MySQL 里只能用 `MODIFY COLUMN`，而 MODIFY

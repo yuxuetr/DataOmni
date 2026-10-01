@@ -38,6 +38,7 @@ export function toColumnInfo(rows: unknown): ColumnInfo[] {
       primary_key_ordinal: primaryKeyOrdinal > 0 ? primaryKeyOrdinal : undefined,
       default_value: (col.column_default ?? undefined) as string | undefined,
       is_generated: Boolean(col.is_generated),
+      is_identity: Boolean(col.is_identity),
       collation: (col.collation ?? null) as string | null,
       comment: (col.comment ?? null) as string | null,
       column_extra: (col.column_extra ?? null) as string | null

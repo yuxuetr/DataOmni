@@ -58,6 +58,10 @@ pub struct ExportOptions {
   /// `sql` 格式必须有；缺了按 SQLite（双引号标识符、标准字符串）写，与前端一致
   #[serde(default)]
   pub sql_dialect: Option<SqlDialect>,
+  /// 计算列（含 SQL Server 的 rowversion）：值由数据库算，`INSERT` 里写了它各家都报错，
+  /// 所以 `sql` 格式不写这几列。CSV 与 JSON 照写，那是给人看的
+  #[serde(default)]
+  pub sql_computed_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -99,7 +103,14 @@ pub struct ExportWriter<W: Write> {
 }
 
 impl<W: Write> ExportWriter<W> {
-  pub fn begin(inner: W, columns: Vec<String>, options: ExportOptions) -> Result<Self, QueryError> {
+  pub fn begin(
+    inner: W,
+    mut columns: Vec<String>,
+    options: ExportOptions,
+  ) -> Result<Self, QueryError> {
+    if options.format == ExportFormat::Sql {
+      columns.retain(|name| !options.sql_computed_columns.contains(name));
+    }
     let json_keys = unique_column_names(&columns);
     let mut writer = Self {
       inner,
@@ -695,6 +706,7 @@ mod tests {
       byte_order_mark: false,
       sql_table: String::new(),
       sql_dialect: None,
+      sql_computed_columns: Vec::new(),
     }
   }
 

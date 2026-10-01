@@ -141,7 +141,8 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
 /// 只能从 `attidentity` / `EXTRA` 读。
 ///
 /// `attgenerated` / `GENERATION_EXPRESSION` / `hidden` 把计算列也一并算进来：
-/// 计算列同样不能由调用方赋值。
+/// 计算列同样不能由调用方赋值。`is_identity` 把自增那一种单独拎出来：导出成 `INSERT`
+/// 时计算列不写，自增列的值要原样写进去。
 ///
 /// 最后三个字段只有 MySQL 有值，因为只有 MySQL 需要它们：改一列的类型或
 /// 可空性只能用 `MODIFY COLUMN`，而 MODIFY **重述整段定义**——没写进去的
@@ -165,6 +166,7 @@ SELECT
   (COALESCE(row_to_json(a)->>'attidentity', '') <> ''
     OR COALESCE(row_to_json(a)->>'attgenerated', '') <> ''
     OR COALESCE(row_to_json(d)->>'adgencol', '') = 's') AS is_generated,
+  (COALESCE(row_to_json(a)->>'attidentity', '') <> '') AS is_identity,
   NULL::text AS collation,
   NULL::text AS comment,
   NULL::text AS column_extra
@@ -239,6 +241,7 @@ SELECT
   (kcu.ORDINAL_POSITION IS NOT NULL) AS is_primary_key,
   kcu.ORDINAL_POSITION AS primary_key_ordinal,
   (c.EXTRA LIKE '%auto_increment%' OR COALESCE(c.GENERATION_EXPRESSION, '') <> '') AS is_generated,
+  (c.EXTRA LIKE '%auto_increment%') AS is_identity,
   CAST(c.COLLATION_NAME AS CHAR) AS collation,
   CAST(NULLIF(c.COLUMN_COMMENT, '') AS CHAR) AS comment,
   CAST(CASE
@@ -281,6 +284,7 @@ SELECT
   (p.pk > 0) AS is_primary_key,
   NULLIF(p.pk, 0) AS primary_key_ordinal,
   (p.hidden IN (2, 3)) AS is_generated,
+  0 AS is_identity,
   NULL AS collation,
   NULL AS comment,
   NULL AS column_extra
@@ -575,6 +579,7 @@ SELECT
   CAST(pk.key_ordinal AS int) AS primary_key_ordinal,
   CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR ty.name = 'timestamp'
     THEN 1 ELSE 0 END AS bit) AS is_generated,
+  c.is_identity AS is_identity,
   c.collation_name AS collation,
   CAST(NULL AS nvarchar(1)) AS comment,
   CAST(NULL AS nvarchar(1)) AS column_extra
@@ -717,6 +722,7 @@ SELECT
   CAST(pk.position AS NUMBER(10)) AS "primary_key_ordinal",
   CAST(CASE WHEN c.identity_column = 'YES' OR c.virtual_column = 'YES' THEN 1 ELSE 0 END
     AS NUMBER(1)) AS "is_generated",
+  CAST(CASE WHEN c.identity_column = 'YES' THEN 1 ELSE 0 END AS NUMBER(1)) AS "is_identity",
   CAST(NULL AS VARCHAR2(1)) AS "collation",
   cm.comments AS "comment",
   CAST(NULL AS VARCHAR2(1)) AS "column_extra"
@@ -861,6 +867,7 @@ SELECT
   (pk.ordinal IS NOT NULL) AS is_primary_key,
   pk.ordinal AS primary_key_ordinal,
   COALESCE(g.is_generated, false) AS is_generated,
+  false AS is_identity,
   NULL::VARCHAR AS collation,
   c.comment AS comment,
   NULL::VARCHAR AS column_extra
@@ -1018,6 +1025,7 @@ SELECT
   toBool(c.is_in_primary_key) AS is_primary_key,
   nullIf(indexOf(splitByString(', ', t.primary_key), c.name), 0) AS primary_key_ordinal,
   toBool(c.default_kind IN ('MATERIALIZED', 'ALIAS', 'EPHEMERAL')) AS is_generated,
+  false AS is_identity,
   CAST(NULL AS Nullable(String)) AS collation,
   nullIf(c.comment, '') AS comment,
   nullIf(arrayStringConcat(arrayFilter(part -> part != '', [
@@ -1320,6 +1328,7 @@ mod tests {
         "is_primary_key",
         "primary_key_ordinal",
         "is_generated",
+        "is_identity",
       ] {
         assert!(
           queries.columns.contains(alias),

@@ -122,6 +122,7 @@ import { useTableEditStore, tableEditKey } from '../stores/tableEditStore';
 import { selectTableStructure, useAppStore } from '../stores/appStore';
 import { buildFilterClause, isCompleteFilter, type ColumnFilter } from '../utils/tableFilters';
 import { serverLabel } from '../utils/serverPresets';
+import { computedColumnNames } from '../utils/exportResult';
 
 // 编辑模式类型
 type EditMode = 'view' | 'edit' | 'add';
@@ -1850,6 +1851,7 @@ export default function TableDataViewer({
           connectionId={connection.id}
           sqlDialect={dialect}
           sqlTable={tableName}
+          sqlComputedColumns={computedColumnNames(tableSchema?.columns ?? [])}
           // 导出跟着可见列走，否则藏起来的列会在文件里冒出来。两个范围各自把
           // 话说全：少了哪几列、是这一页还是整张表，用户不该打开文件才发现
           scopes={exportScopes}

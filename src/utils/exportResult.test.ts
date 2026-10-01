@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SerializedResultValue } from '../contracts/resultSet';
 import {
   DEFAULT_EXPORT_OPTIONS,
+  computedColumnNames,
   serializeExport,
   suggestExportFileName,
   toCsv,
@@ -163,5 +164,23 @@ describe('suggestExportFileName', () => {
   it('来源名为空时用兜底名', () => {
     expect(suggestExportFileName('', 'csv', new Date('2026-09-20T08:09:10Z')))
       .toMatch(/^result-\d{8}-\d{6}\.csv$/);
+  });
+});
+
+describe('computedColumnNames', () => {
+  it('只挑计算列：自增列的值要原样写进 INSERT', () => {
+    const column = (name: string, flags: { is_generated?: boolean; is_identity?: boolean }) => ({
+      name,
+      data_type: 'int',
+      is_nullable: true,
+      is_primary_key: false,
+      ...flags
+    });
+    expect(computedColumnNames([
+      column('id', { is_generated: true, is_identity: true }),
+      column('twice', { is_generated: true }),
+      column('rv', { is_generated: true, is_identity: false }),
+      column('note', {})
+    ])).toEqual(['twice', 'rv']);
   });
 });

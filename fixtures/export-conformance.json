@@ -1125,6 +1125,62 @@
         "sqlDialect": "postgresql"
       },
       "expected": ""
+    },
+    {
+      "name": "sql-leaves-out-computed-columns",
+      "columns": [
+        "id",
+        "n",
+        "twice",
+        "note"
+      ],
+      "rows": [
+        {
+          "id": 1,
+          "n": 2,
+          "twice": 4,
+          "note": "a"
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "orders",
+        "sqlDialect": "mysql",
+        "sqlComputedColumns": [
+          "twice"
+        ]
+      },
+      "expected": "INSERT INTO `orders` (`id`, `n`, `note`) VALUES (1, 2, 'a');"
+    },
+    {
+      "name": "csv-keeps-computed-columns",
+      "columns": [
+        "n",
+        "twice"
+      ],
+      "rows": [
+        {
+          "n": 2,
+          "twice": 4
+        }
+      ],
+      "options": {
+        "format": "csv",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "orders",
+        "sqlDialect": "mysql",
+        "sqlComputedColumns": [
+          "twice"
+        ]
+      },
+      "expected": "n,twice\n2,4"
     }
   ]
 }

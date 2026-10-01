@@ -1,3 +1,4 @@
+import type { ColumnInfo } from '../contracts/databaseMetadata';
 import type { SqlDialect } from '../contracts/queryExecution';
 import type { SerializedResultValue } from '../contracts/resultSet';
 import { binaryLiteral } from './columnEditors';
@@ -23,6 +24,11 @@ export interface ExportOptions {
   sqlTable: string;
   /** 字面量与标识符按哪家的规矩写。`sql` 格式必须有 */
   sqlDialect?: SqlDialect;
+  /**
+   * 计算列（含 SQL Server 的 rowversion）：值由数据库算，`INSERT` 里写了它各家都报错，
+   * 所以 `sql` 格式不写这几列。CSV 与 JSON 照写，那是给人看的
+   */
+  sqlComputedColumns?: readonly string[];
 }
 
 export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
@@ -109,16 +115,25 @@ export function toJson(
 export function toSqlInserts(
   columns: readonly string[],
   rows: ReadonlyArray<readonly SerializedResultValue[]>,
-  options: Pick<ExportOptions, 'sqlTable' | 'sqlDialect'>
+  options: Pick<ExportOptions, 'sqlTable' | 'sqlDialect' | 'sqlComputedColumns'>
 ): string {
   const dialect = options.sqlDialect ?? 'sqlite';
+  const computed = new Set(options.sqlComputedColumns ?? []);
+  const written = columns
+    .map((name, index) => ({ name, index }))
+    .filter(column => !computed.has(column.name));
   const head = `INSERT INTO ${quoteSqlIdentifier(options.sqlTable, dialect)} (`
-    + columns.map(name => quoteSqlIdentifier(name, dialect)).join(', ')
+    + written.map(column => quoteSqlIdentifier(column.name, dialect)).join(', ')
     + ') VALUES (';
 
   return rows
-    .map(row => head + columns.map((_, index) => sqlLiteral(row[index] ?? null, dialect)).join(', ') + ');')
+    .map(row => head + written.map(column => sqlLiteral(row[column.index] ?? null, dialect)).join(', ') + ');')
     .join(LINE_SEPARATOR);
+}
+
+/** 写 `INSERT` 时要略去的列：值由数据库算出的计算列。自增列不算——它的值要原样带过去 */
+export function computedColumnNames(columns: readonly ColumnInfo[]): string[] {
+  return columns.filter(column => column.is_generated && !column.is_identity).map(column => column.name);
 }
 
 /**

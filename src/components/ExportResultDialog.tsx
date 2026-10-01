@@ -61,6 +61,8 @@ interface ExportResultDialogProps {
   sqlDialect?: SqlDialect;
   /** `INSERT INTO` 的默认表名。查询结果多半说不出来自哪张表，留空让用户填 */
   sqlTable?: string;
+  /** 这张表的计算列：`INSERT` 不写它们，见 `ExportOptions.sqlComputedColumns` */
+  sqlComputedColumns?: readonly string[];
   onClose: () => void;
 }
 
@@ -96,13 +98,15 @@ export function ExportResultDialog({
   connectionId,
   sqlDialect,
   sqlTable,
+  sqlComputedColumns,
   onClose
 }: ExportResultDialogProps) {
   const t = useLanguageStore((state) => state.t);
   const [options, setOptions] = useState<ExportOptions>({
     ...DEFAULT_EXPORT_OPTIONS,
     sqlTable: sqlTable ?? '',
-    sqlDialect
+    sqlDialect,
+    sqlComputedColumns
   });
   const [scopeId, setScopeId] = useState(scopes?.[0]?.id ?? '');
   const [writing, setWriting] = useState(false);

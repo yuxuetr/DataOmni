@@ -3635,6 +3635,7 @@ fn csv_export_options() -> ExportOptions {
     byte_order_mark: false,
     sql_table: String::new(),
     sql_dialect: None,
+    sql_computed_columns: Vec::new(),
   }
 }
 
@@ -3881,6 +3882,14 @@ async fn postgres_reports_declared_types_and_generated_columns() {
   }
   assert!(by_name("area").4, "计算列必须标成由数据库产生: {columns:?}");
   assert!(!by_name("code").4, "普通非空列不是由数据库产生的: {columns:?}");
+  // 导出 INSERT 时计算列不写、自增列照写，靠这一项分开两者
+  let identity = |name: &str| {
+    rows
+      .iter()
+      .find(|row| row.get::<String, _>("column_name") == name)
+      .map(|row| row.get::<bool, _>("is_identity"))
+  };
+  assert_eq!((identity("id"), identity("area")), (Some(!opengauss), Some(false)));
 
   assert_eq!(by_name("id").3, Some(1), "主键次序: {columns:?}");
   assert_eq!(by_name("code").3, None, "非主键列没有键内次序: {columns:?}");
@@ -3937,6 +3946,13 @@ async fn mysql_reports_declared_types_and_generated_columns() {
   assert_eq!(by_name("id").4, 1, "AUTO_INCREMENT 必须标成由数据库产生: {columns:?}");
   assert_eq!(by_name("area").4, 1, "计算列必须标成由数据库产生: {columns:?}");
   assert_eq!(by_name("code").4, 0, "普通非空列不是由数据库产生的: {columns:?}");
+  let identity = |name: &str| {
+    rows
+      .iter()
+      .find(|row| row.get::<String, _>("column_name") == name)
+      .map(|row| row.get::<i64, _>("is_identity"))
+  };
+  assert_eq!((identity("id"), identity("area")), (Some(1), Some(0)));
 
   assert_eq!(by_name("id").3, Some(1), "主键次序: {columns:?}");
   assert_eq!(by_name("code").3, None, "非主键列没有键内次序: {columns:?}");

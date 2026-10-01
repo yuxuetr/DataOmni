@@ -552,6 +552,10 @@ async fn sql_server_catalog_queries_describe_the_fixture() {
   assert_eq!(by_name("id")["is_generated"], json!(true));
   assert_eq!(by_name("total")["is_generated"], json!(true));
   assert_eq!(by_name("created")["is_generated"], json!(false));
+  assert_eq!(
+    (&by_name("id")["is_identity"], &by_name("total")["is_identity"]),
+    (&json!(true), &json!(false))
+  );
   assert!(text(&by_name("created")["column_default"]).to_lowercase().contains("sysdatetime"));
   assert_eq!(by_name("note")["is_nullable"], json!(true));
   assert_eq!(by_name("ref_a")["is_nullable"], json!(false));
@@ -1026,6 +1030,7 @@ fn export_options() -> dataomni_lib::services::ExportOptions {
     byte_order_mark: false,
     sql_table: String::new(),
     sql_dialect: None,
+    sql_computed_columns: Vec::new(),
   }
 }
 
