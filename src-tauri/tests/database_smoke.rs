@@ -516,6 +516,34 @@ async fn mysql_single_precision_floats_read_as_the_client_writes_them() {
   assert_eq!(rows[0]["wide"], 0.1);
 }
 
+/// sqlx 把显示宽度为 1 的 TINYINT 一律报成 BOOLEAN，而 `tinyint(1)` 常拿来存状态码：
+/// 按布尔解的话 2、-128 都成了 true，导出的文件里也是 true；mysql 客户端写的是存的数
+#[tokio::test]
+async fn mysql_tinyint_one_reads_the_stored_number() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  sqlx::raw_sql(
+    "DROP TABLE IF EXISTS om_tinyint_one;
+     CREATE TABLE om_tinyint_one (id INT PRIMARY KEY, status TINYINT(1), flag BOOL, u TINYINT(1) UNSIGNED);
+     INSERT INTO om_tinyint_one VALUES (1, -128, TRUE, 255)",
+  )
+  .execute(&pool)
+  .await
+  .expect("create table");
+  let result =
+    execute_query(&DbPool::MySql(pool.clone()), "SELECT * FROM om_tinyint_one ORDER BY id")
+      .await
+      .expect("execute query");
+  sqlx::raw_sql("DROP TABLE om_tinyint_one").execute(&pool).await.expect("drop table");
+  assert_tagged_values(
+    result,
+    &[("status", "bigint", "-128"), ("flag", "bigint", "1"), ("u", "bigint", "255")],
+  );
+}
+
 #[tokio::test]
 async fn mysql_decodes_common_column_types() {
   let Some(url) = network_database_url(MYSQL_URL_ENV) else {

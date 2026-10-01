@@ -1261,7 +1261,12 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, QueryError> {
     // MySQL 存不了 NaN 与无穷
     "FLOAT" => float_value(ValueRef::to_owned(&value).try_decode::<f32>().map(widen_f32), "Inf"),
     "DOUBLE" => float_value(ValueRef::to_owned(&value).try_decode::<f64>(), "Inf"),
-    "BOOLEAN" => json_value(ValueRef::to_owned(&value).try_decode::<bool>()),
+    // sqlx 把显示宽度为 1 的 TINYINT 都报成 BOOLEAN，而 `tinyint(1)` 常存状态码：
+    // 按布尔解 2 就成了 true。照存的数取，与 mysql 客户端相同；UNSIGNED 的 i64 不认，改取 u64
+    "BOOLEAN" => match ValueRef::to_owned(&value).try_decode::<i64>() {
+      Ok(number) => Ok(tagged_value("bigint", number.to_string())),
+      Err(_) => tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<u64>()),
+    },
     // MySQL 的 TIME 是时长而非时刻（-838:59:59 ~ 838:59:59），装不进 time::Time
     "TIME" => {
       let duration =
