@@ -129,8 +129,9 @@ impl SqlServerTarget {
     // 超时设置管（可以选不限），驱动这一层不另设上限
     config.command_timeout(None);
     // NVARCHAR 不检查代理对是否成对（`LEFT` 截在 emoji 中间就存下半个），严格解码的话
-    // 一个这样的值让整条查询失败。解不出的部分换成 U+FFFD，与 SQLite 的非 UTF-8 文本同一个做法；
-    // 改这一格时守卫拿替换过的值去比、比不上，整批回滚，不会写错
+    // 一个这样的值让整条查询失败。解不出的部分换成 U+FFFD，与 SQLite 的非 UTF-8 文本同一个做法。
+    // 改这一格时守卫拿替换过的值去比：默认的 SQL_Latin1_General_CP1_CI_AS 把半个代理对与 U+FFFD
+    // 当成相等，照常改（打包版上试过）；二进制与 `_SC` 排序规则下比不上，整批回滚。行都靠主键定位
     config.lossy_utf16_decoding(true);
     config.authentication(AuthMethod::sql_server(&self.username, &self.password));
     let (encryption, verify) = tls_settings(self.tls);
