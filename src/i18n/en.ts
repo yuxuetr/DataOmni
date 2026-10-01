@@ -776,6 +776,7 @@ export const en: Translations = {
   'queryError.positionAt': 'line {line}, column {column}',
   'queryError.jump': 'Jump to the error',
   'queryError.oracleTimeZoneFile': 'Most likely a TIMESTAMP WITH TIME ZONE column stored with a region name (such as Asia/Shanghai): the local Oracle client\'s time zone file is a different version from the server\'s, so it cannot convert the value. Let the server convert it in the query, for example TO_CHAR(col, \'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM\') or SYS_EXTRACT_UTC(col); the table data view already reads it that way.',
+  'queryError.oracleNativeJson': 'The result has a column of Oracle\'s native JSON type, which the driver cannot read. Let the server write it as text in the query, for example JSON_SERIALIZE(col RETURNING CLOB) AS col; the table data view already reads it that way.',
   'queryError.detail': 'Detail',
   'queryError.hint': 'Hint',
   'queryError.constraint': 'Constraint',

@@ -197,6 +197,54 @@ async fn oracle_binary_floats_read_as_sqlplus_writes_them() {
   drop_quietly(&pool, "om_float").await;
 }
 
+/// Oracle 21c 起的原生 JSON 列：rust-oracle 连取回的缓冲都建不了，`SELECT *` 整条失败。
+/// 表数据页的投影（`tablePagination.ts` 的 `projectedColumn`，这里照抄）让服务端写成文本；
+/// 网格改这一格时绑的是文本，Oracle 自己解析成 JSON（JSON 列不进并发守卫）
+#[tokio::test]
+async fn oracle_native_json_reads_through_the_table_projection() {
+  use dataomni_lib::services::execute_write_batch;
+  let Some(pool) = pool().await else { return };
+  drop_quietly(&pool, "om_json").await;
+  run_all(
+    &pool,
+    &[
+      "CREATE TABLE om_json (id NUMBER(10) PRIMARY KEY, doc JSON)",
+      r#"INSERT INTO om_json VALUES (1, JSON('{"id": 12345678901234567890, "tags": ["a", "b"]}'))"#,
+      "INSERT INTO om_json VALUES (2, NULL)",
+    ],
+  )
+  .await;
+  let mut connection = session(&pool).await;
+  let error =
+    connection.execute("SELECT * FROM om_json", 10).await.expect_err("driver can't fetch JSON");
+  assert!(error.message.contains("JSON"), "{error:?}");
+
+  let projection =
+    r#"SELECT "ID", JSON_SERIALIZE("DOC" RETURNING CLOB) AS "DOC" FROM om_json ORDER BY "ID""#;
+  let rows = rows_of(connection.execute(projection, 10).await.expect("projected select"));
+  let values: Vec<_> = rows.iter().map(|row| row["DOC"].clone()).collect();
+  assert_eq!(values, [json!(r#"{"id":12345678901234567890,"tags":["a","b"]}"#), JsonValue::Null]);
+
+  execute_write_batch(
+    PoolRef::Oracle(&pool),
+    &[write(
+      r#"UPDATE "OM_JSON" SET "DOC" = :1 WHERE "ID" = 1"#,
+      vec![json!(r#"{"id": 1, "tags": []}"#)],
+      Some(1),
+    )],
+  )
+  .await
+  .expect("text binds into a JSON column");
+  let back = rows_of(
+    connection
+      .execute("SELECT JSON_SERIALIZE(doc) AS doc FROM om_json WHERE id = 1", 10)
+      .await
+      .expect("read back"),
+  );
+  assert_eq!(text(&back[0]["DOC"]), r#"{"id":1,"tags":[]}"#);
+  drop_quietly(&pool, "om_json").await;
+}
+
 /// 存成地区名的 TIMESTAMP WITH TIME ZONE：客户端的时区文件与服务器不同版本时，驱动读它是 ORA-01805，
 /// 整条查询失败。表数据页的投影（`tablePagination.ts` 的 `projectedColumn`，这里照抄）让服务端写成文本，
 /// 读出来的写法与驱动读偏移时相同；原样绑回去，并发守卫按时刻比，与存的地区名相等

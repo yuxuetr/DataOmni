@@ -264,4 +264,15 @@ describe('取表数据的投影', () => {
     );
     expect(tableProjection([typed('ID', 'NUMBER(10)'), typed('T', 'TIMESTAMP(6)')], 'oracle')).toBe('*');
   });
+
+  it('Oracle 的原生 JSON 列由服务端写成文本：驱动连取回的缓冲都建不了，整条查询失败', () => {
+    const typed = (name: string, dataType: string) => ({
+      name, data_type: dataType, is_nullable: true, is_primary_key: false
+    });
+    expect(tableProjection([typed('ID', 'NUMBER(10)'), typed('DOC', 'JSON')], 'oracle')).toBe(
+      '"ID", JSON_SERIALIZE("DOC" RETURNING CLOB) AS "DOC"'
+    );
+    // 存成 CLOB / VARCHAR2 的 JSON 驱动读得了，不动
+    expect(tableProjection([typed('ID', 'NUMBER(10)'), typed('DOC', 'CLOB')], 'oracle')).toBe('*');
+  });
 });

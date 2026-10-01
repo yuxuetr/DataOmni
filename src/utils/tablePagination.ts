@@ -198,6 +198,12 @@ function postgresTypeName(dataType: string): string {
 const ORACLE_ZONED_TIMESTAMP = /^TIMESTAMP(\(\d+\))? WITH TIME ZONE$/i;
 
 /**
+ * Oracle 21c 起的原生 `JSON` 类型：rust-oracle 0.6 连取回它的缓冲都建不了（unsupported Oracle type JSON），
+ * 结果里有一列就整条失败。存成 CLOB / VARCHAR2 的 JSON 读得了，不在此列
+ */
+const ORACLE_NATIVE_JSON = 'JSON';
+
+/**
  * tiberius 把 money 拼成 f64 再除以 1e4：五千亿往上第四位小数就不对了（`922337203685477.5807` 读成
  * `…477.625`），并发守卫拿这个原值去比，那一行永远改不了。smallmoney 只有 32 位，f64 装得下
  */
@@ -209,7 +215,8 @@ function isUnreadableColumn(column: ColumnInfo, dialect: SqlIdentifierDialect): 
     return token === SQL_SERVER_MONEY || SQL_SERVER_UNREADABLE_TYPES.has(token);
   }
   if (dialect === 'oracle') {
-    return ORACLE_ZONED_TIMESTAMP.test(column.data_type.trim());
+    const dataType = column.data_type.trim();
+    return ORACLE_ZONED_TIMESTAMP.test(dataType) || dataType.toUpperCase() === ORACLE_NATIVE_JSON;
   }
   return dialect === 'postgresql' && !POSTGRES_READABLE_TYPES.has(postgresTypeName(column.data_type));
 }
@@ -230,6 +237,10 @@ export function projectedColumn(column: ColumnInfo, dialect: SqlIdentifierDialec
     return columnTypeToken(column.data_type) === SQL_SERVER_MONEY
       ? `CAST(${name} AS decimal(19,4)) AS ${name}`
       : `CAST(${name} AS nvarchar(max)) AS ${name}`;
+  }
+  if (dialect === 'oracle' && column.data_type.trim().toUpperCase() === ORACLE_NATIVE_JSON) {
+    // CLOB 而不是默认的 VARCHAR2(4000)：长文档不会因为超长报错
+    return `JSON_SERIALIZE(${name} RETURNING CLOB) AS ${name}`;
   }
   if (dialect === 'oracle') {
     // 照驱动的写法：小数秒去掉末尾的 0（`.000` 连点一起去掉），时区写成偏移——会话的

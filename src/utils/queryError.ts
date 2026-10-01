@@ -40,7 +40,7 @@ export function toQueryExecutionError(error: unknown): QueryExecutionError {
         code: text(source.code),
         position: positive(source.position),
         detail: text(source.detail),
-        hint: text(source.hint) ?? knownHint(text(source.code)),
+        hint: text(source.hint) ?? knownHint(text(source.code), source.message),
         constraint: text(source.constraint),
         table: text(source.table)
       };
@@ -51,15 +51,23 @@ export function toQueryExecutionError(error: unknown): QueryExecutionError {
 }
 
 /**
- * 数据库只给了一句看不出原因的话、而原因我们知道的错误码。
+ * 数据库只给了一句看不出原因的话、而原因我们知道的错误。
  *
  * ORA-01805：存成地区名的 `TIMESTAMP WITH TIME ZONE` 要用客户端的时区文件换算，Instant Client
  * 带的版本与服务器不同就失败——Oracle 只说「possible error in date/time operation」。
- * 表数据页已经让服务端转成文本再取，SQL 标签里的语句只能由用户改
+ * Oracle 的原生 JSON 列：rust-oracle 连取回它的缓冲都建不了，驱动只说「unsupported Oracle type JSON」，
+ * 没有错误码。
+ * 两种表数据页都已经让服务端转成文本再取，SQL 标签里的语句只能由用户改
  */
-function knownHint(code: string | undefined): string | undefined {
-  return code === 'ORA-01805' ? translateNow('queryError.oracleTimeZoneFile') : undefined;
+function knownHint(code: string | undefined, message: string): string | undefined {
+  if (code === 'ORA-01805') {
+    return translateNow('queryError.oracleTimeZoneFile');
+  }
+  return message === ORACLE_UNSUPPORTED_JSON ? translateNow('queryError.oracleNativeJson') : undefined;
 }
+
+/** rust-oracle 0.6 的原话（`oracle_type.rs` 的 `var_param`） */
+const ORACLE_UNSUPPORTED_JSON = 'unsupported Oracle type JSON';
 
 export interface QueryErrorLocation {
   /** 从 1 开始，供显示 */

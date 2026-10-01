@@ -55,6 +55,12 @@ describe('toQueryExecutionError', () => {
     // 别的错误码不凭空加提示
     expect(toQueryExecutionError({ message: 'x', code: 'ORA-00942' }).hint).toBeUndefined();
   });
+
+  it('Oracle 原生 JSON 列读不了时给出 JSON_SERIALIZE 的写法：驱动只说「unsupported Oracle type JSON」', () => {
+    const error = toQueryExecutionError({ message: 'unsupported Oracle type JSON' });
+    expect(error.hint).toContain('JSON_SERIALIZE');
+    expect(toQueryExecutionError({ message: 'unsupported Oracle type FOO' }).hint).toBeUndefined();
+  });
 });
 
 describe('locateQueryError', () => {
