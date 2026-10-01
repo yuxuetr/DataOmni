@@ -1,6 +1,7 @@
 import type { QueryExecutionError } from '../contracts/queryExecution';
 import { translateBackendMessage } from './backendError';
 import { describeError } from './describeError';
+import { translateNow } from '../stores/languageStore';
 
 export const QUERY_TIMEOUT_CODE = 'QUERY_TIMEOUT';
 export const QUERY_CANCELLED_CODE = 'QUERY_CANCELLED';
@@ -39,7 +40,7 @@ export function toQueryExecutionError(error: unknown): QueryExecutionError {
         code: text(source.code),
         position: positive(source.position),
         detail: text(source.detail),
-        hint: text(source.hint),
+        hint: text(source.hint) ?? knownHint(text(source.code)),
         constraint: text(source.constraint),
         table: text(source.table)
       };
@@ -47,6 +48,17 @@ export function toQueryExecutionError(error: unknown): QueryExecutionError {
   }
 
   return { message: describeError(error) };
+}
+
+/**
+ * 数据库只给了一句看不出原因的话、而原因我们知道的错误码。
+ *
+ * ORA-01805：存成地区名的 `TIMESTAMP WITH TIME ZONE` 要用客户端的时区文件换算，Instant Client
+ * 带的版本与服务器不同就失败——Oracle 只说「possible error in date/time operation」。
+ * 表数据页已经让服务端转成文本再取，SQL 标签里的语句只能由用户改
+ */
+function knownHint(code: string | undefined): string | undefined {
+  return code === 'ORA-01805' ? translateNow('queryError.oracleTimeZoneFile') : undefined;
 }
 
 export interface QueryErrorLocation {

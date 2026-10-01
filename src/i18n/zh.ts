@@ -795,6 +795,7 @@ export const zh = {
   'queryError.position': '位置',
   'queryError.positionAt': '第 {line} 行第 {column} 列',
   'queryError.jump': '跳到出错位置',
+  'queryError.oracleTimeZoneFile': '多半是一列存成地区名（如 Asia/Shanghai）的 TIMESTAMP WITH TIME ZONE：本机 Oracle 客户端的时区文件版本与服务器不同，换算不了。在查询里让服务器转换，例如 TO_CHAR(列, \'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM\') 或 SYS_EXTRACT_UTC(列)；表数据页已经这样读取。',
   'queryError.detail': '详情',
   'queryError.hint': '提示',
   'queryError.constraint': '约束',

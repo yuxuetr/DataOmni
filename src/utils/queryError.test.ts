@@ -47,6 +47,14 @@ describe('toQueryExecutionError', () => {
   it('空串字段当作没有，不在面板上留一行空白', () => {
     expect(toQueryExecutionError({ message: 'x', hint: '   ' }).hint).toBeUndefined();
   });
+
+  it('ORA-01805 说清原因与绕法：Oracle 自己只说「possible error in date/time operation」', () => {
+    const error = toQueryExecutionError({ message: 'ORA-01805: possible error in date/time operation', code: 'ORA-01805' });
+    expect(error.hint).toContain('TO_CHAR');
+    expect(error.hint).toContain('TZH:TZM');
+    // 别的错误码不凭空加提示
+    expect(toQueryExecutionError({ message: 'x', code: 'ORA-00942' }).hint).toBeUndefined();
+  });
 });
 
 describe('locateQueryError', () => {
