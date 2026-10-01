@@ -759,7 +759,10 @@
     MySQL 按每个结果集收尾的 OK 数减去 CALL 自己的那一个。两条真库用例（SQL Server 2022、MySQL 8.4），去掉计数就红。
     打包版（rpm 0.4.63，SQL Server 经隧道）：`EXEC sp_spaceused` 显示第一个结果集，结果头上写还有 1 个。
     没做：把每个结果集都画出来（结果模型是一条语句一份结果，要改形状）。重估条件：有人要看过程的第二个结果集。
-    没验：MariaDB 的 CALL（协议相同，没起容器跑）；Oracle 的隐式结果集（`DBMS_SQL.RETURN_RESULT`）没查。
+    没验：MariaDB 的 CALL（协议相同，没起容器跑）。
+    ~~Oracle 的隐式结果集没查~~ 查了，比另两家更糟，**已修**（`6668c66`）：PL/SQL 块用 `DBMS_SQL.RETURN_RESULT` 交回的结果集整个丢掉，
+    显示「影响 0 行」。执行完先取出全部隐式结果，第一个照查询显示，其余报个数（在列之前送，到了行数上限也不漏）。
+    真库用例旧代码上红。打包版（rpm 0.4.64，Oracle 23ai 经隧道）：块交回两个结果集，显示 3 行与「还有 1 个」。
 
   - 还不能勾：Windows——构建要改 `src-tauri/Cargo.toml` 且需 Windows 开发环境，这一轮不处理。
 
