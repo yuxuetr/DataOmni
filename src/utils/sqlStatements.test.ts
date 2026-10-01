@@ -255,6 +255,16 @@ describe('Oracle 的 PL/SQL 块', () => {
       .toEqual(['SELECT 1 FROM dual', 'BEGIN NULL; END;']);
   });
 
+  it("q'…' 字符串里的引号与分号不算数，到配对的右括号或同一个字符加引号为止", () => {
+    const script = "SELECT q'[it's; ok]', Q'{a'b;}', nq'(x;)', q'<y;>', q'!it's; ok!' FROM dual; SELECT 2 FROM dual;";
+    expect(splitSqlStatements(script, 'oracle')).toEqual([
+      "SELECT q'[it's; ok]', Q'{a'b;}', nq'(x;)', q'<y;>', q'!it's; ok!' FROM dual",
+      'SELECT 2 FROM dual'
+    ]);
+    // 标识符末尾的 q 不是前缀
+    expect(splitSqlStatements("SELECT seq'a;'; SELECT 2;", 'oracle')).toEqual(["SELECT seq'a;'", 'SELECT 2']);
+  });
+
   it('别的方言不认 / 这一行', () => {
     expect(splitSqlStatements('SELECT 1;\n/\nSELECT 2;', 'postgresql'))
       .toEqual(['SELECT 1', '/\nSELECT 2']);

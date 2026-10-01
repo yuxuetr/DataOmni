@@ -8,7 +8,8 @@ type LexerState =
   | { type: 'backtick'; backslashEscapes: boolean }
   | { type: 'line-comment' }
   | { type: 'block-comment'; depth: number }
-  | { type: 'dollar-quote'; tag: string };
+  | { type: 'dollar-quote'; tag: string }
+  | { type: 'q-quote'; terminator: string };
 
 const NORMAL_STATE: LexerState = { type: 'normal' };
 
@@ -33,6 +34,7 @@ export interface SqlStatementRange {
  *   脚本里只要有一行 `GO`，就**只按 GO 切**：`CREATE PROCEDURE` 的过程体里
  *   满是分号，按分号切会把一个过程切成几段发出去。`GO 5` 这种带次数的不认——
  *   它要把这一批跑五遍，当成普通分隔符等于悄悄少跑四遍；留在批里让服务端报错。
+ * - Oracle 的 `q'[…]'` 里的引号与分号都是字面量。
  * - Oracle 照 SQL*Plus 的约定：PL/SQL 块（`BEGIN`、`DECLARE`、`CREATE … PROCEDURE`
  *   这一类）里的分号不切，块一直到单独一行的 `/` 为止，没有 `/` 就到脚本末尾。
  *   `plsqlBlocks: false` 关掉这一条——风险判定要看块里面的每一条语句。
@@ -132,6 +134,14 @@ function scanStatements(
         continue;
       }
 
+      const qQuote = dialect === 'oracle' ? matchOracleQQuote(sqlText, index) : null;
+      if (qQuote) {
+        buffer += qQuote.opening;
+        state = { type: 'q-quote', terminator: qQuote.terminator };
+        index += qQuote.opening.length;
+        continue;
+      }
+
       const dollarQuoteTag = matchDollarQuoteTag(sqlText, index);
       if (dollarQuoteTag) {
         buffer += dollarQuoteTag;
@@ -189,10 +199,11 @@ function scanStatements(
       continue;
     }
 
-    if (state.type === 'dollar-quote') {
-      if (sqlText.startsWith(state.tag, index)) {
-        buffer += state.tag;
-        index += state.tag.length;
+    if (state.type === 'dollar-quote' || state.type === 'q-quote') {
+      const closing = state.type === 'dollar-quote' ? state.tag : state.terminator;
+      if (sqlText.startsWith(closing, index)) {
+        buffer += closing;
+        index += closing.length;
         state = NORMAL_STATE;
       } else {
         buffer += sqlText[index];
@@ -335,6 +346,24 @@ export const returnsResultSet = (sql: string): boolean => {
   return ['INSERT', 'UPDATE', 'DELETE', 'MERGE'].includes(firstKeyword)
     && keywords.includes('RETURNING');
 };
+
+const Q_QUOTE_CLOSERS: Record<string, string> = { '[': ']', '{': '}', '(': ')', '<': '>' };
+
+/**
+ * Oracle 的 `q'[…]'`（前面可以有 `n`）：里面的单引号不用双写，到配对的右括号加 `'`
+ * 为止；不是括号的定界符就到同一个字符加 `'`
+ */
+function matchOracleQQuote(sqlText: string, index: number): { opening: string; terminator: string } | null {
+  if (/[\w$#]/.test(sqlText[index - 1] ?? '')) {
+    return null;
+  }
+  const match = sqlText.slice(index, index + 4).match(/^[nN]?[qQ]'([^\s])/);
+  if (!match) {
+    return null;
+  }
+  const delimiter = match[1];
+  return { opening: match[0], terminator: `${Q_QUOTE_CLOSERS[delimiter] ?? delimiter}'` };
+}
 
 /** 引号前面是一个独立的 `E` / `e`：PostgreSQL 的转义字符串，前面再连着字母数字就是标识符的一部分 */
 function isEscapeStringPrefix(sqlText: string, quoteIndex: number): boolean {
