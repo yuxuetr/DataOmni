@@ -446,6 +446,7 @@ export default function TableDataViewer({
         // 这里不再抛一条泛泛的「无法加载表结构」：loadTableSchema 的两条失败
         // 路径都已经把**原因**写进 error 了（读不到列 / 驱动报的错），再抛一条
         // 只会把原因盖掉，留给用户一句没有下一步动作的话
+        setTableData([]);
         return;
       }
       const order = createTablePaginationOrder(loadedSchema.columns, dialect);
@@ -498,6 +499,9 @@ export default function TableDataViewer({
       console.error('加载表数据失败:', err);
       // 原始错误必须可见，否则无从判断是类型解码、权限还是语法问题
       setError(describeReadError(err));
+      // 上一次的行不留：列可能已经按新结构重读过（改了列名之后刷新），旧行里没有新列名，
+      // 那一列整列画成 NULL，看起来就是「数据是空的」
+      setTableData([]);
     } finally {
       setLoading(false);
     }
@@ -1535,7 +1539,7 @@ export default function TableDataViewer({
                     <RefreshCw className="animate-spin text-fg-subtle" size={20} />
                     <span className="ml-2 text-fg-muted">{t('table.loading')}</span>
                   </div>
-                ) : (
+                ) : error ? null : (
                   <div className="flex items-center justify-center h-full text-fg-muted">
                     {t('table.empty')}
                   </div>
