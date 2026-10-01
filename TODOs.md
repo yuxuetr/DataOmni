@@ -702,6 +702,31 @@
     - `sql_server_smoke` 并行跑时有 5 条互相干扰失败，`--test-threads=1` 全过。与本轮改动无关。
     - `database_smoke` 的两条备份用例与其它用例并行跑时偶发失败（`pg_dump` / `mysqldump` 撞上别的用例正在建删的表），
       单独跑稳定通过。与本轮改动无关。
+  - 2026-10-01 结构页改列会不会丢属性（MySQL 8.4、MariaDB 11.4、SQL Server 2022 在 cu 上）。MySQL 只有 `MODIFY COLUMN <整段定义>`、
+    SQL Server 的 `ALTER COLUMN` 一次重述类型与可空性，没写进去的属性被静默删掉、语句照样成功。**修了四处**：
+    - **MySQL 的 INVISIBLE 列**（`7ccf5cf`）：改完变回可见列。照 EXTRA 带上 `INVISIBLE`；`ON UPDATE` 的正则只取到函数名与精度为止
+      （EXTRA 是 `on update CURRENT_TIMESTAMP(3) INVISIBLE`，MariaDB 是 `…(3), INVISIBLE`），否则 INVISIBLE 被吞进去写两遍。
+    - **MySQL 的空间列**（同上）：SRID 被删掉（有空间索引时报 3644）。SRID 在 `COLUMNS.SRS_ID`，TiDB 与 MariaDB 没有这一列、
+      TiDB 又不看版本注释的版本号，共用的列目录查询读不了它，所以改类型 / 可空性时拒绝并说明，只改名照常放行。
+      重估条件：有人要在结构页改空间列，届时按方言分开列目录查询再读 SRID。
+    - **SQL Server 的 SPARSE 与动态数据掩码**（`f3e3153`）：稀疏列改完就不稀疏了；带掩码的列不论改什么（只改可空性也一样）掩码都被摘掉，
+      敏感列改个长度就成了明文。列目录的 `column_extra` 记 `SPARSE` 与服务端转义好的 `MASKED WITH (FUNCTION = N'…')`；
+      SPARSE 写在 COLLATE 之后、NULL 之前（写在 NULL 后面是语法错误），掩码另起一句 `ADD MASKED` 加回去。改结构语料加一条，
+      去掉 ADD MASKED 那句真库用例就红。
+    - **SQL Server 系统版本表的时间段列**（`1b47a21`，顺带查出）：`GENERATED ALWAYS AS ROW START / END` 由服务端写（显式给值 13536），
+      列目录不算它 `is_generated`，于是新增行时被当成必填项、导出的 INSERT 每一行都执行不回去。改为 `generated_always_type <> 0` 也算。
+    - **网格里 INVISIBLE / HIDDEN 列整列是 NULL**（`b576691`，打包版上看到的）：`SELECT *` 不展开这两种列，网格的列却来自列目录。
+      有这种列时取表数据逐列点名；SQL Server 的 `column_extra` 补记 `HIDDEN`。
+    打包版（rpm 0.4.58 → 0.4.59，同一套 GNOME 容器，SQL Server 经隧道、MySQL 连 cu）：系统版本表新增一行，预览里时间段列是 DEFAULT、
+    INSERT 只写 id 与 name，提交成功；INSERT 导出不带时间段列；HIDDEN 的 `vt` 显示 `9999-12-31 23:59:59.9999999`（0.4.58 上是 NULL）。
+    带掩码与稀疏列的表改长度，预览三条（`ALTER COLUMN`、`ADD MASKED`、`… SPARSE NULL`），执行后服务端目录里掩码与稀疏都在。
+    MySQL：INVISIBLE 列的值显示出来（0.4.58 上是 NULL），改长度预览带 INVISIBLE，空间列改可空性被拒、理由文案正常；执行后
+    `secret` 仍 INVISIBLE、`g` 的 SRID 仍是 4326。
+  - 看到没修的：
+    - Oracle 的 INVISIBLE 列（12c 起）没查：`SELECT *` 同样不展开，列目录给不给它、网格是否同样整列 NULL 未知。重估条件：下次开 Oracle 时先查。
+    - SQL Server 列目录读 `sys.masked_columns` 与 `is_hidden`，这两样 2016 起才有，2014 及更早整段列查询会报错（结构页、表数据页都打不开）。
+      2014 已出扩展支持期，README 写的验证版本是 2022。重估条件：有人连 2014。
+
   - 还不能勾：Windows——构建要改 `src-tauri/Cargo.toml` 且需 Windows 开发环境，这一轮不处理。
 
 ## 暂不优先
