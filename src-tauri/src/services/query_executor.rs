@@ -1277,8 +1277,9 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, QueryError> {
       let bytes = ValueRef::to_owned(&value).try_decode::<Vec<u8>>().map_err(display_error)?;
       Ok(mysql_bytes_value(bytes))
     }
-    // WKB：内容上可能恰好是合法 UTF-8，但它从来不是文本
-    "GEOMETRY" => tagged_binary_value(ValueRef::to_owned(&value).try_decode::<Vec<u8>>()),
+    // SRID + WKB：内容上可能恰好是合法 UTF-8，但它从来不是文本。
+    // sqlx 的 Vec<u8> 不认 GEOMETRY 这个类型名，只能跳过类型检查取字节
+    "GEOMETRY" => tagged_binary_value(ValueRef::to_owned(&value).try_decode_unchecked::<Vec<u8>>()),
     "NULL" => Ok(JsonValue::Null),
     _ => Err(QueryError::message(format!("{UNSUPPORTED_COLUMN_TYPE}: {type_name}"))),
   }

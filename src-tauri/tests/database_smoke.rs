@@ -544,6 +544,36 @@ async fn mysql_tinyint_one_reads_the_stored_number() {
   );
 }
 
+/// 空间类型 sqlx 不让按字节取，一列 GEOMETRY 就让整条查询报解码失败、表整张打不开。
+/// 照 `mysql --binary-as-hex` 写成十六进制：前 4 字节是 SRID，后面是 WKB
+#[tokio::test]
+async fn mysql_geometry_reads_as_its_stored_bytes() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  sqlx::raw_sql(
+    "DROP TABLE IF EXISTS om_geometry;
+     CREATE TABLE om_geometry (id INT PRIMARY KEY, g GEOMETRY, p POINT SRID 4326);
+     INSERT INTO om_geometry VALUES (1, ST_GeomFromText('POINT(1 2)'), ST_GeomFromText('POINT(30 120)', 4326))",
+  )
+  .execute(&pool)
+  .await
+  .expect("create table");
+  let result = execute_query(&DbPool::MySql(pool.clone()), "SELECT g, p FROM om_geometry")
+    .await
+    .expect("execute query");
+  sqlx::raw_sql("DROP TABLE om_geometry").execute(&pool).await.expect("drop table");
+  assert_tagged_values(
+    result,
+    &[
+      ("g", "binary", "000000000101000000000000000000f03f0000000000000040"),
+      ("p", "binary", "e610000001010000000000000000005e400000000000003e40"),
+    ],
+  );
+}
+
 #[tokio::test]
 async fn mysql_decodes_common_column_types() {
   let Some(url) = network_database_url(MYSQL_URL_ENV) else {
