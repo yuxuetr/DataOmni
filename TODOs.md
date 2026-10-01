@@ -730,6 +730,13 @@
     - SQL Server 列目录读 `sys.masked_columns` 与 `is_hidden`，这两样 2016 起才有，2014 及更早整段列查询会报错（结构页、表数据页都打不开）。
       2014 已出扩展支持期，README 写的验证版本是 2022。重估条件：有人连 2014。
 
+  - 2026-10-01 顺着同一个问题查 PostgreSQL：`ALTER COLUMN ... TYPE` 是窄语法，原以为只改类型，实际**排序规则跟着类型走**——
+    不写 `COLLATE` 就换成新类型的默认值，语句照样成功（PG 16 与 CockroachDB 都是）。`COLLATE "C"` 的列改个长度，排序与唯一性就变了。
+    **已修**（`df629cd`）：列目录从 `information_schema.columns` 读显式的排序规则（服务端引好；`pg_catalog` 的不带模式名，
+    因为 CockroachDB 不认带模式名的写法，它的 `pg_collation` 也对不上 `en_US` 这类名字），改成字符类型时拼回 `COLLATE`，
+    改成数字等类型时不写（写了报「collations are not supported by type bigint」）。改结构语料加一条，真库红过再绿。
+    打包版（rpm 0.4.61，连 cu 的 PG 16）：改 `varchar(20) COLLATE "C"` 为 `varchar(50)`，预览带 `COLLATE "C"`，执行后服务端仍是 C、排序仍按字节。
+
   - 还不能勾：Windows——构建要改 `src-tauri/Cargo.toml` 且需 Windows 开发环境，这一轮不处理。
 
 ## 暂不优先
