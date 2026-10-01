@@ -254,6 +254,44 @@ async fn oracle_region_named_time_zones_read_through_the_table_projection() {
   drop_quietly(&pool, "om_zones").await;
 }
 
+/// 带时区的时间戳以文本绑回去，由会话的 `NLS_TIMESTAMP_TZ_FORMAT` 转换。`SS.FF TZH:TZM` 遇到没有
+/// 小数秒的值时把空格加负号当成了小数点，`-03:30` 读成 `+03:30`：美洲的偏移全是负的，改一格就差出几个小时
+#[tokio::test]
+async fn oracle_negative_offsets_write_back_with_their_sign() {
+  use dataomni_lib::services::execute_write_batch;
+  let Some(pool) = pool().await else { return };
+  drop_quietly(&pool, "om_offsets").await;
+  run_all(&pool, &["CREATE TABLE om_offsets (id NUMBER(10), at TIMESTAMP(3) WITH TIME ZONE)"]).await;
+  let values = [
+    "2026-01-01 00:00:00 -03:30",
+    "2026-01-01 00:00:00.5 -05:00",
+    "2026-01-01 00:00:00 +08:00",
+    "2026-01-01 00:00:00.25 +05:45",
+  ];
+  let statements: Vec<_> = values
+    .iter()
+    .enumerate()
+    .map(|(id, value)| {
+      write("INSERT INTO om_offsets (id, at) VALUES (:1, :2)", vec![json!(id), json!(value)], Some(1))
+    })
+    .collect();
+  execute_write_batch(PoolRef::Oracle(&pool), &statements).await.expect("insert");
+  let mut connection = session(&pool).await;
+  let rows = rows_of(
+    connection.execute("SELECT at FROM om_offsets ORDER BY id", 10).await.expect("read back"),
+  );
+  let back: Vec<_> = rows.iter().map(|row| text(&row["AT"])).collect();
+  assert_eq!(back, values);
+  // 读出来的值原样做并发守卫，要对得上
+  execute_write_batch(
+    PoolRef::Oracle(&pool),
+    &[write("UPDATE om_offsets SET id = 9 WHERE id = 0 AND at = :1", vec![json!(back[0])], Some(1))],
+  )
+  .await
+  .expect("the displayed value matches itself");
+  drop_quietly(&pool, "om_offsets").await;
+}
+
 /// ClickHouse 回归时查出的同一类：i64 最小值取 `abs()` 溢出，release 里回绕成负数、被当成安全整数，
 /// 以 JSON 数字送到前端，JavaScript 读成 -9223372036854775808 的近似值
 #[tokio::test]

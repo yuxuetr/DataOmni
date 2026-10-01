@@ -229,10 +229,14 @@ impl OracleTarget {
 /// `NLS_DATE_FORMAT` 是 `DD-MON-RR`，`2026-09-20 00:00:00` 写回去就是 ORA-01861；
 /// 小数点按地区设置可能是逗号。实验：设成下面这样之后，带不带小数秒、带不带时区的
 /// 写法都能转回去。
+///
+/// 带时区的那个用 `X`（小数点字符，由下面的 `NLS_NUMERIC_CHARACTERS` 定成 `.`）而不是字面的 `.`：
+/// `SS.FF TZH:TZM` 解析没有小数秒的值时把「空格加负号」当成了那个点，`00:00:00 -03:30` 读成
+/// `+03:30`（23ai 上逐个试过；`SSXFF` 带不带小数、正负偏移都对）
 const SESSION_FORMATS: &str = "ALTER SESSION SET \
   NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS' \
   NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF' \
-  NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM' \
+  NLS_TIMESTAMP_TZ_FORMAT = 'YYYY-MM-DD HH24:MI:SSXFF TZH:TZM' \
   NLS_NUMERIC_CHARACTERS = '.,'";
 
 pub async fn connect(target: &OracleTarget) -> Result<Arc<Connection>, QueryError> {
