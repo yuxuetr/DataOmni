@@ -419,6 +419,11 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                   })}
             </span>
           )}
+          {(result.omitted_result_sets ?? 0) > 0 && (
+            <span className="shrink-0 whitespace-nowrap text-warning">
+              {t('result.omittedResultSets', { count: result.omitted_result_sets ?? 0 })}
+            </span>
+          )}
           <span className="shrink-0 whitespace-nowrap">{t('result.executionTime', { time: formatExecutionTime(result.execution_time) })}</span>
           {canEdit && <span className="min-w-0 truncate text-fg-subtle" title={t('result.doubleClickToEdit')}>{t('result.doubleClickToEdit')}</span>}
           {/* 不能改就说清为什么。只把编辑入口收起来，用户会以为这个版本没有这个功能 */}

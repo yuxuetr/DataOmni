@@ -130,6 +130,9 @@ pub enum QueryExecutionSummary {
     row_limit: usize,
     byte_limit: usize,
     bytes_read: usize,
+    /// 第一个之后还有几个结果集没给出来（`EXEC` 过程、`CALL`、一批里几条 SELECT）。
+    /// 只显示第一个，但界面上要说少了东西
+    omitted_result_sets: usize,
   },
   Affected {
     rows_affected: u64,
@@ -148,6 +151,9 @@ pub enum QueryExecutionResult {
     row_limit: usize,
     byte_limit: usize,
     bytes_read: usize,
+    /// 第一个之后还有几个结果集没给出来（`EXEC` 过程、`CALL`、一批里几条 SELECT）。
+    /// 只显示第一个，但界面上要说少了东西
+    omitted_result_sets: usize,
   },
   Affected {
     rows_affected: u64,
@@ -642,6 +648,7 @@ async fn execute_sqlite_connection_streaming(
     row_limit: options.row_limit,
     byte_limit: options.byte_limit,
     bytes_read,
+    omitted_result_sets: 0,
   })
 }
 
@@ -761,6 +768,7 @@ async fn execute_mysql_connection_streaming(
     row_limit: options.row_limit,
     byte_limit: options.byte_limit,
     bytes_read,
+    omitted_result_sets: 0,
   })
 }
 
@@ -778,6 +786,8 @@ async fn stream_mysql_undescribed(
   let mut first: Option<Vec<QueryColumnMetadata>> = None;
   // 第一个结果集读完（或到了上限）之后，后面的只是读掉
   let mut first_done = false;
+  // 第一个结果集之后的每个结果集（空的也一样）各以一个 OK 收尾，最后还有 CALL 自己的那一个
+  let mut results_after_first: usize = 0;
   let mut rows_affected = 0;
   let mut rows = Vec::with_capacity(options.batch_size);
   let mut row_count = 0;
@@ -788,6 +798,9 @@ async fn stream_mysql_undescribed(
     let row = match item {
       sqlx::Either::Left(result) => {
         rows_affected += result.rows_affected();
+        if first_done {
+          results_after_first += 1;
+        }
         first_done |= first.is_some();
         continue;
       }
@@ -839,6 +852,7 @@ async fn stream_mysql_undescribed(
     row_limit: options.row_limit,
     byte_limit: options.byte_limit,
     bytes_read,
+    omitted_result_sets: results_after_first.saturating_sub(1),
   })
 }
 
@@ -965,6 +979,7 @@ async fn execute_postgres_connection_streaming(
     row_limit: options.row_limit,
     byte_limit: options.byte_limit,
     bytes_read,
+    omitted_result_sets: 0,
   })
 }
 
@@ -1123,6 +1138,7 @@ fn summary_with_rows(
       row_limit,
       byte_limit,
       bytes_read,
+      omitted_result_sets,
       ..
     } => Ok(QueryExecutionResult::Rows {
       columns,
@@ -1133,6 +1149,7 @@ fn summary_with_rows(
       row_limit,
       byte_limit,
       bytes_read,
+      omitted_result_sets,
     }),
     QueryExecutionSummary::Affected { rows_affected } => {
       Ok(QueryExecutionResult::Affected { rows_affected })

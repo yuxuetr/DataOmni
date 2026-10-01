@@ -361,6 +361,7 @@ export const en: Translations = {
   'result.rowCount.one': '{count} row',
   'result.truncatedByBytes': 'Truncated at the {limit} MiB memory limit',
   'result.truncatedByRows': 'Truncated at the {limit} row limit',
+  'result.omittedResultSets': '{count} more result set(s) not shown; only the first is shown here',
   'result.affectedRows': 'Rows affected: {count}',
   'result.executionTime': 'Duration: {time}',
   'result.doubleClickToEdit': 'Double-click a cell to edit',

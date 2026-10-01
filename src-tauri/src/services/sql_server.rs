@@ -724,8 +724,10 @@ async fn stream_first_result(
 ) -> Result<QueryExecutionSummary, QueryError> {
   let mut stream = client.simple_query(sql).await.map_err(|error| query_error(error, Some(sql)))?;
 
-  // 第一个结果集是要给用户看的；之后的结果集读掉不留（和另外三家一样）
+  // 第一个结果集是要给用户看的；之后的结果集读掉不留（和另外三家一样），只记个数
   let mut first: Option<(usize, Vec<QueryColumnMetadata>, Vec<String>)> = None;
+  // 每个结果集先来一份列定义，空的也有
+  let mut omitted_result_sets = 0;
   let mut rows = Vec::with_capacity(options.batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
@@ -736,6 +738,7 @@ async fn stream_first_result(
     match item {
       tiberius::QueryItem::Metadata(metadata) => {
         if first.is_some() {
+          omitted_result_sets += 1;
           continue;
         }
         let columns = metadata.columns();
@@ -799,6 +802,7 @@ async fn stream_first_result(
     row_limit: options.row_limit,
     byte_limit: options.byte_limit,
     bytes_read,
+    omitted_result_sets,
   })
 }
 

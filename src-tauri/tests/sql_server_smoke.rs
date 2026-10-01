@@ -405,6 +405,44 @@ async fn sql_server_truncates_at_the_row_limit_and_the_connection_stays_usable()
   assert_eq!(next[0]["n"], json!(7));
 }
 
+/// 一条语句返回几个结果集（`EXEC` 一个过程、`sp_help`）：只显示第一个，**而且要说还有几个**——
+/// 之前后面的读掉就没了，界面上看不出少了东西。空的结果集也算一个
+#[tokio::test]
+async fn sql_server_counts_the_result_sets_it_does_not_show() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool).await;
+  let mut rows = Vec::new();
+  let summary = connection
+    .execute_streaming(
+      "SELECT 1 AS a; SELECT 2 AS b WHERE 1 = 0; SELECT 3 AS c",
+      StreamOptions::limited(100, 16 * 1024 * 1024, 10),
+      &mut |batch| {
+        rows.extend(batch.rows);
+        Ok(())
+      },
+    )
+    .await
+    .expect("stream");
+  let QueryExecutionSummary::Rows { columns, omitted_result_sets, .. } = summary else {
+    panic!("expected rows");
+  };
+  assert_eq!(columns, vec!["a".to_string()]);
+  assert_eq!(rows.len(), 1);
+  assert_eq!(omitted_result_sets, 2);
+  let single = connection
+    .execute_streaming(
+      "SELECT 7 AS n",
+      StreamOptions::limited(100, 16 * 1024 * 1024, 10),
+      &mut |_| Ok(()),
+    )
+    .await
+    .expect("single");
+  let QueryExecutionSummary::Rows { omitted_result_sets, .. } = single else {
+    panic!("expected rows");
+  };
+  assert_eq!(omitted_result_sets, 0);
+}
+
 /// 超时之后：会话马上能用，**服务端的那条语句也停了**。
 ///
 /// 后一半是要紧的：tiberius 不发 attention 包，只放弃 future 的话那条

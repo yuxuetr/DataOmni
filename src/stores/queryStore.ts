@@ -833,6 +833,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           row_limit: driverResult.row_limit,
           byte_limit: driverResult.byte_limit,
           bytes_read: driverResult.bytes_read,
+          omitted_result_sets: driverResult.omitted_result_sets,
           editability,
           tableColumns: metadata?.columns ?? []
         };

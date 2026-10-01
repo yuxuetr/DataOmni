@@ -378,6 +378,7 @@ export const zh = {
   'result.rowCount.one': '共 {count} 行',
   'result.truncatedByBytes': '已达到 {limit} MiB 内存上限，结果已截断',
   'result.truncatedByRows': '已达到 {limit} 行上限，结果已截断',
+  'result.omittedResultSets': '还返回了 {count} 个结果集，这里只显示第一个',
   'result.affectedRows': '影响行数: {count}',
   'result.executionTime': '执行时间: {time}',
   'result.doubleClickToEdit': '双击单元格编辑',

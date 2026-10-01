@@ -901,6 +901,7 @@ impl ResultReader {
       row_limit: self.options.row_limit,
       byte_limit: self.options.byte_limit,
       bytes_read: self.bytes_read,
+      omitted_result_sets: 0,
     }
   }
 }

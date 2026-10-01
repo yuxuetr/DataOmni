@@ -670,6 +670,7 @@ impl OracleConnection {
       row_limit: options.row_limit,
       byte_limit: options.byte_limit,
       bytes_read,
+      omitted_result_sets: 0,
     })
   }
 
@@ -712,6 +713,7 @@ impl OracleConnection {
       row_limit: options.row_limit,
       byte_limit: options.byte_limit,
       bytes_read: 0,
+      omitted_result_sets: 0,
     })
   }
 
