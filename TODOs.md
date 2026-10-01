@@ -752,6 +752,15 @@
     没修：MySQL 不写 DELIMITER 的触发器 / 过程体照旧被切（`END IF` / `END LOOP` 让数 BEGIN 与 END 不成立，DELIMITER 本来就是它的写法）；
     风险判定用的关键字扫描不分方言，遇到上面几种写法只会往「更危险」那边偏（藏住后面的 WHERE），不会漏报。
 
+    同一轮查了格式化：sql-formatter 对上面几种写法（`'C:\'`、`q'[…]'`、`$tag$`、`#` 注释、方括号、GO、`/`、BEGIN ATOMIC、触发器体）
+    都不改字面量与注释的内容，GO 与 `/` 仍单独成行，不用修。
+  - 2026-10-01 一条语句返回几个结果集（`EXEC` 过程、`sp_help`、MySQL 的 `CALL`）：只显示第一个，后面的读掉就没了，界面上看不出少了东西。
+    **已修**（`4acb3a3`）：结果里记下没显示的个数，结果头上写「还返回了 N 个结果集，这里只显示第一个」。SQL Server 按列定义数（空的也算），
+    MySQL 按每个结果集收尾的 OK 数减去 CALL 自己的那一个。两条真库用例（SQL Server 2022、MySQL 8.4），去掉计数就红。
+    打包版（rpm 0.4.63，SQL Server 经隧道）：`EXEC sp_spaceused` 显示第一个结果集，结果头上写还有 1 个。
+    没做：把每个结果集都画出来（结果模型是一条语句一份结果，要改形状）。重估条件：有人要看过程的第二个结果集。
+    没验：MariaDB 的 CALL（协议相同，没起容器跑）；Oracle 的隐式结果集（`DBMS_SQL.RETURN_RESULT`）没查。
+
   - 还不能勾：Windows——构建要改 `src-tauri/Cargo.toml` 且需 Windows 开发环境，这一轮不处理。
 
 ## 暂不优先
