@@ -596,7 +596,23 @@
     DATE 列里的整数）。`-0.0` 同 DuckDB 那条（见下）。
     打包版（rpm 0.4.51，同一套 GNOME 容器）：一行 `Caf` 加 latin1 的 é 的表照常打开，显示 `Caf�`；改同一行的 note 只发 note，
     提交后 `hex(name)` 仍是 `436166E9`；改 name 本身时守卫比不上、整批回滚，库里不变。
+  - 2026-10-01 MySQL 其余类型与 JSON 里的数（MySQL 8.4、PG 16 在 cu 上）：
+    - **`tinyint(1)` 被当成布尔**（`289ab82`）：sqlx 把显示宽度为 1 的 TINYINT 一律报成 BOOLEAN，存的 `2`、`-128` 都显示 `true`，
+      SQL 标签、表数据页、导出都是。照存的数取，与 mysql 客户端相同；`BOOL` 列随之显示 `1` / `0`。UNSIGNED 取 u64。
+    - **有一列 GEOMETRY，整条查询解码失败**（`623ec7c`）：原有的分支从来没跑通过（sqlx 的 `Vec<u8>` 不认这个类型名），
+      这样的表整张打不开。跳过类型检查取字节，照 `mysql --binary-as-hex` 写十六进制（SRID + WKB）。
+    - **JSON 里 2^53 以上的整数在网格上显示错，点「格式化」再保存就写坏了**（`17fdf4f`）：前端的显示与格式化都走
+      `JSON.stringify(JSON.parse())`。改成只重排空白，字符串与数照原文抄（雪花 ID 这类后端本来就读得准）。
+    - **PG 的 json / jsonb 超出 u64 的整数与长小数被读成双精度**（`1782028`）：取服务端的原文，与 psql 相同（jsonb 显示从
+      `{"a":1}` 变成服务端的 `{"a": 1}`）。MySQL 不改：它自己就把 JSON 里的数存成双精度，服务端读出来也是那样。
+    四条用例各自先红后绿；`database_smoke` 73 条全过（两条备份用例单独跑过）。
+    同一轮探过、没有问题的：BIT(64) 全 1、YEAR、SET、ENUM、负 TIME 到 `-838:59:59`、BIGINT UNSIGNED 上限、`DATETIME(6)` 上限、latin1 的 CHAR。
+    打包版（rpm 0.4.52，同一套 GNOME 容器，连 cu 上的 MySQL 8.4）：一张带 `tinyint(1)`、GEOMETRY、JSON 的表整张打开，status 显示
+    `2` / `-1`，JSON 里的 `order_id` 显示 `1234567890123456789`，「格式化」后仍是原数；改 note 一并提交格式化过的 JSON，
+    服务端读回 `order_id` 不变、GEOMETRY 的字节不变。PG 的 JSON 只在冒烟用例里核过（显示走同一条前端路径）。
   - 看到没修的：
+    - 导出预览（`exportResult.ts`）的 JSON 仍经 `JSON.parse`，2^53 以上的整数在预览里丢位；写出的文件走 Rust，整数是准的，
+      超出 u64 的数与长小数照样经 serde_json 成了双精度。重估条件：有人拿 PG 的高精度 JSON 导出并报告。
     - SQLite 非 UTF-8 的那一格在表格里改不了（守卫拿替换字符比不上），而提示说的是「被别人改过、刷新重试」，刷新了也一样。
       要改得在 SQL 标签里按 `rowid` 写。重估条件：有人报告这种表改不了。
     - 表数据页的 inet `::1` 显示成 `::1/128`（`39bb53d` 按 `::text` 取，`text(inet)` 总带掩码；SQL 标签按 `inet_out` 是 `::1`）。
