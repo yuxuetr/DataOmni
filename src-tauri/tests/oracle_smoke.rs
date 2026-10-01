@@ -261,7 +261,8 @@ async fn oracle_negative_offsets_write_back_with_their_sign() {
   use dataomni_lib::services::execute_write_batch;
   let Some(pool) = pool().await else { return };
   drop_quietly(&pool, "om_offsets").await;
-  run_all(&pool, &["CREATE TABLE om_offsets (id NUMBER(10), at TIMESTAMP(3) WITH TIME ZONE)"]).await;
+  run_all(&pool, &["CREATE TABLE om_offsets (id NUMBER(10), at TIMESTAMP(3) WITH TIME ZONE)"])
+    .await;
   let values = [
     "2026-01-01 00:00:00 -03:30",
     "2026-01-01 00:00:00.5 -05:00",
@@ -272,7 +273,11 @@ async fn oracle_negative_offsets_write_back_with_their_sign() {
     .iter()
     .enumerate()
     .map(|(id, value)| {
-      write("INSERT INTO om_offsets (id, at) VALUES (:1, :2)", vec![json!(id), json!(value)], Some(1))
+      write(
+        "INSERT INTO om_offsets (id, at) VALUES (:1, :2)",
+        vec![json!(id), json!(value)],
+        Some(1),
+      )
     })
     .collect();
   execute_write_batch(PoolRef::Oracle(&pool), &statements).await.expect("insert");
@@ -285,7 +290,11 @@ async fn oracle_negative_offsets_write_back_with_their_sign() {
   // 读出来的值原样做并发守卫，要对得上
   execute_write_batch(
     PoolRef::Oracle(&pool),
-    &[write("UPDATE om_offsets SET id = 9 WHERE id = 0 AND at = :1", vec![json!(back[0])], Some(1))],
+    &[write(
+      "UPDATE om_offsets SET id = 9 WHERE id = 0 AND at = :1",
+      vec![json!(back[0])],
+      Some(1),
+    )],
   )
   .await
   .expect("the displayed value matches itself");
