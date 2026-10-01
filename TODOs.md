@@ -763,6 +763,15 @@
     ~~Oracle 的隐式结果集没查~~ 查了，比另两家更糟，**已修**（`6668c66`）：PL/SQL 块用 `DBMS_SQL.RETURN_RESULT` 交回的结果集整个丢掉，
     显示「影响 0 行」。执行完先取出全部隐式结果，第一个照查询显示，其余报个数（在列之前送，到了行数上限也不漏）。
     真库用例旧代码上红。打包版（rpm 0.4.64，Oracle 23ai 经隧道）：块交回两个结果集，显示 3 行与「还有 1 个」。
+  - 2026-10-01 分区表（PG 16 在 cu 上）。**修了一处**（`167f718`）：引用分区表的外键，服务端在本表上给每个分区各记一条克隆
+    （`conparentid` 指回本表那条），结构页上一条外键成了 1 + 分区数条（删克隆报 cannot drop inherited constraint），
+    ER 图从本表向每个分区各连一条线；父表的每条外键又从每个分区各连一条。排掉克隆，分区从父表继承来的外键照常列出；
+    ER 图只画分区表、不画分区。`conparentid` 与 `relispartition` 经 `row_to_json` 读（openGauss 没有这两列），
+    两条查询在 openGauss 5.0.3 与 CockroachDB 25.2 上照常。真库用例旧查询上红（6 行对 2 行）。
+    同一轮看过、没有问题的：对象树与补全都收 `relkind = 'p'`；没有按 `reltuples` 估行数的地方；备份是整库；
+    MySQL 分区表的列、索引与 `SHOW CREATE TABLE` 照常。
+    打包版（rpm 0.4.65，连 cu 的 PG 16）：引用两个分区的分区表的那张表，结构页外键 1 条、指向 `public.om_part (id, created)`；
+    ER 图 4 张表 4 条线，没有分区的框。
 
   - 还不能勾：Windows——构建要改 `src-tauri/Cargo.toml` 且需 Windows 开发环境，这一轮不处理。
 
