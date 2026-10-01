@@ -776,6 +776,43 @@ async fn duckdb_import_aborts_on_the_first_bad_row_and_names_it() {
   }
 }
 
+/// 导出把 BLOB 写成 `0x…`，导回来是这几个字节；不像十六进制的文本存它自己的字节
+#[tokio::test]
+async fn duckdb_import_reads_exported_hex_into_blob() {
+  use dataomni_lib::services::{ErrorPolicy, TransactionStrategy};
+  let pool = pool("import-blob").await;
+  run_all(&pool, &["CREATE TABLE im (id INTEGER, data BLOB)"]).await;
+  let path = std::env::temp_dir().join(format!("dataomni-duckdb-blob-{}.csv", std::process::id()));
+  std::fs::write(&path, "id,data\n1,0xdeadbeef00\n2,abc\n3,0x\n").expect("write csv");
+  let mut request =
+    import_request(&path, ErrorPolicy::Abort, TransactionStrategy::SingleTransaction);
+  request.columns.truncate(1);
+  request.columns.push(dataomni_lib::services::csv_import::ImportColumn {
+    source: 1,
+    target: "data".into(),
+    target_type: "BLOB".into(),
+  });
+  let summary = dataomni_lib::services::import_csv(
+    PoolRef::DuckDb(&pool),
+    &request,
+    &mut |_| {},
+    &mut || false,
+    &mut || false,
+  )
+  .await
+  .expect("import runs");
+  std::fs::remove_file(&path).ok();
+  assert_eq!(summary.rows_failed, 0, "{:?}", summary.errors);
+  let stored: Vec<JsonValue> = pool
+    .select("SELECT hex(data) AS h FROM im ORDER BY id", &[])
+    .await
+    .expect("read back")
+    .iter()
+    .map(|row| row["h"].clone())
+    .collect();
+  assert_eq!(stored, [json!("DEADBEEF00"), json!("616263"), json!("")]);
+}
+
 /// 整表导出：表头在取任何一行之前就位；不返回结果集的语句一行都不执行
 #[tokio::test]
 async fn duckdb_exports_stream_to_a_file_and_refuse_non_queries_before_running_them() {

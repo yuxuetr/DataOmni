@@ -4959,6 +4959,93 @@ async fn mysql_import_commits_batch_by_batch_and_names_the_bad_line() {
   sqlx::query("DROP TABLE IF EXISTS import_smoke_batch").execute(&pool).await.expect("cleanup");
 }
 
+/// 导出把二进制写成 `0x…`；导回来存的得是这几个字节，不是这串字符。
+/// 不像十六进制的文本照旧存它自己的字节
+const BINARY_IMPORT_CSV: &str = "n,data\n1,0xdeadbeef00\n2,abc\n3,0x\n";
+const BINARY_IMPORTED_HEX: [&str; 3] = ["DEADBEEF00", "616263", ""];
+
+#[tokio::test]
+async fn postgres_import_reads_exported_hex_into_bytea() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(2).connect(&url).await.expect("connect to PostgreSQL");
+  let db_pool = DbPool::Postgres(pool.clone());
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_bytea").execute(&pool).await.expect("drop");
+  sqlx::query("CREATE TABLE import_smoke_bytea (n int, data bytea)")
+    .execute(&pool)
+    .await
+    .expect("create");
+  let path = write_import_csv("pg-bytea", BINARY_IMPORT_CSV);
+  let summary = run_import(
+    &db_pool,
+    &import_request(
+      &path,
+      "import_smoke_bytea",
+      vec![import_column(0, "n", "integer"), import_column(1, "data", "bytea")],
+    ),
+  )
+  .await;
+  assert_eq!(summary.rows_failed, 0, "{:?}", summary.errors);
+
+  let stored: Vec<String> =
+    sqlx::query_scalar("SELECT upper(encode(data, 'hex')) FROM import_smoke_bytea ORDER BY n")
+      .fetch_all(&pool)
+      .await
+      .expect("read back");
+  assert_eq!(stored, BINARY_IMPORTED_HEX);
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_bytea").execute(&pool).await.expect("cleanup");
+}
+
+#[tokio::test]
+async fn mysql_import_reads_exported_hex_into_blob() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(2).connect(&url).await.expect("connect to MySQL");
+  let db_pool = DbPool::MySql(pool.clone());
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_blob").execute(&pool).await.expect("drop");
+  sqlx::query("CREATE TABLE import_smoke_blob (n int, data blob, fixed varbinary(8))")
+    .execute(&pool)
+    .await
+    .expect("create");
+  let path = write_import_csv(
+    "mysql-blob",
+    "n,data,fixed\n1,0xdeadbeef00,0xdeadbeef00\n2,abc,abc\n3,0x,0x\n",
+  );
+  let summary = run_import(
+    &db_pool,
+    &import_request(
+      &path,
+      "import_smoke_blob",
+      vec![
+        import_column(0, "n", "int"),
+        import_column(1, "data", "blob"),
+        import_column(2, "fixed", "varbinary(8)"),
+      ],
+    ),
+  )
+  .await;
+  assert_eq!(summary.rows_failed, 0, "{:?}", summary.errors);
+
+  let stored: Vec<(String, String)> = sqlx::query_as(
+    "SELECT CAST(HEX(data) AS CHAR), CAST(HEX(fixed) AS CHAR) FROM import_smoke_blob ORDER BY n",
+  )
+  .fetch_all(&pool)
+  .await
+  .expect("read back");
+  let expected: Vec<(String, String)> =
+    BINARY_IMPORTED_HEX.iter().map(|hex| (hex.to_string(), hex.to_string())).collect();
+  assert_eq!(stored, expected);
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_blob").execute(&pool).await.expect("cleanup");
+}
+
 /// 对象级结构操作的共用语料：`fixtures/object-ddl-conformance.json`。
 ///
 /// 前端的 `objectDdl.conformance.test.ts` 核对生成的语句；这里把同一条语句拿真库

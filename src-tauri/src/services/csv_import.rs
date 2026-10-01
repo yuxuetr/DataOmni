@@ -477,6 +477,18 @@ impl Dialect {
     (!matches!(self, Self::SqlServer | Self::Oracle)).then(|| format!("RELEASE SAVEPOINT {name}"))
   }
 
+  /// 把绑进来的一串十六进制转成字节的表达式；Oracle 不用转，见 [`binary_param`]
+  fn unhex(&self, placeholder: &str) -> String {
+    match self {
+      Self::Postgres => format!("decode({placeholder}, 'hex')"),
+      Self::MySql => format!("UNHEX({placeholder})"),
+      Self::Sqlite => format!("unhex({placeholder})"),
+      Self::DuckDb => format!("from_hex({placeholder})"),
+      Self::SqlServer => format!("CONVERT(varbinary(max), {placeholder}, 2)"),
+      Self::Oracle => placeholder.to_string(),
+    }
+  }
+
   /// 一条语句放几行：受占位符上限约束，SQL Server 另有 `VALUES` 的行数上限
   fn rows_per_statement(&self, batch_size: usize, columns: usize) -> usize {
     if columns == 0 {
@@ -618,21 +630,26 @@ fn build_insert(
   for _ in 0..rows {
     let mut placeholders = Vec::with_capacity(columns.len());
     for column in columns {
-      match dialect {
-        Dialect::Postgres => {
-          if !valid_type_name(&column.target_type) {
-            return Err(QueryError::message(format!(
-              "{CSV_COLUMN_TYPE_INVALID}: {} · {}",
-              column.target, column.target_type
-            )));
-          }
-          // 先钉成 text 再转到目标类型：只写 `$1::integer` 的话 PostgreSQL 会把
-          // 参数本身推断成 integer，而我们绑进去的是一串文本
-          placeholders.push(format!("${next}::text::{}", column.target_type));
+      let placeholder = match dialect {
+        // 先钉成 text：只写 `$1::integer` 的话 PostgreSQL 会把参数本身推断成 integer，
+        // 而我们绑进去的是一串文本
+        Dialect::Postgres => format!("${next}::text"),
+        Dialect::SqlServer => format!("@P{next}"),
+        Dialect::Oracle => format!(":{next}"),
+        _ => "?".to_string(),
+      };
+      if is_binary_type(&column.target_type) {
+        placeholders.push(dialect.unhex(&placeholder));
+      } else if dialect == Dialect::Postgres {
+        if !valid_type_name(&column.target_type) {
+          return Err(QueryError::message(format!(
+            "{CSV_COLUMN_TYPE_INVALID}: {} · {}",
+            column.target, column.target_type
+          )));
         }
-        Dialect::SqlServer => placeholders.push(format!("@P{next}")),
-        Dialect::Oracle => placeholders.push(format!(":{next}")),
-        _ => placeholders.push("?".to_string()),
+        placeholders.push(format!("{placeholder}::{}", column.target_type));
+      } else {
+        placeholders.push(placeholder);
       }
       next += 1;
     }
@@ -642,11 +659,45 @@ fn build_insert(
   Ok(format!("INSERT INTO {qualified} ({names}) VALUES {}", tuples.join(", ")))
 }
 
+/// 二进制列。只看类型名的第一个词，与前端 `columnEditorKind` 同一个规矩
+fn is_binary_type(target_type: &str) -> bool {
+  let token = target_type.split(['(', ' ']).next().unwrap_or("").to_ascii_lowercase();
+  matches!(
+    token.as_str(),
+    "bytea"
+      | "blob"
+      | "tinyblob"
+      | "mediumblob"
+      | "longblob"
+      | "binary"
+      | "varbinary"
+      | "image"
+      | "raw"
+  )
+}
+
+/// 二进制列的值，绑成一串十六进制，由 [`Dialect::unhex`] 在库里转回字节。
+///
+/// 导出（与网格）把二进制写成 `0x…`：照原样绑进去，存下的是这串字符本身，长度翻倍还不报错。
+/// 不像 `0x` 加偶数位十六进制的值按它自己的 UTF-8 字节存——与改之前一样。
+/// Oracle 本来就把绑进 RAW / BLOB 的文本当十六进制读，只去掉 `0x`。
+fn binary_param(dialect: Dialect, field: String) -> String {
+  let spelled = field
+    .strip_prefix("0x")
+    .filter(|hex| hex.len() % 2 == 0 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()));
+  match (spelled, dialect) {
+    (Some(hex), _) => hex.to_string(),
+    (None, Dialect::Oracle) => field,
+    (None, _) => field.bytes().map(|byte| format!("{byte:02x}")).collect(),
+  }
+}
+
 /// 从一条 CSV 记录里取出要绑定的值。
 ///
 /// 字段不够是**这一行坏了**，不是「缺的当 NULL」：短一格通常意味着这一行
 /// 的所有值都往前挪了一位，当 NULL 补上会把错位的数据静静写进库里。
 fn row_params(
+  dialect: Dialect,
   record: &csv::StringRecord,
   columns: &[ImportColumn],
   options: &CsvOptions,
@@ -654,7 +705,14 @@ fn row_params(
   let mut params = Vec::with_capacity(columns.len());
   for column in columns {
     match record.get(column.source) {
-      Some(field) => params.push(options.to_value(field)),
+      Some(field) => {
+        let value = options.to_value(field);
+        params.push(if is_binary_type(&column.target_type) {
+          value.map(|value| binary_param(dialect, value))
+        } else {
+          value
+        })
+      }
       None => {
         return Err(format!(
           "{CSV_ROW_TOO_SHORT}: {} · {} · {}",
@@ -763,7 +821,7 @@ pub async fn import_csv<'a>(
     let line = record.position().map(|position| position.line()).unwrap_or(0);
     state.rows_read += 1;
 
-    match row_params(&record, &request.columns, &request.csv) {
+    match row_params(dialect, &record, &request.columns, &request.csv) {
       Ok(params) => {
         batch.params.extend(params);
         batch.lines.push(line);
@@ -1488,6 +1546,47 @@ mod tests {
     let summary = run(&pool, &request(&path, 10)).await;
     assert_eq!(summary.rows_failed, 0, "{:?}", summary.errors);
     assert_eq!(rows_in(&pool).await, vec![(1, "张三".into()), (2, "李".repeat(10_000))]);
+  }
+
+  /// 导出把二进制写成 `0x…`，导回来得是那几个字节，不是这串字符；
+  /// 不是十六进制的文本照旧按它自己的字节存
+  #[tokio::test]
+  async fn hex_from_an_export_imports_as_the_bytes_it_spells() {
+    let DbPool::Sqlite(pool) = sqlite_pool().await else {
+      unreachable!("sqlite_pool 只给 SQLite 池");
+    };
+    sqlx::query("CREATE TABLE b (id INTEGER PRIMARY KEY, data BLOB)")
+      .execute(&pool)
+      .await
+      .expect("create table");
+    let db = DbPool::Sqlite(pool.clone());
+    let path = write_csv("binary", "id,data\n1,0xdeadbeef00\n2,0x\n3,abc\n4,0xabc\n");
+    let mut request = request(&path, 10);
+    request.table = "b".into();
+    request.columns = vec![
+      ImportColumn { source: 0, target: "id".into(), target_type: "INTEGER".into() },
+      ImportColumn { source: 1, target: "data".into(), target_type: "BLOB".into() },
+    ];
+    let summary = run(&db, &request).await;
+    assert_eq!(summary.rows_failed, 0, "{:?}", summary.errors);
+    let stored: Vec<(String, String)> =
+      sqlx::query("SELECT typeof(data), hex(data) FROM b ORDER BY id")
+        .fetch_all(&pool)
+        .await
+        .expect("select")
+        .iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect();
+    assert_eq!(
+      stored,
+      vec![
+        ("blob".into(), "DEADBEEF00".into()),
+        ("blob".into(), "".into()),
+        ("blob".into(), "616263".into()),
+        // 奇数位说不清是哪几个字节，当文本
+        ("blob".into(), "3078616263".into()),
+      ]
+    );
   }
 
   #[tokio::test]

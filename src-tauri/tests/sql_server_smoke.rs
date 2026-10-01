@@ -1044,6 +1044,67 @@ async fn sql_server_exports_stream_to_a_file_and_refuse_non_queries_before_runni
   std::fs::remove_dir_all(&dir).ok();
 }
 
+/// 导出把二进制写成 `0x…`，导回来是这几个字节；不像十六进制的文本存它自己的字节。
+/// 绑进来的是 nvarchar，SQL Server 不肯隐式转成 varbinary，得由语句明说怎么转
+#[tokio::test]
+async fn sql_server_import_reads_exported_hex_into_varbinary() {
+  let Some(pool) = pool().await else { return };
+  run_all(
+    &pool,
+    &[
+      "IF OBJECT_ID('dbo.dataomni_import_bin') IS NOT NULL DROP TABLE dbo.dataomni_import_bin",
+      "CREATE TABLE dbo.dataomni_import_bin (id int PRIMARY KEY, data varbinary(max) NULL, fixed binary(5) NULL)",
+    ],
+  )
+  .await;
+  let path = std::env::temp_dir().join(format!("dataomni-mssql-bin-{}.csv", std::process::id()));
+  std::fs::write(&path, "id,data,fixed\n1,0xdeadbeef00,0xdeadbeef00\n2,abc,abc\n3,0x,0x\n")
+    .expect("write csv");
+  let mut request = import_request(&path, dataomni_lib::services::ErrorPolicy::Abort);
+  request.table = "dataomni_import_bin".into();
+  request.columns = vec![
+    dataomni_lib::services::csv_import::ImportColumn {
+      source: 0,
+      target: "id".into(),
+      target_type: "int".into(),
+    },
+    dataomni_lib::services::csv_import::ImportColumn {
+      source: 1,
+      target: "data".into(),
+      target_type: "varbinary(max)".into(),
+    },
+    dataomni_lib::services::csv_import::ImportColumn {
+      source: 2,
+      target: "fixed".into(),
+      target_type: "binary(5)".into(),
+    },
+  ];
+  let summary = run_import(&pool, &request).await;
+  std::fs::remove_file(&path).ok();
+  assert_eq!(summary.rows_failed, 0, "{:?}", summary.errors);
+  let stored: Vec<(JsonValue, JsonValue)> = pool
+    .select(
+      "SELECT CONVERT(varchar(max), data, 2) AS d, CONVERT(varchar(max), fixed, 2) AS f \
+       FROM dbo.dataomni_import_bin ORDER BY id",
+      &[],
+    )
+    .await
+    .expect("read back")
+    .iter()
+    .map(|row| (row["d"].clone(), row["f"].clone()))
+    .collect();
+  // binary(5) 定长：短的值在右边补零
+  assert_eq!(
+    stored,
+    [
+      (json!("DEADBEEF00"), json!("DEADBEEF00")),
+      (json!("616263"), json!("6162630000")),
+      (json!(""), json!("0000000000")),
+    ]
+  );
+  run_all(&pool, &["DROP TABLE dbo.dataomni_import_bin"]).await;
+}
+
 async fn import_fixture(pool: &Arc<SqlServerPool>) {
   run_all(
     pool,

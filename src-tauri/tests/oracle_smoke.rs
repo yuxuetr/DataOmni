@@ -975,6 +975,48 @@ const IMPORT_CSV: &str = "id,n,at,name
 7,70,2024-02-02 08:30:00,g
 ";
 
+/// 导出把二进制写成 `0x…`，导回来是这几个字节。Oracle 本来就把绑进 RAW / BLOB 的文本
+/// 当十六进制读（`deadbeef` 存成四个字节），这个读法不变；空的 RAW 在 Oracle 里就是 NULL
+#[tokio::test]
+async fn oracle_import_reads_exported_hex_into_raw_and_blob() {
+  use dataomni_lib::services::{ErrorPolicy, TransactionStrategy};
+  let Some(pool) = pool().await else { return };
+  drop_quietly(&pool, "om_import_bin").await;
+  run_all(&pool, &["CREATE TABLE om_import_bin (id NUMBER(10) PRIMARY KEY, r RAW(8), b BLOB)"])
+    .await;
+  let path = std::env::temp_dir().join(format!("dataomni-oracle-bin-{}.csv", std::process::id()));
+  std::fs::write(&path, "id,r,b\n1,0xdeadbeef00,0xdeadbeef00\n2,cafe,cafe\n3,0x,0x\n")
+    .expect("write csv");
+  let mut request =
+    import_request(&path, ErrorPolicy::Abort, TransactionStrategy::SingleTransaction);
+  request.table = "OM_IMPORT_BIN".into();
+  let column =
+    |source, target: &str, target_type: &str| dataomni_lib::services::csv_import::ImportColumn {
+      source,
+      target: target.to_string(),
+      target_type: target_type.to_string(),
+    };
+  request.columns =
+    vec![column(0, "ID", "NUMBER(10)"), column(1, "R", "RAW(8)"), column(2, "B", "BLOB")];
+  let summary = run_import(&pool, &request).await;
+  std::fs::remove_file(&path).ok();
+  assert_eq!(summary.rows_failed, 0, "{:?}", summary.errors);
+  let stored: Vec<(String, String)> = pool
+    .select(
+      "SELECT NVL(RAWTOHEX(r), '-') AS r, NVL(RAWTOHEX(DBMS_LOB.SUBSTR(b, 100, 1)), '-') AS b \
+       FROM om_import_bin ORDER BY id",
+      &[],
+    )
+    .await
+    .expect("read back")
+    .iter()
+    .map(|row| (text(&row["R"]), text(&row["B"])))
+    .collect();
+  let pair = |r: &str, b: &str| (r.to_string(), b.to_string());
+  assert_eq!(stored, [pair("DEADBEEF00", "DEADBEEF00"), pair("CAFE", "CAFE"), pair("-", "-")]);
+  drop_quietly(&pool, "om_import_bin").await;
+}
+
 async fn import_fixture(pool: &Arc<OraclePool>) {
   drop_quietly(pool, "om_import").await;
   run_all(
