@@ -239,6 +239,32 @@ describe('SQL 文档分片', () => {
     expect(selectActiveSqlDocument(useQueryStore.getState()).statements[0].result).toBeDefined();
   });
 
+  /**
+   * 自动解析有 500ms 防抖。改完 WHERE 立刻点「执行全部」，跑的曾是改之前的那条——
+   * 结果卡片上却已经换成了新文本（打包版上撞见的：报错说的是旧语句）。
+   * 一条 DELETE 改了条件马上执行，删的是另一批行
+   */
+  it('执行全部跑的是编辑器里现在的文本，不等防抖', async () => {
+    invokeMock.mockResolvedValue({ kind: 'affected', affected_rows: 0, execution_time: 1 });
+    const store = useQueryStore.getState();
+    store.openDocument('tab-a');
+    store.setSqlInput('DELETE FROM t WHERE id = 1;');
+    store.parseStatements();
+    // 改了条件，还没到防抖的时刻
+    useQueryStore.getState().setSqlInput('DELETE FROM t WHERE id = 2;');
+
+    // 确认框也要看到新的那条：它拿去判断危险程度的就是这份
+    expect(useQueryStore.getState().parseStatements().map((statement) => statement.sql))
+      .toEqual(['DELETE FROM t WHERE id = 2;']);
+    useQueryStore.getState().setSqlInput('DELETE FROM t WHERE id = 3;');
+    await useQueryStore.getState().executeAllStatements();
+
+    const sent = invokeMock.mock.calls
+      .filter(([command]) => command === 'execute_query')
+      .map(([, args]) => (args as { request: { sql: string } }).request.sql);
+    expect(sent).toEqual(['DELETE FROM t WHERE id = 3;']);
+  });
+
   it('没有活动文档时不执行也不崩溃', async () => {
     useQueryStore.setState({ activeDocumentId: null });
 

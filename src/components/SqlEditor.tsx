@@ -353,7 +353,8 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
   };
 
   const runAllGuarded = () => {
-    runGuarded(statements.map((statement) => statement.sql), () => {
+    // 确认框判断的必须是将要执行的那几条：渲染时拿到的 `statements` 可能还停在防抖之前
+    runGuarded(parseStatements().map((statement) => statement.sql), () => {
       void executeAllStatements();
     });
   };

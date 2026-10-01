@@ -126,7 +126,8 @@ interface QueryActions {
 
   // SQL 编辑
   setSqlInput: (sql: string) => void;
-  parseStatements: () => void;
+  /** 按编辑器里现在的文本重新解析当前文档，返回解析后的语句（没有活动文档时为空） */
+  parseStatements: () => SqlStatement[];
   
   // SQL 执行
   executeSql: (sql: string) => Promise<boolean>;
@@ -631,7 +632,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   parseStatements: () => {
     const documentId = get().activeDocumentId;
     if (!documentId) {
-      return;
+      return [];
     }
 
     const { sqlInput, statements } = readSqlDocument(get(), documentId);
@@ -643,17 +644,17 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
               .map((statement) => ({ ...statement, sql: '', error: undefined }))
           : []
       })));
-      return;
+    } else {
+      set((state) => writeSqlDocument(state, documentId, () => ({
+        statements: reconcileSqlStatements(
+          sqlInput,
+          statements,
+          undefined,
+          getSqlDialect(get().connectionString)
+        )
+      })));
     }
-
-    set((state) => writeSqlDocument(state, documentId, () => ({
-      statements: reconcileSqlStatements(
-        sqlInput,
-        statements,
-        undefined,
-        getSqlDialect(get().connectionString)
-      )
-    })));
+    return readSqlDocument(get(), documentId).statements;
   },
 
   executeSql: async (sql: string) => {
@@ -989,7 +990,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
   },
 
   executeAllStatements: async () => {
-    const { statements } = selectActiveSqlDocument(get());
+    // 先按现在的文本解析：自动解析有防抖，改完立刻执行时手里那份还是改之前的
+    const statements = get().parseStatements();
     const { executeStatement } = get();
 
     await executeSequentially(
