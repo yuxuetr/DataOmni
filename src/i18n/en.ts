@@ -257,6 +257,7 @@ export const en: Translations = {
   'ddl.refuse.mysqlExpressionDefault': 'This column has an expression default. Changing its type in MySQL restates the whole definition, and the catalog only keeps a normalised form of that expression, so the restated default may not be the same one.',
   'ddl.refuse.sqlServerGeneratedColumn': 'The database produces this column (identity, computed or rowversion). On SQL Server such a column can be renamed, but its type, nullability and default cannot be changed directly.',
   'ddl.refuse.mysqlGeneratedColumn': 'This is a generated column. Changing its type in MySQL means restating the generation expression, and the catalog only keeps a normalised form of it.',
+  'ddl.refuse.mysqlSpatialColumn': 'This is a spatial column. Changing its type or nullability in MySQL restates the whole definition, and its SRID cannot be read back, so the restatement would silently drop it.',
   'ddl.refuse.oracleGeneratedColumn': 'The database produces this column (identity or virtual). It can be renamed, but its type, nullability and default are tied to how it is generated and are not changed here.',
   'settings.ai.title': "AI design",
   'settings.ai.description': "Describe what you need in one sentence and let AI design new tables; nothing is created until you confirm. Off by default. Once on, a request is sent only when you press Generate on the design tab, and it carries the requirement and the names of existing tables, never any data.",

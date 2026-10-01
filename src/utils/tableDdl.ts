@@ -207,13 +207,18 @@ function mysqlColumnDefinition(column: ColumnDraft): string {
     parts.push(`DEFAULT ${column.defaultValue}`);
   }
   const extra = origin?.column_extra ?? '';
-  // `on update CURRENT_TIMESTAMP` 与 DEFAULT 是一对，不带上它等于把它删了
-  const onUpdate = /on update ([^,]+)/i.exec(extra);
+  // `on update CURRENT_TIMESTAMP` 与 DEFAULT 是一对，不带上它等于把它删了。
+  // 只取到函数名与精度为止：EXTRA 里后面还可能跟着 `INVISIBLE`
+  const onUpdate = /on update (\w+(?:\(\d*\))?)/i.exec(extra);
   if (onUpdate) {
-    parts.push(`ON UPDATE ${onUpdate[1].trim()}`);
+    parts.push(`ON UPDATE ${onUpdate[1]}`);
   }
   if (extra.includes('auto_increment')) {
     parts.push('AUTO_INCREMENT');
+  }
+  // 不写就变回可见列，语句照样成功（MySQL 8.4 上核对过）
+  if (/\bINVISIBLE\b/i.test(extra)) {
+    parts.push('INVISIBLE');
   }
   if (origin?.comment) {
     parts.push(`COMMENT ${quoteSqlStringLiteral(origin.comment, 'mysql')}`);
@@ -241,8 +246,21 @@ function mysqlRestatementRefusal(column: ColumnDraft): TranslationKey | null {
   if ((origin.column_extra ?? '').includes('DEFAULT_GENERATED')) {
     return 'ddl.refuse.mysqlExpressionDefault';
   }
+  if (MYSQL_SPATIAL_TYPES.has(origin.data_type.toLowerCase())) {
+    return 'ddl.refuse.mysqlSpatialColumn';
+  }
   return null;
 }
+
+/**
+ * 空间列的 SRID 是列定义的一部分，重述时不写就被删掉（语句成功；列上有空间索引时
+ * 报 3644）。它在 `COLUMNS.SRS_ID` 里，而这一列 TiDB 与 MariaDB 都没有，TiDB 又不看
+ * 版本注释的版本号，共用的列目录查询读不了它——所以拒绝，不重述一条可能丢掉 SRID 的定义。
+ */
+const MYSQL_SPATIAL_TYPES = new Set([
+  'geometry', 'point', 'linestring', 'polygon', 'multipoint', 'multilinestring',
+  'multipolygon', 'geometrycollection', 'geomcollection'
+]);
 
 interface ColumnChange {
   renamed: boolean;

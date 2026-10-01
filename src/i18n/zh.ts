@@ -273,6 +273,7 @@ export const zh = {
   'ddl.refuse.mysqlExpressionDefault': '这一列的默认值是表达式。MySQL 改类型只能重述整段定义，而目录里的表达式是归一化后的形式，重述出来的未必是同一个默认值。',
   'ddl.refuse.sqlServerGeneratedColumn': '这一列的值由数据库产生（自增、计算列或 rowversion）。SQL Server 上除了改名，这一类列的类型、可空与默认值都不能直接改。',
   'ddl.refuse.mysqlGeneratedColumn': '这是计算列。MySQL 改类型要连生成表达式一起重述，而目录里的表达式是归一化后的形式。',
+  'ddl.refuse.mysqlSpatialColumn': '这是空间列。MySQL 改类型或可空性只能重述整段定义，而列上的 SRID 读不到，重述时不写就会被删掉。',
   'ddl.refuse.oracleGeneratedColumn': '这一列的值由数据库产生（自增或虚拟列）。除了改名，它的类型、可空与默认值都连着生成规则，不在这里改。',
   'settings.ai.title': "AI 设计",
   'settings.ai.description': "用一句话需求让 AI 设计新表，确认后再建。默认关；打开之后只有你在设计页按下「生成」时才会发请求，发的是需求与库里已有的表名，不发任何数据。",

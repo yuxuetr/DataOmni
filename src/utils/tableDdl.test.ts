@@ -226,6 +226,37 @@ describe('buildTableDdl / MySQL', () => {
     ]);
   });
 
+  it('重述时带上 INVISIBLE，ON UPDATE 只取到表达式为止', () => {
+    // 两种 EXTRA 原样取自 MySQL 8.4：不写 INVISIBLE，语句成功、列变回可见
+    const hidden = column({ name: 'secret', data_type: 'varchar(20)', column_extra: 'INVISIBLE' });
+    const ts = column({
+      name: 'ts', data_type: 'timestamp(3)',
+      column_extra: 'on update CURRENT_TIMESTAMP(3) INVISIBLE'
+    });
+    const plan = buildTableDdl(request('mysql', [
+      { ...draftOf(hidden, 'mysql'), dataType: 'varchar(40)' },
+      { ...draftOf(ts, 'mysql'), nullable: false }
+    ]));
+    expect(plan.statements).toEqual([
+      'ALTER TABLE `orders`'
+        + ' MODIFY COLUMN `secret` varchar(40) NULL INVISIBLE,'
+        + ' MODIFY COLUMN `ts` timestamp(3) NOT NULL ON UPDATE CURRENT_TIMESTAMP(3) INVISIBLE'
+    ]);
+  });
+
+  it('空间列拒绝重述：SRID 不在列目录里，不写就被删掉', () => {
+    const g = column({ name: 'g', data_type: 'point' });
+    const plan = buildTableDdl(request('mysql', [
+      { ...draftOf(g, 'mysql'), nullable: false },
+      { ...draftOf(column({ name: 'shape', data_type: 'geomcollection' }), 'mysql'), name: 'area' }
+    ]));
+    // 只改名走 RENAME COLUMN，不碰定义，照常放行
+    expect(plan.statements).toEqual(['ALTER TABLE `orders` RENAME COLUMN `shape` TO `area`']);
+    expect(plan.refusals).toEqual([
+      { column: 'g', action: 'change-nullability', reason: 'ddl.refuse.mysqlSpatialColumn' }
+    ]);
+  });
+
   it('只改默认值走窄语法，不重述', () => {
     const plan = buildTableDdl(request('mysql', [
       { ...draftOf(code, 'mysql'), defaultValue: "'x'" }
