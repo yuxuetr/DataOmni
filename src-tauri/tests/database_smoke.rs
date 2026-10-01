@@ -2750,6 +2750,123 @@ async fn postgres_er_diagram_covers_all_tables_and_their_links() {
 }
 
 #[tokio::test]
+async fn postgres_foreign_keys_to_a_partitioned_table_are_listed_once() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+
+  let parent = "dataomni_part_parent";
+  let referrer = "dataomni_part_referrer";
+  let target = "dataomni_part_target";
+  for statement in [
+    format!("DROP TABLE IF EXISTS {referrer}"),
+    format!("DROP TABLE IF EXISTS {parent}"),
+    format!("DROP TABLE IF EXISTS {target}"),
+    format!("CREATE TABLE {target} (code INT PRIMARY KEY)"),
+    format!(
+      "CREATE TABLE {parent} (id INT NOT NULL, created DATE NOT NULL, code INT REFERENCES {target} (code),
+         PRIMARY KEY (id, created)) PARTITION BY RANGE (created)"
+    ),
+    format!("CREATE TABLE {parent}_2025 PARTITION OF {parent} FOR VALUES FROM ('2025-01-01') TO ('2026-01-01')"),
+    format!("CREATE TABLE {parent}_2026 PARTITION OF {parent} FOR VALUES FROM ('2026-01-01') TO ('2027-01-01')"),
+    format!(
+      "CREATE TABLE {referrer} (rid INT PRIMARY KEY, pid INT, pcreated DATE,
+         FOREIGN KEY (pid, pcreated) REFERENCES {parent} (id, created))"
+    ),
+  ] {
+    sqlx::query(&statement).execute(&pool).await.expect("prepare partitioned fixture");
+  }
+
+  // 引用分区表的外键，服务端在本表上给每个分区各记一条克隆（`conparentid` 指回本表那条），
+  // 只是实现细节：`\d` 只列一条，删克隆报「cannot drop inherited constraint」
+  let metadata = dataomni_lib::services::schema_metadata_queries(
+    &dataomni_lib::models::DatabaseType::PostgreSQL,
+  )
+  .expect("PostgreSQL is supported");
+  let fk_rows = sqlx::query(metadata.foreign_keys)
+    .bind(referrer)
+    .bind(Option::<String>::None)
+    .fetch_all(&pool)
+    .await
+    .expect("run PostgreSQL foreign key query");
+  let listed: Vec<(String, String, String)> = fk_rows
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("column_name"),
+        row.get::<String, _>("referenced_table"),
+        row.get::<String, _>("referenced_column"),
+      )
+    })
+    .collect();
+  assert_eq!(
+    listed,
+    vec![
+      ("pid".into(), parent.into(), "id".into()),
+      ("pcreated".into(), parent.into(), "created".into()),
+    ],
+    "引用分区表的外键只有一条，指向分区表本身"
+  );
+
+  // 分区从父表继承来的外键是分区上真实的约束，照常列出
+  let inherited = sqlx::query(metadata.foreign_keys)
+    .bind(format!("{parent}_2025"))
+    .bind(Option::<String>::None)
+    .fetch_all(&pool)
+    .await
+    .expect("run PostgreSQL foreign key query on a partition");
+  assert_eq!(inherited.len(), 1, "分区上继承来的外键要列出来");
+  assert_eq!(inherited[0].get::<String, _>("referenced_table"), target);
+
+  // ER 图上分区不单独画：画了就是每个分区一个框，父表的每条外键又从每个分区各连一条线
+  let er =
+    dataomni_lib::services::er_diagram_queries(&dataomni_lib::models::DatabaseType::PostgreSQL)
+      .expect("supported");
+  let tables: std::collections::BTreeSet<String> = sqlx::query(er.columns)
+    .fetch_all(&pool)
+    .await
+    .expect("list columns")
+    .iter()
+    .map(|row| row.get::<String, _>("table_name"))
+    .filter(|table| table.starts_with("dataomni_part_"))
+    .collect();
+  assert_eq!(
+    tables.into_iter().collect::<Vec<_>>(),
+    vec![parent.to_string(), referrer.into(), target.into()],
+    "分区不出现在 ER 图上"
+  );
+  let links: Vec<(String, String, String)> = sqlx::query(er.foreign_keys)
+    .fetch_all(&pool)
+    .await
+    .expect("list foreign keys")
+    .iter()
+    .map(|row| {
+      (
+        row.get::<String, _>("table_name"),
+        row.get::<String, _>("column_name"),
+        row.get::<String, _>("referenced_table"),
+      )
+    })
+    .filter(|(table, ..)| table.starts_with("dataomni_part_"))
+    .collect();
+  assert_eq!(
+    links,
+    vec![
+      (parent.into(), "code".into(), target.into()),
+      (referrer.into(), "pid".into(), parent.into()),
+      (referrer.into(), "pcreated".into(), parent.into()),
+    ],
+    "每条外键一条线，连在分区表上"
+  );
+
+  for table in [referrer, parent, target] {
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  }
+}
+
+#[tokio::test]
 async fn mysql_er_diagram_reports_column_types_with_length() {
   let Some(url) = network_database_url(MYSQL_URL_ENV) else {
     return;

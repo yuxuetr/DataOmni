@@ -341,6 +341,12 @@ ORDER BY i.relname, ix.ord
 /// 配对；下标由 `generate_subscripts` 在子查询的选择列表里生成，不用 openGauss 不认的
 /// `LATERAL` / `WITH ORDINALITY`（见列的查询）。分两次 unnest 再按名字拼会在复合外键上错位，而错位后的结果看上去
 /// 完全正常。
+///
+/// 引用**分区表**的外键，服务端在本表上给每个分区各记一条克隆，`conparentid` 指回本表
+/// 自己那条——实现细节，`\d` 不列，删它报「cannot drop inherited constraint」，不排掉
+/// 结构页上一条外键就成了 1 + 分区数条。分区从父表继承来的外键也有 `conparentid`，
+/// 但指向的是父表上的约束，那是分区上真实的约束，照常列出。`conparentid` 经
+/// `row_to_json` 读，openGauss 没有这一列（见列的查询）。
 const POSTGRES_FOREIGN_KEYS: &str = r#"
 SELECT
   c.conname::text AS constraint_name,
@@ -359,6 +365,10 @@ FROM (
   SELECT c.*, generate_subscripts(c.conkey, 1) AS ord
   FROM pg_constraint c
   WHERE c.contype = 'f'
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_constraint p
+      WHERE p.oid = (row_to_json(c)->>'conparentid')::oid AND p.conrelid = c.conrelid
+    )
 ) c
 JOIN pg_class t ON t.oid = c.conrelid
 JOIN pg_namespace n ON n.oid = t.relnamespace
