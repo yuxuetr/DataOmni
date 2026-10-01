@@ -572,8 +572,9 @@ ORDER BY name
 /// 与账本表的事务列（`generated_always_type <> 0`，显式给值是 13536）同样如此。
 ///
 /// `column_extra` 记 `ALTER COLUMN` 会静默摘掉的两样：`SPARSE`，与写成 SQL 原文的
-/// `MASKED WITH (FUNCTION = N'…')`（字面量在这里转义好，改结构时原样拼回去）。
-/// `sys.masked_columns` 是 2016 起才有的。
+/// `MASKED WITH (FUNCTION = N'…')`（字面量在这里转义好，改结构时原样拼回去）；
+/// 另记 `HIDDEN`——`SELECT *` 不展开这种列，取表数据时要点名。`CONCAT` 把 NULL 当空串，
+/// 没有掩码时那一段整个是 NULL。`sys.masked_columns` 与 `is_hidden` 是 2016 起才有的。
 const SQL_SERVER_COLUMNS: &str = concat!(
   r#"
 SELECT
@@ -591,12 +592,11 @@ SELECT
   CAST(CASE WHEN c.is_identity = 1 THEN 'ALWAYS' END AS nvarchar(10)) AS identity_generation,
   c.collation_name AS collation,
   CAST(NULL AS nvarchar(1)) AS comment,
-  CAST(NULLIF(
-    CASE WHEN c.is_sparse = 1 THEN N'SPARSE' ELSE N'' END
-    + CASE WHEN mc.masking_function IS NULL THEN N''
-      ELSE CASE WHEN c.is_sparse = 1 THEN N' ' ELSE N'' END
-        + N'MASKED WITH (FUNCTION = N''' + REPLACE(mc.masking_function, N'''', N'''''') + N''')'
-    END, N'') AS nvarchar(max)) AS column_extra
+  CAST(NULLIF(LTRIM(CONCAT(
+    CASE WHEN c.is_sparse = 1 THEN N'SPARSE' END,
+    CASE WHEN c.is_hidden = 1 THEN N' HIDDEN' END,
+    N' MASKED WITH (FUNCTION = N''' + REPLACE(mc.masking_function, N'''', N'''''') + N''')'
+  )), N'') AS nvarchar(max)) AS column_extra
 FROM sys.objects o
 JOIN sys.schemas s ON s.schema_id = o.schema_id
 JOIN sys.columns c ON c.object_id = o.object_id

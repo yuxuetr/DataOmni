@@ -261,6 +261,18 @@ export function projectedColumn(column: ColumnInfo, dialect: SqlIdentifierDialec
 }
 
 /**
+ * `*` 不展开的列：MySQL / MariaDB 的 INVISIBLE、SQL Server 的 HIDDEN（系统版本表的时间段列
+ * 常这么建）。网格的列来自列目录，`*` 取不到的那一列会整列画成 NULL——而它 NOT NULL、有值。
+ */
+function isLeftOutOfStar(column: ColumnInfo, dialect: SqlIdentifierDialect): boolean {
+  const extra = column.column_extra ?? '';
+  if (dialect === 'mysql') {
+    return /\bINVISIBLE\b/i.test(extra);
+  }
+  return dialect === 'sqlserver' && /\bHIDDEN\b/.test(extra);
+}
+
+/**
  * 取表数据时 SELECT 后面那一段。
  *
  * 多数方言是 `*`。SQL Server、PostgreSQL 与 Oracle 有驱动读不了的列时要点名，好把那几列转成文本。ClickHouse 的 `*` 不含 MATERIALIZED 与 ALIAS 列（网格里那几列会整列是 NULL），
@@ -270,9 +282,12 @@ export function projectedColumn(column: ColumnInfo, dialect: SqlIdentifierDialec
  */
 export function tableProjection(columns: readonly ColumnInfo[], dialect: SqlIdentifierDialect): string {
   if (dialect === 'sqlserver' || dialect === 'postgresql' || dialect === 'oracle') {
-    return columns.some(column => isUnreadableColumn(column, dialect))
+    return columns.some(column => isUnreadableColumn(column, dialect) || isLeftOutOfStar(column, dialect))
       ? columns.map(column => projectedColumn(column, dialect)).join(', ')
       : '*';
+  }
+  if (dialect === 'mysql' && columns.some(column => isLeftOutOfStar(column, dialect))) {
+    return columns.map(column => quoteSqlIdentifier(column.name, dialect)).join(', ');
   }
   if (dialect !== 'clickhouse' || !columns.some(column => column.is_generated)) {
     return '*';

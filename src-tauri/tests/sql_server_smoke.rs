@@ -553,19 +553,25 @@ async fn sql_server_period_columns_count_as_generated() {
   let queries = schema_metadata_queries(&DatabaseType::SqlServer).expect("supported");
   let columns =
     pool.select(queries.columns, &[json!("smoke_temporal"), json!("dbo")]).await.expect("columns");
-  let generated: Vec<(String, JsonValue, JsonValue)> = columns
+  let generated: Vec<(String, JsonValue, JsonValue, JsonValue)> = columns
     .iter()
     .map(|row| {
-      (text(&row["column_name"]), row["is_generated"].clone(), row["identity_generation"].clone())
+      (
+        text(&row["column_name"]),
+        row["is_generated"].clone(),
+        row["identity_generation"].clone(),
+        row["column_extra"].clone(),
+      )
     })
     .collect();
   run_all(&pool, &drop).await;
+  // HIDDEN 的列 `SELECT *` 不展开，取表数据时要点名（`tableProjection`）
   assert_eq!(
     generated,
     [
-      ("id".to_string(), json!(false), JsonValue::Null),
-      ("vf".to_string(), json!(true), JsonValue::Null),
-      ("vt".to_string(), json!(true), JsonValue::Null),
+      ("id".to_string(), json!(false), JsonValue::Null, JsonValue::Null),
+      ("vf".to_string(), json!(true), JsonValue::Null, JsonValue::Null),
+      ("vt".to_string(), json!(true), JsonValue::Null, json!("HIDDEN")),
     ]
   );
 }

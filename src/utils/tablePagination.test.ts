@@ -206,6 +206,19 @@ describe('取表数据的投影', () => {
     expect(tableProjection([column('id'), column('g', 'STORED GENERATED')], 'mysql')).toBe('*');
   });
 
+  it('* 不含 MySQL 的 INVISIBLE 与 SQL Server 的 HIDDEN 列：有这种列就点名，不然网格里那一列整列是 NULL', () => {
+    const extra = (name: string, columnExtra: string | null) => ({
+      name, data_type: 'int', is_nullable: true, is_primary_key: false, column_extra: columnExtra
+    });
+    expect(tableProjection([extra('id', ''), extra('secret', 'INVISIBLE')], 'mysql')).toBe('`id`, `secret`');
+    // MariaDB 的 EXTRA 写法
+    expect(tableProjection([extra('id', ''), extra('ts', 'on update current_timestamp(3), INVISIBLE')], 'mysql'))
+      .toBe('`id`, `ts`');
+    expect(tableProjection([extra('id', null), extra('vt', 'HIDDEN')], 'sqlserver')).toBe('[id], [vt]');
+    expect(tableProjection([extra('id', null), extra('sp', 'SPARSE')], 'sqlserver')).toBe('*');
+    expect(tableProjection([extra('id', ''), extra('n', 'auto_increment')], 'mysql')).toBe('*');
+  });
+
   it('SQL Server 驱动读不了的列转成文本再取：不然这张表整张打不开，而报错让用户去改一条他看不到的查询', () => {
     const typed = (name: string, dataType: string) => ({
       name, data_type: dataType, is_nullable: true, is_primary_key: false
