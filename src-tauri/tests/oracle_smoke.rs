@@ -457,6 +457,43 @@ async fn oracle_truncates_at_the_row_limit_and_the_session_stays_usable() {
   assert_eq!(text(&again[0]["ONE"]), "1");
 }
 
+/// PL/SQL 块用 `DBMS_SQL.RETURN_RESULT` 交回的结果集（12c 起，从 SQL Server 迁过来的写法）：
+/// 原先当成非查询执行、显示「影响 0 行」，结果整个丢掉。第一个照查询显示，后面几个报个数——
+/// 到了行数上限也一样报
+#[tokio::test]
+async fn oracle_shows_the_first_implicit_result_and_counts_the_rest() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool).await;
+  let block = "DECLARE c1 SYS_REFCURSOR; c2 SYS_REFCURSOR; BEGIN \
+    OPEN c1 FOR SELECT level AS n FROM dual CONNECT BY level <= 3; DBMS_SQL.RETURN_RESULT(c1); \
+    OPEN c2 FOR SELECT 'x' AS s FROM dual; DBMS_SQL.RETURN_RESULT(c2); END;";
+  for (limit, expected_rows, expected_truncated) in [(100, 3, false), (2, 2, true)] {
+    let mut rows = Vec::new();
+    let summary = connection
+      .execute_streaming(block, StreamOptions::limited(limit, 16 * 1024 * 1024, 40), &mut |batch| {
+        rows.extend(batch.rows);
+        Ok(())
+      })
+      .await
+      .expect("stream");
+    let dataomni_lib::services::QueryExecutionSummary::Rows {
+      columns,
+      truncated,
+      omitted_result_sets,
+      ..
+    } = summary
+    else {
+      panic!("expected rows: {summary:?}");
+    };
+    assert_eq!(columns, vec!["N".to_string()]);
+    assert_eq!((rows.len(), truncated), (expected_rows, expected_truncated));
+    assert_eq!(omitted_result_sets, 1);
+  }
+  // 不交回结果集的块照旧是影响行数
+  let plain = connection.execute("BEGIN NULL; END;", 10).await.expect("plain block");
+  assert!(matches!(plain, QueryExecutionResult::Affected { rows_affected: 0 }), "{plain:?}");
+}
+
 /// 超时要让服务端真的停下：丢掉 future 时发 break。
 #[tokio::test]
 async fn oracle_timeout_breaks_the_statement_on_the_server() {

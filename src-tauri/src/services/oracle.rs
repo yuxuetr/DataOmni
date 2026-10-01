@@ -535,6 +535,8 @@ impl Drop for BreakOnDrop {
 
 /// 阻塞那一侧送过来的东西
 enum Fetched {
+  /// 第一个之后还有几个结果集没给出来；在列之前送，到了行数上限丢掉接收端也不会漏
+  Omitted(usize),
   Columns(Vec<QueryColumnMetadata>, Vec<String>),
   Row(QueryRow),
 }
@@ -610,9 +612,11 @@ impl OracleConnection {
     let mut bytes_read: usize = 0;
     let mut truncation_reason = None;
     let mut sink_error = None;
+    let mut omitted_result_sets = 0;
 
     while let Some(fetched) = receiver.recv().await {
       match fetched {
+        Fetched::Omitted(count) => omitted_result_sets = count,
         Fetched::Columns(metadata, names) => header = Some((metadata, names)),
         Fetched::Row(values) => {
           if row_count >= options.row_limit {
@@ -670,7 +674,7 @@ impl OracleConnection {
       row_limit: options.row_limit,
       byte_limit: options.byte_limit,
       bytes_read,
-      omitted_result_sets: 0,
+      omitted_result_sets,
     })
   }
 
@@ -908,6 +912,15 @@ fn run_statement(
       return Err(QueryError::message(crate::services::query_executor::NON_QUERY_MESSAGE));
     }
     prepared.execute(&[]).map_err(|error| query_error(&error, Some(statement)))?;
+    // 块用 `DBMS_SQL.RETURN_RESULT` 交回的结果集：先全部取出来好报个数，再读第一个
+    let mut implicit = Vec::new();
+    if prepared.is_plsql() {
+      while let Some(cursor) =
+        prepared.implicit_result().map_err(|error| query_error(&error, Some(statement)))?
+      {
+        implicit.push(cursor);
+      }
+    }
     // PL/SQL 块的「影响行数」驱动恒报 1，那不是任何一张表上的行数
     let affected = if prepared.is_plsql() {
       0
@@ -917,9 +930,26 @@ fn run_statement(
     if commit_after {
       connection.commit().map_err(|error| query_error(&error, None))?;
     }
-    return Ok(Some(affected));
+    let mut cursors = implicit.into_iter();
+    let Some(mut first) = cursors.next() else {
+      return Ok(Some(affected));
+    };
+    if sender.blocking_send(Fetched::Omitted(cursors.len())).is_err() {
+      return Ok(None);
+    }
+    let rows = first.query().map_err(|error| query_error(&error, Some(statement)))?;
+    return send_rows(rows, statement, sender);
   }
   let rows = prepared.query(&[]).map_err(|error| query_error(&error, Some(statement)))?;
+  send_rows(rows, statement, sender)
+}
+
+/// 一个结果集的列与行一行行送进通道；接收端丢掉了（到了上限）就停
+fn send_rows(
+  rows: oracle::ResultSet<oracle::Row>,
+  statement: &str,
+  sender: &tokio::sync::mpsc::Sender<Fetched>,
+) -> Result<Option<u64>, QueryError> {
   let columns: Vec<(String, OracleType, bool)> = rows
     .column_info()
     .iter()
