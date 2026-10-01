@@ -167,6 +167,95 @@ async fn postgres_supports_basic_read_write() {
   .await;
 }
 
+/// 同一条连接上，表结构变了之后再跑同一句 `SELECT *`。sqlx 按 SQL 原文缓存预备语句，
+/// PostgreSQL 对结果形状变了的预备语句一律报「cached plan must not change result type」——
+/// 结构页改完列名或类型，表数据页在这条连接上就再也刷不出来
+#[tokio::test]
+async fn postgres_reads_a_table_again_after_its_columns_change() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let db = DbPool::Postgres(pool);
+  execute_query(&db, "CREATE TEMP TABLE reshaped (id INTEGER, label VARCHAR(10))")
+    .await
+    .expect("create table");
+  execute_query(&db, "INSERT INTO reshaped VALUES (1, 'one')").await.expect("insert row");
+  assert_single_row_result(
+    execute_query(&db, "SELECT label FROM reshaped").await.expect("read before"),
+    "label",
+    "one",
+  );
+
+  execute_query(&db, "ALTER TABLE reshaped RENAME COLUMN label TO title")
+    .await
+    .expect("rename column");
+  assert_single_row_result(
+    execute_query(&db, "SELECT label AS title FROM (SELECT title AS label FROM reshaped) AS r")
+      .await
+      .expect("read renamed through a fresh statement"),
+    "title",
+    "one",
+  );
+  execute_query(&db, "SELECT * FROM reshaped").await.expect("cache the star query");
+  execute_query(&db, "ALTER TABLE reshaped RENAME COLUMN title TO heading")
+    .await
+    .expect("rename again");
+  match execute_query(&db, "SELECT * FROM reshaped").await.expect("read after rename") {
+    QueryExecutionResult::Rows { columns, rows, .. } => {
+      assert_eq!(columns, vec!["id", "heading"]);
+      assert_eq!(rows[0]["heading"], "one");
+    }
+    QueryExecutionResult::Affected { .. } => panic!("expected rows"),
+  }
+
+  execute_query(&db, "ALTER TABLE reshaped ALTER COLUMN id TYPE TEXT").await.expect("change type");
+  match execute_query(&db, "SELECT * FROM reshaped").await.expect("read after type change") {
+    QueryExecutionResult::Rows { column_metadata, rows, .. } => {
+      assert_eq!(column_metadata[0].database_type, "TEXT");
+      assert_eq!(rows[0]["id"], "1");
+    }
+    QueryExecutionResult::Affected { .. } => panic!("expected rows"),
+  }
+}
+
+/// 同上，MySQL。服务端自己重新准备，每个结果集也重发列定义，sqlx 的缓存不碍事——钉住这一点
+#[tokio::test]
+async fn mysql_reads_a_table_again_after_its_columns_change() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  let db = DbPool::MySql(pool);
+  execute_query(&db, "CREATE TEMPORARY TABLE reshaped (id INTEGER, label VARCHAR(10))")
+    .await
+    .expect("create table");
+  execute_query(&db, "INSERT INTO reshaped VALUES (1, 'one')").await.expect("insert row");
+  execute_query(&db, "SELECT * FROM reshaped").await.expect("cache the star query");
+  execute_query(&db, "ALTER TABLE reshaped RENAME COLUMN label TO heading")
+    .await
+    .expect("rename column");
+  match execute_query(&db, "SELECT * FROM reshaped").await.expect("read after rename") {
+    QueryExecutionResult::Rows { columns, rows, .. } => {
+      assert_eq!(columns, vec!["id", "heading"]);
+      assert_eq!(rows[0]["heading"], "one");
+    }
+    QueryExecutionResult::Affected { .. } => panic!("expected rows"),
+  }
+  execute_query(&db, "ALTER TABLE reshaped MODIFY COLUMN id VARCHAR(5)")
+    .await
+    .expect("change type");
+  match execute_query(&db, "SELECT * FROM reshaped").await.expect("read after type change") {
+    QueryExecutionResult::Rows { column_metadata, rows, .. } => {
+      assert_eq!(column_metadata[0].database_type, "VARCHAR");
+      assert_eq!(rows[0]["id"], "1");
+    }
+    QueryExecutionResult::Affected { .. } => panic!("expected rows"),
+  }
+}
+
 #[tokio::test]
 async fn mysql_supports_basic_read_write() {
   let Some(url) = network_database_url(MYSQL_URL_ENV) else {

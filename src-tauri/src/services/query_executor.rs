@@ -6,7 +6,7 @@ use sqlx::{
   mysql::{MySqlRow, MySqlValueRef},
   postgres::{PgRow, PgValueRef},
   sqlite::{SqliteRow, SqliteValueRef},
-  Column, Executor, MySql, MySqlConnection, PgConnection, Pool, Postgres, Row, Sqlite,
+  Column, Connection, Executor, MySql, MySqlConnection, PgConnection, Pool, Postgres, Row, Sqlite,
   SqliteConnection, TypeInfo, Value, ValueRef,
 };
 use std::future::Future;
@@ -422,7 +422,6 @@ impl SessionConnection {
   /// 就换一条新的，而不是让用户等满超时再看一句「连接丢了」。
   /// SQLite 在本机，不问。
   pub async fn responds_within(&mut self, limit: Duration) -> bool {
-    use sqlx::Connection;
     let ping = match self {
       Self::MySql(connection) => timeout(limit, connection.ping()).await,
       Self::Postgres(connection) => timeout(limit, connection.ping()).await,
@@ -896,10 +895,18 @@ async fn execute_postgres_connection_with_limits(
 }
 
 /// 列的元数据，外加这些列是不是都能按二进制解（`pg_decodes_binary`）
+///
+/// 先清掉这条连接缓存的预备语句。sqlx 按 SQL 原文缓存，`describe` 命中缓存时连服务端都不问；
+/// 而表结构变了（改列名、改类型，不论哪条连接改的），PostgreSQL 对结果形状变了的旧语句
+/// 一律报「cached plan must not change result type」，同一句 `SELECT *` 在这条连接上就再也
+/// 跑不通。事后重试不行：在事务里这一下已经让整个事务作废。代价是缓存非空时多一次往返
+/// （Close + Sync）；交互式客户端几乎不会在同一条连接上反复跑同一句，缓存本来也省不下什么。
+/// 不把容量设成 0：那样 sqlx 仍给每句开一个具名语句、却不缓存也不关，服务端越攒越多
 async fn describe_postgres_columns(
   connection: &mut PgConnection,
   sql: &str,
 ) -> Result<(Vec<QueryColumnMetadata>, bool), QueryError> {
+  connection.clear_cached_statements().await.map_err(QueryError::from)?;
   let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
   let binary = description.columns().iter().all(|column| pg_decodes_binary(column.type_info()));
   Ok((
