@@ -722,8 +722,10 @@ ORDER BY tr.name
 // ---------------------------------------------------------------------------
 
 /// `DATA_DEFAULT` 是 LONG：不能拿去做任何运算，只能原样取出来（取是可以的）。
-/// 自增列与虚拟列都算「数据库产生的值」。`HIDDEN_COLUMN` 排掉函数索引背后的
-/// 隐藏列（`SYS_NC00005$`）
+/// 自增列与虚拟列都算「数据库产生的值」。函数索引背后的隐藏列（`SYS_NC00005$`）
+/// 要排掉，而 12c 的 INVISIBLE 列带着同一个 `HIDDEN_COLUMN = 'YES'`——两者靠
+/// `USER_GENERATED` 分开。INVISIBLE 列在 `column_extra` 里标出来（`SELECT *` 不展开它，
+/// 取表数据时要点名），没有 `COLUMN_ID`，排在可见列后面
 const ORACLE_COLUMNS: &str = concat!(
   r#"
 SELECT
@@ -740,7 +742,7 @@ SELECT
   ic.generation_type AS "identity_generation",
   CAST(NULL AS VARCHAR2(1)) AS "collation",
   cm.comments AS "comment",
-  CAST(NULL AS VARCHAR2(1)) AS "column_extra"
+  CAST(CASE WHEN c.hidden_column = 'YES' THEN 'INVISIBLE' END AS VARCHAR2(9)) AS "column_extra"
 FROM all_tab_cols c
 LEFT JOIN (
   SELECT cc.owner, cc.table_name, cc.column_name, cc.position
@@ -756,8 +758,8 @@ WHERE c.table_name = :1
   AND c.owner = COALESCE(:2, "#,
   oracle_current_schema!(),
   r#")
-  AND c.hidden_column = 'NO'
-ORDER BY c.column_id
+  AND (c.hidden_column = 'NO' OR c.user_generated = 'YES')
+ORDER BY c.column_id NULLS LAST, c.internal_column_id
 "#
 );
 

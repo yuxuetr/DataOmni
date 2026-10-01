@@ -216,6 +216,8 @@ describe('取表数据的投影', () => {
       .toBe('`id`, `ts`');
     expect(tableProjection([extra('id', null), extra('vt', 'HIDDEN')], 'sqlserver')).toBe('[id], [vt]');
     expect(tableProjection([extra('id', null), extra('sp', 'SPARSE')], 'sqlserver')).toBe('*');
+    // Oracle 12c 的 INVISIBLE（列目录在 column_extra 里标出来）
+    expect(tableProjection([extra('ID', null), extra('SECRET', 'INVISIBLE')], 'oracle')).toBe('"ID", "SECRET"');
     expect(tableProjection([extra('id', ''), extra('n', 'auto_increment')], 'mysql')).toBe('*');
   });
 

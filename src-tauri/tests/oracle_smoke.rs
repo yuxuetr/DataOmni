@@ -572,6 +572,40 @@ fn find<'a>(rows: &'a [QueryRow], column: &str, value: &str) -> Vec<&'a QueryRow
   rows.iter().filter(|row| row[column] == json!(value)).collect()
 }
 
+/// 12c 起的 INVISIBLE 列：`SELECT *` 不展开，目录里 `HIDDEN_COLUMN = 'YES'`、`COLUMN_ID` 为空——
+/// 和函数索引背后的系统列（`USER_GENERATED = 'NO'`）同一个标记。只按 `HIDDEN_COLUMN` 排掉的话，
+/// 这一列在结构页、网格与导出里都不存在，导出的文件静默少一列。
+#[tokio::test]
+async fn oracle_catalog_keeps_invisible_columns_and_drops_system_hidden_ones() {
+  use dataomni_lib::models::DatabaseType;
+  use dataomni_lib::services::schema_metadata_queries;
+  let Some(pool) = pool().await else { return };
+  drop_quietly(&pool, "om_invisible").await;
+  run_all(
+    &pool,
+    &[
+      "CREATE TABLE om_invisible (id NUMBER(10) PRIMARY KEY, secret VARCHAR2(20) INVISIBLE, note VARCHAR2(20))",
+      "CREATE INDEX om_invisible_upper ON om_invisible (UPPER(note))",
+    ],
+  )
+  .await;
+  let queries = schema_metadata_queries(&DatabaseType::Oracle).expect("Oracle catalog");
+  let columns =
+    pool.select(queries.columns, &[json!("OM_INVISIBLE"), JsonValue::Null]).await.expect("columns");
+  drop_quietly(&pool, "om_invisible").await;
+  let described: Vec<(String, JsonValue)> =
+    columns.iter().map(|row| (text(&row["column_name"]), row["column_extra"].clone())).collect();
+  // 可见列按 COLUMN_ID，INVISIBLE 的排在后面；函数索引的 SYS_NC 列不出现
+  assert_eq!(
+    described,
+    [
+      ("ID".to_string(), JsonValue::Null),
+      ("NOTE".to_string(), JsonValue::Null),
+      ("SECRET".to_string(), json!("INVISIBLE")),
+    ]
+  );
+}
+
 #[tokio::test]
 async fn oracle_catalog_queries_describe_the_fixture() {
   use dataomni_lib::models::DatabaseType;

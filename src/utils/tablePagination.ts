@@ -261,12 +261,12 @@ export function projectedColumn(column: ColumnInfo, dialect: SqlIdentifierDialec
 }
 
 /**
- * `*` 不展开的列：MySQL / MariaDB 的 INVISIBLE、SQL Server 的 HIDDEN（系统版本表的时间段列
- * 常这么建）。网格的列来自列目录，`*` 取不到的那一列会整列画成 NULL——而它 NOT NULL、有值。
+ * `*` 不展开的列：MySQL / MariaDB 与 Oracle 12c 起的 INVISIBLE、SQL Server 的 HIDDEN
+ * （系统版本表的时间段列常这么建）。网格的列来自列目录，`*` 取不到的那一列会整列画成 NULL——而它 NOT NULL、有值。
  */
 function isLeftOutOfStar(column: ColumnInfo, dialect: SqlIdentifierDialect): boolean {
   const extra = column.column_extra ?? '';
-  if (dialect === 'mysql') {
+  if (dialect === 'mysql' || dialect === 'oracle') {
     return /\bINVISIBLE\b/i.test(extra);
   }
   return dialect === 'sqlserver' && /\bHIDDEN\b/.test(extra);
