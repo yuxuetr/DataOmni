@@ -197,6 +197,63 @@ async fn oracle_binary_floats_read_as_sqlplus_writes_them() {
   drop_quietly(&pool, "om_float").await;
 }
 
+/// 存成地区名的 TIMESTAMP WITH TIME ZONE：客户端的时区文件与服务器不同版本时，驱动读它是 ORA-01805，
+/// 整条查询失败。表数据页的投影（`tablePagination.ts` 的 `projectedColumn`，这里照抄）让服务端写成文本，
+/// 读出来的写法与驱动读偏移时相同；原样绑回去，并发守卫按时刻比，与存的地区名相等
+#[tokio::test]
+async fn oracle_region_named_time_zones_read_through_the_table_projection() {
+  use dataomni_lib::services::execute_write_batch;
+  let Some(pool) = pool().await else { return };
+  drop_quietly(&pool, "om_zones").await;
+  run_all(
+    &pool,
+    &[
+      "CREATE TABLE om_zones (id NUMBER(10) PRIMARY KEY, at TIMESTAMP(3) WITH TIME ZONE, note VARCHAR2(10))",
+      "INSERT INTO om_zones VALUES (1, TIMESTAMP '2026-07-01 10:00:00.5 America/New_York', 'a')",
+      "INSERT INTO om_zones VALUES (2, TIMESTAMP '2026-01-01 00:00:00 -03:30', 'b')",
+      "INSERT INTO om_zones VALUES (3, NULL, 'c')",
+    ],
+  )
+  .await;
+  let mut connection = session(&pool).await;
+  match connection.execute("SELECT * FROM om_zones", 10).await {
+    Err(error) => assert_eq!(error.code.as_deref(), Some("ORA-01805"), "{error:?}"),
+    // 客户端与服务器的时区文件恰好同版本时驱动读得了，下面照样要成立
+    Ok(_) => {
+      eprintln!("the client's time zone file matches the server's; ORA-01805 not reproduced")
+    }
+  }
+  let projection = r#"SELECT "ID", REGEXP_REPLACE(TO_CHAR("AT", 'YYYY-MM-DD HH24:MI:SS.FF'), '\.?0*$') || TO_CHAR("AT", ' TZH:TZM') AS "AT" FROM om_zones ORDER BY "ID""#;
+  let rows = rows_of(connection.execute(projection, 10).await.expect("projected select"));
+  let values: Vec<_> = rows.iter().map(|row| row["AT"].clone()).collect();
+  assert_eq!(
+    values,
+    [json!("2026-07-01 10:00:00.5 -04:00"), json!("2026-01-01 00:00:00 -03:30"), JsonValue::Null]
+  );
+  // 改 note、拿显示的 at 做并发守卫：守卫对不上就是 0 行，批次报行数不符
+  execute_write_batch(
+    PoolRef::Oracle(&pool),
+    &[write(
+      r#"UPDATE "OM_ZONES" SET "NOTE" = :1 WHERE "ID" = 1 AND "AT" = :2"#,
+      vec![json!("z"), values[0].clone()],
+      Some(1),
+    )],
+  )
+  .await
+  .expect("the displayed value matches the stored region");
+  let back = rows_of(
+    connection
+      .execute("SELECT note, TO_CHAR(at, 'TZR') AS zone FROM om_zones WHERE id = 1", 10)
+      .await
+      .expect("read back"),
+  );
+  assert_eq!(
+    (text(&back[0]["NOTE"]), text(&back[0]["ZONE"])),
+    ("z".into(), "AMERICA/NEW_YORK".into())
+  );
+  drop_quietly(&pool, "om_zones").await;
+}
+
 /// ClickHouse 回归时查出的同一类：i64 最小值取 `abs()` 溢出，release 里回绕成负数、被当成安全整数，
 /// 以 JSON 数字送到前端，JavaScript 读成 -9223372036854775808 的近似值
 #[tokio::test]

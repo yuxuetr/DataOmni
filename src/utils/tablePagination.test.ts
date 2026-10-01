@@ -242,4 +242,17 @@ describe('取表数据的投影', () => {
       typed('h', 'bigint[]'), typed('i', 'interval'), typed('j', 'uuid'), typed('k', 'bytea')
     ], 'postgresql')).toBe('*');
   });
+
+  it('Oracle 带时区的时间戳由服务端写成文本：存的是地区名时，客户端时区文件版本不同就整条 ORA-01805', () => {
+    const typed = (name: string, dataType: string) => ({
+      name, data_type: dataType, is_nullable: true, is_primary_key: false
+    });
+    // 与驱动读出来的写法相同：小数秒去掉末尾的 0，时区写成偏移——会话的格式按偏移解析，写得回去
+    expect(tableProjection([
+      typed('ID', 'NUMBER(10)'), typed('AT', 'TIMESTAMP(3) WITH TIME ZONE'), typed('LT', 'TIMESTAMP(6) WITH LOCAL TIME ZONE')
+    ], 'oracle')).toBe(
+      `"ID", REGEXP_REPLACE(TO_CHAR("AT", 'YYYY-MM-DD HH24:MI:SS.FF'), '\\.?0*$') || TO_CHAR("AT", ' TZH:TZM') AS "AT", "LT"`
+    );
+    expect(tableProjection([typed('ID', 'NUMBER(10)'), typed('T', 'TIMESTAMP(6)')], 'oracle')).toBe('*');
+  });
 });

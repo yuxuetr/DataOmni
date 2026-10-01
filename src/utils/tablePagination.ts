@@ -190,9 +190,19 @@ function postgresTypeName(dataType: string): string {
   return dataType.replace(/\([^)]*\)/g, '').trim().toLowerCase();
 }
 
+/**
+ * Oracle 的 `TIMESTAMP WITH TIME ZONE`：存的是地区名（`Asia/Shanghai`，JDBC 按 JVM 时区写进来的就是）时，
+ * 客户端要用自己的时区文件换算；Instant Client 带的版本与服务器不同就是 ORA-01805，整条查询失败
+ * （23.26 带 45 版，23ai Free 是 43 版，实测）。`LOCAL TIME ZONE` 存的是换算好的时刻，没有这回事
+ */
+const ORACLE_ZONED_TIMESTAMP = /^TIMESTAMP(\(\d+\))? WITH TIME ZONE$/i;
+
 function isUnreadableColumn(column: ColumnInfo, dialect: SqlIdentifierDialect): boolean {
   if (dialect === 'sqlserver') {
     return SQL_SERVER_UNREADABLE_TYPES.has(columnTypeToken(column.data_type));
+  }
+  if (dialect === 'oracle') {
+    return ORACLE_ZONED_TIMESTAMP.test(column.data_type.trim());
   }
   return dialect === 'postgresql' && !POSTGRES_READABLE_TYPES.has(postgresTypeName(column.data_type));
 }
@@ -208,19 +218,28 @@ export function projectedColumn(column: ColumnInfo, dialect: SqlIdentifierDialec
   if (!isUnreadableColumn(column, dialect)) {
     return name;
   }
-  return dialect === 'sqlserver' ? `CAST(${name} AS nvarchar(max)) AS ${name}` : `${name}::text AS ${name}`;
+  if (dialect === 'sqlserver') {
+    return `CAST(${name} AS nvarchar(max)) AS ${name}`;
+  }
+  if (dialect === 'oracle') {
+    // 照驱动的写法：小数秒去掉末尾的 0（`.000` 连点一起去掉），时区写成偏移——会话的
+    // `NLS_TIMESTAMP_TZ_FORMAT` 按偏移解析，改了写回去转得回来。地区名不写：换成 `TZR` 解析时
+    // `-03:30` 会读成 `+03:30`（试过）。并发守卫拿这段文本比，按时刻比，与存的地区名相等
+    return `REGEXP_REPLACE(TO_CHAR(${name}, 'YYYY-MM-DD HH24:MI:SS.FF'), '\\.?0*$') || TO_CHAR(${name}, ' TZH:TZM') AS ${name}`;
+  }
+  return `${name}::text AS ${name}`;
 }
 
 /**
  * 取表数据时 SELECT 后面那一段。
  *
- * 多数方言是 `*`。SQL Server 与 PostgreSQL 有驱动读不了的列时要点名，好把那几列转成文本。ClickHouse 的 `*` 不含 MATERIALIZED 与 ALIAS 列（网格里那几列会整列是 NULL），
+ * 多数方言是 `*`。SQL Server、PostgreSQL 与 Oracle 有驱动读不了的列时要点名，好把那几列转成文本。ClickHouse 的 `*` 不含 MATERIALIZED 与 ALIAS 列（网格里那几列会整列是 NULL），
  * 要一个个点名；打开 `asterisk_include_materialized_columns` 也行，但那是个设置，`readonly = 1`
  * 的账号改不了。EPHEMERAL 列不点：它不存值，点名去查报「There is no column」（25.8 上试过）；
  * 网格上那一列是空的，本来也没有值
  */
 export function tableProjection(columns: readonly ColumnInfo[], dialect: SqlIdentifierDialect): string {
-  if (dialect === 'sqlserver' || dialect === 'postgresql') {
+  if (dialect === 'sqlserver' || dialect === 'postgresql' || dialect === 'oracle') {
     return columns.some(column => isUnreadableColumn(column, dialect))
       ? columns.map(column => projectedColumn(column, dialect)).join(', ')
       : '*';
