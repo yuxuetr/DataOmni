@@ -5132,3 +5132,45 @@ async fn mysql_backup_with_mysqldump_restores_into_a_new_database() {
   sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
   std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `CALL` 一个查询过程：describe 说没有列，原先当成非查询执行，结果整个丢掉、显示「影响 0 行」
+#[tokio::test]
+async fn mysql_call_shows_the_procedures_first_result_set() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  for statement in [
+    "DROP PROCEDURE IF EXISTS om_call_two",
+    "DROP PROCEDURE IF EXISTS om_call_write",
+    "DROP TABLE IF EXISTS om_call_t",
+    "CREATE TABLE om_call_t (id INT PRIMARY KEY)",
+    "CREATE PROCEDURE om_call_two() BEGIN SELECT 1 AS a, 'x' AS b UNION ALL SELECT 2, 'y'; SELECT 3 AS c; END",
+    "CREATE PROCEDURE om_call_write() BEGIN INSERT INTO om_call_t VALUES (1), (2); END",
+  ] {
+    sqlx::raw_sql(statement).execute(&pool).await.expect(statement);
+  }
+  let database = DbPool::MySql(pool.clone());
+
+  let result = execute_query(&database, "CALL om_call_two()").await.expect("call");
+  let QueryExecutionResult::Rows { columns, rows, .. } = result else {
+    panic!("expected the first result set, got {result:?}");
+  };
+  assert_eq!(columns, ["a", "b"]);
+  assert_eq!(rows.len(), 2);
+  assert_eq!(rows[1]["b"], "y");
+
+  // 只写不查的过程照旧报影响行数；连接还能接着用
+  let result = execute_query(&database, "CALL om_call_write()").await.expect("call write");
+  assert!(matches!(result, QueryExecutionResult::Affected { rows_affected: 2 }), "{result:?}");
+  let result =
+    execute_query(&database, "SELECT COUNT(*) AS n FROM om_call_t").await.expect("count");
+  assert!(matches!(result, QueryExecutionResult::Rows { .. }), "{result:?}");
+
+  for statement in
+    ["DROP PROCEDURE om_call_two", "DROP PROCEDURE om_call_write", "DROP TABLE om_call_t"]
+  {
+    sqlx::raw_sql(statement).execute(&pool).await.expect(statement);
+  }
+}

@@ -722,8 +722,7 @@ async fn execute_mysql_connection_streaming(
 
   if columns.is_empty() && !options.explain_plan {
     refuse_non_query(options.non_query)?;
-    let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
-    return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
+    return stream_mysql_undescribed(connection, sql, options, sink).await;
   }
 
   let mut stream = (&mut *connection).fetch(sqlx::query(sql));
@@ -754,6 +753,84 @@ async fn execute_mysql_connection_streaming(
   flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
   Ok(QueryExecutionSummary::Rows {
     columns,
+    column_metadata,
+    row_count,
+    batch_count,
+    truncated: truncation_reason.is_some(),
+    truncation_reason,
+    row_limit: options.row_limit,
+    byte_limit: options.byte_limit,
+    bytes_read,
+  })
+}
+
+/// describe 说没有列的语句。多数是写语句，但 `CALL` 一个查询过程也是这样：过程里的 SELECT 要执行了才有
+/// 结果集。第一个结果集给用户看（与 SQL Server 一样），之后的读掉不留；一个结果集都没有就是影响行数。
+///
+/// 列名取自第一行：结果集是空的时候拿不到列（sqlx 不给没有行的列定义），只能报影响行数
+async fn stream_mysql_undescribed(
+  connection: &mut MySqlConnection,
+  sql: &str,
+  options: StreamOptions,
+  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+) -> Result<QueryExecutionSummary, QueryError> {
+  let mut stream = (&mut *connection).fetch_many(sqlx::query(sql));
+  let mut first: Option<Vec<QueryColumnMetadata>> = None;
+  // 第一个结果集读完（或到了上限）之后，后面的只是读掉
+  let mut first_done = false;
+  let mut rows_affected = 0;
+  let mut rows = Vec::with_capacity(options.batch_size);
+  let mut row_count = 0;
+  let mut batch_count = 0;
+  let mut bytes_read: usize = 0;
+  let mut truncation_reason = None;
+  while let Some(item) = stream.try_next().await.map_err(QueryError::from)? {
+    let row = match item {
+      sqlx::Either::Left(result) => {
+        rows_affected += result.rows_affected();
+        first_done |= first.is_some();
+        continue;
+      }
+      sqlx::Either::Right(row) => row,
+    };
+    if first_done || truncation_reason.is_some() {
+      continue;
+    }
+    if first.is_none() {
+      first = Some(
+        row
+          .columns()
+          .iter()
+          .enumerate()
+          .map(|(ordinal, column)| QueryColumnMetadata {
+            name: column.name().to_string(),
+            ordinal,
+            database_type: column.type_info().name().to_string(),
+            logical_type: mysql_logical_type(column.type_info().name()).to_string(),
+            nullable: None,
+          })
+          .collect(),
+      );
+    }
+    if row_count >= options.row_limit {
+      truncation_reason = Some(QueryTruncationReason::RowLimit);
+      continue;
+    }
+    let row = decode_mysql_row(&row)?;
+    if !admit_row_bytes(&row, options.byte_limit, &mut bytes_read)? {
+      truncation_reason = Some(QueryTruncationReason::ByteLimit);
+      continue;
+    }
+    rows.push(row);
+    row_count += 1;
+    flush_full_batch(&mut rows, options.batch_size, &mut batch_count, row_count, sink)?;
+  }
+  let Some(column_metadata) = first else {
+    return Ok(QueryExecutionSummary::Affected { rows_affected });
+  };
+  flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
+  Ok(QueryExecutionSummary::Rows {
+    columns: column_metadata.iter().map(|column| column.name.clone()).collect(),
     column_metadata,
     row_count,
     batch_count,
