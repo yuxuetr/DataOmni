@@ -772,6 +772,26 @@
     MySQL 分区表的列、索引与 `SHOW CREATE TABLE` 照常。
     打包版（rpm 0.4.65，连 cu 的 PG 16）：引用两个分区的分区表的那张表，结构页外键 1 条、指向 `public.om_part (id, created)`；
     ER 图 4 张表 4 条线，没有分区的框。
+  - 2026-10-01 SQL Server 的图表（`AS NODE` / `AS EDGE`，SQL Server 2022 在 cu 上）：节点表与边表的数据页整个打不开。**修了四处**：
+    - **驱动读不了图表的伪列**（`996a090`）：`$node_id` 等伪列在列元数据里带着 TDS 没定义的标志位，tiberius 0.12 遇到不认识的位
+      整个结果报「column metadata: invalid flags」，`SELECT *` 都不行。升到 0.13（忽略不认识的位）。同时得到的：`sql_variant` 与
+      CLR 类型不再 `todo!()` panic、照底层类型解出来（CLR 类型给二进制，表数据页照旧转文本）；Cargo.lock 里重复的 rustls 0.21 一套没了。
+      升级要处理的两件：0.13 默认每个往返最多等 30 秒，关掉（执行多久归界面的超时设置，32 秒的 `WAITFOR` 用例去掉这一句就红）；
+      握手的 future 在 debug 构建里从 10 KB 涨到 36 KB，目录用例在握手里撑爆 2 MB 线程栈（lldb 看到栈顶在 `Connection::establish`），
+      改为放在堆上，1.5 MB 栈也过。TLS 四档重新试过：关闭 / 要求连得上，校验证书对自签证书照旧拒绝且原因写得清楚。
+    - **列目录把内部列记成 HIDDEN**（`c9b1d5f`）：`graph_id_…`、`from_id_…` 等 `is_hidden`，取表数据时按 HIDDEN 点名，报 13908
+      「Cannot access internal graph column」。HIDDEN 只能写在 `GENERATED ALWAYS` 的列上，「隐藏却不是 generated always」的只会是
+      这几列，结构页、ER 图与补全都排掉；`$node_id` / `$edge_id` 算服务端产生（`graph_type` 经 `FOR JSON` 读，2016 上不报列名无效）。
+    - **NVARCHAR 里半个代理对让整条查询失败**（`c86808c`，顺带查出）：`LEFT` 截在 emoji 中间就存下半个，驱动严格解码报
+      「invalid UTF-16 sequence」。打开 0.13 的宽松解码，换成 U+FFFD（与 SQLite 的非 UTF-8 文本同一个做法）。
+      改这一格时：默认的 `SQL_Latin1_General_CP1_CI_AS` 把半个代理对与 U+FFFD 当成相等，照常改（行靠主键定位，改的就是这一行）；
+      二进制与 `_SC` 排序规则下守卫比不上、整批回滚（`238091e` 把注释改成照实写）。
+    - **新增行表单里很长的列名压到右边那一格**（`9e17f22`，打包版上看到）：`$node_id_<32 位十六进制>` 没有空格，标签折行。
+    四条真库用例都先红后绿，`sql_server_smoke` 26 条单线程全过。
+    打包版（rpm 0.4.66，SQL Server 经隧道）：节点表数据页显示 `$node_id`（JSON）、id、name，新增行时 `$node_id` 标「生成」、预览里
+    INSERT 只写 id 与 name，提交后新行带着服务端给的 `$node_id`；`om_cut` 显示 `�!`，改 note 提交成功、改 txt 也提交成功
+    （见上一条的排序规则）；编辑器里 `SELECT *` 边表、`sql_variant`（1.5）、hierarchyid（`0x58`）照常显示。
+    rpm 0.4.67：新增行表单里 `$node_id_…` 的标签在自己那一格里折行，右边的 `id (PK) * int` 不再被盖住。
 
   - 还不能勾：Windows——构建要改 `src-tauri/Cargo.toml` 且需 Windows 开发环境，这一轮不处理。
 
