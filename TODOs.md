@@ -610,6 +610,15 @@
     打包版（rpm 0.4.52，同一套 GNOME 容器，连 cu 上的 MySQL 8.4）：一张带 `tinyint(1)`、GEOMETRY、JSON 的表整张打开，status 显示
     `2` / `-1`，JSON 里的 `order_id` 显示 `1234567890123456789`，「格式化」后仍是原数；改 note 一并提交格式化过的 JSON，
     服务端读回 `order_id` 不变、GEOMETRY 的字节不变。PG 的 JSON 只在冒烟用例里核过（显示走同一条前端路径）。
+  - 2026-10-01 MariaDB 11.4 特有的类型（cu 上）：没查出问题。UUID、INET4 / INET6、存成 LONGTEXT 的 JSON（大整数是原文）、POINT、
+    零日期、DECIMAL(65,30)、带系统版本的表与 `FOR SYSTEM_TIME ALL` 都照常读出。VECTOR 要 11.7，没测。
+  - **CSV 导入：GBK 文件第一行就报「invalid utf-8」**（`268cdb4`）：中文 Windows 上 Excel 另存的「CSV（逗号分隔）」是 GBK，
+    分隔符嗅探也全部出局、回落到逗号。开头 64 KB 不是 UTF-8 就按 GB18030 边读边转，预览、嗅探与导入共用一个判断；
+    导入前检查里提醒一句。BOM 与 CRLF 原本就没问题。单测先红后绿（把判断改回总是 UTF-8 精确红在两条 GBK 用例上；
+    导入用例里一个字跨在读缓冲的边界上）。README 同步（`ebb7bf8`）。
+    打包版（rpm 0.4.53，同一套 GNOME 容器，SQLite）：分号分隔的 GBK 文件经 GTK 文件框选中，预览认出 `;`、`张三` / `广州,天河`
+    都对，映射页与执行页显示提醒，导入 3 行、0 失败，库里与原文一致。
+    不做：编码下拉框（Latin-1、Big5 之类读成乱码时只能先另存为 UTF-8）。重估条件：有人拿着这类文件来。
   - 看到没修的：
     - 导出预览（`exportResult.ts`）的 JSON 仍经 `JSON.parse`，2^53 以上的整数在预览里丢位；写出的文件走 Rust，整数是准的，
       超出 u64 的数与长小数照样经 serde_json 成了双精度。重估条件：有人拿 PG 的高精度 JSON 导出并报告。
