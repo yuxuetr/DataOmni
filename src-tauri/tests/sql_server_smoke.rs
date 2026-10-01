@@ -503,6 +503,71 @@ async fn sql_server_timeout_closes_the_connection_so_the_server_stops_the_statem
   assert_eq!(waiting[0]["n"], json!(0), "被放弃的语句还在服务端跑");
 }
 
+/// 执行多久只由界面上的超时设置管：tiberius 0.13 起驱动自己默认每个往返最多等 30 秒，
+/// 不关掉的话设了一分钟超时的语句到第 30 秒就报 TimedOut。
+#[tokio::test]
+async fn sql_server_statements_may_run_past_the_drivers_own_default_timeout() {
+  let Some(pool) = pool().await else { return };
+  let sessions = QuerySessionState::default();
+  let mut rows = Vec::new();
+  sessions
+    .execute_streaming(
+      StreamingQueryOptions {
+        session_id: "sql-server-long",
+        pool_key: "sqlserver://smoke-long",
+        pool: PoolRef::SqlServer(&pool),
+        sql: "WAITFOR DELAY '00:00:32'; SELECT 1 AS late",
+        autocommit: true,
+        explain_plan: false,
+        row_limit: 10,
+        byte_limit: 16 * 1024 * 1024,
+        batch_size: 10,
+        timeout_duration: Duration::from_secs(60),
+      },
+      &mut |batch| {
+        rows.extend(batch.rows);
+        Ok(())
+      },
+    )
+    .await
+    .expect("runs to the end within the app's own timeout");
+  assert_eq!(rows[0]["late"], json!(1));
+}
+
+/// 图表的伪列（`$node_id`、`$edge_id`、`$from_id`、`$to_id`）在列元数据里带着一个 TDS 没有
+/// 定义的标志位，tiberius 0.12 遇到不认识的位整个结果报「column metadata: invalid flags」——
+/// 节点表与边表 `SELECT *` 都读不出来。0.13 起忽略不认识的位。
+#[tokio::test]
+async fn sql_server_reads_graph_pseudo_columns() {
+  let Some(pool) = pool().await else { return };
+  let drop =
+    ["DROP TABLE IF EXISTS dbo.smoke_graph_edge", "DROP TABLE IF EXISTS dbo.smoke_graph_node"];
+  run_all(&pool, &drop).await;
+  run_all(
+    &pool,
+    &[
+      "CREATE TABLE dbo.smoke_graph_node (id int PRIMARY KEY) AS NODE",
+      "CREATE TABLE dbo.smoke_graph_edge AS EDGE",
+      "INSERT INTO dbo.smoke_graph_node (id) VALUES (1), (2)",
+      "INSERT INTO dbo.smoke_graph_edge VALUES ((SELECT $node_id FROM dbo.smoke_graph_node WHERE id = 1), \
+       (SELECT $node_id FROM dbo.smoke_graph_node WHERE id = 2))",
+    ],
+  )
+  .await;
+  let nodes = pool.select("SELECT * FROM dbo.smoke_graph_node ORDER BY id", &[]).await;
+  let edges = pool.select("SELECT $from_id AS from_id FROM dbo.smoke_graph_edge", &[]).await;
+  run_all(&pool, &drop).await;
+  let nodes = nodes.expect("read node table");
+  let node_id =
+    nodes[0].iter().find(|(name, _)| name.starts_with("$node_id")).map(|(_, value)| text(value));
+  assert!(
+    node_id.as_deref().is_some_and(|id| id.contains("\"id\":0")),
+    "伪列的值是服务端拼的 JSON: {:?}",
+    nodes[0]
+  );
+  assert!(text(&edges.expect("read edge table")[0]["from_id"]).contains("smoke_graph_node"));
+}
+
 // ---------------------------------------------------------------------------
 // 目录查询。夹具的陷阱和 MySQL / PostgreSQL 那一组相同：复合外键的列在表里
 // 声明的次序和键内次序相反（ref_b 在 ref_a 前面）；复合主键与复合唯一键的
@@ -796,39 +861,36 @@ async fn sql_server_sessions_use_the_options_that_filtered_indexes_require() {
   }
 }
 
-/// 驱动不认识的列类型：tiberius 在读 `sql_variant` 的列元数据时是 `todo!()`，
-/// 直接 panic。没接住的话这次调用永远不回来，界面一直转着「执行中」。
-/// 接住之后是一条能照着做的错误，而且会话还能继续用。
+/// `sql_variant` 与 CLR 类型（hierarchyid、geography）：tiberius 0.12 读它们的列元数据时是
+/// `todo!()`，整条查询 panic（接住之后报驱动失败）；0.13 起照底层类型解出来。
 #[tokio::test]
-async fn sql_server_driver_panics_become_errors_and_the_session_recovers() {
+async fn sql_server_reads_sql_variant_and_clr_columns() {
   let Some(pool) = pool().await else { return };
   let mut connection = session(&pool).await;
-  let error = connection
-    .execute("SELECT SERVERPROPERTY('Edition') AS edition", 10)
-    .await
-    .expect_err("sql_variant is not decodable");
-  assert!(
-    error.message.starts_with(dataomni_lib::services::sql_server::SQL_SERVER_DRIVER_FAILURE),
-    "{error:?}"
-  );
   let rows = rows_of(
     connection
-      .execute("SELECT CAST(SERVERPROPERTY('Edition') AS nvarchar(128)) AS edition", 10)
+      .execute(
+        "SELECT SERVERPROPERTY('Edition') AS edition, CAST(7 AS sql_variant) AS i, \
+         CAST(1.5 AS sql_variant) AS d, CAST(N'中' AS sql_variant) AS s, CAST(NULL AS sql_variant) AS n, \
+         hierarchyid::Parse('/1/') AS h, geography::Point(1, 2, 4326) AS g",
+        10,
+      )
       .await
-      .expect("the CAST that the error suggests works"),
+      .expect("sql_variant and CLR columns are readable"),
   );
-  assert!(text(&rows[0]["edition"]).contains("Developer"), "{rows:?}");
-  // 目录查询那条路一样要接住
-  let catalog_error = pool
-    .select("SELECT SERVERPROPERTY('Edition') AS edition", &[])
-    .await
-    .expect_err("catalog path");
-  assert!(
-    catalog_error
-      .message
-      .starts_with(dataomni_lib::services::sql_server::SQL_SERVER_DRIVER_FAILURE),
-    "{catalog_error:?}"
+  let row = &rows[0];
+  assert!(text(&row["edition"]).contains("Developer"), "{row:?}");
+  assert_eq!(
+    [&row["i"], &row["d"], &row["s"], &row["n"]],
+    [&json!(7), &json!({ "type": "decimal", "value": "1.5" }), &json!("中"), &JsonValue::Null]
   );
+  // CLR 类型给的是它的二进制形态，与 SSMS 直接查出来的相同（hierarchyid `/1/` 是 0x58）
+  assert_eq!(row["h"], json!({ "type": "binary", "value": "58" }));
+  assert_eq!(row["g"]["type"], json!("binary"));
+  // 目录查询那条路一样
+  let catalog =
+    pool.select("SELECT SERVERPROPERTY('Edition') AS edition", &[]).await.expect("catalog path");
+  assert!(text(&catalog[0]["edition"]).contains("Developer"), "{catalog:?}");
 }
 
 // ---------------------------------------------------------------------------

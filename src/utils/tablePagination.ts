@@ -167,9 +167,9 @@ export function pageClause(
 }
 
 /**
- * tiberius 解不了的列类型：`sql_variant` 与 CLR 类型的列元数据是 `todo!()`，结果里有一列
- * 这种类型，整条查询就失败。服务端转成文本再取——四种都认 `CAST(… AS nvarchar(max))`，
- * 改回去时文本也能隐式转回原类型（2022 上试过）
+ * 要服务端转成文本再取的列类型。tiberius 0.12 读 `sql_variant` 与 CLR 类型的列元数据是 `todo!()`，
+ * 整条查询失败；0.13 起读得出来，但 CLR 类型给的是二进制（geography 是一串字节，不是 `POINT (2 1)`），
+ * 看不懂也改不回去。四种都认 `CAST(… AS nvarchar(max))`，改回去时文本也能隐式转回原类型（2022 上试过）
  */
 const SQL_SERVER_UNREADABLE_TYPES = new Set(['sql_variant', 'geography', 'geometry', 'hierarchyid']);
 

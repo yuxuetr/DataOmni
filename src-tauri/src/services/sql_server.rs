@@ -72,10 +72,10 @@ pub(crate) use sql_server_type_name;
 /// 连接串的 scheme。前端据此认出这条连接不归插件管
 pub const SQL_SERVER_SCHEME: &str = "sqlserver://";
 
-/// tiberius 在它没实现的地方直接 panic：`sql_variant` 与 CLR 类型（geography、
-/// hierarchyid）的列元数据是 `todo!()`，服务端要求的加密级别对不上时也是
-/// `panic!`。没接住的话那一次调用永远不回来，界面一直转着「执行中」。
-/// 冒号后面是 panic 的原话。
+/// 驱动 panic 时报的错。tiberius 0.12 在它没实现的地方直接 panic（`sql_variant` 与 CLR 类型
+/// 的列元数据是 `todo!()`，加密级别对不上也是 `panic!`）；0.13 把这几处都改成了错误，
+/// 已知的触发点没有了，这一层仍然留着：没接住的话那一次调用永远不回来，界面一直转着
+/// 「执行中」。冒号后面是 panic 的原话。
 pub const SQL_SERVER_DRIVER_FAILURE: &str = "DATAOMNI_SQL_SERVER_DRIVER_FAILURE";
 /// 驱动失败之后这条连接的协议状态不可知，和断线一样不再复用
 const DRIVER_FAILURE_CODE: &str = "SQL_SERVER_DRIVER_FAILURE";
@@ -125,6 +125,9 @@ impl SqlServerTarget {
       config.database(database);
     }
     config.application_name("DataOmni");
+    // tiberius 0.13 起默认每个往返最多等 30 秒，到了就报 TimedOut。执行多久由界面上的
+    // 超时设置管（可以选不限），驱动这一层不另设上限
+    config.command_timeout(None);
     config.authentication(AuthMethod::sql_server(&self.username, &self.password));
     let (encryption, verify) = tls_settings(self.tls);
     config.encryption(encryption);
@@ -157,7 +160,11 @@ pub async fn connect(target: &SqlServerTarget) -> Result<SqlServerClient, QueryE
   let attempt = guarded(async {
     let tcp = TcpStream::connect(config.get_addr()).await.map_err(connection_lost)?;
     tcp.set_nodelay(true).map_err(connection_lost)?;
-    Client::connect(config, tcp.compat_write()).await.map_err(|error| query_error(error, None))
+    // 握手的 future 放到堆上：tiberius 0.13 的握手状态在 debug 构建里有三十多 KB，
+    // 层层按值移动，连同 TLS 的栈帧把 2 MB 的线程栈撑爆过（目录用例在握手里栈溢出）
+    Box::pin(Client::connect(config, tcp.compat_write()))
+      .await
+      .map_err(|error| query_error(error, None))
   });
   tokio::time::timeout(CONNECT_TIMEOUT, attempt).await.map_err(|_| {
     QueryError::with_code(

@@ -53,7 +53,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"]
 # SQL Server（`services/sql_server.rs`）。sqlx 0.7 起不再带 MSSQL 驱动，插件也就没有；
 # tiberius 是纯 Rust 的 TDS 实现，不带原生依赖。关掉默认的 native-tls 与 winauth：
 # TLS 与 sqlx 一样走 rustls，免得一个应用里两套 TLS 栈。
-tiberius = { version = "0.12", default-features = false, features = ["tds73", "rustls", "time"] }
+tiberius = { version = "0.13", default-features = false, features = ["tds73", "rustls", "time"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 # SQL Server 的执行计划是 XML（SHOWPLAN_XML）。零依赖、只读的树，够用
 roxmltree = "0.20"
