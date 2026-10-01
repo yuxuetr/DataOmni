@@ -252,7 +252,10 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
 - 每个单元格分得清 NULL、空字符串、默认值、表达式和未填写；JSON、二进制、
   布尔和日期各有专用编辑器
 - 结果导出为 CSV / JSON / `INSERT` 语句，可选分隔符、表头、NULL 写法与 UTF-8 BOM，
-  对话框带真实输出预览；`INSERT` 的字面量与标识符按当前连接的数据库写，七种关系库都实际灌回去验过
+  对话框带真实输出预览；`INSERT` 的字面量与标识符按当前连接的数据库写，七种关系库都实际灌回去验过。
+  表数据导出的 `INSERT` 不写计算列；自增列照原值写，SQL Server 前后加 `SET IDENTITY_INSERT`，
+  PostgreSQL 的 `GENERATED ALWAYS` 写 `OVERRIDING SYSTEM VALUE`，末尾照 pg_dump 用 `setval` 把序列推过插入的最大值
+  （Oracle 的 `ALWAYS` 自增列没有覆盖写法，执行时报 ORA-32795）
 - 备份：SQLite 用 `VACUUM INTO` 写一份一致的库文件，DuckDB 用 `EXPORT DATABASE` 导成 Parquet 目录，
   PostgreSQL 用本机的 `pg_dump`（custom 格式），MySQL / MariaDB 用本机的 `mysqldump`（一致性快照的 SQL 文本）；
   MongoDB 按库用本机的 `mongodump`（gzip 归档，对象树上右键）；密码不进命令行，经 SSH 隧道也行；走后台任务
