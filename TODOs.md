@@ -619,7 +619,37 @@
     打包版（rpm 0.4.53，同一套 GNOME 容器，SQLite）：分号分隔的 GBK 文件经 GTK 文件框选中，预览认出 `;`、`张三` / `广州,天河`
     都对，映射页与执行页显示提醒，导入 3 行、0 失败，库里与原文一致。
     不做：编码下拉框（Latin-1、Big5 之类读成乱码时只能先另存为 UTF-8）。重估条件：有人拿着这类文件来。
+  - 2026-10-01 导出再导回（每种方言一张各类型的表，CSV 导出后导回同结构的空表，逐列比对；MySQL 8.4、PG 16 在 cu 上，
+    SQL Server 2022、Oracle 23ai 经隧道，DuckDB 进程内）。**修了五处**：
+    - **二进制导回去存的是 `0x…` 这串字符**（`a8f1a7d`）：PG bytea、MySQL / SQLite / DuckDB 的 BLOB 长度翻倍、不报错；
+      SQL Server 报 nvarchar 不能隐式转 varbinary；Oracle 报 ORA-01465。二进制列的值绑成十六进制，由语句在库里转回字节
+      （decode / UNHEX / unhex / from_hex / CONVERT(…, 2)）；`0x` 加偶数位十六进制按字节存，别的文本存它自己的字节（与原来一样），
+      Oracle 本来就把文本当十六进制读，只去掉 `0x`。六种方言各一条真库用例，旧代码上都先红。
+    - **MySQL 的 BIT 导回去**（`f88096f`）：导出是十进制数，`bit(8)` 导 `0` 存成字符 `'0'` 的字节 48、不报错，`165` 报 Data too long。
+      占位符改成 `CAST(? AS UNSIGNED)`。
+    - **MySQL 的 GEOMETRY / POINT 导回去报 1416**（`8e05889`）：导出是 `0x` 加内部格式，与二进制列同样转回字节。只限 MySQL。
+    - **SQL Server 1900 年以前的 datetime 读不出**（`a67b9ac`）：tiberius 把负的天数转成 u64，release 下报 overflow adding duration to date，
+      整条查询（表数据页、导出）报驱动错误；`1753-01-01` 是常见的最小日期占位值。改为自己按天数与 1/300 秒换算，debug 与 release 都先红。
+    - **Oracle 原生 JSON（21c 起）与 VECTOR（23ai）的表整张打不开**（`48e397a`、`e1d98ed`）：rust-oracle 0.6 读不了这两种类型，
+      报的是 unsupported Oracle type JSON / unknown Oracle type number 2033。投影里写成 `JSON_SERIALIZE` / `VECTOR_SERIALIZE(… RETURNING CLOB)`，
+      文本写得回去；SQL 标签的报错加提示给出同样的写法。单测先红后绿，冒烟用例在 23ai 上复现、读出、写回。
+    修完以后：PG 24 列、MySQL 22 列、DuckDB 25 列（HUGEINT / UHUGEINT、列表、结构体、MAP、BIT）、SQL Server 24 列（geography 走 WKT、
+    hierarchyid、datetimeoffset、xml）、Oracle 21 列逐列一致，剩下的都是预期内的：JSON 里的数被规整（`2.50` → `2.5`，数值相等），
+    以及恰好等于 NULL 写法（`\N`）的文本。
+    打包版（rpm 0.4.54，同一套 GNOME 容器，经隧道连 cu 上的 Oracle 23ai）：带 JSON 与 VECTOR 列的表整张打开，JSON 里的 20 位整数原样，
+    VECTOR 是 Oracle 自己的写法（`1.0E+000`）；网格里给空着的一行填 JSON（JSON 编辑器）与 `[7, 8, 9]` 提交，语句里两列都不进守卫，
+    服务端读回一致；SQL 标签 `SELECT *` 报错下面中英文提示都画出来了。CSV 导入、BIT、GEOMETRY、datetime 几处只改后端，没单独打包看。
+  - **「执行全部」跑的是改之前的语句**（`6709c3f`，上一条打包验证时撞见）：自动解析有 500ms 防抖，改完立刻点「执行全部」
+    （或 Ctrl+Shift+Enter），跑的是上一次解析出的那几条，结果卡片却已换成新文本，危险语句的确认框判断的也是旧的；
+    关掉「自动解析」时则一直跑旧的。改了 WHERE 立刻执行的 DELETE，删的是另一批行。执行全部先按现在的文本解析一次，
+    确认框与执行用同一份。单测先红（发出去的是旧的 `id = 2`）后绿。
+    打包版：0.4.54 上改成 `SELECT 2 AS new_v` 立刻执行，结果列是 `OLD_V`；0.4.55 上关掉自动解析、把 v8 改成 v9 直接「执行全部」，结果是 `V9`。
+    （虚拟输入在这台模拟环境里赶不上防抖的时间窗：点击会落在打字中途，所以防抖那条路靠单测钉。）
   - 看到没修的：
+    - Oracle 公元前的 DATE（`-4712-01-01`）导出后导不回去（ORA-01841）：会话的日期格式不认负年份，网格改这种值同理。
+      重估条件：有人存公元前的日期。
+    - Oracle 的 BFILE 列整条查询报 ORA-00932；`SYS.ANYDATA` 只显示类型名。重估条件：有人拿着这种表来。
+    - SQL Server 的冒烟用例并行跑时偶发失败：两条导入用例共用 `dbo.dataomni_import`。单线程 21 条全过。
     - 导出预览（`exportResult.ts`）的 JSON 仍经 `JSON.parse`，2^53 以上的整数在预览里丢位；写出的文件走 Rust，整数是准的，
       超出 u64 的数与长小数照样经 serde_json 成了双精度。重估条件：有人拿 PG 的高精度 JSON 导出并报告。
     - SQLite 非 UTF-8 的那一格在表格里改不了（守卫拿替换字符比不上），而提示说的是「被别人改过、刷新重试」，刷新了也一样。
