@@ -65,6 +65,8 @@ interface ExportResultDialogProps {
   sqlComputedColumns?: readonly string[];
   /** 这张表的自增列：值照写，按方言写明覆盖，见 `ExportOptions.sqlIdentityColumns` */
   sqlIdentityColumns?: readonly string[];
+  /** 这张表靠序列取号的列，见 `ExportOptions.sqlSequenceColumns` */
+  sqlSequenceColumns?: readonly string[];
   onClose: () => void;
 }
 
@@ -102,6 +104,7 @@ export function ExportResultDialog({
   sqlTable,
   sqlComputedColumns,
   sqlIdentityColumns,
+  sqlSequenceColumns,
   onClose
 }: ExportResultDialogProps) {
   const t = useLanguageStore((state) => state.t);
@@ -110,7 +113,8 @@ export function ExportResultDialog({
     sqlTable: sqlTable ?? '',
     sqlDialect,
     sqlComputedColumns,
-    sqlIdentityColumns
+    sqlIdentityColumns,
+    sqlSequenceColumns
   });
   const [scopeId, setScopeId] = useState(scopes?.[0]?.id ?? '');
   const [writing, setWriting] = useState(false);

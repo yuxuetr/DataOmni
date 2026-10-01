@@ -36,6 +36,12 @@ export interface ExportOptions {
    * Oracle 的 `ALWAYS` 没有覆盖写法，照写会报 ORA-32795
    */
   sqlIdentityColumns?: readonly string[];
+  /**
+   * PostgreSQL 里靠序列取号的列（identity 与 serial）。带着原值插进去，序列不会跟着走，
+   * 下一条不给 id 的 INSERT 就从 1 取号、撞主键。所以末尾照 pg_dump 补一句 `setval` 推到最大值
+   * （表是空的时 `max` 是 NULL，`setval` 什么也不做）。别家不用：MySQL、SQL Server、SQLite 自己会推
+   */
+  sqlSequenceColumns?: readonly string[];
 }
 
 export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
@@ -122,7 +128,10 @@ export function toJson(
 export function toSqlInserts(
   columns: readonly string[],
   rows: ReadonlyArray<readonly SerializedResultValue[]>,
-  options: Pick<ExportOptions, 'sqlTable' | 'sqlDialect' | 'sqlComputedColumns' | 'sqlIdentityColumns'>
+  options: Pick<
+    ExportOptions,
+    'sqlTable' | 'sqlDialect' | 'sqlComputedColumns' | 'sqlIdentityColumns' | 'sqlSequenceColumns'
+  >
 ): string {
   const dialect = options.sqlDialect ?? 'sqlite';
   const table = quoteSqlIdentifier(options.sqlTable, dialect);
@@ -143,12 +152,24 @@ export function toSqlInserts(
     return [`SET IDENTITY_INSERT ${table} ON;`, ...statements, `SET IDENTITY_INSERT ${table} OFF;`]
       .join(LINE_SEPARATOR);
   }
-  return statements.join(LINE_SEPARATOR);
+  const sequences = new Set(dialect === 'postgresql' ? options.sqlSequenceColumns ?? [] : []);
+  const moveSequences = written
+    .filter(column => sequences.has(column.name))
+    .map(column => `SELECT setval(pg_get_serial_sequence(${quoteSqlStringLiteral(table, dialect)}, `
+      + `${quoteSqlStringLiteral(column.name, dialect)}), max(${quoteSqlIdentifier(column.name, dialect)})) FROM ${table};`);
+  return [...statements, ...moveSequences].join(LINE_SEPARATOR);
 }
 
 /** 写 `INSERT` 时要略去的列：值由数据库算出的计算列。自增列不算——它的值要原样带过去 */
 export function computedColumnNames(columns: readonly ColumnInfo[]): string[] {
   return columns.filter(column => column.is_generated && !column.identity_generation).map(column => column.name);
+}
+
+/** 见 `ExportOptions.sqlSequenceColumns`：identity，以及默认值是 `nextval(…)` 的 serial */
+export function sequenceColumnNames(columns: readonly ColumnInfo[]): string[] {
+  return columns
+    .filter(column => column.identity_generation || /^nextval\(/i.test(column.default_value ?? ''))
+    .map(column => column.name);
 }
 
 /** 见 `ExportOptions.sqlIdentityColumns` */

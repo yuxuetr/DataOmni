@@ -1011,6 +1011,7 @@ fn export_options() -> dataomni_lib::services::ExportOptions {
     sql_dialect: None,
     sql_computed_columns: Vec::new(),
     sql_identity_columns: Vec::new(),
+    sql_sequence_columns: Vec::new(),
   }
 }
 

@@ -5,6 +5,7 @@ import {
   DEFAULT_EXPORT_OPTIONS,
   computedColumnNames,
   alwaysIdentityColumnNames,
+  sequenceColumnNames,
   serializeExport,
   suggestExportFileName,
   toCsv,
@@ -200,5 +201,21 @@ describe('computedColumnNames', () => {
       column('seq', { is_generated: true, identity_generation: 'BY DEFAULT' }),
       column('twice', { is_generated: true })
     ])).toEqual(['id']);
+  });
+
+  it('靠序列取号的列：identity 与默认值是 nextval 的 serial', () => {
+    const column = (name: string, flags: Partial<ColumnInfo>) => ({
+      name,
+      data_type: 'int',
+      is_nullable: true,
+      is_primary_key: false,
+      ...flags
+    });
+    expect(sequenceColumnNames([
+      column('id', { is_generated: true, identity_generation: 'BY DEFAULT' }),
+      column('legacy', { default_value: "nextval('orders_legacy_seq'::regclass)" }),
+      column('rowid', { default_value: 'unique_rowid()' }),
+      column('twice', { is_generated: true })
+    ])).toEqual(['id', 'legacy']);
   });
 });

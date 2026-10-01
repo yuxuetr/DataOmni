@@ -54,7 +54,7 @@ import { ResultChartDialog } from './ResultChartDialog';
 import { DENSITY_CELL_CLASS } from '../utils/gridColumns';
 import { useSettingsStore } from '../stores/settingsStore';
 import { SHORTCUTS, formatShortcut } from '../utils/shortcuts';
-import { computedColumnNames, alwaysIdentityColumnNames } from '../utils/exportResult';
+import { alwaysIdentityColumnNames, computedColumnNames, sequenceColumnNames } from '../utils/exportResult';
 
 /**
  * 结果区底边要留出的余量。
@@ -496,6 +496,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
           sqlTable={editability?.editable ? editability.table : ''}
           sqlComputedColumns={editability?.editable ? computedColumnNames(result.tableColumns ?? []) : undefined}
           sqlIdentityColumns={editability?.editable ? alwaysIdentityColumnNames(result.tableColumns ?? []) : undefined}
+          sqlSequenceColumns={editability?.editable ? sequenceColumnNames(result.tableColumns ?? []) : undefined}
           // 只在结果真被截断时才给「完整结果」这一档。没截断时内存里的就是全部，
           // 再跑一遍数据库只是白付一次查询的代价。
           scopes={exportScopes}

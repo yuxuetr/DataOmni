@@ -1293,6 +1293,64 @@
         ]
       },
       "expected": "INSERT INTO `orders` (`id`, `n`) VALUES (5, 1);"
+    },
+    {
+      "name": "sql-postgresql-moves-sequences-past-the-inserted-ids",
+      "columns": [
+        "id",
+        "legacy",
+        "n"
+      ],
+      "rows": [
+        {
+          "id": 5,
+          "legacy": 7,
+          "n": 1
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "order's",
+        "sqlDialect": "postgresql",
+        "sqlIdentityColumns": [
+          "id"
+        ],
+        "sqlSequenceColumns": [
+          "id",
+          "legacy"
+        ]
+      },
+      "expected": "INSERT INTO \"order's\" (\"id\", \"legacy\", \"n\") OVERRIDING SYSTEM VALUE VALUES (5, 7, 1);\nSELECT setval(pg_get_serial_sequence('\"order''s\"', 'id'), max(\"id\")) FROM \"order's\";\nSELECT setval(pg_get_serial_sequence('\"order''s\"', 'legacy'), max(\"legacy\")) FROM \"order's\";"
+    },
+    {
+      "name": "sql-sequences-only-for-postgresql",
+      "columns": [
+        "id",
+        "n"
+      ],
+      "rows": [
+        {
+          "id": 5,
+          "n": 1
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "order's",
+        "sqlDialect": "mysql",
+        "sqlSequenceColumns": [
+          "id"
+        ]
+      },
+      "expected": "INSERT INTO `order's` (`id`, `n`) VALUES (5, 1);"
     }
   ]
 }

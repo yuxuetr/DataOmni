@@ -66,6 +66,10 @@ pub struct ExportOptions {
   /// 不许赋值，要写明覆盖：前者前后各一句 `SET IDENTITY_INSERT`，后者 `OVERRIDING SYSTEM VALUE`
   #[serde(default)]
   pub sql_identity_columns: Vec<String>,
+  /// PostgreSQL 里靠序列取号的列（identity 与 serial）。带着原值插进去序列不会跟着走，
+  /// 下一条不给 id 的 INSERT 就撞主键，所以末尾照 pg_dump 补一句 `setval` 推到最大值
+  #[serde(default)]
+  pub sql_sequence_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -107,6 +111,8 @@ pub struct ExportWriter<W: Write> {
   /// 写出去的列里有自增列：要按方言写明覆盖。表上没有 identity 列时
   /// `SET IDENTITY_INSERT` 本身就报错（8106），所以只在真写了那一列时加
   overrides_identity: bool,
+  /// 收尾时要用 `setval` 推过已插入最大值的那几列；只有 PostgreSQL 有
+  sequence_columns: Vec<String>,
 }
 
 impl<W: Write> ExportWriter<W> {
@@ -120,6 +126,13 @@ impl<W: Write> ExportWriter<W> {
     }
     let overrides_identity = options.format == ExportFormat::Sql
       && columns.iter().any(|name| options.sql_identity_columns.contains(name));
+    let sequence_columns = if options.format == ExportFormat::Sql
+      && options.sql_dialect == Some(SqlDialect::Postgresql)
+    {
+      columns.iter().filter(|name| options.sql_sequence_columns.contains(name)).cloned().collect()
+    } else {
+      Vec::new()
+    };
     let json_keys = unique_column_names(&columns);
     let mut writer = Self {
       inner,
@@ -130,6 +143,7 @@ impl<W: Write> ExportWriter<W> {
       bytes_written: 0,
       wrote_anything: false,
       overrides_identity,
+      sequence_columns,
     };
 
     if writer.options.byte_order_mark {
@@ -237,6 +251,20 @@ impl<W: Write> ExportWriter<W> {
     if let Some(statement) = self.identity_insert("OFF") {
       self.emit(LINE_SEPARATOR)?;
       self.emit(&statement)?;
+    }
+    let table = quote_identifier(&self.options.sql_table, SqlDialect::Postgresql);
+    for column in std::mem::take(&mut self.sequence_columns) {
+      let statement = format!(
+        "SELECT setval(pg_get_serial_sequence({}, {}), max({})) FROM {table};",
+        string_literal(&table, SqlDialect::Postgresql),
+        string_literal(&column, SqlDialect::Postgresql),
+        quote_identifier(&column, SqlDialect::Postgresql),
+      );
+      if self.wrote_anything {
+        self.emit(LINE_SEPARATOR)?;
+      }
+      self.emit(&statement)?;
+      self.wrote_anything = true;
     }
     if self.options.format == ExportFormat::Json {
       if self.rows_written == 0 {
@@ -743,6 +771,7 @@ mod tests {
       sql_dialect: None,
       sql_computed_columns: Vec::new(),
       sql_identity_columns: Vec::new(),
+      sql_sequence_columns: Vec::new(),
     }
   }
 
