@@ -174,6 +174,21 @@ describe('按方言切语句', () => {
       .toEqual(["SELECT 'it\\'s; odd'", 'SELECT 2']);
   });
 
+  it('反斜杠只在 MySQL / ClickHouse 与 PostgreSQL 的 E 字符串里是转义', () => {
+    // 别的地方 `'C:\'` 就是一个完整的字面量；当成转义的话后面整段都被吞进字符串
+    const script = "SELECT 'C:\\'; SELECT \"a\\\"; SELECT 2;";
+    for (const dialect of ['postgresql', 'sqlserver', 'oracle', 'sqlite', 'duckdb'] as const) {
+      expect(splitSqlStatements(script, dialect)).toEqual(["SELECT 'C:\\'", 'SELECT "a\\"', 'SELECT 2']);
+    }
+    expect(splitSqlStatements("SELECT E'it\\'s; ok'; SELECT e'\\\\'; SELECT 2;", 'postgresql'))
+      .toEqual(["SELECT E'it\\'s; ok'", "SELECT e'\\\\'", 'SELECT 2']);
+    // 标识符末尾的 e 不是前缀
+    expect(splitSqlStatements("SELECT name'x\\'; SELECT 2;", 'postgresql'))
+      .toEqual(["SELECT name'x\\'", 'SELECT 2']);
+    expect(splitSqlStatements("SELECT 'it\\'s; ok'; SELECT 2;", 'mysql'))
+      .toEqual(["SELECT 'it\\'s; ok'", 'SELECT 2']);
+  });
+
   it('SQL Server 的方括号标识符里的引号与分号不算数', () => {
     expect(splitSqlStatements("SELECT [it's; odd]]name] FROM t; SELECT 2;", 'sqlserver'))
       .toEqual(["SELECT [it's; odd]]name] FROM t", 'SELECT 2']);

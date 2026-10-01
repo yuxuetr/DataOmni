@@ -3,9 +3,9 @@ import type { SqlDialect } from '../contracts/queryExecution';
 type LexerState =
   | { type: 'normal' }
   | { type: 'bracket' }
-  | { type: 'single-quote' }
-  | { type: 'double-quote' }
-  | { type: 'backtick' }
+  | { type: 'single-quote'; backslashEscapes: boolean }
+  | { type: 'double-quote'; backslashEscapes: boolean }
+  | { type: 'backtick'; backslashEscapes: boolean }
   | { type: 'line-comment' }
   | { type: 'block-comment'; depth: number }
   | { type: 'dollar-quote'; tag: string };
@@ -27,6 +27,8 @@ export interface SqlStatementRange {
  * - `#` 只有 MySQL 与 ClickHouse 是注释。PostgreSQL 里它是按位异或，SQL Server 里 `#t` 是
  *   临时表——当成注释的话 `SELECT 1 INTO #t;` 那一行的分号就被吞了。
  * - SQL Server 的 `[...]` 是标识符，里面的 `'` 与 `;` 不算数。
+ * - 反斜杠只在 MySQL / ClickHouse 的引号里、PostgreSQL 的 `E'…'` 里是转义。别处 `'C:\'`
+ *   就是一个完整的字面量，当成转义的话后面整段脚本都被吞进字符串，切成一条发出去。
  * - SQL Server 的脚本常用单独一行的 `GO` 分批（SSMS 的约定，不是 T-SQL 语法）。
  *   脚本里只要有一行 `GO`，就**只按 GO 切**：`CREATE PROCEDURE` 的过程体里
  *   满是分号，按分号切会把一个过程切成几段发出去。`GO 5` 这种带次数的不认——
@@ -81,6 +83,7 @@ function scanStatements(
   let index = 0;
   let sawBatchSeparator = false;
   const hashComments = dialect === undefined || dialect === 'mysql' || dialect === 'clickhouse';
+  const backslashEscapes = hashComments;
 
   const flush = () => {
     const statement = buffer.trim();
@@ -155,11 +158,14 @@ function scanStatements(
       const character = sqlText[index];
       buffer += character;
       if (character === "'") {
-        state = { type: 'single-quote' };
+        state = {
+          type: 'single-quote',
+          backslashEscapes: backslashEscapes || (dialect === 'postgresql' && isEscapeStringPrefix(sqlText, index))
+        };
       } else if (character === '"') {
-        state = { type: 'double-quote' };
+        state = { type: 'double-quote', backslashEscapes };
       } else if (character === '`') {
-        state = { type: 'backtick' };
+        state = { type: 'backtick', backslashEscapes };
       } else if (character === '[' && dialect === 'sqlserver') {
         state = { type: 'bracket' };
       }
@@ -232,7 +238,7 @@ function scanStatements(
     buffer += character;
     index += 1;
 
-    if (character === '\\' && index < sqlText.length) {
+    if (state.backslashEscapes && character === '\\' && index < sqlText.length) {
       buffer += sqlText[index];
       index += 1;
       continue;
@@ -330,6 +336,11 @@ export const returnsResultSet = (sql: string): boolean => {
     && keywords.includes('RETURNING');
 };
 
+/** 引号前面是一个独立的 `E` / `e`：PostgreSQL 的转义字符串，前面再连着字母数字就是标识符的一部分 */
+function isEscapeStringPrefix(sqlText: string, quoteIndex: number): boolean {
+  return /[eE]/.test(sqlText[quoteIndex - 1] ?? '') && !/[\w$]/.test(sqlText[quoteIndex - 2] ?? '');
+}
+
 function matchDollarQuoteTag(sqlText: string, index: number): string | null {
   if (sqlText[index] !== '$') {
     return null;
@@ -406,11 +417,12 @@ export function topLevelKeywords(sql: string): string[] {
         continue;
       }
       if (character === "'" || character === '"' || character === '`') {
+        // 不知道方言，反斜杠一律当转义：认错了只会把后面的 WHERE 藏起来，判定往更危险那边偏
         state = character === "'"
-          ? { type: 'single-quote' }
+          ? { type: 'single-quote', backslashEscapes: true }
           : character === '"'
-            ? { type: 'double-quote' }
-            : { type: 'backtick' };
+            ? { type: 'double-quote', backslashEscapes: true }
+            : { type: 'backtick', backslashEscapes: true };
         index += 1;
         continue;
       }
