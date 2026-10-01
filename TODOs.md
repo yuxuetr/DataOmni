@@ -723,7 +723,10 @@
     MySQL：INVISIBLE 列的值显示出来（0.4.58 上是 NULL），改长度预览带 INVISIBLE，空间列改可空性被拒、理由文案正常；执行后
     `secret` 仍 INVISIBLE、`g` 的 SRID 仍是 4326。
   - 看到没修的：
-    - Oracle 的 INVISIBLE 列（12c 起）没查：`SELECT *` 同样不展开，列目录给不给它、网格是否同样整列 NULL 未知。重估条件：下次开 Oracle 时先查。
+    - ~~Oracle 的 INVISIBLE 列没查~~ 查了，比另两家更糟，**已修**（`e0342ae`）：列目录按 `hidden_column = 'NO'` 取，而 INVISIBLE 列与
+      函数索引背后的系统列同是 `HIDDEN_COLUMN = 'YES'`，于是这一列在结构页、网格与整表导出里都不存在（导出的文件静默少一列）。
+      改为再收 `user_generated = 'YES'` 的，`column_extra` 标 INVISIBLE、取表数据时点名；`MODIFY` 改它的长度与可空性后仍是 INVISIBLE。
+      真库用例在旧查询上红。打包版（rpm 0.4.60，Oracle 23ai 经隧道）：网格里有这一列与它的值，CSV 导出预览带着它，行编辑改它提交后服务端是新值。
     - SQL Server 列目录读 `sys.masked_columns` 与 `is_hidden`，这两样 2016 起才有，2014 及更早整段列查询会报错（结构页、表数据页都打不开）。
       2014 已出扩展支持期，README 写的验证版本是 2022。重估条件：有人连 2014。
 
