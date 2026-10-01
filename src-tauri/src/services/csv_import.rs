@@ -538,9 +538,14 @@ fn ensure_transaction(
   }
 }
 
+/// 类型名的第一个词，小写：`varchar(32)` → `varchar`，`character varying` → `character`
+fn column_type_token(target_type: &str) -> String {
+  target_type.split(['(', ' ']).next().unwrap_or("").to_ascii_lowercase()
+}
+
 /// 不用查转换的类型：文本进文本不会转换失败（太长是截断，只终止语句）
 fn converts_without_failing(target_type: &str) -> bool {
-  let token = target_type.split(['(', ' ']).next().unwrap_or("").to_ascii_lowercase();
+  let token = column_type_token(target_type);
   matches!(token.as_str(), "char" | "varchar" | "nchar" | "nvarchar" | "text" | "ntext" | "sysname")
 }
 
@@ -648,6 +653,10 @@ fn build_insert(
           )));
         }
         placeholders.push(format!("{placeholder}::{}", column.target_type));
+      } else if dialect == Dialect::MySql && column_type_token(&column.target_type) == "bit" {
+        // MySQL 的 BIT 读出来、导出去都是十进制数；绑成文本存的是那串字符的字节，
+        // `0` 成了 48。转成数才是那几位
+        placeholders.push(format!("CAST({placeholder} AS UNSIGNED)"));
       } else {
         placeholders.push(placeholder);
       }
@@ -661,7 +670,7 @@ fn build_insert(
 
 /// 二进制列。只看类型名的第一个词，与前端 `columnEditorKind` 同一个规矩
 fn is_binary_type(target_type: &str) -> bool {
-  let token = target_type.split(['(', ' ']).next().unwrap_or("").to_ascii_lowercase();
+  let token = column_type_token(target_type);
   matches!(
     token.as_str(),
     "bytea"

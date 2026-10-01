@@ -5046,6 +5046,48 @@ async fn mysql_import_reads_exported_hex_into_blob() {
   sqlx::query("DROP TABLE IF EXISTS import_smoke_blob").execute(&pool).await.expect("cleanup");
 }
 
+/// MySQL 的 BIT 读出来、导出去都是十进制数。原样绑回去是一串字符：`0` 存成
+/// `'0'` 的字节 48，`165` 报 Data too long
+#[tokio::test]
+async fn mysql_import_reads_exported_numbers_into_bit() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(2).connect(&url).await.expect("connect to MySQL");
+  let db_pool = DbPool::MySql(pool.clone());
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_bit").execute(&pool).await.expect("drop");
+  sqlx::query("CREATE TABLE import_smoke_bit (n int, flags bit(8), flag bit(1))")
+    .execute(&pool)
+    .await
+    .expect("create");
+  let path = write_import_csv("mysql-bit", "n,flags,flag\n1,165,1\n2,0,0\n");
+  let summary = run_import(
+    &db_pool,
+    &import_request(
+      &path,
+      "import_smoke_bit",
+      vec![
+        import_column(0, "n", "int"),
+        import_column(1, "flags", "bit(8)"),
+        import_column(2, "flag", "bit(1)"),
+      ],
+    ),
+  )
+  .await;
+  assert_eq!(summary.rows_failed, 0, "{:?}", summary.errors);
+
+  let stored: Vec<(u64, u64)> =
+    sqlx::query_as("SELECT flags + 0, flag + 0 FROM import_smoke_bit ORDER BY n")
+      .fetch_all(&pool)
+      .await
+      .expect("read back");
+  assert_eq!(stored, [(165, 1), (0, 0)]);
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_bit").execute(&pool).await.expect("cleanup");
+}
+
 /// 对象级结构操作的共用语料：`fixtures/object-ddl-conformance.json`。
 ///
 /// 前端的 `objectDdl.conformance.test.ts` 核对生成的语句；这里把同一条语句拿真库
