@@ -592,6 +592,12 @@ ORDER BY name
 /// `MASKED WITH (FUNCTION = N'…')`（字面量在这里转义好，改结构时原样拼回去）；
 /// 另记 `HIDDEN`——`SELECT *` 不展开这种列，取表数据时要点名。`CONCAT` 把 NULL 当空串，
 /// 没有掩码时那一段整个是 NULL。`sys.masked_columns` 与 `is_hidden` 是 2016 起才有的。
+///
+/// 图表（`AS NODE` / `AS EDGE`）的内部列（`graph_id_…`、`from_id_…` 等）同样 `is_hidden`，
+/// 但点名取它报 13908，排掉：HIDDEN 只能写在 `GENERATED ALWAYS` 的列上，所以
+/// 「隐藏却不是 generated always」的只会是这几列。`$node_id` / `$edge_id`（`graph_type` 2）
+/// 由服务端写，算 `is_generated`；`graph_type` 是 2017 起才有的，经 `FOR JSON` 读，
+/// 2016 上读出来是 NULL，不至于整段报列名无效。
 const SQL_SERVER_COLUMNS: &str = concat!(
   r#"
 SELECT
@@ -605,6 +611,10 @@ SELECT
   CAST(pk.key_ordinal AS int) AS primary_key_ordinal,
   CAST(CASE WHEN c.is_identity = 1 OR c.is_computed = 1 OR ty.name = 'timestamp'
     OR c.generated_always_type <> 0
+    OR JSON_VALUE((
+      SELECT g.* FROM sys.columns g WHERE g.object_id = c.object_id AND g.column_id = c.column_id
+      FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
+    ), '$.graph_type') = '2'
     THEN 1 ELSE 0 END AS bit) AS is_generated,
   CAST(CASE WHEN c.is_identity = 1 THEN 'ALWAYS' END AS nvarchar(10)) AS identity_generation,
   c.collation_name AS collation,
@@ -629,6 +639,7 @@ LEFT JOIN (
 WHERE o.name = @P1
   AND s.name = COALESCE(@P2, SCHEMA_NAME())
   AND o.type IN ('U', 'V')
+  AND NOT (c.is_hidden = 1 AND c.generated_always_type = 0)
 ORDER BY c.column_id
 "#
 );

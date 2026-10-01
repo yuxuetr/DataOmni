@@ -233,6 +233,7 @@ LEFT JOIN (
 ) pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id
 WHERE o.type = 'U'
   AND o.is_ms_shipped = 0
+  AND NOT (c.is_hidden = 1 AND c.generated_always_type = 0)
 ORDER BY s.name, o.name, c.column_id
 "#
 );

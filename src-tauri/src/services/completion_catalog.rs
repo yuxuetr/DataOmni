@@ -123,6 +123,7 @@ JOIN sys.columns c ON c.object_id = o.object_id
 JOIN sys.types ty ON ty.user_type_id = c.user_type_id
 WHERE o.type IN ('U', 'V')
   AND o.is_ms_shipped = 0
+  AND NOT (c.is_hidden = 1 AND c.generated_always_type = 0)
 ORDER BY s.name, o.name, c.column_id
 "#
 );

@@ -679,6 +679,65 @@ async fn sql_server_period_columns_count_as_generated() {
   );
 }
 
+/// 图表（`AS NODE` / `AS EDGE`）的内部列（`graph_id_…`、`from_id_…` 这几列）`is_hidden`，
+/// 点名取它报 13908「Cannot access internal graph column」——不排掉的话按 HIDDEN 点名取表数据，
+/// 节点表与边表的数据页整个打不开。`$node_id` / `$edge_id` 由服务端写，算 `is_generated`；
+/// `$from_id` / `$to_id` 是新增边时要给的，不算。
+#[tokio::test]
+async fn sql_server_graph_tables_hide_their_internal_columns() {
+  let Some(pool) = pool().await else { return };
+  let drop = ["DROP TABLE IF EXISTS dbo.smoke_likes", "DROP TABLE IF EXISTS dbo.smoke_person"];
+  run_all(&pool, &drop).await;
+  run_all(
+    &pool,
+    &[
+      "CREATE TABLE dbo.smoke_person (id int PRIMARY KEY, name nvarchar(20)) AS NODE",
+      "CREATE TABLE dbo.smoke_likes (rating int) AS EDGE",
+      "INSERT INTO dbo.smoke_person (id, name) VALUES (1, N'a'), (2, N'b')",
+      "INSERT INTO dbo.smoke_likes VALUES ((SELECT $node_id FROM dbo.smoke_person WHERE id = 1), \
+       (SELECT $node_id FROM dbo.smoke_person WHERE id = 2), 5)",
+    ],
+  )
+  .await;
+  let queries = schema_metadata_queries(&DatabaseType::SqlServer).expect("supported");
+  let mut seen: Vec<(String, String)> = Vec::new();
+  for table in ["smoke_person", "smoke_likes"] {
+    let columns =
+      pool.select(queries.columns, &[json!(table), json!("dbo")]).await.expect("columns");
+    let projection = columns
+      .iter()
+      .map(|row| format!("[{}]", text(&row["column_name"]).replace(']', "]]")))
+      .collect::<Vec<_>>()
+      .join(", ");
+    // 数据页点名取的就是这些列
+    let read = pool.select(&format!("SELECT {projection} FROM dbo.{table}"), &[]).await;
+    seen.push((
+      table.to_string(),
+      read.map(|rows| format!("{} rows", rows.len())).unwrap_or_else(|error| format!("{error:?}")),
+    ));
+    for row in &columns {
+      // 列名带一段随机的十六进制后缀，只比前两段
+      let name = text(&row["column_name"]);
+      let prefix = name.split('_').take(2).collect::<Vec<_>>().join("_");
+      seen.push((prefix, row["is_generated"].to_string()));
+    }
+  }
+  run_all(&pool, &drop).await;
+  let expected = [
+    ("smoke_person", "2 rows"),
+    ("$node_id", "true"),
+    ("id", "false"),
+    ("name", "false"),
+    ("smoke_likes", "1 rows"),
+    ("$edge_id", "true"),
+    ("$from_id", "false"),
+    ("$to_id", "false"),
+    ("rating", "false"),
+  ]
+  .map(|(label, value)| (label.to_string(), value.to_string()));
+  assert_eq!(seen, expected);
+}
+
 /// 这一条把所有目录查询一次跑完：它们共用一个夹具，而建夹具本身要十几条 DDL。
 #[tokio::test]
 async fn sql_server_catalog_queries_describe_the_fixture() {
