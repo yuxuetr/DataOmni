@@ -146,6 +146,57 @@ async fn oracle_decodes_values_the_way_the_other_dialects_do() {
   assert_eq!(rows[1]["V"], JsonValue::Null);
 }
 
+/// BINARY_FLOAT 是单精度：放宽成 f64 的话 0.1 成了 0.10000000149011612。
+/// 无穷与 NaN 照 SQL*Plus 的拼法（`Inf`、`-Inf`、`Nan`），`TO_BINARY_DOUBLE` 也认这几个词
+#[tokio::test]
+async fn oracle_binary_floats_read_as_sqlplus_writes_them() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool).await;
+  let rows = rows_of(
+    connection
+      .execute(
+        "SELECT TO_BINARY_FLOAT(0.1) AS narrow, TO_BINARY_DOUBLE(0.1) AS wide, \
+          BINARY_FLOAT_INFINITY AS up, -BINARY_DOUBLE_INFINITY AS down, BINARY_DOUBLE_NAN AS nan \
+          FROM dual",
+        10,
+      )
+      .await
+      .expect("select"),
+  );
+  let row = &rows[0];
+  assert_eq!(row["NARROW"], json!(0.1));
+  assert_eq!(row["WIDE"], json!(0.1));
+  assert_eq!(row["UP"], json!("Inf"));
+  assert_eq!(row["DOWN"], json!("-Inf"));
+  assert_eq!(row["NAN"], json!("Nan"));
+
+  // 显示的值原样绑回去，读回来不变：表格里改别的列时这几格就是这么发的
+  drop_quietly(&pool, "om_float").await;
+  run_all(&pool, &["CREATE TABLE om_float (id NUMBER(10), f BINARY_FLOAT, d BINARY_DOUBLE)"]).await;
+  let statements: Vec<_> = [(1, "NARROW", "WIDE"), (2, "UP", "DOWN"), (3, "NAN", "NAN")]
+    .iter()
+    .map(|(id, f, d)| {
+      write(
+        "INSERT INTO om_float (id, f, d) VALUES (:1, :2, :3)",
+        vec![json!(id), row[*f].clone(), row[*d].clone()],
+        Some(1),
+      )
+    })
+    .collect();
+  dataomni_lib::services::execute_write_batch(PoolRef::Oracle(&pool), &statements)
+    .await
+    .expect("write the displayed values back");
+  let back = rows_of(
+    connection.execute("SELECT f, d FROM om_float ORDER BY id", 10).await.expect("read back"),
+  );
+  let pairs: Vec<_> = back.iter().map(|row| (row["F"].clone(), row["D"].clone())).collect();
+  assert_eq!(
+    pairs,
+    [(json!(0.1), json!(0.1)), (json!("Inf"), json!("-Inf")), (json!("Nan"), json!("Nan"))]
+  );
+  drop_quietly(&pool, "om_float").await;
+}
+
 /// ClickHouse 回归时查出的同一类：i64 最小值取 `abs()` 溢出，release 里回绕成负数、被当成安全整数，
 /// 以 JSON 数字送到前端，JavaScript 读成 -9223372036854775808 的近似值
 #[tokio::test]

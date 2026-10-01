@@ -24,8 +24,8 @@ use crate::services::query_error::QueryErrorDetails;
 use crate::services::query_error::{CONNECTION_LOST, CONNECTION_LOST_CODE};
 use crate::services::query_executor::{
   admit_row_bytes, flush_full_batch, flush_remaining_batch, number_duplicate_columns, tagged_value,
-  QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow, QueryTruncationReason,
-  StreamOptions,
+  widen_f32, QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow,
+  QueryTruncationReason, StreamOptions,
 };
 use crate::services::transaction_state::{TransactionState, TransactionStatus};
 use crate::services::write_batch::{
@@ -1099,10 +1099,20 @@ fn decode(oracle_type: &OracleType, value: &SqlValue) -> Result<JsonValue, Query
       tagged_value("decimal", leading_zero(&text()?))
     }
     OracleType::BinaryFloat | OracleType::BinaryDouble => {
-      let number = value.get::<f64>().map_err(|error| query_error(&error, None))?;
-      serde_json::Number::from_f64(number)
-        .map(JsonValue::Number)
-        .unwrap_or_else(|| JsonValue::from(number.to_string()))
+      // 单精度按它自己的最短写法放宽，不然 0.1 成了 0.10000000149011612
+      let number = if *oracle_type == OracleType::BinaryFloat {
+        value.get::<f32>().map(widen_f32)
+      } else {
+        value.get::<f64>()
+      }
+      .map_err(|error| query_error(&error, None))?;
+      // JSON 里没有无穷与 NaN；照 SQL*Plus 的拼法，`TO_BINARY_DOUBLE` 也认
+      match serde_json::Number::from_f64(number) {
+        Some(number) => JsonValue::Number(number),
+        None if number.is_nan() => JsonValue::from("Nan"),
+        None if number > 0.0 => JsonValue::from("Inf"),
+        None => JsonValue::from("-Inf"),
+      }
     }
     OracleType::Date => {
       let stamp = value.get::<Timestamp>().map_err(|error| query_error(&error, None))?;
