@@ -5046,6 +5046,51 @@ async fn mysql_import_reads_exported_hex_into_blob() {
   sqlx::query("DROP TABLE IF EXISTS import_smoke_blob").execute(&pool).await.expect("cleanup");
 }
 
+/// MySQL 的空间类型导出成 `0x` 加它的内部格式（SRID + WKB），这几个字节原样写回去就是那个值
+#[tokio::test]
+async fn mysql_import_reads_exported_geometry() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(2).connect(&url).await.expect("connect to MySQL");
+  let db_pool = DbPool::MySql(pool.clone());
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_geometry").execute(&pool).await.expect("drop");
+  sqlx::query("CREATE TABLE import_smoke_geometry (n int, g geometry, p point SRID 4326)")
+    .execute(&pool)
+    .await
+    .expect("create");
+  let path = write_import_csv(
+    "mysql-geometry",
+    "n,g,p\n1,0x000000000101000000000000000000f03f0000000000000040,\
+     0xe610000001010000000000000000005e400000000000003e40\n",
+  );
+  let summary = run_import(
+    &db_pool,
+    &import_request(
+      &path,
+      "import_smoke_geometry",
+      vec![
+        import_column(0, "n", "int"),
+        import_column(1, "g", "geometry"),
+        import_column(2, "p", "point"),
+      ],
+    ),
+  )
+  .await;
+  assert_eq!(summary.rows_failed, 0, "{:?}", summary.errors);
+
+  let stored: (String, String, i64) =
+    sqlx::query_as("SELECT ST_AsText(g), ST_AsText(p), ST_SRID(p) FROM import_smoke_geometry")
+      .fetch_one(&pool)
+      .await
+      .expect("read back");
+  assert_eq!(stored, ("POINT(1 2)".into(), "POINT(30 120)".into(), 4326));
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_geometry").execute(&pool).await.expect("cleanup");
+}
+
 /// MySQL 的 BIT 读出来、导出去都是十进制数。原样绑回去是一串字符：`0` 存成
 /// `'0'` 的字节 48，`165` 报 Data too long
 #[tokio::test]

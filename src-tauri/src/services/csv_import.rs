@@ -643,7 +643,7 @@ fn build_insert(
         Dialect::Oracle => format!(":{next}"),
         _ => "?".to_string(),
       };
-      if is_binary_type(&column.target_type) {
+      if is_binary_type(dialect, &column.target_type) {
         placeholders.push(dialect.unhex(&placeholder));
       } else if dialect == Dialect::Postgres {
         if !valid_type_name(&column.target_type) {
@@ -668,21 +668,18 @@ fn build_insert(
   Ok(format!("INSERT INTO {qualified} ({names}) VALUES {}", tuples.join(", ")))
 }
 
-/// 二进制列。只看类型名的第一个词，与前端 `columnEditorKind` 同一个规矩
-fn is_binary_type(target_type: &str) -> bool {
-  let token = column_type_token(target_type);
-  matches!(
-    token.as_str(),
-    "bytea"
-      | "blob"
-      | "tinyblob"
-      | "mediumblob"
-      | "longblob"
-      | "binary"
-      | "varbinary"
-      | "image"
-      | "raw"
-  )
+/// 二进制列。只看类型名的第一个词，与前端 `columnEditorKind` 同一个规矩。
+///
+/// MySQL 的空间类型也算：网格与导出给的是 `0x` 加它的内部格式（SRID + WKB），
+/// 这几个字节原样写回去就是那个值。只限 MySQL——PostgreSQL 自带的 `point` 是 `(1,2)` 这样的文本
+fn is_binary_type(dialect: Dialect, target_type: &str) -> bool {
+  match column_type_token(target_type).as_str() {
+    "bytea" | "blob" | "tinyblob" | "mediumblob" | "longblob" | "binary" | "varbinary"
+    | "image" | "raw" => true,
+    "geometry" | "point" | "linestring" | "polygon" | "multipoint" | "multilinestring"
+    | "multipolygon" | "geometrycollection" | "geomcollection" => dialect == Dialect::MySql,
+    _ => false,
+  }
 }
 
 /// 二进制列的值，绑成一串十六进制，由 [`Dialect::unhex`] 在库里转回字节。
@@ -716,7 +713,7 @@ fn row_params(
     match record.get(column.source) {
       Some(field) => {
         let value = options.to_value(field);
-        params.push(if is_binary_type(&column.target_type) {
+        params.push(if is_binary_type(dialect, &column.target_type) {
           value.map(|value| binary_param(dialect, value))
         } else {
           value
