@@ -1181,6 +1181,118 @@
         ]
       },
       "expected": "n,twice\n2,4"
+    },
+    {
+      "name": "sql-sqlserver-identity-insert-wraps-the-rows",
+      "columns": [
+        "id",
+        "n",
+        "total"
+      ],
+      "rows": [
+        {
+          "id": 5,
+          "n": 1,
+          "total": 2
+        },
+        {
+          "id": 9,
+          "n": 3,
+          "total": 6
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "orders",
+        "sqlDialect": "sqlserver",
+        "sqlComputedColumns": [
+          "total"
+        ],
+        "sqlIdentityColumns": [
+          "id"
+        ]
+      },
+      "expected": "SET IDENTITY_INSERT [orders] ON;\nINSERT INTO [orders] ([id], [n]) VALUES (5, 1);\nINSERT INTO [orders] ([id], [n]) VALUES (9, 3);\nSET IDENTITY_INSERT [orders] OFF;"
+    },
+    {
+      "name": "sql-sqlserver-identity-insert-only-when-the-identity-column-is-written",
+      "columns": [
+        "n"
+      ],
+      "rows": [
+        {
+          "n": 1
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "orders",
+        "sqlDialect": "sqlserver",
+        "sqlIdentityColumns": [
+          "id"
+        ]
+      },
+      "expected": "INSERT INTO [orders] ([n]) VALUES (1);"
+    },
+    {
+      "name": "sql-postgresql-overrides-identity",
+      "columns": [
+        "id",
+        "n"
+      ],
+      "rows": [
+        {
+          "id": 5,
+          "n": 1
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "orders",
+        "sqlDialect": "postgresql",
+        "sqlIdentityColumns": [
+          "id"
+        ]
+      },
+      "expected": "INSERT INTO \"orders\" (\"id\", \"n\") OVERRIDING SYSTEM VALUE VALUES (5, 1);"
+    },
+    {
+      "name": "sql-mysql-writes-auto-increment-values-as-they-are",
+      "columns": [
+        "id",
+        "n"
+      ],
+      "rows": [
+        {
+          "id": 5,
+          "n": 1
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "orders",
+        "sqlDialect": "mysql",
+        "sqlIdentityColumns": [
+          "id"
+        ]
+      },
+      "expected": "INSERT INTO `orders` (`id`, `n`) VALUES (5, 1);"
     }
   ]
 }

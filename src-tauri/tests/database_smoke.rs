@@ -3636,6 +3636,7 @@ fn csv_export_options() -> ExportOptions {
     sql_table: String::new(),
     sql_dialect: None,
     sql_computed_columns: Vec::new(),
+    sql_identity_columns: Vec::new(),
   }
 }
 
@@ -3887,9 +3888,10 @@ async fn postgres_reports_declared_types_and_generated_columns() {
     rows
       .iter()
       .find(|row| row.get::<String, _>("column_name") == name)
-      .map(|row| row.get::<bool, _>("is_identity"))
+      .map(|row| row.get::<Option<String>, _>("identity_generation"))
   };
-  assert_eq!((identity("id"), identity("area")), (Some(!opengauss), Some(false)));
+  let id = if opengauss { None } else { Some("ALWAYS".to_string()) };
+  assert_eq!((identity("id"), identity("area")), (Some(id), Some(None)));
 
   assert_eq!(by_name("id").3, Some(1), "主键次序: {columns:?}");
   assert_eq!(by_name("code").3, None, "非主键列没有键内次序: {columns:?}");
@@ -3950,9 +3952,12 @@ async fn mysql_reports_declared_types_and_generated_columns() {
     rows
       .iter()
       .find(|row| row.get::<String, _>("column_name") == name)
-      .map(|row| row.get::<i64, _>("is_identity"))
+      .map(|row| row.get::<Option<String>, _>("identity_generation"))
   };
-  assert_eq!((identity("id"), identity("area")), (Some(1), Some(0)));
+  assert_eq!(
+    (identity("id"), identity("area")),
+    (Some(Some("BY DEFAULT".to_string())), Some(None))
+  );
 
   assert_eq!(by_name("id").3, Some(1), "主键次序: {columns:?}");
   assert_eq!(by_name("code").3, None, "非主键列没有键内次序: {columns:?}");

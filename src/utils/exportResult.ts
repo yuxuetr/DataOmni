@@ -29,6 +29,13 @@ export interface ExportOptions {
    * 所以 `sql` 格式不写这几列。CSV 与 JSON 照写，那是给人看的
    */
   sqlComputedColumns?: readonly string[];
+  /**
+   * 要写明覆盖才收值的自增列（`GENERATED ALWAYS`，以及 SQL Server 的 identity）。
+   * SQL Server 前后各一句 `SET IDENTITY_INSERT`，PostgreSQL 写 `OVERRIDING SYSTEM VALUE`。
+   * `BY DEFAULT` 的不进这里：直接给值就收，而 CockroachDB 不认 `OVERRIDING`（语法错）。
+   * Oracle 的 `ALWAYS` 没有覆盖写法，照写会报 ORA-32795
+   */
+  sqlIdentityColumns?: readonly string[];
 }
 
 export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
@@ -115,25 +122,38 @@ export function toJson(
 export function toSqlInserts(
   columns: readonly string[],
   rows: ReadonlyArray<readonly SerializedResultValue[]>,
-  options: Pick<ExportOptions, 'sqlTable' | 'sqlDialect' | 'sqlComputedColumns'>
+  options: Pick<ExportOptions, 'sqlTable' | 'sqlDialect' | 'sqlComputedColumns' | 'sqlIdentityColumns'>
 ): string {
   const dialect = options.sqlDialect ?? 'sqlite';
+  const table = quoteSqlIdentifier(options.sqlTable, dialect);
   const computed = new Set(options.sqlComputedColumns ?? []);
   const written = columns
     .map((name, index) => ({ name, index }))
     .filter(column => !computed.has(column.name));
-  const head = `INSERT INTO ${quoteSqlIdentifier(options.sqlTable, dialect)} (`
+  // 表上没有 identity 列时 `SET IDENTITY_INSERT` 本身就报错（8106），所以只在真写了那一列时加
+  const identity = new Set(options.sqlIdentityColumns ?? []);
+  const overridesIdentity = written.some(column => identity.has(column.name));
+  const head = `INSERT INTO ${table} (`
     + written.map(column => quoteSqlIdentifier(column.name, dialect)).join(', ')
-    + ') VALUES (';
+    + (overridesIdentity && dialect === 'postgresql' ? ') OVERRIDING SYSTEM VALUE VALUES (' : ') VALUES (');
 
-  return rows
-    .map(row => head + written.map(column => sqlLiteral(row[column.index] ?? null, dialect)).join(', ') + ');')
-    .join(LINE_SEPARATOR);
+  const statements = rows
+    .map(row => head + written.map(column => sqlLiteral(row[column.index] ?? null, dialect)).join(', ') + ');');
+  if (overridesIdentity && dialect === 'sqlserver') {
+    return [`SET IDENTITY_INSERT ${table} ON;`, ...statements, `SET IDENTITY_INSERT ${table} OFF;`]
+      .join(LINE_SEPARATOR);
+  }
+  return statements.join(LINE_SEPARATOR);
 }
 
 /** 写 `INSERT` 时要略去的列：值由数据库算出的计算列。自增列不算——它的值要原样带过去 */
 export function computedColumnNames(columns: readonly ColumnInfo[]): string[] {
-  return columns.filter(column => column.is_generated && !column.is_identity).map(column => column.name);
+  return columns.filter(column => column.is_generated && !column.identity_generation).map(column => column.name);
+}
+
+/** 见 `ExportOptions.sqlIdentityColumns` */
+export function alwaysIdentityColumnNames(columns: readonly ColumnInfo[]): string[] {
+  return columns.filter(column => column.identity_generation === 'ALWAYS').map(column => column.name);
 }
 
 /**

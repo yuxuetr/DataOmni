@@ -3,6 +3,8 @@ export interface SchemaInfo {
   owner?: string;
 }
 
+export type IdentityGeneration = 'ALWAYS' | 'BY DEFAULT';
+
 export interface ColumnInfo {
   name: string;
   data_type: string;
@@ -19,10 +21,13 @@ export interface ColumnInfo {
    */
   is_generated?: boolean;
   /**
-   * `is_generated` 里的自增 / identity 那一种（MySQL 的 AUTO_INCREMENT 也算）。
-   * 计算列的值写不进去，自增列的值可以、而且导出再导回时要原样带过去
+   * `is_generated` 里的自增 / identity 那一种；计算列与普通列没有。
+   *
+   * 计算列的值写不进去，自增列的值可以、而且导出再导回时要原样带过去；`ALWAYS` 的还要
+   * 写明覆盖。SQL Server 的 identity 不开 `IDENTITY_INSERT` 就不收值，算 `ALWAYS`；
+   * MySQL 的 AUTO_INCREMENT 收值，算 `BY DEFAULT`
    */
-  is_identity?: boolean;
+  identity_generation?: IdentityGeneration | null;
   /**
    * 以下三项只有 MySQL 有值。
    *

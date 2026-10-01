@@ -834,6 +834,7 @@ async fn duckdb_exports_stream_to_a_file_and_refuse_non_queries_before_running_t
     sql_table: String::new(),
     sql_dialect: None,
     sql_computed_columns: Vec::new(),
+    sql_identity_columns: Vec::new(),
   };
   let export = |sql: &'static str| {
     let pool = Arc::clone(&pool);

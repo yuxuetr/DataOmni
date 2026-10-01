@@ -592,8 +592,8 @@ async fn oracle_catalog_queries_describe_the_fixture() {
   assert_eq!(by_name("TOTAL")["is_generated"], json!(1), "虚拟列");
   assert_eq!(by_name("REF_A")["is_generated"], json!(0));
   assert_eq!(
-    (&by_name("ID")["is_identity"], &by_name("TOTAL")["is_identity"]),
-    (&json!(1), &json!(0))
+    (&by_name("ID")["identity_generation"], &by_name("TOTAL")["identity_generation"]),
+    (&json!("ALWAYS"), &JsonValue::Null)
   );
   assert_eq!(by_name("ID")["is_primary_key"], json!(1));
   assert_eq!(by_name("REF_B")["is_nullable"], json!(0));
@@ -1010,6 +1010,7 @@ fn export_options() -> dataomni_lib::services::ExportOptions {
     sql_table: String::new(),
     sql_dialect: None,
     sql_computed_columns: Vec::new(),
+    sql_identity_columns: Vec::new(),
   }
 }
 

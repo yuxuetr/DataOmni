@@ -553,8 +553,8 @@ async fn sql_server_catalog_queries_describe_the_fixture() {
   assert_eq!(by_name("total")["is_generated"], json!(true));
   assert_eq!(by_name("created")["is_generated"], json!(false));
   assert_eq!(
-    (&by_name("id")["is_identity"], &by_name("total")["is_identity"]),
-    (&json!(true), &json!(false))
+    (&by_name("id")["identity_generation"], &by_name("total")["identity_generation"]),
+    (&json!("ALWAYS"), &JsonValue::Null)
   );
   assert!(text(&by_name("created")["column_default"]).to_lowercase().contains("sysdatetime"));
   assert_eq!(by_name("note")["is_nullable"], json!(true));
@@ -1031,6 +1031,7 @@ fn export_options() -> dataomni_lib::services::ExportOptions {
     sql_table: String::new(),
     sql_dialect: None,
     sql_computed_columns: Vec::new(),
+    sql_identity_columns: Vec::new(),
   }
 }
 

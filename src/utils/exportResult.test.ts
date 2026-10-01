@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import type { ColumnInfo } from '../contracts/databaseMetadata';
 import type { SerializedResultValue } from '../contracts/resultSet';
 import {
   DEFAULT_EXPORT_OPTIONS,
   computedColumnNames,
+  alwaysIdentityColumnNames,
   serializeExport,
   suggestExportFileName,
   toCsv,
@@ -169,7 +171,7 @@ describe('suggestExportFileName', () => {
 
 describe('computedColumnNames', () => {
   it('只挑计算列：自增列的值要原样写进 INSERT', () => {
-    const column = (name: string, flags: { is_generated?: boolean; is_identity?: boolean }) => ({
+    const column = (name: string, flags: Partial<ColumnInfo>) => ({
       name,
       data_type: 'int',
       is_nullable: true,
@@ -177,10 +179,26 @@ describe('computedColumnNames', () => {
       ...flags
     });
     expect(computedColumnNames([
-      column('id', { is_generated: true, is_identity: true }),
+      column('id', { is_generated: true, identity_generation: 'ALWAYS' }),
+      column('seq', { is_generated: true, identity_generation: 'BY DEFAULT' }),
       column('twice', { is_generated: true }),
-      column('rv', { is_generated: true, is_identity: false }),
+      column('rv', { is_generated: true, identity_generation: null }),
       column('note', {})
     ])).toEqual(['twice', 'rv']);
+  });
+
+  it('只有 ALWAYS 的自增列要写明覆盖', () => {
+    const column = (name: string, flags: Partial<ColumnInfo>) => ({
+      name,
+      data_type: 'int',
+      is_nullable: true,
+      is_primary_key: false,
+      ...flags
+    });
+    expect(alwaysIdentityColumnNames([
+      column('id', { is_generated: true, identity_generation: 'ALWAYS' }),
+      column('seq', { is_generated: true, identity_generation: 'BY DEFAULT' }),
+      column('twice', { is_generated: true })
+    ])).toEqual(['id']);
   });
 });

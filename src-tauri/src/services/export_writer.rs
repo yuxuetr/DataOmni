@@ -62,6 +62,10 @@ pub struct ExportOptions {
   /// 所以 `sql` 格式不写这几列。CSV 与 JSON 照写，那是给人看的
   #[serde(default)]
   pub sql_computed_columns: Vec<String>,
+  /// 自增 / identity 列。值照写，但 SQL Server 与 PostgreSQL 的 `GENERATED ALWAYS` 默认
+  /// 不许赋值，要写明覆盖：前者前后各一句 `SET IDENTITY_INSERT`，后者 `OVERRIDING SYSTEM VALUE`
+  #[serde(default)]
+  pub sql_identity_columns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -100,6 +104,9 @@ pub struct ExportWriter<W: Write> {
   /// CSV 的行分隔符要写在**下一行之前**：`lines.join('\n')` 不留行尾换行，
   /// 而流式写入没有「最后一行」可言，只能靠这个标志跳过第一次。
   wrote_anything: bool,
+  /// 写出去的列里有自增列：要按方言写明覆盖。表上没有 identity 列时
+  /// `SET IDENTITY_INSERT` 本身就报错（8106），所以只在真写了那一列时加
+  overrides_identity: bool,
 }
 
 impl<W: Write> ExportWriter<W> {
@@ -111,6 +118,8 @@ impl<W: Write> ExportWriter<W> {
     if options.format == ExportFormat::Sql {
       columns.retain(|name| !options.sql_computed_columns.contains(name));
     }
+    let overrides_identity = options.format == ExportFormat::Sql
+      && columns.iter().any(|name| options.sql_identity_columns.contains(name));
     let json_keys = unique_column_names(&columns);
     let mut writer = Self {
       inner,
@@ -120,6 +129,7 @@ impl<W: Write> ExportWriter<W> {
       rows_written: 0,
       bytes_written: 0,
       wrote_anything: false,
+      overrides_identity,
     };
 
     if writer.options.byte_order_mark {
@@ -139,7 +149,12 @@ impl<W: Write> ExportWriter<W> {
         }
       }
       // 语句一行一条，没有表头；空结果就是空文件
-      ExportFormat::Sql => {}
+      ExportFormat::Sql => {
+        if let Some(statement) = writer.identity_insert("ON") {
+          writer.emit(&statement)?;
+          writer.wrote_anything = true;
+        }
+      }
       // 空结果要写成 `[]`，与 `JSON.stringify([], null, 2)` 一致。开头的 `[`
       // 留到第一行或收尾时再决定，就不用回头改已经写出去的字节。
       ExportFormat::Json => {}
@@ -198,8 +213,13 @@ impl<W: Write> ExportWriter<W> {
           .map(|name| quote_identifier(name, dialect))
           .collect::<Vec<_>>()
           .join(", ");
+        let overriding = if self.overrides_identity && dialect == SqlDialect::Postgresql {
+          " OVERRIDING SYSTEM VALUE"
+        } else {
+          ""
+        };
         let statement = format!(
-          "INSERT INTO {} ({names}) VALUES ({values});",
+          "INSERT INTO {} ({names}){overriding} VALUES ({values});",
           quote_identifier(&self.options.sql_table, dialect)
         );
         if self.wrote_anything {
@@ -214,6 +234,10 @@ impl<W: Write> ExportWriter<W> {
   }
 
   pub fn finish(mut self) -> Result<(u64, u64), QueryError> {
+    if let Some(statement) = self.identity_insert("OFF") {
+      self.emit(LINE_SEPARATOR)?;
+      self.emit(&statement)?;
+    }
     if self.options.format == ExportFormat::Json {
       if self.rows_written == 0 {
         self.emit("[]")?;
@@ -227,6 +251,17 @@ impl<W: Write> ExportWriter<W> {
 
   pub fn progress(&self) -> ExportProgress {
     ExportProgress { rows_written: self.rows_written, bytes_written: self.bytes_written }
+  }
+
+  /// SQL Server 包在整批 `INSERT` 前后的那一句；别家不需要
+  fn identity_insert(&self, state: &str) -> Option<String> {
+    let dialect = self.options.sql_dialect.unwrap_or(SqlDialect::Sqlite);
+    (self.overrides_identity && dialect == SqlDialect::Sqlserver).then(|| {
+      format!(
+        "SET IDENTITY_INSERT {} {state};",
+        quote_identifier(&self.options.sql_table, SqlDialect::Sqlserver)
+      )
+    })
   }
 
   fn emit(&mut self, text: &str) -> Result<(), QueryError> {
@@ -707,6 +742,7 @@ mod tests {
       sql_table: String::new(),
       sql_dialect: None,
       sql_computed_columns: Vec::new(),
+      sql_identity_columns: Vec::new(),
     }
   }
 
