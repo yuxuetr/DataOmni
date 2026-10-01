@@ -189,6 +189,32 @@ describe('按方言切语句', () => {
       .toEqual(["SELECT 'it\\'s; ok'", 'SELECT 2']);
   });
 
+  it('SQLite 触发器体与 PostgreSQL 的 BEGIN ATOMIC 到配对的 END 为止，CASE … END 不算', () => {
+    const trigger = [
+      'CREATE TEMP TRIGGER IF NOT EXISTS tr AFTER INSERT ON t BEGIN',
+      "  SELECT CASE WHEN NEW.a < 0 THEN RAISE(ABORT, 'neg; no') END;",
+      '  UPDATE t SET backend = 1;',
+      'END;',
+      'SELECT 1;'
+    ].join('\n');
+    expect(splitSqlStatements(trigger, 'sqlite')).toEqual([
+      trigger.slice(0, trigger.lastIndexOf('END;') + 3),
+      'SELECT 1'
+    ]);
+    const atomic = 'CREATE OR REPLACE FUNCTION f(x int) RETURNS int LANGUAGE sql BEGIN ATOMIC'
+      + ' SELECT CASE WHEN x > 0 THEN 1 END; SELECT 2; END; SELECT f(1);';
+    expect(splitSqlStatements(atomic, 'postgresql')).toEqual([
+      'CREATE OR REPLACE FUNCTION f(x int) RETURNS int LANGUAGE sql BEGIN ATOMIC'
+        + ' SELECT CASE WHEN x > 0 THEN 1 END; SELECT 2; END',
+      'SELECT f(1)'
+    ]);
+    // 事务的 BEGIN 不是块：照旧切
+    expect(splitSqlStatements('BEGIN; DELETE FROM t; COMMIT;', 'sqlite'))
+      .toEqual(['BEGIN', 'DELETE FROM t', 'COMMIT']);
+    expect(splitSqlStatements('BEGIN; SELECT CASE WHEN true THEN 1 END; COMMIT;', 'postgresql'))
+      .toEqual(['BEGIN', 'SELECT CASE WHEN true THEN 1 END', 'COMMIT']);
+  });
+
   it('SQL Server 的方括号标识符里的引号与分号不算数', () => {
     expect(splitSqlStatements("SELECT [it's; odd]]name] FROM t; SELECT 2;", 'sqlserver'))
       .toEqual(["SELECT [it's; odd]]name] FROM t", 'SELECT 2']);

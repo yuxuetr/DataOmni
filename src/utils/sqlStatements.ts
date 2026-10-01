@@ -34,6 +34,7 @@ export interface SqlStatementRange {
  *   脚本里只要有一行 `GO`，就**只按 GO 切**：`CREATE PROCEDURE` 的过程体里
  *   满是分号，按分号切会把一个过程切成几段发出去。`GO 5` 这种带次数的不认——
  *   它要把这一批跑五遍，当成普通分隔符等于悄悄少跑四遍；留在批里让服务端报错。
+ * - SQLite 的 `CREATE TRIGGER … BEGIN … END`、PostgreSQL 的 `BEGIN ATOMIC … END` 里的分号不切。
  * - Oracle 的 `q'[…]'` 里的引号与分号都是字面量。
  * - Oracle 照 SQL*Plus 的约定：PL/SQL 块（`BEGIN`、`DECLARE`、`CREATE … PROCEDURE`
  *   这一类）里的分号不切，块一直到单独一行的 `/` 为止，没有 `/` 就到脚本末尾。
@@ -60,6 +61,15 @@ function matchSlashLine(sqlText: string, index: number): number | null {
   return match ? index + match[0].length : null;
 }
 
+/**
+ * 语句体里带分号、靠 `BEGIN … END` 收尾的：SQLite 的触发器、PostgreSQL 14 起的 `BEGIN ATOMIC`
+ * 函数与过程体。只在这两种语句里数 BEGIN / CASE 与 END——单独的 `BEGIN;` 是开事务，照旧切
+ */
+const BODY_STATEMENT_START: Partial<Record<SqlDialect, RegExp>> = {
+  sqlite: /^\s*CREATE\s+(?:(?:TEMP|TEMPORARY)\s+)?TRIGGER\b/i,
+  postgresql: /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b/i
+};
+
 const PLSQL_BLOCK_START = /^\s*(?:BEGIN|DECLARE|CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:NON)?EDITIONABLE\s+)?(?:PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE))\b/i;
 
 /** 单独一行的 `GO`，前后可以有空白，后面可以跟行注释 */
@@ -78,6 +88,9 @@ function scanStatements(
   plsqlBlocks: boolean
 ): { statements: string[]; sawBatchSeparator: boolean } {
   let inBlock = false;
+  const bodyStart = dialect ? BODY_STATEMENT_START[dialect] : undefined;
+  let countsBody = false;
+  let bodyDepth = 0;
   const statements: string[] = [];
   let buffer = '';
   let delimiter = ';';
@@ -93,6 +106,8 @@ function scanStatements(
       statements.push(statement);
     }
     buffer = '';
+    countsBody = false;
+    bodyDepth = 0;
   };
 
   while (index < sqlText.length) {
@@ -128,7 +143,23 @@ function scanStatements(
         }
       }
 
-      if (splitOnDelimiter && !inBlock && sqlText.startsWith(delimiter, index)) {
+      if (bodyStart && !countsBody && buffer.trim() === '' && bodyStart.test(sqlText.slice(index, index + 60))) {
+        countsBody = true;
+      }
+      if (countsBody && /[A-Za-z_]/.test(sqlText[index]) && !/[\w$]/.test(sqlText[index - 1] ?? '')) {
+        const word = sqlText.slice(index).match(/^[A-Za-z_][\w$]*/)?.[0] ?? sqlText[index];
+        const upper = word.toUpperCase();
+        if (upper === 'BEGIN' || upper === 'CASE') {
+          bodyDepth += 1;
+        } else if (upper === 'END') {
+          bodyDepth = Math.max(0, bodyDepth - 1);
+        }
+        buffer += word;
+        index += word.length;
+        continue;
+      }
+
+      if (splitOnDelimiter && !inBlock && bodyDepth === 0 && sqlText.startsWith(delimiter, index)) {
         flush();
         index += delimiter.length;
         continue;
