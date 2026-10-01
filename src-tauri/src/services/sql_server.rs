@@ -931,9 +931,12 @@ fn decode(column_type: ColumnType, data: &ColumnData<'static>) -> Result<JsonVal
     // 老的 datetime 以 1/300 秒为刻度，照原样换算是 `.003333`：SQL Server 从
     // 字符串转 datetime 最多收三位小数，这个值写回去或拿去比较会报 241。
     // 按毫秒写（SSMS 也这么显示），转回去落在同一个刻度上
-    ColumnData::DateTime(_) => time::PrimitiveDateTime::from_sql(data)
-      .map_err(|error| query_error(error, None))?
-      .map(|value| tagged_value("datetime", format_datetime(round_to_millisecond(value)))),
+    ColumnData::DateTime(value) => value
+      .map(|value| {
+        legacy_datetime(value)
+          .map(|value| tagged_value("datetime", format_datetime(round_to_millisecond(value))))
+      })
+      .transpose()?,
     ColumnData::SmallDateTime(_) | ColumnData::DateTime2(_) => {
       time::PrimitiveDateTime::from_sql(data)
         .map_err(|error| query_error(error, None))?
@@ -950,6 +953,20 @@ fn decode(column_type: ColumnType, data: &ColumnData<'static>) -> Result<JsonVal
       .map(|value| tagged_value("datetime", format_offset_datetime(value))),
   };
   Ok(value.unwrap_or(JsonValue::Null))
+}
+
+/// 老的 `datetime`：离 1900-01-01 的天数加 1/300 秒的刻度。
+///
+/// 不用 tiberius 的换算：它把天数转成无符号再乘，1900 年以前（下限是 1753 年，
+/// `1753-01-01` 是常见的「最小日期」占位值）的天数是负的，换算 panic，整条查询报驱动错误
+fn legacy_datetime(value: tiberius::time::DateTime) -> Result<time::PrimitiveDateTime, QueryError> {
+  let epoch = time::Date::from_calendar_date(1900, time::Month::January, 1)
+    .map_err(|error| QueryError::message(error.to_string()))?;
+  let date = epoch
+    .checked_add(time::Duration::days(i64::from(value.days())))
+    .ok_or_else(|| QueryError::message(format!("datetime out of range: {} days", value.days())))?;
+  let nanos = i64::from(value.seconds_fragments()) * 1_000_000_000 / 300;
+  Ok(time::PrimitiveDateTime::new(date, time::Time::MIDNIGHT + time::Duration::nanoseconds(nanos)))
 }
 
 /// 刻度最大是 299/300 秒，四舍五入到 997 毫秒，不会进位到下一秒

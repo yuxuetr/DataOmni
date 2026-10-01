@@ -101,6 +101,33 @@ fn kind(value: &JsonValue) -> &str {
   value.get("type").and_then(JsonValue::as_str).unwrap_or("")
 }
 
+/// `datetime` 存的是离 1900-01-01 的天数，更早的是负数；而它的下限是 1753 年，
+/// `1753-01-01` 还是常见的「最小日期」占位值。tiberius 把天数转成无符号再乘，
+/// 这一格读不出来，整条查询（表数据页、导出）跟着报驱动错误
+#[tokio::test]
+async fn sql_server_reads_datetime_before_1900() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool).await;
+  let rows = rows_of(
+    connection
+      .execute(
+        "SELECT CAST('1753-01-01' AS datetime) AS floor_value,
+           CAST('1899-12-31 23:59:59.997' AS datetime) AS eve,
+           CAST('9999-12-31 23:59:59.997' AS datetime) AS ceiling_value",
+        10,
+      )
+      .await
+      .expect("read datetime before 1900"),
+  );
+  for (column, expected) in [
+    ("floor_value", "1753-01-01 00:00:00"),
+    ("eve", "1899-12-31 23:59:59.997"),
+    ("ceiling_value", "9999-12-31 23:59:59.997"),
+  ] {
+    assert_eq!(text(&rows[0][column]), expected, "{column}");
+  }
+}
+
 #[tokio::test]
 async fn sql_server_decodes_values_the_way_the_other_dialects_do() {
   let Some(pool) = pool().await else { return };
