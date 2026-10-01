@@ -1344,7 +1344,15 @@ fn decode_postgres(value: PgValueRef<'_>) -> Result<JsonValue, QueryError> {
   match type_name {
     "INT2" => json_value(ValueRef::to_owned(&value).try_decode::<i16>()),
     "INT4" => json_value(ValueRef::to_owned(&value).try_decode::<i32>()),
-    "JSON" | "JSONB" => tagged_json_value(ValueRef::to_owned(&value).try_decode::<JsonValue>()),
+    // 数按 numeric 存，经 serde_json 读成双精度会改掉超出 u64 的整数与长小数，照服务端的原文给。
+    // jsonb 的二进制格式是版本字节 1 加文本；文本格式与 json 本来就是原文
+    "JSON" | "JSONB" => ValueRef::to_owned(&value)
+      .try_decode_unchecked::<String>()
+      .map(|text| {
+        let text = text.strip_prefix('\u{1}').map(str::to_string).unwrap_or(text);
+        tagged_value("json", text)
+      })
+      .map_err(display_error),
     "CHAR" | "VARCHAR" | "TEXT" | "NAME" => {
       json_value(ValueRef::to_owned(&value).try_decode::<String>())
     }

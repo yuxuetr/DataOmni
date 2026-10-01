@@ -152,7 +152,7 @@ async fn postgres_supports_basic_read_write() {
       ("decimal_value", "decimal", "12345678901234567890.12345678"),
       ("zoned_time", "datetime", "2026-09-18T02:00:00+00:00"),
       ("binary_value", "binary", "00ff10"),
-      ("json_value", "json", "{\"enabled\":true}"),
+      ("json_value", "json", "{\"enabled\": true}"),
     ],
   );
 
@@ -572,6 +572,27 @@ async fn mysql_geometry_reads_as_its_stored_bytes() {
       ("p", "binary", "e610000001010000000000000000005e400000000000003e40"),
     ],
   );
+}
+
+/// PostgreSQL 的 json / jsonb 按 numeric 存数，超出 u64 的整数与长小数照存；
+/// 经 serde_json 读成双精度就改了。照服务端的原文给，与 psql 显示的相同。
+/// （MySQL 不用：它自己就把 JSON 里的数存成双精度，`CAST(… AS CHAR)` 读出来也是那样）
+#[tokio::test]
+async fn postgres_json_numbers_read_as_the_servers_own_text() {
+  const DOCUMENT: &str = r#"{"big": 123456789012345678901234567890, "pi": 3.14159265358979323846, "id": 18446744073709551615}"#;
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let (jsonb, json): (String, String) = sqlx::query_as("SELECT $1::jsonb::text, $1::json::text")
+    .bind(DOCUMENT)
+    .fetch_one(&pool)
+    .await
+    .expect("server text");
+  let sql = format!("SELECT '{DOCUMENT}'::jsonb AS b, '{DOCUMENT}'::json AS j");
+  let result = execute_query(&DbPool::Postgres(pool), &sql).await.expect("execute query");
+  assert_tagged_values(result, &[("b", "json", jsonb.as_str()), ("j", "json", json.as_str())]);
 }
 
 #[tokio::test]
