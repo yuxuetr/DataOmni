@@ -245,6 +245,46 @@ async fn oracle_native_json_reads_through_the_table_projection() {
   drop_quietly(&pool, "om_json").await;
 }
 
+/// 23ai 的 VECTOR：驱动不认这个类型号，`SELECT *` 整条失败。投影让服务端序列化成文本，
+/// 写法是 Oracle 自己的（`1.0E+000`），原样绑回去 Oracle 自己转回向量
+#[tokio::test]
+async fn oracle_vectors_read_through_the_table_projection() {
+  use dataomni_lib::services::execute_write_batch;
+  let Some(pool) = pool().await else { return };
+  drop_quietly(&pool, "om_vector").await;
+  run_all(
+    &pool,
+    &[
+      "CREATE TABLE om_vector (id NUMBER(10) PRIMARY KEY, emb VECTOR(3, FLOAT32))",
+      "INSERT INTO om_vector VALUES (1, TO_VECTOR('[1, 2.5, -3]'))",
+    ],
+  )
+  .await;
+  let mut connection = session(&pool).await;
+  let error =
+    connection.execute("SELECT * FROM om_vector", 10).await.expect_err("driver can't read VECTOR");
+  assert_eq!(error.message, "unknown Oracle type number 2033");
+
+  let projection = r#"SELECT "ID", VECTOR_SERIALIZE("EMB" RETURNING CLOB) AS "EMB" FROM om_vector"#;
+  let rows = rows_of(connection.execute(projection, 10).await.expect("projected select"));
+  let shown = rows[0]["EMB"].clone();
+  assert_eq!(shown, json!("[1.0E+000,2.5E+000,-3.0E+000]"));
+
+  execute_write_batch(
+    PoolRef::Oracle(&pool),
+    &[write(
+      r#"UPDATE "OM_VECTOR" SET "EMB" = :1 WHERE "ID" = 1"#,
+      vec![json!("[4, 5, 6]")],
+      Some(1),
+    )],
+  )
+  .await
+  .expect("text binds into a VECTOR column");
+  let back = rows_of(connection.execute(projection, 10).await.expect("read back"));
+  assert_eq!(back[0]["EMB"], json!("[4.0E+000,5.0E+000,6.0E+000]"));
+  drop_quietly(&pool, "om_vector").await;
+}
+
 /// 存成地区名的 TIMESTAMP WITH TIME ZONE：客户端的时区文件与服务器不同版本时，驱动读它是 ORA-01805，
 /// 整条查询失败。表数据页的投影（`tablePagination.ts` 的 `projectedColumn`，这里照抄）让服务端写成文本，
 /// 读出来的写法与驱动读偏移时相同；原样绑回去，并发守卫按时刻比，与存的地区名相等

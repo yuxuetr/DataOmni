@@ -198,10 +198,19 @@ function postgresTypeName(dataType: string): string {
 const ORACLE_ZONED_TIMESTAMP = /^TIMESTAMP(\(\d+\))? WITH TIME ZONE$/i;
 
 /**
- * Oracle 21c 起的原生 `JSON` 类型：rust-oracle 0.6 连取回它的缓冲都建不了（unsupported Oracle type JSON），
- * 结果里有一列就整条失败。存成 CLOB / VARCHAR2 的 JSON 读得了，不在此列
+ * 驱动读不了、要由服务端序列化成文本的 Oracle 类型 → 序列化函数。rust-oracle 0.6 对 21c 起的原生 `JSON`
+ * 连取回的缓冲都建不了（unsupported Oracle type JSON），23ai 的 `VECTOR` 连类型号都不认
+ * （unknown Oracle type number 2033）：结果里有一列就整条失败。改回去时文本 Oracle 自己会转。
+ * 存成 CLOB / VARCHAR2 的 JSON 读得了，不在此列
  */
-const ORACLE_NATIVE_JSON = 'JSON';
+const ORACLE_SERIALIZED_TYPES: Readonly<Record<string, string>> = {
+  JSON: 'JSON_SERIALIZE',
+  VECTOR: 'VECTOR_SERIALIZE'
+};
+
+function oracleSerializer(column: ColumnInfo): string | undefined {
+  return ORACLE_SERIALIZED_TYPES[column.data_type.trim().toUpperCase()];
+}
 
 /**
  * tiberius 把 money 拼成 f64 再除以 1e4：五千亿往上第四位小数就不对了（`922337203685477.5807` 读成
@@ -215,8 +224,7 @@ function isUnreadableColumn(column: ColumnInfo, dialect: SqlIdentifierDialect): 
     return token === SQL_SERVER_MONEY || SQL_SERVER_UNREADABLE_TYPES.has(token);
   }
   if (dialect === 'oracle') {
-    const dataType = column.data_type.trim();
-    return ORACLE_ZONED_TIMESTAMP.test(dataType) || dataType.toUpperCase() === ORACLE_NATIVE_JSON;
+    return ORACLE_ZONED_TIMESTAMP.test(column.data_type.trim()) || oracleSerializer(column) !== undefined;
   }
   return dialect === 'postgresql' && !POSTGRES_READABLE_TYPES.has(postgresTypeName(column.data_type));
 }
@@ -238,9 +246,10 @@ export function projectedColumn(column: ColumnInfo, dialect: SqlIdentifierDialec
       ? `CAST(${name} AS decimal(19,4)) AS ${name}`
       : `CAST(${name} AS nvarchar(max)) AS ${name}`;
   }
-  if (dialect === 'oracle' && column.data_type.trim().toUpperCase() === ORACLE_NATIVE_JSON) {
-    // CLOB 而不是默认的 VARCHAR2(4000)：长文档不会因为超长报错
-    return `JSON_SERIALIZE(${name} RETURNING CLOB) AS ${name}`;
+  const serializer = dialect === 'oracle' ? oracleSerializer(column) : undefined;
+  if (serializer) {
+    // CLOB 而不是默认的 VARCHAR2(4000)：长文档、高维向量不会因为超长报错
+    return `${serializer}(${name} RETURNING CLOB) AS ${name}`;
   }
   if (dialect === 'oracle') {
     // 照驱动的写法：小数秒去掉末尾的 0（`.000` 连点一起去掉），时区写成偏移——会话的

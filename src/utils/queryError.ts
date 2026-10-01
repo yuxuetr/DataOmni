@@ -55,19 +55,22 @@ export function toQueryExecutionError(error: unknown): QueryExecutionError {
  *
  * ORA-01805：存成地区名的 `TIMESTAMP WITH TIME ZONE` 要用客户端的时区文件换算，Instant Client
  * 带的版本与服务器不同就失败——Oracle 只说「possible error in date/time operation」。
- * Oracle 的原生 JSON 列：rust-oracle 连取回它的缓冲都建不了，驱动只说「unsupported Oracle type JSON」，
- * 没有错误码。
- * 两种表数据页都已经让服务端转成文本再取，SQL 标签里的语句只能由用户改
+ * Oracle 的原生 JSON 与 VECTOR 列：rust-oracle 读不了，驱动的原话（没有错误码）看不出该怎么办。
+ * 这几种表数据页都已经让服务端转成文本再取，SQL 标签里的语句只能由用户改
  */
 function knownHint(code: string | undefined, message: string): string | undefined {
   if (code === 'ORA-01805') {
     return translateNow('queryError.oracleTimeZoneFile');
   }
-  return message === ORACLE_UNSUPPORTED_JSON ? translateNow('queryError.oracleNativeJson') : undefined;
+  if (message === ORACLE_UNSUPPORTED_JSON) {
+    return translateNow('queryError.oracleNativeJson');
+  }
+  return message === ORACLE_UNKNOWN_VECTOR ? translateNow('queryError.oracleVector') : undefined;
 }
 
-/** rust-oracle 0.6 的原话（`oracle_type.rs` 的 `var_param`） */
+/** rust-oracle 0.6 的原话（`oracle_type.rs`）：JSON 建不了取回缓冲，VECTOR 的类型号 2033 不认 */
 const ORACLE_UNSUPPORTED_JSON = 'unsupported Oracle type JSON';
+const ORACLE_UNKNOWN_VECTOR = 'unknown Oracle type number 2033';
 
 export interface QueryErrorLocation {
   /** 从 1 开始，供显示 */
