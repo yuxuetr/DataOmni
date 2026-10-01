@@ -122,6 +122,95 @@
       ]
     },
     {
+      "name": "postgres-retyping-a-column-keeps-its-collation",
+      "why": "ALTER COLUMN ... TYPE 不写 COLLATE 就换成新类型的默认排序规则，语句照样成功（PostgreSQL 16 上核对过）。改成非字符类型时不写：整数没有排序规则，写了是错误。",
+      "dialect": "postgresql",
+      "schema": "public",
+      "table": "ddl_conf_pg_coll",
+      "newTableName": "ddl_conf_pg_coll",
+      "fixture": [
+        "DROP TABLE IF EXISTS ddl_conf_pg_coll",
+        "CREATE TABLE ddl_conf_pg_coll (id integer PRIMARY KEY, name varchar(20) COLLATE \"C\" NOT NULL, code text COLLATE \"C\")"
+      ],
+      "origin": [
+        {
+          "name": "id",
+          "dataType": "integer",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": false
+        },
+        {
+          "name": "name",
+          "dataType": "character varying(20)",
+          "nullable": false,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "collation": "\"C\""
+        },
+        {
+          "name": "code",
+          "dataType": "text",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "collation": "\"C\""
+        }
+      ],
+      "draft": [
+        {
+          "origin": "id"
+        },
+        {
+          "origin": "name",
+          "dataType": "varchar(50)"
+        },
+        {
+          "origin": "code",
+          "nullable": false
+        }
+      ],
+      "statements": [
+        "ALTER TABLE \"public\".\"ddl_conf_pg_coll\" ALTER COLUMN \"name\" TYPE varchar(50) COLLATE \"C\", ALTER COLUMN \"code\" SET NOT NULL"
+      ],
+      "refusals": [],
+      "impacts": [],
+      "after": [
+        {
+          "name": "id",
+          "dataType": "integer",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": false
+        },
+        {
+          "name": "name",
+          "dataType": "character varying(50)",
+          "nullable": false,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "collation": "\"C\""
+        },
+        {
+          "name": "code",
+          "dataType": "text",
+          "nullable": false,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "collation": "\"C\""
+        }
+      ],
+      "cleanup": [
+        "DROP TABLE IF EXISTS ddl_conf_pg_coll"
+      ]
+    },
+    {
       "name": "mysql-one-atomic-statement-that-restates-everything",
       "dialect": "mysql",
       "schema": null,

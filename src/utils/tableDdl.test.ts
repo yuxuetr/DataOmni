@@ -122,6 +122,23 @@ describe('buildTableDdl / PostgreSQL', () => {
     ]);
   });
 
+  it('改类型带上显式的排序规则，改成不收排序规则的类型时不写', () => {
+    // 不写 COLLATE 就换成新类型的默认排序规则，语句照样成功（PostgreSQL 16 上核对过）
+    const name = column({ name: 'name', data_type: 'character varying(20)', collation: '"C"' });
+    const tags = column({ name: 'tags', data_type: 'text[]', collation: 'public.nocase' });
+    const flag = column({ name: 'flag', data_type: 'character(1)', collation: '"C"' });
+    const plan = buildTableDdl(request('postgresql', [
+      { ...draftOf(name, 'postgresql'), dataType: 'varchar(50)' },
+      { ...draftOf(tags, 'postgresql'), dataType: 'varchar(40)[]' },
+      { ...draftOf(flag, 'postgresql'), dataType: 'boolean' }
+    ]));
+    expect(plan.statements).toEqual([
+      'ALTER TABLE "orders" ALTER COLUMN "name" TYPE varchar(50) COLLATE "C",'
+        + ' ALTER COLUMN "tags" TYPE varchar(40)[] COLLATE public.nocase,'
+        + ' ALTER COLUMN "flag" TYPE boolean'
+    ]);
+  });
+
   it('清掉默认值发 DROP DEFAULT，不发 SET DEFAULT NULL', () => {
     const withDefault = column({ name: 'n', data_type: 'integer', default_value: '0' });
     const plan = buildTableDdl(request('postgresql', [

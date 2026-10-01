@@ -282,7 +282,8 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
   （含 MariaDB / TiDB / CockroachDB）的真库上跑过
 - 主键与约束的增删改还要去 SQL 编辑器；SQLite 改列类型、MySQL 改带
   表达式默认值的列与空间列（读不到 SRID，重述会把它删掉）的类型都明确不做，界面上写明原因。
-  MySQL 重述列定义时带上 INVISIBLE；SQL Server 改类型时保留 SPARSE，动态数据掩码另起一句加回去
+  MySQL 重述列定义时带上 INVISIBLE；SQL Server 改类型时保留 SPARSE，动态数据掩码另起一句加回去；
+  PostgreSQL / CockroachDB 改字符列的类型时带上原来显式写的排序规则
 
 - 事务控制：自动提交开关、开始 / 提交 / 回滚，工作台头部常驻事务状态与计时。
   状态由执行语句的那条连接给出，所以你自己在编辑器里写的 `BEGIN` 一样算数。

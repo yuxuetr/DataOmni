@@ -146,10 +146,14 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
 /// `ALWAYS` 的还要写明覆盖。SQL Server 的 identity 不开 `IDENTITY_INSERT` 就不收值，算 `ALWAYS`；
 /// MySQL 的 AUTO_INCREMENT 收值，算 `BY DEFAULT`。
 ///
-/// 最后三个字段只有 MySQL 有值，因为只有 MySQL 需要它们：改一列的类型或
-/// 可空性只能用 `MODIFY COLUMN`，而 MODIFY **重述整段定义**——没写进去的
-/// 排序规则与注释会被静默丢掉。PostgreSQL 与 SQLite 走的是
-/// `ALTER COLUMN ... TYPE` 这类窄语法，只改被点名的那一项，用不上这三项。
+/// 最后三个字段是改结构时要重述回去的东西：MySQL 改一列的类型或可空性只能用
+/// `MODIFY COLUMN`，而 MODIFY **重述整段定义**——没写进去的排序规则与注释会被
+/// 静默丢掉。PostgreSQL 的 `ALTER COLUMN ... TYPE` 是窄语法，但排序规则跟着类型走：
+/// 不写 `COLLATE` 就换成新类型的默认值（PostgreSQL 16 与 CockroachDB 上都核对过），所以
+/// 这里给**显式写过的**排序规则，由服务端引好，可以原样拼回语句。取自
+/// `information_schema` 而不是 `pg_collation`：CockroachDB 的 `pg_collation` 里没有 `en_US`
+/// 这类名字（只有 `en-US`），对不上 `attcollation`；`pg_catalog` 里的不带模式名，
+/// 因为 CockroachDB 不认带模式名的排序规则（语法错）。SQLite 改不了列类型，用不上这三项。
 ///
 /// **openGauss（PG 9.2 系，TODOs 下一步规划 B2b）也要跑得通**，所以这条查询有两处特别的写法：
 /// - identity / 计算列经 `row_to_json(a)->>'…'` 读：openGauss 的 pg_attribute 没有
@@ -170,12 +174,15 @@ SELECT
     OR COALESCE(row_to_json(d)->>'adgencol', '') = 's') AS is_generated,
   CASE row_to_json(a)->>'attidentity' WHEN 'a' THEN 'ALWAYS' WHEN 'd' THEN 'BY DEFAULT' END
     AS identity_generation,
-  NULL::text AS collation,
+  (COALESCE(CASE WHEN ic.collation_schema::text <> 'pg_catalog' THEN quote_ident(ic.collation_schema::text) || '.' END, '')
+    || quote_ident(ic.collation_name::text))::text AS collation,
   NULL::text AS comment,
   NULL::text AS column_extra
 FROM pg_class t
 JOIN pg_namespace n ON n.oid = t.relnamespace
 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum > 0 AND NOT a.attisdropped
+LEFT JOIN information_schema.columns ic ON ic.table_schema::text = n.nspname::text
+  AND ic.table_name::text = t.relname::text AND ic.column_name::text = a.attname::text
 LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
 LEFT JOIN (
   SELECT x.conrelid, x.conkey[x.ord] AS attnum, x.ord

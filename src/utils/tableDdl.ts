@@ -403,7 +403,13 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
     }
 
     if (change.typeChanged) {
-      alters.push(`ALTER COLUMN ${quoted} TYPE ${column.dataType.trim()}`);
+      const dataType = column.dataType.trim();
+      // 排序规则跟着类型走：不写就换成新类型的默认值，语句照样成功。目录给的是服务端
+      // 引好的名字；改成数字之类不收排序规则的类型时不写，写了是错误
+      const collation = origin.collation && POSTGRES_COLLATABLE_TYPES.has(columnTypeToken(dataType).replace(/\[.*$/, ''))
+        ? ` COLLATE ${origin.collation}`
+        : '';
+      alters.push(`ALTER COLUMN ${quoted} TYPE ${dataType}${collation}`);
     }
     if (change.nullabilityChanged) {
       alters.push(`ALTER COLUMN ${quoted} ${column.nullable ? 'DROP NOT NULL' : 'SET NOT NULL'}`);
@@ -444,6 +450,9 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
 }
 
 const SQL_SERVER_CHARACTER_TYPES = new Set(['char', 'varchar', 'nchar', 'nvarchar', 'text', 'ntext']);
+
+/** `character varying` 的首词是 `character`；`citext` 是扩展类型，也收排序规则 */
+const POSTGRES_COLLATABLE_TYPES = new Set(['text', 'varchar', 'character', 'char', 'bpchar', 'name', 'citext']);
 
 /**
  * 删掉一列上的默认值约束。
