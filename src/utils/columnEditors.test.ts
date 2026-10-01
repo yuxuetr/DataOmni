@@ -105,6 +105,22 @@ describe('prettyJson', () => {
   it('解析不了就返回 null，由调用方去提示', () => {
     expect(prettyJson('{a:1}')).toBeNull();
   });
+
+  // JSON.parse 把数读成双精度：雪花 ID 这类 2^53 以上的整数会被改掉，点一下「格式化」再保存就写坏了
+  it('数照原文写，不经过双精度', () => {
+    expect(prettyJson('{"id":1234567890123456789,"x":1.0,"y":3.14159265358979323846}'))
+      .toBe('{\n  "id": 1234567890123456789,\n  "x": 1.0,\n  "y": 3.14159265358979323846\n}');
+  });
+
+  it('字符串里的括号、逗号、转义引号与空白原样留着', () => {
+    expect(prettyJson('{"s" : "a\\"{, b]\\\\" , "t":[ ] , "u":{}}'))
+      .toBe('{\n  "s": "a\\"{, b]\\\\",\n  "t": [],\n  "u": {}\n}');
+  });
+
+  it('与 JSON.stringify 的缩进相同', () => {
+    const text = '[1,{"a":[true,null,"x"],"b":{"c":-2.5}},[]]';
+    expect(prettyJson(text)).toBe(JSON.stringify(JSON.parse(text), null, 2));
+  });
 });
 
 describe('日期选择器与数据库文本互转', () => {

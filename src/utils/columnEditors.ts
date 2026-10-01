@@ -97,10 +97,56 @@ export function binaryLiteral(hex: string, dialect: SqlIdentifierDialect): strin
 /** 缩进过的 JSON；解析不了就返回 null，由调用方决定怎么提示 */
 export function prettyJson(text: string): string | null {
   try {
-    return JSON.stringify(JSON.parse(text), null, 2);
+    JSON.parse(text);
   } catch {
     return null;
   }
+  return reindentJson(text);
+}
+
+/**
+ * 照 `JSON.stringify(…, null, 2)` 的样子重排空白，但字符串与数**照原文抄**：
+ * JSON.parse 把数读成双精度，雪花 ID 这类 2^53 以上的整数会被悄悄改掉。
+ * 调用方先确认过 `text` 是合法 JSON。
+ */
+function reindentJson(text: string): string {
+  let out = '';
+  let depth = 0;
+  const newline = () => `\n${'  '.repeat(depth)}`;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '"') {
+      let end = index + 1;
+      while (text[end] !== '"') {
+        end += text[end] === '\\' ? 2 : 1;
+      }
+      out += text.slice(index, end + 1);
+      index = end;
+    } else if (char === '{' || char === '[') {
+      const close = char === '{' ? '}' : ']';
+      let next = index + 1;
+      while (/\s/.test(text[next])) {
+        next += 1;
+      }
+      if (text[next] === close) {
+        out += char + close;
+        index = next;
+      } else {
+        depth += 1;
+        out += char + newline();
+      }
+    } else if (char === '}' || char === ']') {
+      depth -= 1;
+      out += newline() + char;
+    } else if (char === ',') {
+      out += `,${newline()}`;
+    } else if (char === ':') {
+      out += ': ';
+    } else if (!/\s/.test(char)) {
+      out += char;
+    }
+  }
+  return out;
 }
 
 /**

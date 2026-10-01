@@ -1,4 +1,5 @@
 import type { SerializedResultValue } from '../contracts/resultSet';
+import { prettyJson } from './columnEditors';
 
 export function isTaggedResultValue(
   value: SerializedResultValue
@@ -18,11 +19,7 @@ export function formatResultValue(value: SerializedResultValue): string {
   }
 
   if (value.type === 'json') {
-    try {
-      return JSON.stringify(JSON.parse(value.value), null, 2);
-    } catch {
-      return value.value;
-    }
+    return prettyJson(value.value) ?? value.value;
   }
   if (value.type === 'binary') {
     return `0x${value.value}`;

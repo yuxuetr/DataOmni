@@ -48,6 +48,11 @@ describe('单元格单行形态', () => {
     expect(formatResultValueOneLine(value)).toBe('{ "a": 1, "b": 2 }');
   });
 
+  it('JSON 里的大整数照原文显示', () => {
+    const value = { type: 'json' as const, value: '{"id":18446744073709551615}' };
+    expect(formatResultValueOneLine(value)).toBe('{ "id": 18446744073709551615 }');
+  });
+
   it('文本里的换行和连续空白也折成单个空格', () => {
     expect(formatResultValueOneLine('第一行\n  第二行')).toBe('第一行 第二行');
   });
