@@ -23,8 +23,8 @@ use crate::services::query_error::QueryErrorDetails;
 use crate::services::query_error::{CONNECTION_LOST, CONNECTION_LOST_CODE};
 use crate::services::query_executor::{
   admit_row_bytes, flush_full_batch, flush_remaining_batch, format_date, format_datetime,
-  format_time, tagged_value, NonQueryHandling, QueryColumnMetadata, QueryExecutionSummary,
-  QueryResultBatch, QueryRow, QueryTruncationReason, StreamOptions,
+  format_time, tagged_value, widen_f32, NonQueryHandling, QueryColumnMetadata,
+  QueryExecutionSummary, QueryResultBatch, QueryRow, QueryTruncationReason, StreamOptions,
 };
 use crate::services::transaction_state::{TransactionState, TransactionStatus};
 use crate::services::write_batch::{
@@ -913,7 +913,7 @@ fn decode(column_type: ColumnType, data: &ColumnData<'static>) -> Result<JsonVal
     ColumnData::F64(value) if matches!(column_type, ColumnType::Money | ColumnType::Money4) => {
       value.map(|value| tagged_value("decimal", format!("{value:.4}")))
     }
-    ColumnData::F32(value) => value.map(JsonValue::from),
+    ColumnData::F32(value) => value.map(|value| JsonValue::from(widen_f32(value))),
     ColumnData::F64(value) => value.map(JsonValue::from),
     ColumnData::Bit(value) => value.map(JsonValue::from),
     ColumnData::String(value) => value.as_ref().map(|text| JsonValue::from(text.as_ref())),

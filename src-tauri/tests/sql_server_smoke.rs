@@ -181,6 +181,27 @@ async fn sql_server_decodes_values_the_way_the_other_dialects_do() {
   assert_eq!(row["(No column name) 2"], json!(4));
 }
 
+/// real 是单精度：直接转 f64 的话 0.1 成了 0.10000000149011612，SSMS 写的是 0.1
+#[tokio::test]
+async fn sql_server_reals_read_as_ssms_writes_them() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool).await;
+  let rows = rows_of(
+    connection
+      .execute(
+        "SELECT CAST(0.1 AS real) AS narrow, CAST(-3.4e38 AS real) AS low,
+           CAST(1.17549435e-38 AS real) AS tiny, CAST(0.1 AS float) AS wide",
+        100,
+      )
+      .await
+      .expect("read reals"),
+  );
+  assert_eq!(rows[0]["narrow"], json!(0.1));
+  assert_eq!(rows[0]["low"], json!(-3.4e38));
+  assert_eq!(rows[0]["tiny"], json!(1.1754944e-38));
+  assert_eq!(rows[0]["wide"], json!(0.1));
+}
+
 #[tokio::test]
 async fn sql_server_reports_affected_rows_and_runs_batches_that_must_stand_alone() {
   let Some(pool) = pool().await else { return };

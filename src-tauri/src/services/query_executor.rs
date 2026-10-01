@@ -1617,7 +1617,7 @@ fn float_value<E: std::fmt::Display>(
 
 /// 单精度按它自己的最短写法放宽：直接转 f64 的话 `0.1` 成了 0.10000000149011612，
 /// 而数据库的客户端写的是 0.1。两者是同一个 f32，写回去不变
-fn widen_f32(value: f32) -> f64 {
+pub(crate) fn widen_f32(value: f32) -> f64 {
   value.to_string().parse().unwrap_or(f64::from(value))
 }
 
