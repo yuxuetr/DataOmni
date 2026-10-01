@@ -737,6 +737,21 @@
     改成数字等类型时不写（写了报「collations are not supported by type bigint」）。改结构语料加一条，真库红过再绿。
     打包版（rpm 0.4.61，连 cu 的 PG 16）：改 `varchar(20) COLLATE "C"` 为 `varchar(50)`，预览带 `COLLATE "C"`，执行后服务端仍是 C、排序仍按字节。
 
+    DuckDB 同样会丢（`VARCHAR COLLATE nocase` 改类型后没了），**不修**：它的目录（`information_schema.collation_name`、`duckdb_columns()`）
+    不给排序规则，只在建表原文里；而 DuckDB 的 VARCHAR 没有长度，「字符列改成字符列」几乎不会发生。重估条件：有人在 DuckDB 上改带排序规则的列。
+  - 2026-10-01 编辑器切语句（各方言特有写法逐个试）。**修了四处**，都是切错之后整条报语法错：
+    - 引号里的反斜杠一律当转义（`0c3241a`）：PostgreSQL、SQL Server、Oracle、SQLite、DuckDB 里 `'C:\'` 是完整的字面量，后面整段脚本
+      被吞进字符串合成一条。现在只有 MySQL / ClickHouse 与 PostgreSQL 的 `E'…'` 认反斜杠。
+    - Oracle 的 `q'[…]'`（`cf9993f`）：里面的撇号把字符串提前结束，分号把语句切开。
+    - SQLite 的 `CREATE TRIGGER … BEGIN … END` 与 PostgreSQL 14 起的 `BEGIN ATOMIC` 函数体（`fadb40d`）：体里的分号把它切成几段，
+      编辑器里建不了 SQLite 触发器（没有 DELIMITER 可用）。只在这两种语句里数 BEGIN / CASE 与 END；单独的 `BEGIN;` 照旧切。
+    - SQL Server 没有 GO 时的 `CREATE PROCEDURE` / `FUNCTION` / `TRIGGER`（`610d6f2`）：过程体被按分号切开。T-SQL 的过程体到批的末尾，
+      没有 GO 整段就是一批，所以从它开始到脚本末尾算一条，前面的语句照旧切。
+    切出来的语句在 SQLite、PG 16、SQL Server 2022 上逐条执行过。打包版（rpm 0.4.62，连 cu 的 PG 16）：一段脚本里建 BEGIN ATOMIC 函数、
+    查 `'C:\'`、删函数，解析成 3 条，全部执行成功，结果是 1 与 `C:\`。
+    没修：MySQL 不写 DELIMITER 的触发器 / 过程体照旧被切（`END IF` / `END LOOP` 让数 BEGIN 与 END 不成立，DELIMITER 本来就是它的写法）；
+    风险判定用的关键字扫描不分方言，遇到上面几种写法只会往「更危险」那边偏（藏住后面的 WHERE），不会漏报。
+
   - 还不能勾：Windows——构建要改 `src-tauri/Cargo.toml` 且需 Windows 开发环境，这一轮不处理。
 
 ## 暂不优先
