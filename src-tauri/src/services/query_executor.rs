@@ -1197,7 +1197,15 @@ fn decode_sqlite(value: SqliteValueRef<'_>) -> Result<JsonValue, QueryError> {
   }
 
   match value.type_info().name() {
-    "TEXT" => json_value(ValueRef::to_owned(&value).try_decode::<String>()),
+    // SQLite 不查 TEXT 是不是 UTF-8；解不出就把非法的字节换成 U+FFFD，
+    // 改这一格时守卫拿替换后的值比不上，整批退回，不会写坏
+    "TEXT" => match ValueRef::to_owned(&value).try_decode::<String>() {
+      Ok(text) => Ok(JsonValue::String(text)),
+      Err(_) => ValueRef::to_owned(&value)
+        .try_decode_unchecked::<Vec<u8>>()
+        .map(|bytes| JsonValue::String(String::from_utf8_lossy(&bytes).into_owned()))
+        .map_err(display_error),
+    },
     "INTEGER" | "NUMERIC" => {
       tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<i64>())
     }
@@ -1972,6 +1980,26 @@ mod tests {
       }
       QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
     }
+  }
+
+  /// SQLite 不查 TEXT 是不是 UTF-8，老程序按 latin1 写进来的字节原样存着；
+  /// 按严格 UTF-8 解的话这一格让整条查询报错，表整张打不开
+  #[tokio::test]
+  async fn sqlite_text_that_is_not_utf8_still_reads() {
+    let pool = SqlitePoolOptions::new()
+      .max_connections(1)
+      .connect("sqlite::memory:")
+      .await
+      .expect("connect to SQLite");
+    let result =
+      execute_query(&DbPool::Sqlite(pool), "SELECT CAST(x'436166e9' AS TEXT) AS name, 1 AS id")
+        .await
+        .expect("execute query");
+    let QueryExecutionResult::Rows { rows, .. } = result else {
+      panic!("expected a row result");
+    };
+    assert_eq!(rows[0]["name"], "Caf\u{fffd}");
+    assert_eq!(rows[0]["id"]["value"], "1");
   }
 
   /// JSON 里没有无穷，serde_json 给 null：网格上 `1e999` 看着是 NULL
