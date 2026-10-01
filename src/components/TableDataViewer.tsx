@@ -1501,7 +1501,8 @@ export default function TableDataViewer({
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                   {tableSchema.columns.map((column) => (
                     <div key={column.name} className="flex flex-col">
-                      <label className="mb-1 text-xs font-medium text-fg">
+                      {/* 一整串不带空格的列名（SQL Server 图表的 `$node_id_<32 位十六进制>`）不折行就压到右边那一格上 */}
+                      <label className="mb-1 text-xs font-medium text-fg break-all">
                         {column.name}
                         {column.is_primary_key && (
                           <span className="ml-1 text-accent">{t('table.primaryKeyTag')}</span>
