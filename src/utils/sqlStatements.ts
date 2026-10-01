@@ -34,6 +34,8 @@ export interface SqlStatementRange {
  *   脚本里只要有一行 `GO`，就**只按 GO 切**：`CREATE PROCEDURE` 的过程体里
  *   满是分号，按分号切会把一个过程切成几段发出去。`GO 5` 这种带次数的不认——
  *   它要把这一批跑五遍，当成普通分隔符等于悄悄少跑四遍；留在批里让服务端报错。
+ *   没有 GO 时，`CREATE PROCEDURE` / `FUNCTION` / `TRIGGER` 到脚本末尾为止——T-SQL 的过程体
+ *   本来就到批的末尾，没有 GO 整段就是一批；之前的语句照旧按分号切。
  * - SQLite 的 `CREATE TRIGGER … BEGIN … END`、PostgreSQL 的 `BEGIN ATOMIC … END` 里的分号不切。
  * - Oracle 的 `q'[…]'` 里的引号与分号都是字面量。
  * - Oracle 照 SQL*Plus 的约定：PL/SQL 块（`BEGIN`、`DECLARE`、`CREATE … PROCEDURE`
@@ -69,6 +71,9 @@ const BODY_STATEMENT_START: Partial<Record<SqlDialect, RegExp>> = {
   sqlite: /^\s*CREATE\s+(?:(?:TEMP|TEMPORARY)\s+)?TRIGGER\b/i,
   postgresql: /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b/i
 };
+
+/** T-SQL 里这几种定义的体到批的末尾为止（批里只能有它一条），没有 GO 就到脚本末尾 */
+const SQL_SERVER_ROUTINE_START = /^\s*(?:CREATE\s+(?:OR\s+ALTER\s+)?|ALTER\s+)(?:PROC|PROCEDURE|FUNCTION|TRIGGER)\b/i;
 
 const PLSQL_BLOCK_START = /^\s*(?:BEGIN|DECLARE|CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:NON)?EDITIONABLE\s+)?(?:PROCEDURE|FUNCTION|PACKAGE|TRIGGER|TYPE))\b/i;
 
@@ -141,6 +146,11 @@ function scanStatements(
         if (!inBlock && buffer.trim() === '' && PLSQL_BLOCK_START.test(sqlText.slice(index, index + 120))) {
           inBlock = true;
         }
+      }
+
+      if (dialect === 'sqlserver' && !inBlock && buffer.trim() === ''
+        && SQL_SERVER_ROUTINE_START.test(sqlText.slice(index, index + 60))) {
+        inBlock = true;
       }
 
       if (bodyStart && !countsBody && buffer.trim() === '' && bodyStart.test(sqlText.slice(index, index + 60))) {

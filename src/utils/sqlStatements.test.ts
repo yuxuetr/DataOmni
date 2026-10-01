@@ -237,6 +237,19 @@ describe('按方言切语句', () => {
     ]);
   });
 
+  it('没有 GO 时过程、函数、触发器的定义到脚本末尾，前面的语句照旧切', () => {
+    // T-SQL 的过程体到批的末尾为止；没有 GO，整段脚本就是一批
+    expect(splitSqlStatements(
+      'DROP PROCEDURE IF EXISTS dbo.p;\nCREATE OR ALTER PROC dbo.p AS\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND;',
+      'sqlserver'
+    )).toEqual(['DROP PROCEDURE IF EXISTS dbo.p', 'CREATE OR ALTER PROC dbo.p AS\nBEGIN\n  SELECT 1;\n  SELECT 2;\nEND;']);
+    expect(splitSqlStatements('ALTER TRIGGER tr ON t AFTER INSERT AS SET NOCOUNT ON; UPDATE t SET a = 1;', 'sqlserver'))
+      .toEqual(['ALTER TRIGGER tr ON t AFTER INSERT AS SET NOCOUNT ON; UPDATE t SET a = 1;']);
+    // 视图只有一条 SELECT，照旧切
+    expect(splitSqlStatements('CREATE VIEW v AS SELECT 1 AS a; SELECT * FROM v;', 'sqlserver'))
+      .toEqual(['CREATE VIEW v AS SELECT 1 AS a', 'SELECT * FROM v']);
+  });
+
   it('GO 带次数、在字符串里、在一行中间都不是分隔符', () => {
     expect(splitSqlStatements('SELECT 1\nGO 5\n', 'sqlserver')).toEqual(['SELECT 1\nGO 5']);
     expect(splitSqlStatements("SELECT 'a\nGO\nb'; SELECT 2;", 'sqlserver'))
