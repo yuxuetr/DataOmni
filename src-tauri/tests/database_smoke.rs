@@ -622,6 +622,26 @@ async fn mysql_zero_dates_read_as_mysql_writes_them() {
   );
 }
 
+/// sqlx 默认连上就 `SET time_zone='+00:00'`。服务器在东八区时，`NOW()`、`CURDATE()` 差 8 小时，
+/// 写进 DATETIME 的 `NOW()` 成了 UTC 的钟点，TIMESTAMP 列读写都按 UTC——与应用和其他客户端都对不上
+#[tokio::test]
+async fn mysql_session_keeps_the_servers_time_zone() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool = dataomni_lib::services::sqlx_pool::open(&url).await.expect("open the app's pool");
+  let result = execute_query(
+    &pool,
+    "SELECT @@session.time_zone AS session_zone, @@global.time_zone AS server_zone",
+  )
+  .await
+  .expect("read time zones");
+  let QueryExecutionResult::Rows { rows, .. } = result else {
+    panic!("expected a row result");
+  };
+  assert_eq!(rows[0]["session_zone"], rows[0]["server_zone"], "{:?}", rows[0]);
+}
+
 /// FLOAT 是单精度，直接放宽成 f64 的话 0.1 读成 0.10000000149011612；照 mysql 客户端写成 0.1
 #[tokio::test]
 async fn mysql_single_precision_floats_read_as_the_client_writes_them() {

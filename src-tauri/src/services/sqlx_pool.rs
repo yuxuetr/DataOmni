@@ -47,8 +47,11 @@ pub async fn open(connection_string: &str) -> Result<DbPool, String> {
     return Ok(DbPool::Postgres(pool));
   }
   if handles(connection_string) {
-    let options =
-      MySqlConnectOptions::from_str(connection_string).map_err(|error| error.to_string())?;
+    // sqlx 默认连上就 `SET time_zone='+00:00'`，为的是它自己按 UTC 解 TIMESTAMP；我们按字节照原样显示，
+    // 用不着它。留着的话服务器在东八区时 `NOW()` 差 8 小时，写进 DATETIME 的就是 UTC 的钟点
+    let options = MySqlConnectOptions::from_str(connection_string)
+      .map_err(|error| error.to_string())?
+      .timezone(None);
     let pool = MySqlPoolOptions::new()
       .idle_timeout(IDLE_TIMEOUT)
       .connect_with(options)
