@@ -881,15 +881,17 @@ function App() {
       return <EsIndexStructureView key={activeTab.id} index={activeTab.object.table} />;
     }
 
+    // 种类来自对象树（标签都是从树或命令面板打开的，那时树已经读出来了）；读不到时按表 / 集合处理。
+    // 只认普通视图：物化视图有行标识，按表处理
+    const isView = databaseMetadata[activeTab.binding.profileId]?.objects.some((object) => (
+      object.kind === 'view'
+      && object.schema === activeTab.object.schema
+      && object.name === activeTab.object.table
+    )) ?? false;
+
     // MongoDB 的集合开在同一种标签里（schema 那一格是库名），换一个浏览页：
     // 标签的身份、去重、持久化与关系库的表完全一样，不必另起一种标签
     if (!activeSpeaksSql) {
-      // 种类来自对象树；树还没读出来时按集合处理：写视图会被服务端拒绝并说明
-      const isView = databaseMetadata[activeTab.binding.profileId]?.objects.some((object) => (
-        object.kind === 'view'
-        && object.schema === activeTab.object.schema
-        && object.name === activeTab.object.table
-      )) ?? false;
       return activeTab.kind === 'table-structure' ? (
         <MongoCollectionStructureView
           key={activeTab.id}
@@ -914,6 +916,7 @@ function App() {
         connection={activeConnection.config}
         tableName={activeTab.object.table}
         schema={activeTab.object.schema ?? undefined}
+        isView={isView}
         initialTab={activeTab.kind === 'table-structure' ? 'schema' : 'data'}
         onClose={() => closeWorkspaceTab(activeTab.id)}
         onRenamed={(table) => {

@@ -21,7 +21,8 @@ export interface TablePaginationOrder {
 
 export function createTablePaginationOrder(
   columns: ColumnInfo[],
-  dialect: SqlIdentifierDialect
+  dialect: SqlIdentifierDialect,
+  { isView = false }: { isView?: boolean } = {}
 ): TablePaginationOrder {
   const keyColumns = primaryKeyColumns(columns);
   // ClickHouse 的主键不唯一（它是稀疏索引的排序前缀），按它排序时同键的行每页次序不定，
@@ -33,6 +34,13 @@ export function createTablePaginationOrder(
   }
   if (keyColumns.length > 0) {
     return createOrder(keyColumns, dialect, 'primary-key', true);
+  }
+
+  // 视图没有 rowid / ctid（三家都报列不存在），也不按全部列排：json、point 这类没有排序运算符，
+  // 一列就让视图打不开，而大视图每翻一页就是一次全量排序。不排序，按数据库默认次序翻页——
+  // 只读横幅本来就是这么说的。物化视图是堆表、有 ctid，调用方不当视图传
+  if (isView && (dialect === 'postgresql' || dialect === 'sqlite' || dialect === 'duckdb')) {
+    return { clause: '', strategy: 'all-columns', columns: [], stableAcrossChanges: false };
   }
 
   // DuckDB 的表同样有 `rowid` 伪列（没有另外两个别名）。分析用的表大多没有主键，

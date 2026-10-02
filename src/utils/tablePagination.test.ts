@@ -45,6 +45,22 @@ describe('createTablePaginationOrder', () => {
       .toBe('ORDER BY ctid');
   });
 
+  it('视图没有 rowid / ctid：不排序，按数据库默认次序翻页', () => {
+    // 三家都实测过：PG「column "ctid" does not exist」、SQLite「no such column: rowid」、
+    // DuckDB「Referenced column "rowid" not found」——没有主键的视图（视图都没有）整个打不开。
+    // 也不退回按全部列排序：json、point 这类没有排序运算符，一列就让视图打不开
+    for (const dialect of ['postgresql', 'sqlite', 'duckdb'] as const) {
+      const order = createTablePaginationOrder([column('value')], dialect, { isView: true });
+      expect(order).toEqual({ clause: '', strategy: 'all-columns', columns: [], stableAcrossChanges: false });
+      expect(createSortedOrderClause(order, { column: 'value', direction: 'desc' }, dialect))
+        .toBe('ORDER BY "value" DESC');
+      expect(pageClause(order.clause, 50, 0, dialect).trim()).toBe('LIMIT 50 OFFSET 0');
+    }
+    // 物化视图是堆表，有 ctid：仍按表处理（调用方只对普通视图传 isView）
+    expect(createTablePaginationOrder([column('value')], 'postgresql', { isView: false }).clause)
+      .toBe('ORDER BY ctid');
+  });
+
   it('DuckDB 的表同样按 rowid 翻页；只有这一个别名，被列名占了就退回全部列', () => {
     expect(createTablePaginationOrder([column('value')], 'duckdb').clause).toBe('ORDER BY rowid');
     expect(createTablePaginationOrder([column('rowid'), column('value')], 'duckdb').clause)

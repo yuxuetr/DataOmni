@@ -143,6 +143,8 @@ interface TableDataViewerProps {
   connection: ConnectionProfile;
   tableName: string;
   schema?: string;
+  /** 普通视图：没有 rowid / ctid，分页不能拿它排序 */
+  isView?: boolean;
   initialTab?: TabType;
   onClose?: () => void;
   /**
@@ -166,6 +168,7 @@ export default function TableDataViewer({
   connection,
   tableName, 
   schema, 
+  isView = false,
   initialTab,
   onClose,
   onRenamed 
@@ -382,7 +385,7 @@ export default function TableDataViewer({
         setTableSchema(loadedSchema);
         setTableSchemaKey(currentTableKey);
         setSchemaObjects(cached.objects);
-        setPaginationOrder(createTablePaginationOrder(cached.columns, dialect));
+        setPaginationOrder(createTablePaginationOrder(cached.columns, dialect, { isView }));
         // 索引等还没缓存上（列先到那一次就切走了）就补一次
         if (!cached.objects) {
           void loadSchemaObjects();
@@ -416,7 +419,7 @@ export default function TableDataViewer({
       setTableSchemaKey(currentTableKey);
       cacheTableStructure(currentTableKey, connection.id, { columns });
       // 排序在这里就定下来：结构页上从没取过数，但「导出整表」在那儿也要能用
-      setPaginationOrder(createTablePaginationOrder(columns, dialect));
+      setPaginationOrder(createTablePaginationOrder(columns, dialect, { isView }));
       // 不 await：列已经可以画了，索引和约束到了再补上
       void loadSchemaObjects();
       return loadedSchema;
@@ -449,7 +452,7 @@ export default function TableDataViewer({
         setTableData([]);
         return;
       }
-      const order = createTablePaginationOrder(loadedSchema.columns, dialect);
+      const order = createTablePaginationOrder(loadedSchema.columns, dialect, { isView });
       setPaginationOrder(order);
 
       // 筛选在数据库里做：只筛当前页得到的是「这一页里恰好符合的行」，
