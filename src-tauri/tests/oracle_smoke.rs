@@ -1402,3 +1402,37 @@ async fn oracle_runs_the_object_ddl_corpus() {
     run_all(&pool, &case.cleanup.iter().map(String::as_str).collect::<Vec<_>>()).await;
   }
 }
+
+/// 同一条会话上，表结构变了之后再跑同一句 `SELECT *`（OCI 有语句缓存，PostgreSQL 与 SQLite
+/// 上这一步都出过事：`database_smoke` 的 `*_reads_a_table_again_after_its_columns_change`）。
+/// OCI 自己重新描述，本来就过——钉住它
+#[tokio::test]
+async fn oracle_reads_a_table_again_after_its_columns_change() {
+  let Some(pool) = pool().await else { return };
+  drop_quietly(&pool, "om_reshaped").await;
+  run_all(
+    &pool,
+    &[
+      "CREATE TABLE om_reshaped (id NUMBER(5), label VARCHAR2(10))",
+      "INSERT INTO om_reshaped VALUES (1, 'one')",
+    ],
+  )
+  .await;
+  let mut connection = session(&pool).await;
+  rows_of(connection.execute("SELECT * FROM om_reshaped", 10).await.expect("cache the star query"));
+  connection
+    .execute("ALTER TABLE om_reshaped RENAME COLUMN label TO heading", 1)
+    .await
+    .expect("rename");
+  connection
+    .execute("ALTER TABLE om_reshaped ADD (extra VARCHAR2(5) DEFAULT 'x')", 1)
+    .await
+    .expect("add");
+  let result =
+    connection.execute("SELECT * FROM om_reshaped", 10).await.expect("read after change");
+  let QueryExecutionResult::Rows { columns, rows, .. } = result else { panic!("expected rows") };
+  assert_eq!(columns, vec!["ID", "HEADING", "EXTRA"]);
+  assert_eq!(text(&rows[0]["HEADING"]), "one");
+  assert_eq!(text(&rows[0]["EXTRA"]), "x");
+  drop_quietly(&pool, "om_reshaped").await;
+}
