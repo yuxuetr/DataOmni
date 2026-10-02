@@ -910,6 +910,27 @@
       连接用 `collation_server`，不是的话（latin1 之类）列是什么说不准，不动。
     用例比对会话与全局的 time_zone、sql_mode，并跑一条与 `CAST` 比较的查询，旧代码在 cu 的 MySQL 8.4 上各自红；
     MySQL 8.4、MariaDB 11.4、TiDB 8.5 的 `mysql_` 冒烟各 35 条全过。OceanBase 没跑（本机那台不动）。
+  - 2026-10-02 经事务池连 PostgreSQL（本机 pgbouncer 1.26，`pool_mode = transaction`；Supabase、Neon、云厂商托管 PG 的连接池端口是这种）：
+    - **每条查询都报 26000**（`1a63e54`）：取列信息用的 sqlx `describe` 为推断可空另发目录查询和 `EXPLAIN (VERBOSE) EXECUTE sqlx_s_1`，
+      那句在 SQL 文本里点名预备语句，连接池只改得了协议里的名字（`max_prepared_statements = 0` 时报的是 42P05 already exists）。
+      PG 冒烟 37 条红 16 条。改用 `prepare`，结果表头的可空写「未知」（与 DuckDB、SQL Server 相同）。顺带每条语句少两次往返：
+      经 cu 20 次平均 describe 1.14 秒、prepare 0.36 秒。用例要设 `DATAOMNI_POSTGRES_POOLER_TEST_URL` 才跑，旧代码红。
+    - **取消 / 超时停掉了别的客户端的连接**（`3eb2729`，`6023749` 引入的）：会话打开时记下的 pid 过后可能在服务别人，
+      照它 `pg_terminate_backend`，另一个客户端的查询报 terminating connection due to administrator command（旧代码三次三红）。
+      现在只停 `pg_stat_activity` 里那个 pid 正 active、语句文本含这条开头 48 个字符的后端；MySQL（ProxySQL 一类代理同理）
+      先在 PROCESSLIST 里核对再 KILL，两句之间还有一个往返的窗口（MySQL 没有带条件的 KILL）。对不上就不停，被放弃的语句在服务端跑完。
+      停失败原先被整个吞掉；改的过程中 PROCESSLIST 的 ID 按 u64 取，在 MariaDB（有符号）上解码失败、KILL 没发出去，是放弃语句的用例抓到的，
+      改成按文本比，失败时 `eprintln`。放弃语句的用例在 MySQL 8.4、MariaDB、TiDB、PG 16、CockroachDB、openGauss 两种模式库都过。
+    - 没修：经 pgbouncer 改了表结构之后，同一句查询报 `cached plan must not change result type`。pgbouncer 在服务端按原文缓存预备语句，
+      我们发的 Close 只关掉它那边的名字映射（pgbouncer 文档里写着这条限制）。重估条件：有人经连接池用结构编辑后报这个错，
+      届时考虑让 PG 的查询不走具名语句。Supabase 的 Supavisor 本身没验，只验了 pgbouncer。
+  - 2026-10-02 同一轮看过、没修的：
+    - PostgreSQL 库编码是 `SQL_ASCII`、里面存着 GBK 字节：服务端在转成 UTF8 时就报 22021（psql 设成 UTF8 客户端编码报同一句），
+      sqlx 写死 `client_encoding=UTF8`，没有开关。重估条件：有人拿着这样的老库来。
+    - MySQL 开着 `NO_BACKSLASH_ESCAPES` 时，前端拼的字符串字面量（表数据筛选、导出的 INSERT）把 `\` 写两遍，筛选落空、导回多一个 `\`。
+      前端不知道会话的 sql_mode；重估条件：有人报，届时后端随会话报出这个模式。
+    - SQL Server：tiberius 登录时带 ODBC 驱动标志，服务端随之开 `ANSI_DEFAULTS`（QUOTED_IDENTIFIER、ANSI_NULLS 都开），与 SSMS 一致。
+    - MySQL 8.4 的 `caching_sha2_password` 用户在缓存清掉后走完整认证，TLS 关 / 优先 / 必须三种都连得上（本机 Docker）。
   - 2026-10-02 Windows：在 Windows 上 `bun tauri build` 能构建（原先差的只是换行符，`643fcf0` 加 `.gitattributes` 统一 LF，并写了
     `docs/windows-build.md`）。顺着查带 Oracle 的打包：`fetch-oracle-client.sh` 的 windows-x64 文件集照 19c 的名字写，23ai 的 zip 里
     一个都没有，脚本在第一个 `cp` 就退出（本机拷到假仓库根下复现）。**修了一处**（`3e791b3`）：按 DLL 导入表重挑 5 个文件、补上校验和；
