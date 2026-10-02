@@ -4403,6 +4403,15 @@ async fn postgres_runs_the_generated_ddl_from_the_shared_corpus() {
   };
 
   for case in ddl_corpus::load("postgresql") {
+    // 语料按 PostgreSQL 生成：改类型与别的子命令合在一条 ALTER 里。CockroachDB 上应用会把
+    // 改类型拆开（`typeChangesApart`），拆开的写法由下面写批量那条用例在它上面验
+    let combines_a_retype = case
+      .statements
+      .iter()
+      .any(|statement| statement.contains(" TYPE ") && statement.contains(", ALTER COLUMN"));
+    if cockroach && combines_a_retype {
+      continue;
+    }
     for statement in &case.fixture {
       sqlx::query(statement).execute(&pool).await.expect("prepare corpus fixture");
     }
@@ -5794,4 +5803,54 @@ async fn mariadb_er_diagram_includes_system_versioned_tables() {
   }
   assert!(tables.iter().any(|table| table == "om_er_versioned_child"), "{tables:?}");
   assert!(tables.iter().any(|table| table == "om_er_versioned_parent"), "{tables:?}");
+}
+
+/// 结构页的改动经 `execute_write_batch` 发出。CockroachDB 上要重写数据的改类型（INT → TEXT）
+/// 不能在事务里跑，也不能走预备语句（同一句「not supported inside a transaction」）：
+/// 原先单改一列的类型也一次成不了。PostgreSQL 上照旧在事务里，同一条用例也过
+#[tokio::test]
+async fn postgres_structure_edit_changes_a_column_type_through_the_write_batch() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let db = DbPool::Postgres(pool.clone());
+  let batch = |sql: &str| {
+    vec![dataomni_lib::services::WriteStatement {
+      sql: sql.to_string(),
+      params: vec![],
+      expect_rows: None,
+    }]
+  };
+  for statement in [
+    "DROP TABLE IF EXISTS om_retype",
+    "CREATE TABLE om_retype (id INT PRIMARY KEY, n INT, code TEXT)",
+    "INSERT INTO om_retype VALUES (1, 7, 'x')",
+  ] {
+    sqlx::query(statement).execute(&pool).await.expect(statement);
+  }
+  let alone = dataomni_lib::services::execute_write_batch(
+    &db,
+    &batch(r#"ALTER TABLE "public"."om_retype" ALTER COLUMN "n" TYPE text"#),
+  )
+  .await;
+  // CockroachDB 上生成器把改类型拆成单独一条（`typeChangesApart`），一批发出去
+  let split = dataomni_lib::services::execute_write_batch(
+    &db,
+    &[
+      batch(r#"ALTER TABLE "public"."om_retype" ALTER COLUMN "code" TYPE varchar(5)"#),
+      batch(r#"ALTER TABLE "public"."om_retype" ALTER COLUMN "code" SET NOT NULL"#),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>(),
+  )
+  .await;
+  let stored: (String, String) =
+    sqlx::query_as("SELECT n, code FROM om_retype").fetch_one(&pool).await.expect("read back");
+  sqlx::query("DROP TABLE om_retype").execute(&pool).await.expect("drop");
+  assert!(alone.is_ok(), "单独改类型: {alone:?}");
+  assert!(split.is_ok(), "改类型加设非空: {split:?}");
+  assert_eq!(stored, ("7".into(), "x".into()));
 }

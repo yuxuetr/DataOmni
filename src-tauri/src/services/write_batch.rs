@@ -145,9 +145,58 @@ pub async fn execute_write_batch<'a>(
     }
     DbPool::Postgres(pool) => {
       let _: &sqlx::Pool<Postgres> = pool;
+      if is_schema_batch(statements) {
+        if let Some(affected) = run_schema_batch_on_cockroach(pool, statements).await? {
+          return Ok(affected);
+        }
+      }
       run_in_transaction!(pool, statements)
     }
   }
+}
+
+/// 整批都是改结构的语句（结构页、建表、AI 设计发的就是这种），没有一条 DML
+fn is_schema_batch(statements: &[WriteStatement]) -> bool {
+  !statements.is_empty()
+    && statements.iter().all(|statement| {
+      if !statement.params.is_empty() {
+        return false;
+      }
+      let keyword = statement.sql.split_whitespace().next().unwrap_or_default();
+      ["ALTER", "CREATE", "DROP", "COMMENT"].iter().any(|ddl| keyword.eq_ignore_ascii_case(ddl))
+    })
+}
+
+/// CockroachDB 上改结构的语句逐条执行，不包事务；不是 CockroachDB 时返回 `None`。
+///
+/// 要重写数据的改类型（INT → TEXT、带排序规则的字符列）在事务里一律被拒（0A000「not supported
+/// inside a transaction」），结构页上改这种列的类型就一次也成不了（25.2 上试过）。而事务本来也
+/// 保不住它：25.2 起默认开着 `autocommit_before_ddl`，每条 DDL 前先提交，失败时前面的照样生效。
+/// 预览里会说这几条逐条生效。在同一条连接上跑：建表之后紧接着的 COMMENT ON 要看得见它。
+///
+/// 走简单查询协议：扩展协议（预备语句）的那一条在它看来也算在事务里，报同一句错。
+/// 改结构的语句不带参数，`is_schema_batch` 只收没有参数的
+async fn run_schema_batch_on_cockroach(
+  pool: &sqlx::Pool<Postgres>,
+  statements: &[WriteStatement],
+) -> Result<Option<Vec<u64>>, WriteBatchError> {
+  let mut connection = pool.acquire().await.map_err(|error| WriteBatchError::at(0, error))?;
+  let version: String = sqlx::query_scalar("SELECT version()")
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|error| WriteBatchError::at(0, error))?;
+  if !version.contains("CockroachDB") {
+    return Ok(None);
+  }
+  let mut affected = Vec::with_capacity(statements.len());
+  for (index, statement) in statements.iter().enumerate() {
+    let result = connection
+      .execute(sqlx::raw_sql(&statement.sql))
+      .await
+      .map_err(|error| WriteBatchError::at(index, error))?;
+    affected.push(result.rows_affected());
+  }
+  Ok(Some(affected))
 }
 
 #[cfg(test)]
@@ -302,5 +351,26 @@ mod tests {
     .expect("statement is valid");
 
     assert_eq!(affected, vec![0]);
+  }
+
+  #[test]
+  fn only_schema_statements_make_a_schema_batch() {
+    let ddl = |sql: &str| statement(sql, vec![]);
+    assert!(is_schema_batch(&[
+      ddl(r#"ALTER TABLE "public"."t" ALTER COLUMN "n" TYPE text"#),
+      ddl("  comment on column t.n IS 'x'"),
+      ddl("CREATE INDEX i ON t (n)"),
+      ddl("DROP INDEX i"),
+    ]));
+    // 网格的改动是 DML，照旧放进事务
+    assert!(!is_schema_batch(&[ddl("ALTER TABLE t ADD COLUMN x int"), ddl("UPDATE t SET x = 1")]));
+    assert!(!is_schema_batch(&[statement("INSERT INTO t VALUES (?)", vec![1.into()])]));
+    // 带参数的走不了简单协议
+    assert!(!is_schema_batch(&[statement(
+      "ALTER TABLE t ALTER COLUMN x SET DEFAULT $1",
+      vec![1.into()]
+    )]));
+    assert!(!is_schema_batch(&[ddl("ALTERNATIVE")]));
+    assert!(!is_schema_batch(&[]));
   }
 }

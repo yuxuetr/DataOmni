@@ -1,6 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertTriangle, Ban, Loader2, X } from 'lucide-react';
 import { useLanguageStore } from '../stores/languageStore';
+import { useQueryStore } from '../stores/queryStore';
+import type { DatabaseHandle } from '../utils/databaseHandle';
 import type { TranslationKey } from '../i18n/translate';
 import type { DdlAction, DdlPlan } from '../utils/tableDdl';
 import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
@@ -46,6 +48,8 @@ export function DdlPreviewDialog({
   onClose
 }: DdlPreviewDialogProps) {
   const t = useLanguageStore((state) => state.t);
+  const database = useQueryStore((state) => state.database);
+  const cockroach = useIsCockroach(dialect, database);
 
   // 点遮罩已经会把填的内容丢掉，Esc 却不动——两条关闭路径得一致，否则人会
   // 以为这个弹窗「关不掉」。跑着的时候不关：那一下会让人以为动作被取消了，
@@ -75,6 +79,9 @@ export function DdlPreviewDialog({
   // 这张表有没有这些依赖，所以只要有这几种就说一句
   const duckdbIndexesBlock = dialect === 'duckdb'
     && plan.statements.some((sql) => /\b(RENAME|DROP COLUMN)\b|\bALTER COLUMN \S+ (TYPE|SET NOT NULL|DROP NOT NULL)\b/.test(sql));
+  // CockroachDB 上改结构的语句逐条执行、各自提交（write_batch.rs 的 run_schema_batch_on_cockroach）：
+  // 第二条失败时第一条已经生效
+  const cockroachCommitsEach = cockroach && plan.statements.length > 1;
   // 只有改表名之外还有别的改动时才真的拆成了两条
   const splitRename = renameApart && plan.statements.length > 1
     && plan.statements.some((sql) => sql.includes('RENAME TO'));
@@ -150,6 +157,11 @@ export function DdlPreviewDialog({
               {t('ddl.mysqlCommitsEach', { count: plan.statements.length })}
             </p>
           )}
+          {cockroachCommitsEach && (
+            <p className="text-xs text-fg-subtle">
+              {t('ddl.cockroachCommitsEach', { count: plan.statements.length })}
+            </p>
+          )}
           {commitsEach && (
             <p className="text-xs text-fg-subtle">
               {t('ddl.oracleCommitsEach', { count: plan.statements.length })}
@@ -198,4 +210,26 @@ export function DdlPreviewDialog({
       </div>
     </div>
   );
+}
+
+/** 连的是不是 CockroachDB（走 PostgreSQL 协议）。问不出来就当不是——少一句提示，不挡执行 */
+function useIsCockroach(dialect: SqlIdentifierDialect, database: DatabaseHandle | null): boolean {
+  const [cockroach, setCockroach] = useState(false);
+  useEffect(() => {
+    if (dialect !== 'postgresql' || !database) {
+      return;
+    }
+    let cancelled = false;
+    database
+      .select('SELECT version() AS version')
+      .then((rows) => {
+        const first = Array.isArray(rows) ? (rows[0] as Record<string, unknown> | undefined) : undefined;
+        if (!cancelled) setCockroach(String(first?.version ?? '').includes('CockroachDB'));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [dialect, database]);
+  return cockroach;
 }

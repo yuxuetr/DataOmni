@@ -7,6 +7,7 @@ import {
   columnDefaultSql,
   incompleteDraftColumns,
   renamesApart,
+  typeChangesApart,
   type ColumnDraft,
   type TableDdlRequest
 } from './tableDdl';
@@ -119,6 +120,21 @@ describe('buildTableDdl / PostgreSQL', () => {
       'ALTER TABLE "orders" ALTER COLUMN "code" TYPE text,'
         + ' ALTER COLUMN "code" SET NOT NULL,'
         + ' ALTER COLUMN "code" SET DEFAULT \'x\''
+    ]);
+  });
+
+  it('CockroachDB：改类型各自单独一条，其余照旧合在一起', () => {
+    // 要重写数据的改类型（int → text）与别的子命令同句报「cannot be combined with other
+    // ALTER TABLE commands」（25.2 上试过）。预览时分不清哪种要重写，一律拆
+    const n = column({ name: 'n', data_type: 'integer' });
+    const plan = buildTableDdl(request('postgresql', [
+      { ...draftOf(code, 'postgresql'), dataType: 'text', nullable: false, defaultValue: "'x'" },
+      { ...draftOf(n, 'postgresql'), dataType: 'bigint' }
+    ], { typeChangesApart: true }));
+    expect(plan.statements).toEqual([
+      'ALTER TABLE "orders" ALTER COLUMN "code" TYPE text',
+      'ALTER TABLE "orders" ALTER COLUMN "n" TYPE bigint',
+      'ALTER TABLE "orders" ALTER COLUMN "code" SET NOT NULL, ALTER COLUMN "code" SET DEFAULT \'x\''
     ]);
   });
 
@@ -576,6 +592,15 @@ describe('defaultCreateSchema', () => {
     expect(defaultCreateSchema([], 'mysql')).toBe('');
     expect(defaultCreateSchema(['APEX', 'DATAOMNI'], 'oracle', 'dataomni')).toBe('DATAOMNI');
     expect(defaultCreateSchema(['APEX', 'HR'], 'oracle', 'dataomni')).toBe('APEX');
+  });
+});
+
+describe('typeChangesApart', () => {
+  it('只有 version() 带 CockroachDB 的 PostgreSQL 连接才拆', () => {
+    expect(typeChangesApart('postgresql', 'CockroachDB CCL v25.2.4 (aarch64-unknown-linux-gnu, built 2025/07/28 15:33:58, go1.23.7 X:nocoverageredesign)')).toBe(true);
+    expect(typeChangesApart('postgresql', 'PostgreSQL 16.4 on x86_64-pc-linux-gnu')).toBe(false);
+    expect(typeChangesApart('postgresql', null)).toBe(false);
+    expect(typeChangesApart('mysql', 'CockroachDB')).toBe(false);
   });
 });
 

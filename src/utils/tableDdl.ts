@@ -61,6 +61,18 @@ export interface TableDdlRequest {
    * 由 [`renamesApart`] 按服务端版本决定，别处不该手写 true
    */
   renameApart?: boolean;
+  /**
+   * 每个改类型单独成句，放在改列名之后、其余改动之前。CockroachDB 要这样：要重写数据的改类型
+   * （int → text、带排序规则的字符列）与别的子命令同句报「cannot be combined with other ALTER TABLE
+   * commands」（25.2 上试过；varchar 加长这种不重写的不受影响——但预览时分不清，一律拆）。
+   * 那边的 DDL 本来就逐条提交，拆开不损失原子性。由 [`typeChangesApart`] 按服务端版本决定
+   */
+  typeChangesApart?: boolean;
+}
+
+/** `version()` 里带 `CockroachDB` 的 PostgreSQL 连接要把改类型拆出来 */
+export function typeChangesApart(dialect: SqlIdentifierDialect, serverVersion: string | null): boolean {
+  return dialect === 'postgresql' && (serverVersion ?? '').includes('CockroachDB');
 }
 
 /** `VERSION()` 里带 `TiDB` 或 `OceanBase` 的 MySQL 连接要把改表名拆出来 */
@@ -317,6 +329,7 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
   // 改列名在 PostgreSQL 与 SQLite 里必须单独成句，放在最前面，
   // 后面的动作一律用新名字
   const renames: string[] = [];
+  const retypes: string[] = [];
   // 删列排在加列之前：删掉 `code` 再新建一个同名的 `code` 是一次合理的编辑，
   // 而反过来的次序在三家里都会撞上「列已存在」。同一条 ALTER 里的动作
   // PostgreSQL 与 MySQL 都按书写次序执行，所以次序就是语义。
@@ -409,7 +422,12 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
       const collation = origin.collation && POSTGRES_COLLATABLE_TYPES.has(columnTypeToken(dataType).replace(/\[.*$/, ''))
         ? ` COLLATE ${origin.collation}`
         : '';
-      alters.push(`ALTER COLUMN ${quoted} TYPE ${dataType}${collation}`);
+      const retype = `ALTER COLUMN ${quoted} TYPE ${dataType}${collation}`;
+      if (request.typeChangesApart) {
+        retypes.push(`ALTER TABLE ${current} ${retype}`);
+      } else {
+        alters.push(retype);
+      }
     }
     if (change.nullabilityChanged) {
       alters.push(`ALTER COLUMN ${quoted} ${column.nullable ? 'DROP NOT NULL' : 'SET NOT NULL'}`);
@@ -429,7 +447,7 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
     }
   }
 
-  statements.push(...renames);
+  statements.push(...renames, ...retypes);
 
   if (ordered.length > 0) {
     if (dialect === 'sqlite' || dialect === 'duckdb') {

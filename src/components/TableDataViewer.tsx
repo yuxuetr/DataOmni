@@ -256,7 +256,8 @@ export default function TableDataViewer({
   // 标识符引用方言。此前这行三元式在四个函数里各抄了一份
   const dialect = identifierDialectFor(connection.db_type);
   useEffect(() => {
-    if (activeTab !== 'schema' || dialect !== 'mysql' || serverVersion !== null || !database) {
+    // MySQL 系认 TiDB / OceanBase（改表名拆开），PostgreSQL 系认 CockroachDB（改类型拆开）
+    if (activeTab !== 'schema' || (dialect !== 'mysql' && dialect !== 'postgresql') || serverVersion !== null || !database) {
       return;
     }
     database
