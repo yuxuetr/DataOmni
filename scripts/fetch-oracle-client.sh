@@ -42,10 +42,13 @@ case "$platform" in
     files="libclntsh.dylib.23.1 libclntshcore.dylib.23.1 libnnz.dylib libociicus.dylib fips.dylib fips1403.dylib legacy.dylib"
     ;;
   windows-x64)
-    # 未在 Windows 上验证过：文件集照 Linux 那一份的对应物挑，没有可对照的校验和
+    # 文件集按导入表挑（llvm-objdump -p）：oci.dll 只静态依赖系统库与 VC 运行库，
+    # 运行时加载 oraociicus.dll，后者再加载三个加密模块。orannz.dll 不要：它导入的
+    # oranls / oracore / orauts 不在 Instant Client 里，本来就加载不起来。
+    # 还没在 Windows 上真连过 Oracle。
     url="https://download.oracle.com/otn_software/nt/instantclient/2326300/instantclient-basiclite-windows.x64-$version.zip"
-    sha=""
-    files="oci.dll oraociicus23.dll orannzsbb.dll oraons.dll fips.dll legacy.dll"
+    sha=9d9b9a8deafbc94086789d4b16c8156deb6a101be9db1a52d3d7c6b714a0fa07
+    files="oci.dll oraociicus.dll fips.dll fips1403.dll legacy.dll"
     ;;
   *) echo "不认识的平台 $platform" >&2; exit 1 ;;
 esac
