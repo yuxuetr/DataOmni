@@ -1180,6 +1180,8 @@ export const zh = {
   'error.sessionUnavailable': '数据库会话不可用，请先重新连接',
   'error.batchOutOfOrder': '查询结果批次顺序错误: 预期偏移 {expected}，实际 {actual}',
   'error.batchIncomplete': '查询结果批次数量不完整: 预期 {expected} 行，实际 {actual} 行',
+  'error.readTruncated': '这一页太大，只读到了前 {count} 行（一次最多读 12 MiB）。调小每页行数，或用 SQL 编辑器只选需要的列。',
+  'error.readTruncated.one': '这一页太大，只读到了前 {count} 行（一次最多读 12 MiB）。调小每页行数，或用 SQL 编辑器只选需要的列。',
   'error.memoryBudget': '查询结果超过前端 16 MiB 内存预算',
   'error.noActiveSqlTab': '没有活动的 SQL 标签',
   'error.notConnected': '数据库未连接',

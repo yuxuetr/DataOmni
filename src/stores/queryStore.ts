@@ -55,6 +55,11 @@ export type { QueryResult, SqlStatement } from '../contracts/query';
 
 const QUERY_RESULT_BACKEND_BYTE_LIMIT = 12 * 1024 * 1024;
 const QUERY_RESULT_FRONTEND_BYTE_LIMIT = 16 * 1024 * 1024;
+/**
+ * `runReadQuery` 的行数上限。表数据页的语句自带 LIMIT（最多 200），这里只是兜底；
+ * 不用编辑器的「行数上限」——那里能选 100，每页 200 行时一页只读到一半
+ */
+const READ_QUERY_ROW_LIMIT = 1_000;
 
 /** 一个 SQL 标签的编辑文档：草稿、解析出的语句及其结果 */
 export interface SqlDocument {
@@ -280,7 +285,7 @@ export const selectActiveSqlDocument = (state: QueryState): SqlDocument =>
 export async function runReadQuery(
   sql: string
 ): Promise<Record<string, SerializedResultValue>[]> {
-  const { connectionId, session, queryTimeoutMs, queryResultRowLimit } = useQueryStore.getState();
+  const { connectionId, session, queryTimeoutMs } = useQueryStore.getState();
   if (!connectionId || !session) {
     throw new Error(translateNow('error.sessionUnavailable'));
   }
@@ -325,7 +330,7 @@ export async function runReadQuery(
       executionId: crypto.randomUUID(),
       sql,
       timeoutMs: queryTimeoutMs,
-      rowLimit: queryResultRowLimit,
+      rowLimit: READ_QUERY_ROW_LIMIT,
       byteLimit: QUERY_RESULT_BACKEND_BYTE_LIMIT,
       // 目录与表数据的读取一律自动提交：关掉自动提交管的是**用户在编辑器里
       // 跑的语句**，浏览一张表不该让状态栏凭空亮起「事务中」。
@@ -344,6 +349,10 @@ export async function runReadQuery(
   }
   if (batchError) {
     throw batchError;
+  }
+  // 只交回前几行是最糟的：网格照画、分页照算偏移，后面那些行再也看不到，界面上什么都不说
+  if (driverResult.truncated) {
+    throw new Error(translateNow('error.readTruncated', { count: rows.length }));
   }
 
   return rows;

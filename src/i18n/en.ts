@@ -1167,6 +1167,8 @@ export const en: Translations = {
   'error.sessionUnavailable': 'The database session is unavailable; reconnect first',
   'error.batchOutOfOrder': 'Result batches arrived out of order: expected offset {expected}, got {actual}',
   'error.batchIncomplete': 'Incomplete result batches: expected row count {expected}, got {actual}',
+  'error.readTruncated': 'This page is too large: only the first {count} rows could be read (one read is capped at 12 MiB). Pick fewer rows per page, or select just the columns you need in the SQL editor.',
+  'error.readTruncated.one': 'This page is too large: only the first {count} row could be read (one read is capped at 12 MiB). Pick fewer rows per page, or select just the columns you need in the SQL editor.',
   'error.memoryBudget': 'The result exceeds the 16 MiB front-end memory budget',
   'error.noActiveSqlTab': 'No active SQL tab',
   'error.notConnected': 'Not connected to a database',
