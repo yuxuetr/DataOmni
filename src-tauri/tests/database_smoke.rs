@@ -2902,16 +2902,17 @@ async fn postgres_foreign_keys_to_a_partitioned_table_are_listed_once() {
   let parent = "dataomni_part_parent";
   let referrer = "dataomni_part_referrer";
   let target = "dataomni_part_target";
-  // CockroachDB 没有 PostgreSQL 的声明式分区：分区是表自己的属性，不另建子表，也就没有
-  // 每个分区克隆一条的外键。钉住：哪天它认了 PARTITION BY RANGE (col) 这种写法，这条会红
-  if is_cockroach(&pool).await {
+  // CockroachDB 与 openGauss 没有 PostgreSQL 的声明式分区：分区是表自己的属性（openGauss 要在
+  // 建表时写全 `VALUES LESS THAN`），不另建子表，也就没有每个分区克隆一条的外键。
+  // 钉住：哪天它们认了 PARTITION BY RANGE (col) 这种写法，这条会红
+  if is_cockroach(&pool).await || is_opengauss(&pool).await {
     let refused = sqlx::query(&format!(
       "CREATE TABLE {parent} (id INT NOT NULL, created DATE NOT NULL, PRIMARY KEY (id, created))
          PARTITION BY RANGE (created)"
     ))
     .execute(&pool)
     .await;
-    assert!(refused.is_err(), "CockroachDB 认 PostgreSQL 的分区写法了，回来把这条接上");
+    assert!(refused.is_err(), "认 PostgreSQL 的分区写法了，回来把这条接上");
     return;
   }
   for statement in [
