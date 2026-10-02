@@ -721,6 +721,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       .statements.find(s => s.id === statementId);
     if (!statement) return false;
     const dialect = getSqlDialect(get().connectionString);
+    const inTransactionBefore = session.transaction.status !== 'idle';
     const execution = startQueryExecution(
       createQueryExecution(documentId, statement.sql, session, dialect)
     );
@@ -907,6 +908,14 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         : timedOut
           ? translateNow('error.queryTimedOut', { duration: formatExecutionTime(queryTimeoutMs) })
           : queryError.message;
+      // 停下一条语句时，会话连接被结束（SQLite 除外），服务端回滚整个事务——
+      // 前面没提交的几条也没了。状态栏会变，但「已停止」那一行得说清楚
+      let transactionLost = false;
+      if ((cancelled || timedOut) && inTransactionBefore) {
+        await get().refreshTransaction();
+        transactionLost = get().session?.transaction.status === 'idle';
+      }
+      const rolledBack = transactionLost ? translateNow('error.abandonedTransactionRolledBack') : null;
       // 超时、取消、断线都是我们自己判出来的，数据库没说过话，不该带上任何结构
       const errorDetails = timedOut || cancelled || connectionLost ? undefined : queryError;
       
@@ -919,7 +928,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           )
         : failQueryExecution(
             pending,
-            { ...queryError, message: errorMessage },
+            { ...queryError, message: rolledBack ? `${errorMessage}\n${rolledBack}` : errorMessage },
             undefined,
             timedOut ? 'timed-out' : 'failed'
           );
@@ -930,8 +939,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           statements: document.statements.map(s =>
             s.id === statementId
               ? cancelled
-                ? { ...s, isExecuting: false, error: undefined, errorDetails: undefined }
-                : failSqlStatement(s, errorMessage, errorDetails)
+                ? { ...s, isExecuting: false, error: rolledBack ? `${errorMessage}\n${rolledBack}` : undefined, errorDetails: undefined }
+                : failSqlStatement(s, rolledBack ? `${errorMessage}\n${rolledBack}` : errorMessage, errorDetails)
               : s
           )
         })),

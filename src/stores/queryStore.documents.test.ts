@@ -26,7 +26,12 @@ function resetStore() {
     executions: [],
     connectionString: 'sqlite:memory',
     connectionId: 'profile-a',
-    session: { id: 'session-a', profileId: 'profile-a', database: null } as never,
+    session: {
+      id: 'session-a',
+      profileId: 'profile-a',
+      database: null,
+      transaction: { status: 'idle', startedAt: null }
+    } as never,
     database: {} as never,
     error: null
   });

@@ -26,7 +26,12 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 
 const { selectActiveSqlDocument, useQueryStore } = await import('./queryStore');
 
-const SESSION = { id: 'session-a', profileId: 'profile-a', database: null } as never;
+const SESSION = {
+  id: 'session-a',
+  profileId: 'profile-a',
+  database: null,
+  transaction: { status: 'idle', startedAt: null }
+} as never;
 
 function connectedStore() {
   useQueryStore.setState({
