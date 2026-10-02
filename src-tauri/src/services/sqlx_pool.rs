@@ -60,13 +60,18 @@ pub async fn open(connection_string: &str) -> Result<DbPool, String> {
     let pool = MySqlPoolOptions::new()
       .idle_timeout(IDLE_TIMEOUT)
       // 握手时 sqlx 写死了 `CLIENT_IGNORE_SPACE`，服务器据此往会话的 sql_mode 加 `IGNORE_SPACE`，
-      // 函数名成了保留字：`CREATE TABLE position (x INT)` 报语法错。服务器本来就开着的不动
+      // 函数名成了保留字：`CREATE TABLE position (x INT)` 报语法错。服务器本来就开着的不动。
+      // 它还 `SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci`，而 MySQL 8 的列默认 `utf8mb4_0900_ai_ci`：
+      // 用户变量、`CAST(… AS CHAR)` 按连接的排序规则，跟列一比报 1267 Illegal mix of collations。
+      // 服务器默认就是 utf8mb4 时照它的排序规则；不是的话（latin1 之类）列是什么说不准，不动
       .after_connect(|connection, _| {
         Box::pin(async move {
           sqlx::Executor::execute(
             connection,
             "SET SESSION sql_mode = IF(FIND_IN_SET('IGNORE_SPACE', @@GLOBAL.sql_mode), @@SESSION.sql_mode, \
-             TRIM(BOTH ',' FROM REPLACE(CONCAT(',', @@SESSION.sql_mode, ','), ',IGNORE_SPACE,', ',')))",
+             TRIM(BOTH ',' FROM REPLACE(CONCAT(',', @@SESSION.sql_mode, ','), ',IGNORE_SPACE,', ','))), \
+             collation_connection = IF(@@collation_server LIKE 'utf8mb4\\_%', @@collation_server, \
+             @@collation_connection)",
           )
           .await
           .map(|_| ())

@@ -646,6 +646,36 @@ async fn mysql_session_keeps_the_servers_time_zone_and_sql_mode() {
   assert_eq!(rows[0]["session_mode"], rows[0]["server_mode"], "{:?}", rows[0]);
 }
 
+/// sqlx 连上就 `SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci`，而 MySQL 8 的表默认是 `utf8mb4_0900_ai_ci`。
+/// 用户变量与 `CAST(… AS CHAR)` 的结果按连接的排序规则，同为隐式，比较时报 1267 Illegal mix of collations
+#[tokio::test]
+async fn mysql_compares_a_column_with_a_cast_in_the_servers_collation() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool = dataomni_lib::services::sqlx_pool::open(&url).await.expect("open the app's pool");
+  let DbPool::MySql(raw) = &pool else {
+    panic!("expected a MySQL pool");
+  };
+  sqlx::query("DROP TABLE IF EXISTS dataomni_collation").execute(raw).await.expect("drop");
+  // 列不写排序规则，照库的默认——就是平常建表的样子
+  sqlx::query("CREATE TABLE dataomni_collation (name VARCHAR(20))")
+    .execute(raw)
+    .await
+    .expect("create");
+  sqlx::query("INSERT INTO dataomni_collation VALUES ('a')").execute(raw).await.expect("insert");
+  let result = execute_query(
+    &pool,
+    "SELECT COUNT(*) AS hits FROM dataomni_collation WHERE name = CAST('a' AS CHAR)",
+  )
+  .await;
+  sqlx::query("DROP TABLE dataomni_collation").execute(raw).await.ok();
+  let Ok(QueryExecutionResult::Rows { rows, .. }) = result else {
+    panic!("compare against a cast: {result:?}");
+  };
+  assert_eq!(rows[0]["hits"]["value"], "1", "{:?}", rows[0]);
+}
+
 /// FLOAT 是单精度，直接放宽成 f64 的话 0.1 读成 0.10000000149011612；照 mysql 客户端写成 0.1
 #[tokio::test]
 async fn mysql_single_precision_floats_read_as_the_client_writes_them() {
