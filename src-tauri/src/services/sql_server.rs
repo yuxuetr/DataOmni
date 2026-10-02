@@ -211,10 +211,11 @@ impl SqlServerPool {
     })
   }
 
-  /// 给一次目录查询用的连接：用完放回。
-  async fn acquire_reusable(self: &Arc<Self>) -> Result<SqlServerConnection, QueryError> {
+  /// 给一次目录查询用的连接：用完放回。另带一个「是不是池里放着的旧连接」
+  async fn acquire_reusable(self: &Arc<Self>) -> Result<(SqlServerConnection, bool), QueryError> {
     // 放太久的直接丢：tiberius 的客户端 drop 只是关掉本地套接字，不走网络
     let (idle, _stale) = self.idle.take();
+    let reused = idle.is_some();
     let client = match idle {
       Some(client) => client,
       None => {
@@ -223,12 +224,13 @@ impl SqlServerPool {
         client
       }
     };
-    Ok(SqlServerConnection {
+    let connection = SqlServerConnection {
       client: Some(client),
       target: self.target.clone(),
       pool: Some(Arc::clone(self)),
       transaction: TransactionState::default(),
-    })
+    };
+    Ok((connection, reused))
   }
 }
 
@@ -552,14 +554,30 @@ impl SqlServerPool {
     sql: &str,
     params: &[JsonValue],
   ) -> Result<Vec<QueryRow>, QueryError> {
-    let mut connection = self.acquire_reusable().await?;
-    let mut client = connection.take_client().await?;
-    let result = guarded(select_rows(&mut client, sql, params)).await;
-    if keeps_connection(&result) {
-      connection.client = Some(client);
+    let (connection, reused) = self.acquire_reusable().await?;
+    let result = select_on(connection, sql, params).await;
+    if !reused || keeps_connection(&result) {
+      return result;
     }
-    result
+    // 池里的连接被服务端断掉了（重启、DBA `KILL`、故障转移）：只读，换一条新连接
+    // 再读一次。不然池里有几条，对象树和表数据页就连着报几次「连接已断开」
+    drop(self.idle.drain());
+    let (connection, _) = self.acquire_reusable().await?;
+    select_on(connection, sql, params).await
   }
+}
+
+async fn select_on(
+  mut connection: SqlServerConnection,
+  sql: &str,
+  params: &[JsonValue],
+) -> Result<Vec<QueryRow>, QueryError> {
+  let mut client = connection.take_client().await?;
+  let result = guarded(select_rows(&mut client, sql, params)).await;
+  if keeps_connection(&result) {
+    connection.client = Some(client);
+  }
+  result
 }
 
 async fn select_rows(
@@ -628,7 +646,7 @@ impl SqlServerPool {
     if statements.is_empty() {
       return Ok(Vec::new());
     }
-    let mut connection =
+    let (mut connection, _) =
       self.acquire_reusable().await.map_err(|error| WriteBatchError::at(0, error))?;
     let mut client =
       connection.take_client().await.map_err(|error| WriteBatchError::at(0, error))?;
@@ -646,6 +664,9 @@ impl SqlServerPool {
     };
     if reusable {
       connection.client = Some(client);
+    } else {
+      // 写不重试（不知道写进去没有），但同一批旧连接一起丢掉，下一次不再撞上
+      drop(self.idle.drain());
     }
     outcome.map_err(|error| WriteBatchError::at(index, error))
   }

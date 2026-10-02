@@ -1198,6 +1198,51 @@ async fn sql_server_session_recovers_after_the_server_kills_it_mid_transaction()
   sessions.release(id).await;
 }
 
+/// 池里放满连接，再在服务端结束它们（重启、DBA `KILL`、故障转移之后就是这样）
+async fn fill_the_pool_and_kill_it(pool: &Arc<SqlServerPool>) {
+  let read = || pool.select("SELECT 1 AS x", &[]);
+  let _ = tokio::join!(read(), read(), read(), read());
+  // 另开一条会话连接去列、去结束：用池里的连接列的话，它自己不在名单里，
+  // 又是最后放回去的，下一次读正好拿到这条活的
+  let mut killer = session(pool).await;
+  let sessions = rows_of(
+    killer
+      .execute(
+        "SELECT session_id FROM sys.dm_exec_sessions WHERE is_user_process = 1 \
+         AND login_name = SUSER_SNAME() AND session_id <> @@SPID",
+        100,
+      )
+      .await
+      .expect("sessions"),
+  );
+  assert!(sessions.len() >= 4, "池里该有 4 条连接：{}", sessions.len());
+  for row in &sessions {
+    let id = row.get("session_id").map(text).unwrap_or_default();
+    killer.execute(&format!("KILL {id}"), 10).await.expect("kill");
+  }
+}
+
+/// 池里的连接被服务端断掉之后，对象树、表数据页不能一次次报「连接已断开」——
+/// 原先池里有几条就连着错几次，sqlx 那几家取连接前先 ping，一次都不错
+#[tokio::test]
+async fn sql_server_pool_reads_survive_the_server_dropping_its_connections() {
+  let Some(pool) = pool().await else { return };
+  write_fixture(&pool).await;
+  fill_the_pool_and_kill_it(&pool).await;
+  for attempt in 0..2 {
+    pool
+      .select("SELECT 1 AS x", &[])
+      .await
+      .unwrap_or_else(|error| panic!("第 {attempt} 次读：{error:?}"));
+  }
+
+  // 写不重试（不知道写进去没有），但只错这一次：同一批旧连接一起丢掉
+  fill_the_pool_and_kill_it(&pool).await;
+  let update = || write("UPDATE dbo.dataomni_write SET note = N'w' WHERE id = 1", vec![], Some(1));
+  let _ = pool.write_batch(&[update()]).await;
+  pool.write_batch(&[update()]).await.expect("第二次写换一条新连接");
+}
+
 /// SQL Server 的读已提交是加锁读：编辑器里开着一个改过这张表的事务时，表数据页
 /// 的查询会一直等。等满了要报出来，而不是让界面停在「加载中」。
 #[tokio::test]
