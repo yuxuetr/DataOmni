@@ -308,7 +308,7 @@
 ### v0.3：可日常使用的关系型数据库 MVP
 
 - [ ] 完成三平台基础安装与冒烟测试
-  - macOS 与 Linux（容器）已验，Windows 没有，需真机或虚拟机。
+  - macOS 与 Linux（容器）已验；Windows 能构建（2026-10-02），安装与冒烟没有，需真机或虚拟机。
 
 ### v1.0：稳定桌面客户端
 
@@ -815,7 +815,11 @@
     点一格选中在 0.5 秒内出来，交互不随格数整页重画，慢的只是换页那一次。**当前版本不做**列虚拟化：没有真机数字也没人报过，
     而它是两张网格的结构性改动。重估条件：有人报宽表卡，或在真机（原生 WebView）上 300 列 × 200 行换页超过 1 秒。
 
-  - 还不能勾：Windows——构建要改 `src-tauri/Cargo.toml` 且需 Windows 开发环境，这一轮不处理。
+  - 2026-10-02 Windows：在 Windows 上 `bun tauri build` 能构建（原先差的只是换行符，`643fcf0` 加 `.gitattributes` 统一 LF，并写了
+    `docs/windows-build.md`）。顺着查带 Oracle 的打包：`fetch-oracle-client.sh` 的 windows-x64 文件集照 19c 的名字写，23ai 的 zip 里
+    一个都没有，脚本在第一个 `cp` 就退出（本机拷到假仓库根下复现）。**修了一处**（`3e791b3`）：按 DLL 导入表重挑 5 个文件、补上校验和；
+    文档补了点名平台的打包步骤（`e7a3d74`，`bash` 若是 WSL 的会被认成 linux-x64）。还没在 Windows 上真连过 Oracle。
+  - 还不能勾：Windows 的安装、升级、卸载（MSI / NSIS）与带 Instant Client 的 Oracle 连接，需要 Windows 真机或虚拟机。
 
 ## 暂不优先
 
