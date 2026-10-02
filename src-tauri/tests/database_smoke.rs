@@ -5711,3 +5711,43 @@ async fn mysql_call_shows_the_procedures_first_result_set() {
     sqlx::raw_sql(statement).execute(&pool).await.expect(statement);
   }
 }
+
+/// MariaDB 的系统版本表在目录里是 `SYSTEM VERSIONED`，不是 `BASE TABLE`。ER 图只认后者时，
+/// 这种表连同它的外键整张从图里消失
+#[tokio::test]
+async fn mariadb_er_diagram_includes_system_versioned_tables() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  if mysql_flavor(&pool).await != MysqlFlavor::MariaDb {
+    return;
+  }
+  for statement in [
+    "DROP TABLE IF EXISTS om_er_versioned_child",
+    "DROP TABLE IF EXISTS om_er_versioned_parent",
+    "CREATE TABLE om_er_versioned_parent (id INT PRIMARY KEY) WITH SYSTEM VERSIONING",
+    "CREATE TABLE om_er_versioned_child (id INT PRIMARY KEY, parent_id INT,
+       FOREIGN KEY (parent_id) REFERENCES om_er_versioned_parent (id)) WITH SYSTEM VERSIONING",
+  ] {
+    sqlx::raw_sql(statement).execute(&pool).await.expect(statement);
+  }
+  let database: String =
+    sqlx::query_scalar("SELECT DATABASE()").fetch_one(&pool).await.expect("current database");
+  let er = dataomni_lib::services::er_diagram_queries(&dataomni_lib::models::DatabaseType::MySQL)
+    .expect("supported");
+  let tables: Vec<String> = sqlx::query(er.columns)
+    .bind(&database)
+    .fetch_all(&pool)
+    .await
+    .expect("er columns")
+    .iter()
+    .map(|row| row.get::<String, _>("table_name"))
+    .collect();
+  for statement in ["DROP TABLE om_er_versioned_child", "DROP TABLE om_er_versioned_parent"] {
+    sqlx::raw_sql(statement).execute(&pool).await.expect(statement);
+  }
+  assert!(tables.iter().any(|table| table == "om_er_versioned_child"), "{tables:?}");
+  assert!(tables.iter().any(|table| table == "om_er_versioned_parent"), "{tables:?}");
+}

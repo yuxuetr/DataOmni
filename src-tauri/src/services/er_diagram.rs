@@ -138,6 +138,8 @@ ORDER BY n.nspname, t.relname, c.conname, c.ord
 /// 后者只有 `varchar`、`int`。
 ///
 /// join TABLES 是为了排掉视图——ER 图画的是表之间的外键，视图没有外键。
+/// 按白名单而不是「不是 VIEW」：MariaDB 的系统版本表是 `SYSTEM VERSIONED`（要画），
+/// 序列是 `SEQUENCE`（不画，它的「列」是 start_value、increment 这些属性）。
 const MYSQL_COLUMNS: &str = r#"
 SELECT
   CAST(c.TABLE_SCHEMA AS CHAR) AS table_schema,
@@ -151,7 +153,7 @@ FROM INFORMATION_SCHEMA.COLUMNS c
 JOIN INFORMATION_SCHEMA.TABLES t
   ON t.TABLE_SCHEMA = c.TABLE_SCHEMA
  AND t.TABLE_NAME = c.TABLE_NAME
- AND t.TABLE_TYPE = 'BASE TABLE'
+ AND t.TABLE_TYPE IN ('BASE TABLE', 'SYSTEM VERSIONED')
 WHERE c.TABLE_SCHEMA = ?
 ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION
 "#;
