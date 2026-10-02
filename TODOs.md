@@ -891,6 +891,15 @@
     Oracle 同样（`bb223a4`）：Easy Connect 串 `//::1:1521/…` 报 ORA-12262，加方括号后 `oracle_smoke` 经 `::1` 24 条全过。
     SQL Server 本来就行（tokio 按最后一个冒号切主机与端口），ClickHouse / Elasticsearch 的 `http_endpoint` 早就加了方括号。
     没验：MongoDB、Redis、Neo4j 与 SSH 隧道的跳板机填 IPv6 地址（都按结构化的主机与端口交给驱动，没经过 URL）；重估条件：有人报。
+  - 2026-10-02 会话时区（本机 Docker 的 MySQL 8.4 / PG 16，`TZ=Asia/Shanghai`）：**MySQL 会话被 sqlx 设成 UTC**（`70c9ca5`）。
+    sqlx 默认连上就 `SET time_zone='+00:00'`，服务器在东八区时 `NOW()` / `CURDATE()` 差 8 小时，写进 DATETIME 的 `NOW()`、表格里
+    「当前时间」按钮写的都是 UTC 的钟点，TIMESTAMP 列按 UTC 读写——与应用和其他客户端对不上。我们按字节照原样显示日期时间，用不着
+    sqlx 那条假设，开池时 `timezone(None)`。用例（会话时区等于 `@@global.time_zone`）旧代码在 cu 与本机都红；`mysql_` 冒烟两边各 34 条全过。
+    `plugin_decode` 的 TIMESTAMP 仍按 `+00:00` 标偏移，没改：它只解目录查询，而 information_schema 里的时间列都是 DATETIME。
+    **PostgreSQL 不改**：sqlx 在启动包里写死 `TimeZone=UTC`，没有开关；它算客户端来源，`RESET` 回来还是 UTC，非超级用户读不到
+    配置文件里的值（实测 `reset_val` = UTC、`source` = client）。能选的只有 UTC 或本机时区（JDBC 的做法），两种都会在一部分部署上
+    与 psql 不一致，不是对错之分。timestamptz 按 UTC 带偏移显示，存取的时刻是对的；受影响的是 SQL 里不带偏移的字面量与 `current_date`。
+    重估条件：有人报东八区的库里 `current_date` 或写入的时刻不对，届时按 JDBC 用本机时区（`after_connect` 里 `SET TimeZone`）。
   - 2026-10-02 Windows：在 Windows 上 `bun tauri build` 能构建（原先差的只是换行符，`643fcf0` 加 `.gitattributes` 统一 LF，并写了
     `docs/windows-build.md`）。顺着查带 Oracle 的打包：`fetch-oracle-client.sh` 的 windows-x64 文件集照 19c 的名字写，23ai 的 zip 里
     一个都没有，脚本在第一个 `cp` 就退出（本机拷到假仓库根下复现）。**修了一处**（`3e791b3`）：按 DLL 导入表重挑 5 个文件、补上校验和；
