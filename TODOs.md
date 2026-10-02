@@ -866,6 +866,16 @@
     没做：CockroachDB 上「改类型时带上原来的排序规则」只手工试过（`COLLATE "en_us"` 单独一条可以），共用语料用的 `"C"` 它不认，
     那条用例在它上面跳过；SQL 编辑器里手写 `BEGIN; INSERT …; ALTER …; ROLLBACK` 时 INSERT 已被它提交，界面不提示——
     这是服务端的设置，重估条件：有人报。
+  - 2026-10-02 取消与超时（MySQL 8.4、PG 16 在 cu 上）：**在 MySQL / PostgreSQL 上点取消，服务端并没有停**（`6023749`）。
+    取消与超时只是丢掉执行的 future：点了取消的 `UPDATE` 照样跑完、提交；会话连接上还留着它没读完的回包——PG 的下一条要等它跑完，
+    MySQL 的下一条读到残包，先报 `COM_STMT_PREPARE_OK` 协议错、再给出「成功、0 行」，这个标签页直到关掉都是坏的（之前的冒烟只在池上测超时，
+    没测会话；300ms 的超时经慢链路死在预处理那一步，语句根本没发出去，测不出来）。照 ClickHouse 的 `KillOnDrop`：执行期间拿一个守卫，
+    被丢掉时另取池里一条连接发 `pg_terminate_backend` / `KILL`，下一条先等它结束再换新连接，事务状态归零。真库用例旧代码红；
+    只换连接不发结束语句时红在「UPDATE 提交了」。MySQL 8.4、MariaDB 11.4、TiDB 8.5、PG 16、CockroachDB 25.2、openGauss 两种模式都过
+    （CockroachDB 不发结束语句也会停：旧连接一关它就取消），MySQL + PG 整套 87/87。
+    顺着补了界面（`fb92eac`）：事务里停下一条语句会回滚整个事务（SQL Server、Oracle 本来就是），原先只有状态栏变了；
+    现在那一行写「查询已取消」再加一句事务也回滚了。打包版（rpm 0.4.80 / 0.4.81，PG 16）中英文都看过，服务端那行没被改、`pg_sleep` 已停。
+    没查：SQLite 被放弃的语句是不是也要等它跑完（本机文件，sqlx 没有 interrupt 接口）；重估条件：有人报。
   - 2026-10-02 Windows：在 Windows 上 `bun tauri build` 能构建（原先差的只是换行符，`643fcf0` 加 `.gitattributes` 统一 LF，并写了
     `docs/windows-build.md`）。顺着查带 Oracle 的打包：`fetch-oracle-client.sh` 的 windows-x64 文件集照 19c 的名字写，23ai 的 zip 里
     一个都没有，脚本在第一个 `cp` 就退出（本机拷到假仓库根下复现）。**修了一处**（`3e791b3`）：按 DLL 导入表重挑 5 个文件、补上校验和；
