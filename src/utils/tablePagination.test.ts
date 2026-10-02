@@ -241,6 +241,28 @@ describe('ClickHouse 的分页排序', () => {
     expect(order.strategy).toBe('all-columns');
     expect(order.stableAcrossChanges).toBe(false);
   });
+
+  it('AggregateFunction、Variant、Dynamic 不能排序（Code 44），哪一层里有都略去', () => {
+    const typed = (name: string, data_type: string, primaryKeyOrdinal?: number) => ({
+      name, data_type, is_nullable: false,
+      is_primary_key: primaryKeyOrdinal !== undefined, primary_key_ordinal: primaryKeyOrdinal
+    });
+    // AggregatingMergeTree 表：排序键之外全是聚合状态
+    const order = createTablePaginationOrder([
+      typed('k', 'UInt32', 1),
+      typed('s', 'AggregateFunction(sum, UInt64)'),
+      typed('a', 'Array(AggregateFunction(uniq, String))'),
+      typed('v', 'Variant(String, UInt64)'),
+      typed('d', 'Dynamic'),
+      typed('m', 'Map(String, Dynamic(max_types=10))'),
+      typed('t', 'Tuple(x LowCardinality(Nullable(String)), y Variant(UInt8, String))'),
+      typed('simple', 'SimpleAggregateFunction(sum, UInt64)'),
+      typed('j', 'JSON'),
+      typed('e', "Enum8('Dynamic' = 1, 'AggregateFunction(' = 2)")
+    ], 'clickhouse');
+    expect(order.clause).toBe('ORDER BY `k`, `simple`, `j`, `e`');
+    expect(createTablePaginationOrder([typed('s', 'AggregateFunction(sum, UInt64)')], 'clickhouse').clause).toBe('');
+  });
 });
 
 describe('取表数据的投影', () => {

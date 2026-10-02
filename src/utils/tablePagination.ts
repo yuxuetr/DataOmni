@@ -30,8 +30,13 @@ export function createTablePaginationOrder(
   // 翻页会重复或漏掉。主键列在前、其余列跟在后面：顺序是确定的（只有整行相同的才分不出，
   // 而那些本来就分不出），服务端按排序键顺序读、只给同键的那一截补排，不是每页整表排序
   if (dialect === 'clickhouse') {
-    const rest = columns.map(column => column.name).filter(name => !keyColumns.includes(name));
-    return createOrder([...keyColumns, ...rest], dialect, 'all-columns', false);
+    const rest = columns
+      .filter(column => !keyColumns.includes(column.name) && !isClickHouseUnsortable(column.data_type))
+      .map(column => column.name);
+    const ordered = [...keyColumns, ...rest];
+    return ordered.length > 0
+      ? createOrder(ordered, dialect, 'all-columns', false)
+      : { clause: '', strategy: 'all-columns', columns: [], stableAcrossChanges: false };
   }
   if (keyColumns.length > 0) {
     return createOrder(keyColumns, dialect, 'primary-key', true);
@@ -117,6 +122,16 @@ const ORACLE_SORTABLE_TYPES = new Set([
   'number', 'integer', 'float', 'binary_float', 'binary_double', 'varchar2', 'nvarchar2', 'char', 'nchar',
   'raw', 'date', 'timestamp', 'interval', 'boolean', 'json', 'rowid', 'urowid'
 ]);
+
+/**
+ * ClickHouse 查询的 ORDER BY 不收聚合状态、Variant 与 Dynamic，嵌在 Array / Map / Tuple 里也不收（Code 44，25.8 上试过）。
+ * AggregatingMergeTree 表排序键以外全是聚合状态，按全部列排时整张打不开。SimpleAggregateFunction 存的是普通值，可以排。
+ * 先去掉引号里的文本：枚举的标签可以叫这些名字；类型名后面跟括号或分隔符，Tuple 里叫这个名字的元素后面跟的是空格
+ */
+function isClickHouseUnsortable(dataType: string): boolean {
+  return /(?<![A-Za-z])(?:AggregateFunction|Variant)\(|\bDynamic(?=\s*[(),]|\s*$)/
+    .test(dataType.replace(/'(?:[^'\\]|\\.)*'/g, "''"));
+}
 
 const SQL_SERVER_UNSORTABLE_TYPES = new Set(['xml', 'text', 'ntext', 'image', 'geography', 'geometry']);
 
