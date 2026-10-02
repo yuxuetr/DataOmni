@@ -6229,3 +6229,114 @@ async fn sqlite_abandoned_statement_is_interrupted() {
   pool.close().await;
   let _ = std::fs::remove_file(&path);
 }
+
+/// 事务开着时服务端把连接断了（PostgreSQL 的 `idle_in_transaction_session_timeout`，Supabase 等托管库常设；
+/// MySQL 的 `wait_timeout`；DBA 结束会话、重启、VPN 掉线同理）。这之前状态一直停在「事务失败」，
+/// `ROLLBACK` 与之后每一条都报连接已断，标签页只能关掉重开
+async fn assert_session_recovers_after_the_server_drops_it(
+  db_pool: &DbPool,
+  url: &str,
+  drop_soon: &'static str,
+  insert: &'static str,
+  count: &'static str,
+  // CockroachDB 的闲置事务超时报一句 ERROR 级的 XXUUU 再断开，认不出是断开；
+  // 下一条读到断掉的 socket 才知道
+  hangs_up_without_saying_so: bool,
+) {
+  let sessions = QuerySessionState::default();
+  let options = |sql: &'static str| StreamingQueryOptions {
+    session_id: "dropped",
+    pool_key: url,
+    pool: db_pool.into(),
+    sql,
+    autocommit: true,
+    explain_plan: false,
+    row_limit: 100,
+    byte_limit: 1 << 20,
+    batch_size: 10,
+    timeout_duration: Duration::from_secs(20),
+  };
+  for sql in ["BEGIN", drop_soon, insert] {
+    sessions
+      .execute_streaming(options(sql), &mut |_| Ok(()))
+      .await
+      .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+  }
+  tokio::time::sleep(Duration::from_secs(4)).await;
+  let mut error = sessions
+    .execute_streaming(options("SELECT 1 AS one"), &mut |_| Ok(()))
+    .await
+    .expect_err("服务端已经断开了这条连接");
+  if hangs_up_without_saying_so {
+    error = sessions
+      .execute_streaming(options("SELECT 1 AS one"), &mut |_| Ok(()))
+      .await
+      .expect_err("连接已经断了");
+  }
+  assert_eq!(
+    sessions.transaction("dropped").await.status,
+    dataomni_lib::services::TransactionStatus::Idle,
+    "连接没了，事务也就没了：{error:?}"
+  );
+  let mut rows = Vec::new();
+  sessions
+    .execute_streaming(options(count), &mut |batch| {
+      rows.extend(batch.rows);
+      Ok(())
+    })
+    .await
+    .expect("下一条换一条连接照常跑");
+  let value = rows[0].get("n").map(ToString::to_string).unwrap_or_default();
+  assert!(value.contains('0'), "事务里写的那行还在：{value}");
+  sessions.release("dropped").await;
+}
+
+#[tokio::test]
+async fn postgres_session_recovers_after_the_server_drops_it_mid_transaction() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool = dataomni_lib::services::sqlx_pool::open(&url).await.expect("open the app's pool");
+  let DbPool::Postgres(raw) = &pool else {
+    panic!("expected a PostgreSQL pool");
+  };
+  sqlx::raw_sql("DROP TABLE IF EXISTS om_dropped; CREATE TABLE om_dropped (id int PRIMARY KEY)")
+    .execute(raw)
+    .await
+    .expect("create om_dropped");
+  assert_session_recovers_after_the_server_drops_it(
+    &pool,
+    &url,
+    "SET LOCAL idle_in_transaction_session_timeout = '1s'",
+    "INSERT INTO om_dropped VALUES (1)",
+    "SELECT count(*)::text AS n FROM om_dropped",
+    is_cockroach(raw).await,
+  )
+  .await;
+  sqlx::query("DROP TABLE om_dropped").execute(raw).await.ok();
+}
+
+#[tokio::test]
+async fn mysql_session_recovers_after_the_server_drops_it_mid_transaction() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool = dataomni_lib::services::sqlx_pool::open(&url).await.expect("open the app's pool");
+  let DbPool::MySql(raw) = &pool else {
+    panic!("expected a MySQL pool");
+  };
+  sqlx::raw_sql("DROP TABLE IF EXISTS om_dropped; CREATE TABLE om_dropped (id int PRIMARY KEY)")
+    .execute(raw)
+    .await
+    .expect("create om_dropped");
+  assert_session_recovers_after_the_server_drops_it(
+    &pool,
+    &url,
+    "SET SESSION wait_timeout = 2",
+    "INSERT INTO om_dropped VALUES (1)",
+    "SELECT CAST(COUNT(*) AS CHAR) AS n FROM om_dropped",
+    false,
+  )
+  .await;
+  sqlx::query("DROP TABLE om_dropped").execute(raw).await.ok();
+}

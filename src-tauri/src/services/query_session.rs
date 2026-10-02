@@ -1,3 +1,4 @@
+use crate::services::query_error::CONNECTION_LOST_CODE;
 use crate::services::query_executor::PoolRef;
 use crate::services::query_executor::QUERY_TIMEOUT;
 use crate::services::{
@@ -31,6 +32,9 @@ struct SessionRuntime {
   terminator: Option<Terminator>,
   /// 一条语句开始了还没回来。锁已经放开时它还是 true，就是执行的 future 被丢掉了（超时、取消）
   in_flight: bool,
+  /// 上一条语句报出这条连接已经没了（[`connection_is_gone`]）。服务端那头的事务随之回滚；
+  /// 不记下来的话状态一直停在「事务中 / 事务失败」，而 `ROLLBACK` 和之后每一条都报连接已断
+  connection_gone: bool,
   pending_termination: PendingTermination,
 }
 
@@ -189,6 +193,11 @@ fn statement_fingerprint(sql: &str) -> String {
   sql.trim().chars().take(48).collect()
 }
 
+/// 这个错误说明会话连接已经断了：传输层断开，或者服务端说完这句就断开（见 `QueryError::from`）
+fn connection_is_gone(error: &QueryError) -> bool {
+  error.code.as_deref() == Some(CONNECTION_LOST_CODE)
+}
+
 /// 执行被放弃之后还能不能接着用这条连接。sqlx 的两家网络库不能，见 [`Terminator`]；
 /// SQLite 被打断之后照常能用
 fn breaks_when_abandoned(connection: &SessionConnection) -> bool {
@@ -222,6 +231,7 @@ impl SessionRuntime {
       last_used: std::time::Instant::now(),
       terminator,
       in_flight: false,
+      connection_gone: false,
       pending_termination: PendingTermination::default(),
     })
   }
@@ -233,11 +243,15 @@ impl SessionRuntime {
     self.terminator = fresh.terminator;
     self.transaction = TransactionState::default();
     self.in_flight = false;
+    self.connection_gone = false;
     Ok(())
   }
 
-  /// 上一条语句被放弃了：等服务端结束那条连接，再换一条
+  /// 上一条语句被放弃了：等服务端结束那条连接，再换一条。上一条报出连接已经没了，也换一条
   async fn recover_if_abandoned(&mut self, pool: PoolRef<'_>) -> Result<(), QueryError> {
+    if self.connection_gone {
+      return self.replace_connection(pool).await;
+    }
     self.settle_interrupted().await;
     if !self.in_flight {
       return Ok(());
@@ -307,7 +321,8 @@ impl SessionRuntime {
   /// 服务端报得出就用服务端的，否则用从语句推出来的。
   /// 上一条被放弃了的话，连接已经结束，事务随之回滚
   fn current_transaction(&self) -> TransactionState {
-    if self.in_flight && breaks_when_abandoned(&self.connection) {
+    // 连接没了时 PostgreSQL 驱动记着的还是最后那次的「事务失败」
+    if self.connection_gone || (self.in_flight && breaks_when_abandoned(&self.connection)) {
       return TransactionState::default();
     }
     self.connection.observed_transaction().unwrap_or_else(|| self.transaction.clone())
@@ -378,6 +393,7 @@ impl QuerySessionState {
       let guard = runtime.statement_started(sql);
       let result = runtime.connection.execute(sql, row_limit).await;
       runtime.statement_returned(guard);
+      runtime.connection_gone = result.as_ref().is_err_and(connection_is_gone);
       runtime.record(sql, result.is_ok());
       result
     })
@@ -479,6 +495,7 @@ impl QuerySessionState {
         )
         .await;
       runtime.statement_returned(guard);
+      runtime.connection_gone = result.as_ref().is_err_and(connection_is_gone);
       runtime.record(options.sql, result.is_ok());
       result
     })

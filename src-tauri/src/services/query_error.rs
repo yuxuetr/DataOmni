@@ -92,6 +92,15 @@ impl From<&str> for QueryError {
   }
 }
 
+/// `ER_CLIENT_INTERACTION_TIMEOUT`：「The client was disconnected by the server because of inactivity」
+const MYSQL_CLIENT_INTERACTION_TIMEOUT: u16 = 4031;
+
+/// PostgreSQL 在建立连接时拒绝的 FATAL：认证（28 类）、库不存在、连接数满、暂不接受连接。
+/// 这些不是「连着的连接被断开」，原样报出来，说的是该改什么
+fn refused_at_startup(code: &str) -> bool {
+  code.starts_with("28") || matches!(code, "3D000" | "53300" | "57P03")
+}
+
 impl From<sqlx::Error> for QueryError {
   fn from(error: sqlx::Error) -> Self {
     let Some(database_error) = error.as_database_error() else {
@@ -115,6 +124,28 @@ impl From<sqlx::Error> for QueryError {
       // 剩下的没有数据库侧结构可取，只有一句话
       return Self::message(error.to_string());
     };
+
+    // 服务端说完这句就断开了连接，和 socket 断了是一回事，下一条照样失败。原话留着，它说了为什么：
+    // - MySQL 8.0.24 起闲置超过 wait_timeout 先收到 4031，SQLSTATE 只是笼统的 HY000
+    // - PostgreSQL 的 FATAL：闲置事务超时（25P03，托管库常设）、被结束（57P01）……CockroachDB 的闲置事务
+    //   超时报的是 XXUUU，所以按严重级别认，不按错误码
+    let mysql_hung_up = database_error
+      .try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
+      .is_some_and(|mysql| mysql.number() == MYSQL_CLIENT_INTERACTION_TIMEOUT);
+    let postgres_hung_up = database_error
+      .try_downcast_ref::<sqlx::postgres::PgDatabaseError>()
+      .is_some_and(|postgres| {
+        matches!(
+          postgres.severity(),
+          sqlx::postgres::PgSeverity::Fatal | sqlx::postgres::PgSeverity::Panic
+        ) && !refused_at_startup(postgres.code())
+      });
+    if mysql_hung_up || postgres_hung_up {
+      return Self::with_code(
+        CONNECTION_LOST_CODE,
+        format!("{CONNECTION_LOST}: {}", database_error.message()),
+      );
+    }
 
     let mut details = QueryErrorDetails {
       constraint: database_error.constraint().map(str::to_string),
