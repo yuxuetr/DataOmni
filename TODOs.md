@@ -944,6 +944,15 @@
       打包版（rpm 0.4.86，同一套 GNOME 容器，连 cu 上的 SQL Server 2022）：把应用的连接全部 `KILL` 之后，对象树刷新一次就出来。
       表数据页第一次刷新仍报一次断开——它走 SQL 标签的会话连接，空闲不到 60 秒不先 ping（`REVALIDATE_AFTER`），编辑器里的语句
       不知道是不是只读，不重试；第二次刷新照常。ClickHouse 走 HTTP（hyper 的池自己重发）、DuckDB 在进程内，没有这个问题。
+  - 2026-10-02 危险语句确认的分级（`statementRisk.ts`，36 种各方言写法逐个过一遍）：**两类改数据的语句被当成只读，生产上也不弹确认**
+    （`31af2a8`）。PostgreSQL 的数据修改 CTE（`WITH gone AS (DELETE FROM t RETURNING *) SELECT …`，归档常用）顶层只看得到 SELECT；
+    `EXPLAIN ANALYZE DELETE / UPDATE`（PG 与 MySQL 8）真的执行，却按 EXPLAIN 算。词法扫描改成带上每个词所在的括号
+    （`sqlWords`；`topLevelKeywords` 取顶层，行为不变），WITH 再看括号里的写语句、只认它自己括号里的 WHERE；`FOR UPDATE`、
+    `ON CONFLICT DO UPDATE`、`ON DUPLICATE KEY UPDATE` 不算。EXPLAIN 带 ANALYZE（含 `EXPLAIN (ANALYZE, BUFFERS)`）按被解释的那条定级。
+    三条用例先红后绿，前端 1752 条全过。打包版（rpm 0.4.87，GNOME 容器，「生产」环境的 PG 16 连接）：两种写法都弹出「没有 WHERE 条件，
+    将影响整张表」，取消之后服务端的行与值都没变。
+    没改：动态 SQL（PG 的 `DO $$ … $$`、T-SQL 的 `EXEC('…')` / `sp_executesql`）看不到字符串里的语句，按有界写入算（生产上照样拦）；
+    `SELECT pg_terminate_backend(…)` 这类有副作用的函数调用按只读算——从语句文本分不出来。重估条件：有人在非生产环境被这类语句伤到。
   - 2026-10-02 同一轮看过、没修的：
     - PostgreSQL 库编码是 `SQL_ASCII`、里面存着 GBK 字节：服务端在转成 UTF8 时就报 22021（psql 设成 UTF8 客户端编码报同一句），
       sqlx 写死 `client_encoding=UTF8`，没有开关。重估条件：有人拿着这样的老库来。
