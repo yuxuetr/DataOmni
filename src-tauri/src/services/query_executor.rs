@@ -7,7 +7,7 @@ use sqlx::{
   postgres::{PgRow, PgValueRef},
   sqlite::{SqliteRow, SqliteValueRef},
   Column, Connection, Executor, MySql, MySqlConnection, PgConnection, Pool, Postgres, Row, Sqlite,
-  SqliteConnection, TypeInfo, Value, ValueRef,
+  SqliteConnection, Statement, TypeInfo, Value, ValueRef,
 };
 use std::future::Future;
 use tauri_plugin_sql::DbPool;
@@ -906,15 +906,21 @@ async fn execute_postgres_connection_with_limits(
 /// 跑不通。事后重试不行：在事务里这一下已经让整个事务作废。代价是缓存非空时多一次往返
 /// （Close + Sync）；交互式客户端几乎不会在同一条连接上反复跑同一句，缓存本来也省不下什么。
 /// 不把容量设成 0：那样 sqlx 仍给每句开一个具名语句、却不缓存也不关，服务端越攒越多
+///
+/// 用 `prepare` 而不是 `describe`：后者为了推断可空，另发一句目录查询和一句
+/// `EXPLAIN (VERBOSE) EXECUTE sqlx_s_1`。一是慢——经 cu 那条链路每条语句多 0.78 秒（20 次平均
+/// describe 1.14 秒、prepare 0.36 秒）；二是那句 EXPLAIN 在 SQL 文本里点名预备语句，事务池
+/// （pgbouncer、Supabase、Neon 的连接池端口）只改得了协议里的名字，每条查询都报 26000。
+/// 代价是 PostgreSQL 的结果表头不再写 NULL / NOT NULL，与说不出可空的别家一样写「未知」
 async fn describe_postgres_columns(
   connection: &mut PgConnection,
   sql: &str,
 ) -> Result<(Vec<QueryColumnMetadata>, bool), QueryError> {
   connection.clear_cached_statements().await.map_err(QueryError::from)?;
-  let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
-  let binary = description.columns().iter().all(|column| pg_decodes_binary(column.type_info()));
+  let statement = (&mut *connection).prepare(sql).await.map_err(QueryError::from)?;
+  let binary = statement.columns().iter().all(|column| pg_decodes_binary(column.type_info()));
   Ok((
-    description
+    statement
       .columns()
       .iter()
       .enumerate()
@@ -923,7 +929,7 @@ async fn describe_postgres_columns(
         ordinal,
         database_type: column.type_info().name().to_string(),
         logical_type: postgres_logical_type(column.type_info().name()).to_string(),
-        nullable: description.nullable(ordinal),
+        nullable: None,
       })
       .collect(),
     binary,

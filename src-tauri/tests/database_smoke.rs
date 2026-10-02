@@ -44,7 +44,7 @@ async fn sqlite_supports_basic_read_write() {
     execute_query(&DbPool::Sqlite(pool.clone()), "SELECT value FROM smoke_test WHERE id = -1")
       .await
       .expect("describe empty SQLite result");
-  assert_empty_row_result(result, "value");
+  assert_empty_row_result(result, "value", Some(false));
 
   assert_truncated_result(
     execute_query_with_limit(
@@ -71,6 +71,29 @@ async fn sqlite_supports_basic_read_write() {
     precise,
     &[("large_integer", "bigint", "9007199254740993"), ("binary_value", "binary", "00ff10")],
   );
+}
+
+/// 经事务池（pgbouncer `pool_mode = transaction`，Supabase、Neon、云厂商托管 PG 的连接池端口都是这种）连。
+/// sqlx 的 `describe` 为了推断可空，会发一句 SQL 文本里点名预备语句的 `EXPLAIN … EXECUTE sqlx_s_1`：
+/// 连接池只改得了协议里的语句名，改不了 SQL 文本，每条查询都报 26000「prepared statement does not exist」。
+/// 只在设了 `DATAOMNI_POSTGRES_POOLER_TEST_URL` 时跑
+#[tokio::test]
+async fn postgres_queries_run_through_a_transaction_pooler() {
+  let Some(url) =
+    std::env::var("DATAOMNI_POSTGRES_POOLER_TEST_URL").ok().filter(|url| !url.is_empty())
+  else {
+    return;
+  };
+  let pool = dataomni_lib::services::sqlx_pool::open(&url).await.expect("open through the pooler");
+  for sql in
+    ["SELECT 1 AS one", "SELECT relname FROM pg_class ORDER BY relname LIMIT 1", "SELECT 1 AS one"]
+  {
+    let result = execute_query(&pool, sql).await.unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    let QueryExecutionResult::Rows { rows, .. } = result else {
+      panic!("expected a row result");
+    };
+    assert_eq!(rows.len(), 1, "{sql}");
+  }
 }
 
 #[tokio::test]
@@ -326,7 +349,7 @@ async fn mysql_supports_basic_read_write() {
     execute_query(&DbPool::MySql(pool.clone()), "SELECT value FROM smoke_test WHERE id = -1")
       .await
       .expect("describe empty MySQL result");
-  assert_empty_row_result(result, "value");
+  assert_empty_row_result(result, "value", Some(false));
 
   assert_query_times_out(
     execute_query_with_timeout(
@@ -436,7 +459,9 @@ async fn assert_transaction_binding(
     .execute(session_id, pool_key, pool, "SELECT value FROM transaction_binding_test", 100, timeout)
     .await
     .expect("read after rollback");
-  assert_empty_row_result(result, "value");
+  // PostgreSQL 只 prepare、不推断可空（见 `describe_postgres_columns`）
+  let nullable = if matches!(pool, DbPool::Postgres(_)) { None } else { Some(false) };
+  assert_empty_row_result(result, "value", nullable);
 
   let mut batches = Vec::new();
   let summary = sessions
@@ -473,7 +498,7 @@ async fn assert_transaction_binding(
   assert!(sessions.release(session_id).await);
 }
 
-fn assert_empty_row_result(result: QueryExecutionResult, column: &str) {
+fn assert_empty_row_result(result: QueryExecutionResult, column: &str, nullable: Option<bool>) {
   match result {
     QueryExecutionResult::Rows { columns, column_metadata, rows, .. } => {
       assert_eq!(columns, vec![column]);
@@ -483,7 +508,7 @@ fn assert_empty_row_result(result: QueryExecutionResult, column: &str) {
       assert_eq!(column_metadata[0].ordinal, 0);
       assert!(!column_metadata[0].database_type.is_empty());
       assert_eq!(column_metadata[0].logical_type, "text");
-      assert_eq!(column_metadata[0].nullable, Some(false));
+      assert_eq!(column_metadata[0].nullable, nullable);
     }
     QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
   }
