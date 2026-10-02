@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { linkSqlFile, planSqlSave, savedToFile, stripBom, suggestSqlFileName, tabTitleFromSqlPath } from './sqlFile';
+import {
+  linkSqlFile,
+  planSqlSave,
+  readSqlFileText,
+  savedToFile,
+  sqlFileContents,
+  stripBom,
+  suggestSqlFileName,
+  tabTitleFromSqlPath
+} from './sqlFile';
 
 describe('stripBom', () => {
   it('去掉开头的 BOM', () => {
@@ -74,5 +83,33 @@ describe('就地保存', () => {
     expect(savedToFile(link, 'SELECT 1')).toBe(true);
     expect(savedToFile(link, 'SELECT 1 ')).toBe(false);
     expect(savedToFile(undefined, 'SELECT 1')).toBe(false);
+  });
+});
+
+describe('Windows 换行（CRLF）的脚本', () => {
+  const disk = '\ufeffSELECT 1;\r\n-- 清掉测试数据\r\nDELETE FROM t WHERE id = 1;\r\n';
+
+  it('读进编辑器时换行统一成 \\n：编辑器的位置和文本得对得上', () => {
+    // CodeMirror 把 CRLF 读成一个换行。文本里留着 \r 的话，按编辑器的位置去截
+    // 「选中的那段」，每多一行就往前偏一个字符
+    const { text } = readSqlFileText(disk);
+    expect(text).toBe('SELECT 1;\n-- 清掉测试数据\nDELETE FROM t WHERE id = 1;\n');
+    expect(readSqlFileText('SELECT 1;\rSELECT 2;').text).toBe('SELECT 1;\nSELECT 2;');
+  });
+
+  it('存回去还是 CRLF，不悄悄改掉别人仓库里的换行', () => {
+    const { text, link } = readSqlFileText(disk, '/work/cleanup.sql');
+    expect(sqlFileContents(`${text}SELECT 2;\n`, link)).toBe(
+      'SELECT 1;\r\n-- 清掉测试数据\r\nDELETE FROM t WHERE id = 1;\r\nSELECT 2;\r\n'
+    );
+    expect(sqlFileContents('SELECT 1;\n', linkSqlFile('/work/new.sql', 'SELECT 1;\n'))).toBe('SELECT 1;\n');
+    expect(sqlFileContents('SELECT 1;\n', undefined)).toBe('SELECT 1;\n');
+  });
+
+  it('刚打开就是已保存；磁盘上没动过就直接写', () => {
+    const { text, link } = readSqlFileText(disk, '/work/cleanup.sql');
+    expect(savedToFile(link, text)).toBe(true);
+    expect(planSqlSave(link, disk)).toBe('write');
+    expect(planSqlSave(link, disk.replace('id = 1', 'id = 2'))).toBe('confirm-overwrite');
   });
 });

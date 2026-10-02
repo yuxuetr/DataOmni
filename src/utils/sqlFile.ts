@@ -47,6 +47,28 @@ export function tabTitleFromSqlPath(path: string): string {
 export interface SqlFileLink {
   path: string;
   contentHash: string;
+  /** 文件用 CRLF 换行（Windows 上的编辑器、SSMS 存的）。不写是 `\n` */
+  crlf?: true;
+}
+
+/**
+ * 换行统一成 `\n`。编辑器（CodeMirror）把 CRLF 与单独的 CR 都读成一个换行，
+ * 交给「执行选中」「执行当前」的是**编辑器里的位置**；文本里还留着 `\r` 的话，
+ * 按位置截出来的那段每多一行就往前偏一个字符
+ */
+export function normalizeLineBreaks(text: string): string {
+  return text.replace(/\r\n?/g, '\n');
+}
+
+/** 读进来的文件 → 编辑器里的文本，和记下来的来源（换行照原文件记） */
+export function readSqlFileText(contents: string, path = ''): { text: string; link: SqlFileLink } {
+  const text = normalizeLineBreaks(stripBom(contents));
+  return { text, link: linkSqlFile(path, text, contents.includes('\r\n')) };
+}
+
+/** 要写进文件的内容：原文件是 CRLF 就还写 CRLF，不悄悄改掉别人仓库里的换行 */
+export function sqlFileContents(text: string, link: SqlFileLink | undefined): string {
+  return link?.crlf ? normalizeLineBreaks(text).replace(/\n/g, '\r\n') : text;
 }
 
 /**
@@ -66,13 +88,14 @@ function fingerprint(text: string): string {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
 }
 
-export function linkSqlFile(path: string, text: string): SqlFileLink {
-  return { path, contentHash: fingerprint(text) };
+export function linkSqlFile(path: string, text: string, crlf = false): SqlFileLink {
+  const contentHash = fingerprint(normalizeLineBreaks(text));
+  return crlf ? { path, contentHash, crlf } : { path, contentHash };
 }
 
 /** 编辑器里的内容就是文件里的内容：标签上不画「未保存」，关的时候也不用问 */
 export function savedToFile(link: SqlFileLink | undefined, text: string): boolean {
-  return link !== undefined && fingerprint(text) === link.contentHash;
+  return link !== undefined && fingerprint(normalizeLineBreaks(text)) === link.contentHash;
 }
 
 /**
@@ -88,5 +111,7 @@ export function planSqlSave(
   if (!link) {
     return 'choose-path';
   }
-  return diskText !== null && fingerprint(stripBom(diskText)) === link.contentHash ? 'write' : 'confirm-overwrite';
+  return diskText !== null && fingerprint(normalizeLineBreaks(stripBom(diskText))) === link.contentHash
+    ? 'write'
+    : 'confirm-overwrite';
 }

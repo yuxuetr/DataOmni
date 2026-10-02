@@ -48,7 +48,13 @@ import {
 } from '../utils/sqlStatements';
 import { statementOutcome, withTrailingSemicolon } from '../utils/queryStatements';
 import { planFormat, sqlFormatterLanguage } from '../utils/formatSql';
-import { SQL_FILE_FILTER, linkSqlFile, planSqlSave, suggestSqlFileName } from '../utils/sqlFile';
+import {
+  SQL_FILE_FILTER,
+  linkSqlFile,
+  planSqlSave,
+  sqlFileContents,
+  suggestSqlFileName
+} from '../utils/sqlFile';
 import { useWorkspaceStore } from '../stores/workspaceStore';
 import { useConfirmPrompt } from './ConfirmPrompt';
 import { save } from '@tauri-apps/plugin-dialog';
@@ -312,9 +318,14 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
           return;
         }
       }
-      await invoke<number>('write_text_file', { path, contents });
+      // 写回原来那个文件时照它的换行写；另存为新文件用 `\n`
+      const sameFile = path === sqlFile?.path;
+      await invoke<number>('write_text_file', {
+        path,
+        contents: sqlFileContents(contents, sameFile ? sqlFile : undefined)
+      });
       if (documentId) {
-        linkSqlTabFile(documentId, linkSqlFile(path, contents));
+        linkSqlTabFile(documentId, linkSqlFile(path, contents, sameFile && sqlFile?.crlf === true));
       }
       setSavedPath(path);
     } catch (error) {

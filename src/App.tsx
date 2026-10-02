@@ -73,7 +73,13 @@ import { useResizablePanel } from './hooks/useResizablePanel';
 import { PanelResizeHandle } from './components/PanelResizeHandle';
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette';
 import { QueryHistoryDialog } from './components/QueryHistoryDialog';
-import { SQL_FILE_FILTER, linkSqlFile, savedToFile, stripBom, tabTitleFromSqlPath, type SqlFileLink } from './utils/sqlFile';
+import {
+  SQL_FILE_FILTER,
+  readSqlFileText,
+  savedToFile,
+  tabTitleFromSqlPath,
+  type SqlFileLink
+} from './utils/sqlFile';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -564,9 +570,9 @@ function App() {
     try {
       const contents = await invoke<string>('read_text_file', { path: selected });
       // BOM 在编辑器里不可见，却会跟着第一条语句发给数据库，换来一条指着
-      // 第 1 行第 1 列的语法错误，而那一行看上去完全正常
-      const text = stripBom(contents);
-      openSqlTab(text, tabTitleFromSqlPath(selected), linkSqlFile(selected, text));
+      // 第 1 行第 1 列的语法错误，而那一行看上去完全正常。换行统一成 `\n`，见 `normalizeLineBreaks`
+      const { text, link } = readSqlFileText(contents, selected);
+      openSqlTab(text, tabTitleFromSqlPath(selected), link);
     } catch (error) {
       setFileError(describeError(error, t('editor.openFailed')));
     }

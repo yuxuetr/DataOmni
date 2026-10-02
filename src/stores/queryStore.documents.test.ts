@@ -335,3 +335,15 @@ describe('自动提交开关要真的送到后端', () => {
     expect(requestOf('execute_query')).toHaveProperty('autocommit', true);
   });
 });
+
+describe('编辑器里的文本与编辑器的位置', () => {
+  beforeEach(resetStore);
+
+  it('灌进来的 CRLF 统一成 \\n：「执行选中」按编辑器的位置截文本', () => {
+    // 历史、「在新标签打开」这些入口都经过 setSqlInput；CodeMirror 自己把 CRLF 读成一个换行
+    useQueryStore.getState().openDocument('doc-crlf');
+    useQueryStore.getState().setSqlInput('SELECT 1;\r\nDELETE FROM t WHERE id = 1;\r');
+    expect(selectActiveSqlDocument(useQueryStore.getState()).sqlInput)
+      .toBe('SELECT 1;\nDELETE FROM t WHERE id = 1;\n');
+  });
+});

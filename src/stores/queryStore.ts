@@ -50,6 +50,7 @@ import { changesSchema } from '../utils/schemaChanges';
 import { useAppStore } from './appStore';
 import { useConnectionStore } from './connectionStore';
 import { useHistoryStore } from './historyStore';
+import { normalizeLineBreaks } from '../utils/sqlFile';
 
 export type { QueryResult, SqlStatement } from '../contracts/query';
 
@@ -513,7 +514,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         Object.entries(drafts).map(([documentId, sqlInput]) => [
           documentId,
           // 结果不持久化，恢复出来的文档只有草稿；语句由 parseStatements 重新解析
-          { sqlInput, statements: [], latestExecutionIdByStatement: {} }
+          { sqlInput: normalizeLineBreaks(sqlInput), statements: [], latestExecutionIdByStatement: {} }
         ])
       )
     });
@@ -562,7 +563,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       return;
     }
 
-    set((state) => writeSqlDocument(state, documentId, () => ({ sqlInput: sql })));
+    // 编辑器把 CRLF 读成一个换行，「执行选中」按编辑器的位置截这份文本——两边的换行得一样
+    set((state) => writeSqlDocument(state, documentId, () => ({ sqlInput: normalizeLineBreaks(sql) })));
   },
 
   setQueryTimeoutMs: (queryTimeoutMs: number) => {
