@@ -184,6 +184,11 @@
     `pg_sequences` 不存在。
   - 错误与计划的细节不同（3 条）：约束违反不带约束名、语法错的 SQLSTATE 是 `0A000`、`EXPLAIN ANALYZE` 没有总耗时。
   - openGauss 建库默认 `DBCOMPATIBILITY 'A'`（Oracle 语义，`''` 即 NULL）；测试库是 `PG` 模式建的，A 模式另测。
+    2026-10-02 测了（另建 `dataomni_test_a`）：36 条里 4 条红。**修了一处**（`f879e16`）：列目录的 `COALESCE(x, '') <> ''`
+    在 A 模式恒为 NULL，普通列的 `is_generated` 读出 NULL（前端按 Boolean 归一，界面上没露出来），改成点名取值。
+    其余三条是用例按 PG 写死了 `date`：A 模式的 DATE 是 `timestamp(0)`，应用照真实类型显示 `… 00:00:00`，按类型分开预期（`7a26bf0`）。
+    同一轮：PG 模式库上分区表那条也钉住（openGauss 的分区要写全 `VALUES LESS THAN`，没有 `PARTITION OF`，`f793f20`），
+    并查过它分区表的 `tableoid` 每个分区各不相同，按 `tableoid, ctid` 翻页能唯一定位。四处（PG 16、CockroachDB、openGauss 两种模式）各 36/36。
 - [ ] B3 云库认证（AWS RDS IAM、Azure Entra、GCP Cloud SQL 代理）：按有人要的顺序
 - [ ] B4 驱动按 Cargo feature 分
   - 重估条件：第一个客户端库不许随包分发或只在部分平台有的库（多半是达梦）、或包的大小成问题（现在 171 MB）
