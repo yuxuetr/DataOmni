@@ -119,4 +119,28 @@ describe('TableDataViewer（ClickHouse）', () => {
     expect(change?.kind).toBe('delete');
     expect(change && 'key' in change ? change.key.columns : null).toEqual(['id', 'note']);
   });
+
+  // 打包版上撞到的：AggregateFunction 列点了排序，查询报错、行清空，表头跟着没了，
+  // 刷新还带着这个排序——只能关掉标签重开
+  it('按某列排序失败时取消排序重读，报错仍然看得到', async () => {
+    readQuery.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('SELECT COUNT(*)')) return [{ total: 1 }];
+      if (sql.includes('ORDER BY `note`')) throw new Error('Data type is not allowed in ORDER BY keys');
+      return [{ id: 1, fs: 'a', note: 'x' }];
+    });
+    await act(async () => {
+      root.render(<TableDataViewer connection={connection} tableName="t" schema="db" initialTab="data" />);
+    });
+    await act(async () => {
+      byTitle('note: click to sort ascending').click();
+    });
+
+    expect(container.textContent).toContain('not allowed in ORDER BY keys');
+    expect(container.textContent).toContain('note');
+    // 行回来了，表头还在、排序已取消
+    expect([...container.querySelectorAll('input, td')].some((cell) => cell.textContent === 'x')).toBe(true);
+    byTitle('note: click to sort ascending');
+    const dataQueries = readQuery.mock.calls.map(([sql]) => sql as string).filter((sql) => !sql.startsWith('SELECT COUNT(*)'));
+    expect(dataQueries[dataQueries.length - 1]).not.toContain('ORDER BY `note`');
+  });
 });

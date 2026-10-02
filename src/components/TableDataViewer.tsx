@@ -495,13 +495,24 @@ export default function TableDataViewer({
       const offsetValue = Math.max(0, Math.trunc((page - 1) * requestedPageSize));
       // 用户排序列拼在前，分页排序列追加在后作决胜条件——按不唯一的列排序时，
       // 没有决胜条件翻页会重复或漏行
-      const orderClause = createSortedOrderClause(order, sortRef.current, dialect);
-      const dataQuery = `SELECT ${tableProjection(loadedSchema.columns, dialect)} FROM ${tableReference} ${whereClause} `
-        + pageClause(orderClause, limitValue, offsetValue, dialect);
+      const dataQuery = (columnSort: ColumnSort | null) => (
+        `SELECT ${tableProjection(loadedSchema.columns, dialect)} FROM ${tableReference} ${whereClause} `
+          + pageClause(createSortedOrderClause(order, columnSort, dialect), limitValue, offsetValue, dialect)
+      );
 
-      const dataResult = await runReadQuery(dataQuery);
-
-      setTableData(dataResult);
+      const failedSort = sortRef.current;
+      try {
+        setTableData(await runReadQuery(dataQuery(failedSort)));
+      } catch (sortError) {
+        // 有的列不能排序（ClickHouse 的聚合状态、PG 的 json、SQL Server 的 xml、Oracle 的 CLOB……）。
+        // 报错时行清空、表头跟着没了，而排序只能在表头上取消，刷新又带着它——只能关掉标签重开。
+        // COUNT 刚读成功，这条只多了排序：取消排序再读一次，原因留在横幅里
+        if (!failedSort) throw sortError;
+        setSort(null);
+        sortRef.current = null;
+        setTableData(await runReadQuery(dataQuery(null)));
+        setError(t('table.sortFailed', { column: failedSort.column, reason: describeReadError(sortError) }));
+      }
     } catch (err) {
       console.error('加载表数据失败:', err);
       // 原始错误必须可见，否则无从判断是类型解码、权限还是语法问题

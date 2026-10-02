@@ -695,6 +695,7 @@ export const en: Translations = {
   'cell.binary': 'Binary, {count} bytes',
   'cell.binary.one': 'Binary, {count} byte',
   'table.readOnly.badge': 'Read-only',
+  'table.sortFailed': 'Could not sort by {column}, so the sort was cleared: {reason}',
   'table.readOnly.view': 'Views have no primary key and no unique index that can pin down a single row, so the grid cannot edit this one. Paging follows the database default order, so page boundaries can shift as rows change. Edit it from the SQL editor with an explicit condition.',
   'table.readOnly.noUniqueKey': 'This table has neither a primary key nor a unique index that is complete, not null and not partial, so the grid cannot edit it: no WHERE clause can pin down a single row. Paging also falls back to the database default order, so page boundaries can shift as rows change. Edit it from the SQL editor with an explicit condition.',
   'result.readOnly.editInTable': 'ClickHouse query results cannot be edited in place; edit in the table data view, which commits one change at a time and checks before and after.',
