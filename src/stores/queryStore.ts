@@ -908,8 +908,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         : timedOut
           ? translateNow('error.queryTimedOut', { duration: formatExecutionTime(queryTimeoutMs) })
           : queryError.message;
-      // 停下一条语句时，会话连接被结束（SQLite 除外），服务端回滚整个事务——
-      // 前面没提交的几条也没了。状态栏会变，但「已停止」那一行得说清楚
+      // 停下一条语句时，网络库的会话连接被结束、服务端回滚整个事务；SQLite 打断的是写语句时
+      // 也自己回滚。前面没提交的几条都没了，状态栏会变，但「已停止」那一行得说清楚
       let transactionLost = false;
       if ((cancelled || timedOut) && inTransactionBefore) {
         await get().refreshTransaction();

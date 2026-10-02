@@ -1177,7 +1177,7 @@ export const en: Translations = {
   'error.notConnected': 'Not connected to a database',
   'error.cannotInsertNoTable': 'Cannot insert: the table name is missing',
   'error.insertFailed': 'Insert failed',
-  'error.abandonedTransactionRolledBack': 'The whole transaction was rolled back too: stopping a statement ends this connection, so the uncommitted statements before it are gone.',
+  'error.abandonedTransactionRolledBack': 'The whole transaction was rolled back too, so the uncommitted statements before it are gone.',
   'error.queryCancelled': 'Query cancelled',
   'error.queryTimedOut': 'Query timed out ({duration})',
   'error.connectionNotReady': 'The database connection object was not ready in time',

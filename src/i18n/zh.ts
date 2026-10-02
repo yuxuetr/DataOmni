@@ -1190,7 +1190,7 @@ export const zh = {
   'error.notConnected': '数据库未连接',
   'error.cannotInsertNoTable': '无法新增数据：缺少表名信息',
   'error.insertFailed': '数据新增失败',
-  'error.abandonedTransactionRolledBack': '事务也一起回滚了：停下一条语句要结束这条连接，事务里前面没提交的语句都没了。',
+  'error.abandonedTransactionRolledBack': '事务也一起回滚了，事务里前面没提交的语句都没了。',
   'error.queryCancelled': '查询已取消',
   'error.queryTimedOut': '查询已超时（{duration}）',
   'error.connectionNotReady': '数据库连接对象超时未就绪',

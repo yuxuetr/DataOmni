@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * 事务里取消一条语句（或它超时），PostgreSQL、MySQL、SQL Server、Oracle 都是结束那条连接，
- * 服务端随之回滚整个事务——前面没提交的那几条也没了。状态栏从「事务中」变回「无事务」，
+ * 服务端随之回滚整个事务——前面没提交的那几条也没了；SQLite 打断的是写语句时也一样。状态栏从「事务中」变回「无事务」，
  * 可「已停止」那一行什么也没说，以为只停了这一条的人会接着写、最后提交一个空事务。
  */
 const invokeMock = vi.fn();
@@ -81,7 +81,7 @@ describe('事务里放弃一条语句', () => {
     expect(statement.error).toContain('whole transaction was rolled back');
   });
 
-  // SQLite 的会话连接不因放弃而结束，事务还在
+  // SQLite 打断的是读语句时，事务还在
   it('事务还在就不说', async () => {
     sessionIn('active');
     const statement = await abandon('QUERY_CANCELLED', 'active');
