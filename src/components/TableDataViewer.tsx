@@ -1286,9 +1286,13 @@ export default function TableDataViewer({
             <div className="p-4 border-b bg-surface-sunken flex items-center justify-between gap-4">
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-fg">{t('table.dataTitle')}</h2>
-                <p className="text-xs text-fg-muted mt-1">
-                  {t('table.rowCount', { count: totalRows })}
-                </p>
+                {/* 取数失败时行数是上一次的（来自行数缓存），网格却已清空：两者对不上，
+                    就不印；也不写 0，那是在说表是空的 */}
+                {!(error && tableData.length === 0) && (
+                  <p className="text-xs text-fg-muted mt-1">
+                    {t('table.rowCount', { count: totalRows })}
+                  </p>
+                )}
                 {paginationOrder?.strategy === 'primary-key' && (
                   <p className="text-xs mt-1 text-success">
                     {t('table.stablePagination', { columns: paginationOrder.columns.join(', ') })}
