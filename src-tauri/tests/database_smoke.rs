@@ -670,23 +670,31 @@ async fn mysql_geometry_reads_as_its_stored_bytes() {
   };
   let pool =
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
-  sqlx::raw_sql(
+  let point = mysql_flavor(&pool).await.point_with_srid_4326();
+  sqlx::raw_sql(&format!(
     "DROP TABLE IF EXISTS om_geometry;
-     CREATE TABLE om_geometry (id INT PRIMARY KEY, g GEOMETRY, p POINT SRID 4326);
-     INSERT INTO om_geometry VALUES (1, ST_GeomFromText('POINT(1 2)'), ST_GeomFromText('POINT(30 120)', 4326))",
-  )
+     CREATE TABLE om_geometry (id INT PRIMARY KEY, g GEOMETRY, p {point});
+     INSERT INTO om_geometry VALUES (1, ST_GeomFromText('POINT(1 2)'), ST_GeomFromText('POINT(30 120)', 4326))"
+  ))
   .execute(&pool)
   .await
   .expect("create table");
   let result = execute_query(&DbPool::MySql(pool.clone()), "SELECT g, p FROM om_geometry")
     .await
     .expect("execute query");
+  // 与服务端自己的 HEX 比：MySQL 8 对 4326 按「纬度 经度」读 WKT、存的时候换了轴，MariaDB 不换，
+  // 同一句 POINT(30 120) 两边存下的字节不同
+  let (stored_point,): (String,) = sqlx::query_as("SELECT LOWER(HEX(p)) FROM om_geometry")
+    .fetch_one(&pool)
+    .await
+    .expect("server hex");
   sqlx::raw_sql("DROP TABLE om_geometry").execute(&pool).await.expect("drop table");
+  assert!(stored_point.starts_with("e6100000"), "{stored_point}");
   assert_tagged_values(
     result,
     &[
       ("g", "binary", "000000000101000000000000000000f03f0000000000000040"),
-      ("p", "binary", "e610000001010000000000000000005e400000000000003e40"),
+      ("p", "binary", stored_point.as_str()),
     ],
   );
 }
@@ -3457,6 +3465,14 @@ impl MysqlFlavor {
   fn shows_integer_display_width(self) -> bool {
     matches!(self, Self::MariaDb | Self::OceanBase)
   }
+
+  /// 带 SRID 的点列：MySQL 8 写 `SRID 4326`，MariaDB 不认，它的写法是 `REF_SYSTEM_ID=4326`
+  fn point_with_srid_4326(self) -> &'static str {
+    match self {
+      Self::MariaDb => "POINT REF_SYSTEM_ID=4326",
+      Self::MySql | Self::TiDb | Self::OceanBase => "POINT SRID 4326",
+    }
+  }
 }
 
 /// PostgreSQL 协议的那一组：同一个 URL 可能指向 PostgreSQL 或 CockroachDB
@@ -5313,7 +5329,8 @@ async fn mysql_import_reads_exported_geometry() {
   let db_pool = DbPool::MySql(pool.clone());
 
   sqlx::query("DROP TABLE IF EXISTS import_smoke_geometry").execute(&pool).await.expect("drop");
-  sqlx::query("CREATE TABLE import_smoke_geometry (n int, g geometry, p point SRID 4326)")
+  let point = mysql_flavor(&pool).await.point_with_srid_4326();
+  sqlx::query(&format!("CREATE TABLE import_smoke_geometry (n int, g geometry, p {point})"))
     .execute(&pool)
     .await
     .expect("create");
@@ -5337,12 +5354,20 @@ async fn mysql_import_reads_exported_geometry() {
   .await;
   assert_eq!(summary.rows_failed, 0, "{:?}", summary.errors);
 
+  // 按字节比：ST_AsText 在 MySQL 8 上按 4326 的轴序换回「纬度 经度」，MariaDB 照存的次序写
   let stored: (String, String, i64) =
-    sqlx::query_as("SELECT ST_AsText(g), ST_AsText(p), ST_SRID(p) FROM import_smoke_geometry")
+    sqlx::query_as("SELECT LOWER(HEX(g)), LOWER(HEX(p)), ST_SRID(p) FROM import_smoke_geometry")
       .fetch_one(&pool)
       .await
       .expect("read back");
-  assert_eq!(stored, ("POINT(1 2)".into(), "POINT(30 120)".into(), 4326));
+  assert_eq!(
+    stored,
+    (
+      "000000000101000000000000000000f03f0000000000000040".into(),
+      "e610000001010000000000000000005e400000000000003e40".into(),
+      4326
+    )
+  );
 
   sqlx::query("DROP TABLE IF EXISTS import_smoke_geometry").execute(&pool).await.expect("cleanup");
 }
