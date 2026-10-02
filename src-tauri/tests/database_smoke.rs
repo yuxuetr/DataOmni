@@ -890,6 +890,11 @@ async fn postgres_decodes_common_column_types() {
   let result = execute_query(&DbPool::Postgres(pool.clone()), "SELECT * FROM type_coverage")
     .await
     .expect("decode every PostgreSQL column type");
+  let col_date = if date_is_timestamp(&pool).await {
+    ("col_date", "datetime", "2026-09-20 00:00:00")
+  } else {
+    ("col_date", "date", "2026-09-20")
+  };
 
   assert_tagged_values(
     result,
@@ -905,7 +910,7 @@ async fn postgres_decodes_common_column_types() {
       ("col_numeric_zero_cents", "decimal", "0.00"),
       ("col_numeric_tiny", "decimal", "0.00000001"),
       ("col_bytea", "binary", "00ff1020"),
-      ("col_date", "date", "2026-09-20"),
+      col_date,
       ("col_time", "time", "07:04:05"),
       // 小数秒照 PostgreSQL 自己的文本输出，去掉末尾的 0
       ("col_timestamp", "datetime", "2026-09-20 07:04:05.25"),
@@ -1139,7 +1144,8 @@ async fn postgres_infinite_dates_and_timestamps_read_as_infinity() {
   let QueryExecutionResult::Rows { rows, .. } = result else {
     panic!("expected a row result");
   };
-  assert_eq!(rows[0]["d"]["value"], "1999-12-31");
+  let day = if date_is_timestamp(&pool).await { "1999-12-31 00:00:00" } else { "1999-12-31" };
+  assert_eq!(rows[0]["d"]["value"], day);
   assert_eq!(rows[0]["ts"]["value"], "1999-12-31 23:59:59.5");
   assert_eq!(rows[0]["tz"]["value"], "2000-01-01T00:00:00.000001+00:00");
 }
@@ -3521,6 +3527,16 @@ async fn is_opengauss(pool: &sqlx::PgPool) -> bool {
   version.contains("openGauss")
 }
 
+/// openGauss 的 A 模式库（它默认建的就是这种）里 `DATE` 是 `timestamp(0)`：Oracle 语义，带时分秒。
+/// 应用照真实类型显示 `2026-09-20 00:00:00`，用例的预期跟着换。PostgreSQL 与 CockroachDB 是 `date`
+async fn date_is_timestamp(pool: &sqlx::PgPool) -> bool {
+  let name: String = sqlx::query_scalar("SELECT pg_typeof('2000-01-01'::date)::text")
+    .fetch_one(pool)
+    .await
+    .expect("read the date type");
+  name != "date"
+}
+
 /// 触发器调用函数的写法：`EXECUTE FUNCTION` 是 PostgreSQL 11 起的，openGauss 只认老写法
 async fn trigger_execute(pool: &sqlx::PgPool) -> &'static str {
   if is_opengauss(pool).await {
@@ -5144,7 +5160,12 @@ async fn postgres_import_casts_text_into_typed_columns() {
   .await
   .expect("read back");
   assert_eq!(row.get::<i32, _>("n"), 1);
-  assert_eq!(row.get::<chrono::NaiveDate, _>("d").to_string(), "2026-01-02");
+  let day = if date_is_timestamp(&pool).await {
+    row.get::<chrono::NaiveDateTime, _>("d").date()
+  } else {
+    row.get::<chrono::NaiveDate, _>("d")
+  };
+  assert_eq!(day.to_string(), "2026-01-02");
   assert!(row.get::<bool, _>("ok"));
   assert_eq!(row.get::<String, _>("tag"), "a");
 
