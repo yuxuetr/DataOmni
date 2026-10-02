@@ -6007,6 +6007,64 @@ async fn assert_abandoned_statement_stops_on_the_server(
   sessions.release("abandoned").await;
 }
 
+/// 经事务池时，会话每个事务落在哪个后端由连接池定，会话打开时记下的 pid 过后可能在服务别人：
+/// 照那个 pid `pg_terminate_backend`，停掉的是另一个客户端的连接。只在设了
+/// `DATAOMNI_POSTGRES_POOLER_TEST_URL` 时跑
+#[tokio::test]
+async fn postgres_abandoning_a_statement_through_a_pooler_leaves_other_clients_alone() {
+  use sqlx::Connection;
+  let Some(url) =
+    std::env::var("DATAOMNI_POSTGRES_POOLER_TEST_URL").ok().filter(|url| !url.is_empty())
+  else {
+    return;
+  };
+  let db_pool =
+    dataomni_lib::services::sqlx_pool::open(&url).await.expect("open through the pooler");
+  let sessions = QuerySessionState::default();
+  let options = |sql: &'static str, timeout_ms: u64| StreamingQueryOptions {
+    session_id: "pooled",
+    pool_key: &url,
+    pool: (&db_pool).into(),
+    sql,
+    autocommit: true,
+    explain_plan: false,
+    row_limit: 100,
+    byte_limit: 1 << 20,
+    batch_size: 10,
+    timeout_duration: Duration::from_millis(timeout_ms),
+  };
+  let mut rows = Vec::new();
+  sessions
+    .execute_streaming(options("SELECT pg_backend_pid()::text AS pid", 20_000), &mut |batch| {
+      rows.extend(batch.rows);
+      Ok(())
+    })
+    .await
+    .expect("open the session");
+  let session_pid = rows[0]["pid"].as_str().unwrap_or_default().to_string();
+
+  // 另一个客户端，连接池把刚空出来的那个后端给它
+  let mut other = sqlx::PgConnection::connect(&url).await.expect("another client");
+  let victim = tokio::spawn(async move {
+    sqlx::query_as::<_, (String, String)>("SELECT pg_backend_pid()::text, pg_sleep(6)::text")
+      .fetch_one(&mut other)
+      .await
+  });
+  tokio::time::sleep(Duration::from_millis(500)).await;
+  let error = sessions
+    .execute_streaming(options("SELECT pg_sleep(5)", 1_500), &mut |_| Ok(()))
+    .await
+    .expect_err("该超时");
+  assert_eq!(error.code.as_deref(), Some(QUERY_TIMEOUT_CODE));
+  let (victim_pid, _) = victim
+    .await
+    .expect("join")
+    .unwrap_or_else(|error| panic!("另一个客户端的查询被停掉了：{error}"));
+  // 不在同一个后端上，这条就什么也没验
+  assert_eq!(victim_pid, session_pid, "另一个客户端没落在会话打开时的那个后端上");
+  sessions.release("pooled").await;
+}
+
 #[tokio::test]
 async fn postgres_abandoned_statement_stops_on_the_server() {
   let Some(url) = network_database_url(POSTGRES_URL_ENV) else {

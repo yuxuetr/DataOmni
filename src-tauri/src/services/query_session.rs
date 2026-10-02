@@ -49,10 +49,16 @@ type PendingTermination = Arc<std::sync::Mutex<Option<JoinHandle<()>>>>;
 /// SQLite 没有网络连接可断：被放弃的语句在 sqlx 的工作线程上接着跑，同一个标签页的
 /// 下一条（包括 `ROLLBACK`）排在它后面，写语句跑完照样提交。它用 `sqlite3_interrupt`
 /// 当场打断，连接接着用——内存库换一条连接就是换了一个库
+///
+/// 结束之前先核对那个编号上正在跑的是不是这条语句：经事务池（pgbouncer、Supabase）或
+/// 复用连接的代理时，会话打开时问到的编号过后可能在服务别的客户端，照着结束就停掉了别人的连接
+/// （本机 pgbouncer 1.26 实测）。对不上就不结束，被放弃的语句在服务端跑完
 #[derive(Clone)]
 enum Terminator {
-  MySql(sqlx::MySqlPool, String),
-  Postgres(sqlx::PgPool, String),
+  /// `CONNECTION_ID()`
+  MySql(sqlx::MySqlPool, u64),
+  /// `pg_backend_pid()`；openGauss 的是线程号，超出 int4
+  Postgres(sqlx::PgPool, u64),
   Sqlite(SqliteHandle),
 }
 
@@ -80,7 +86,7 @@ impl Terminator {
           .await
           .ok()?;
         let id: u64 = id.parse().ok()?;
-        Some(Self::MySql(pool.clone(), format!("KILL {id}")))
+        Some(Self::MySql(pool.clone(), id))
       }
       // openGauss 的编号是线程号，超出 int4，按文本取
       (SessionConnection::Postgres(connection), PoolRef::Sqlx(DbPool::Postgres(pool))) => {
@@ -89,7 +95,7 @@ impl Terminator {
           .await
           .ok()?;
         let pid: u64 = pid.parse().ok()?;
-        Some(Self::Postgres(pool.clone(), format!("SELECT pg_terminate_backend({pid})")))
+        Some(Self::Postgres(pool.clone(), pid))
       }
       (SessionConnection::Sqlite(connection), _) => {
         let mut locked = connection.lock_handle().await.ok()?;
@@ -99,21 +105,54 @@ impl Terminator {
     }
   }
 
-  async fn run(self) {
-    let _ = timeout(TERMINATE_LIMIT, async {
+  /// `statement`：那条语句的开头，拿来核对编号上正在跑的是不是它
+  async fn run(self, statement: String) {
+    let outcome = timeout(TERMINATE_LIMIT, async {
       match self {
-        Self::MySql(pool, sql) => pool.execute(sql.as_str()).await.map(drop),
-        Self::Postgres(pool, sql) => pool.execute(sql.as_str()).await.map(drop),
+        Self::MySql(pool, id) => {
+          // ID 在 MySQL 是 BIGINT UNSIGNED、在 MariaDB 是有符号的，按文本比，免得解码对不上类型
+          let running: Option<String> = sqlx::query_scalar(
+            "SELECT CAST(ID AS CHAR) FROM information_schema.PROCESSLIST \
+             WHERE CAST(ID AS CHAR) = ? AND INSTR(INFO, ?) > 0",
+          )
+          .bind(id.to_string())
+          .bind(&statement)
+          .fetch_optional(&pool)
+          .await?;
+          if running.is_none() {
+            return Ok(());
+          }
+          // MySQL 没有带条件的 KILL：两句之间那条刚好跑完、代理又把连接给了别人时仍会停错，
+          // 窗口是一个往返。直连时编号一直是这个会话自己的
+          pool.execute(format!("KILL {id}").as_str()).await.map(drop)
+        }
+        Self::Postgres(pool, pid) => sqlx::query(
+          "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+           WHERE pid::text = $1 AND state = 'active' AND strpos(query, $2) > 0",
+        )
+        .bind(pid.to_string())
+        .bind(&statement)
+        .execute(&pool)
+        .await
+        .map(drop),
         Self::Sqlite(_) => Ok(()),
       }
     })
     .await;
+    // 停不下来不算错：下一条语句照样换连接。记一笔，免得「服务端没停」查不到原因
+    match outcome {
+      Ok(Ok(())) => {}
+      Ok(Err(error)) => eprintln!("结束被放弃的语句失败: {error}"),
+      Err(_) => eprintln!("结束被放弃的语句超时"),
+    }
   }
 }
 
 /// 执行期间拿着；没走到 `finish` 就被丢掉时，在服务端结束那条连接
 struct TerminateOnDrop {
   terminator: Option<Terminator>,
+  /// 语句的开头，见 [`Terminator::run`]
+  statement: String,
   pending: PendingTermination,
 }
 
@@ -137,11 +176,17 @@ impl Drop for TerminateOnDrop {
     let Ok(runtime) = tokio::runtime::Handle::try_current() else {
       return;
     };
-    let handle = runtime.spawn(terminator.run());
+    let handle = runtime.spawn(terminator.run(std::mem::take(&mut self.statement)));
     if let Ok(mut pending) = self.pending.lock() {
       *pending = Some(handle);
     }
   }
+}
+
+/// 服务端记下的语句文本里认这一段：开头 48 个字符。执行计划会在前面加 `EXPLAIN …`，
+/// 服务端记的文本有长度上限（PostgreSQL 默认 1024 字节），所以不比整句
+fn statement_fingerprint(sql: &str) -> String {
+  sql.trim().chars().take(48).collect()
 }
 
 /// 执行被放弃之后还能不能接着用这条连接。sqlx 的两家网络库不能，见 [`Terminator`]；
@@ -225,10 +270,11 @@ impl SessionRuntime {
   }
 
   /// 语句开始执行。守卫在语句回来之后交给 `statement_returned`
-  fn statement_started(&mut self) -> TerminateOnDrop {
+  fn statement_started(&mut self, sql: &str) -> TerminateOnDrop {
     self.in_flight = breaks_when_abandoned(&self.connection) || self.terminator.is_some();
     TerminateOnDrop {
       terminator: if self.in_flight { self.terminator.clone() } else { None },
+      statement: statement_fingerprint(sql),
       pending: Arc::clone(&self.pending_termination),
     }
   }
@@ -329,7 +375,7 @@ impl QuerySessionState {
     timeout(timeout_duration, async {
       let mut runtime = entry.runtime.lock().await;
       runtime.recover_if_abandoned(pool.into()).await?;
-      let guard = runtime.statement_started();
+      let guard = runtime.statement_started(sql);
       let result = runtime.connection.execute(sql, row_limit).await;
       runtime.statement_returned(guard);
       runtime.record(sql, result.is_ok());
@@ -415,7 +461,7 @@ impl QuerySessionState {
       }
       runtime.last_used = std::time::Instant::now();
       runtime.begin_if_needed(options.autocommit, options.sql).await?;
-      let guard = runtime.statement_started();
+      let guard = runtime.statement_started(options.sql);
       let result = runtime
         .connection
         .execute_streaming(
