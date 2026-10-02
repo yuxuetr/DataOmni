@@ -880,7 +880,9 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         })),
         executions: state.executions.map((candidate) =>
           candidate.id === execution.id ? finished : candidate
-        )
+        ),
+        // 断线之后后端下一条会换一条连接：跑通了就说明连接是好的，不该还挂着「连接已断开」
+        connectionLost: false
       }));
       recordHistory(finished, queryResult.affected_rows);
 

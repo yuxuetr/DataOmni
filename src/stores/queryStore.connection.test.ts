@@ -114,6 +114,19 @@ describe('断线之后', () => {
     expect(useQueryStore.getState().connectionLost).toBe(false);
   });
 
+  // 会话连接断了之后，后端下一条换一条连接：语句跑通了就说明连接是好的，
+  // 还挂着「连接已断开」和重连按钮是在说一件已经不对的事
+  it('断线之后下一条跑通了，标记就清掉', async () => {
+    await runFailing({ code: 'CONNECTION_LOST', message: 'DATAOMNI_CONNECTION_LOST: broken pipe' });
+    invokeMock.mockReset();
+    invokeMock.mockImplementation(async (command: string) =>
+      command === 'execute_query' ? { kind: 'affected', rows_affected: 0 } : undefined
+    );
+    const statement = selectActiveSqlDocument(useQueryStore.getState()).statements[0];
+    await useQueryStore.getState().executeStatement(statement.id);
+    expect(useQueryStore.getState().connectionLost).toBe(false);
+  });
+
   it('没连过的时候掉网不该让空工作台说「连接已断开」', () => {
     useQueryStore.setState({ database: null, connectionLost: false });
     useQueryStore.getState().reportConnectionLost();
