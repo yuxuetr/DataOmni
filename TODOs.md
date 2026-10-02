@@ -850,6 +850,17 @@
     两边都过（`f56bf9e`）。顺着查 MariaDB 特有的对象：**系统版本表从 ER 图里消失**（`b37ce37`）——ER 的列查询只认
     `BASE TABLE`，这种表是 `SYSTEM VERSIONED`；改成白名单，序列（`SEQUENCE`）仍不画。真库用例旧代码红。查询改动，没打包。
     没改：序列在对象树里算表，结构页照样给「编辑结构」（服务端拒绝 `ALTER TABLE`）；重估条件：有人在 MariaDB 上用序列。
+  - 2026-10-02 MySQL 与 PostgreSQL 的冒烟用例换着库各跑一遍（cu）。TiDB 8.5：32 条里 4 条红在用例（没有存储过程、没有空间类型、
+    不许 ALTER 临时表），钉住或换真表后 32/32（`677e7d5`）。CockroachDB 25.2：36 条里两条红在用例（改临时表的列类型、PG 的
+    `PARTITION OF`，`9a876b2`），第三条是应用的问题——**结构页在 CockroachDB 上改不了要重写数据的列类型**（`8565d04`）：
+    int → text、带排序规则的字符列，在事务里与走预备语句时都报「not supported inside a transaction」，和别的子命令同句又报
+    「cannot be combined」。整批都是改结构的语句时在同一条连接上逐条以简单协议执行、不包事务；生成器把改类型各拆一条；
+    预览说明逐条生效。事务本来也保不住它：25.2 起默认开着 `autocommit_before_ddl`，第二条失败时第一条已生效（实测）。
+    真库用例旧代码红，PG 16 与 CockroachDB 各 36/36。打包版（rpm 0.4.79）：bigint → text 加设非空，预览是两条加那句说明，
+    执行后两行数据都在。
+    没做：CockroachDB 上「改类型时带上原来的排序规则」只手工试过（`COLLATE "en_us"` 单独一条可以），共用语料用的 `"C"` 它不认，
+    那条用例在它上面跳过；SQL 编辑器里手写 `BEGIN; INSERT …; ALTER …; ROLLBACK` 时 INSERT 已被它提交，界面不提示——
+    这是服务端的设置，重估条件：有人报。
   - 2026-10-02 Windows：在 Windows 上 `bun tauri build` 能构建（原先差的只是换行符，`643fcf0` 加 `.gitattributes` 统一 LF，并写了
     `docs/windows-build.md`）。顺着查带 Oracle 的打包：`fetch-oracle-client.sh` 的 windows-x64 文件集照 19c 的名字写，23ai 的 zip 里
     一个都没有，脚本在第一个 `cp` 就退出（本机拷到假仓库根下复现）。**修了一处**（`3e791b3`）：按 DLL 导入表重挑 5 个文件、补上校验和；
