@@ -164,6 +164,8 @@ impl DatabaseType {
     }
   }
 
+  /// MySQL 与 PostgreSQL 的串是给 sqlx 解析的 URL：库名要编码（`#` 之后会被当成片段，
+  /// 连到另一个库、TLS 参数一起丢掉），IPv6 地址要加方括号（不加 sqlx 报 `EmptyHost`）
   pub fn to_connection_string(&self, config: &ConnectionProfile) -> String {
     match self {
       DatabaseType::MySQL => {
@@ -171,9 +173,9 @@ impl DatabaseType {
           "mysql://{}:{}@{}:{}/{}",
           encode(&config.username),
           encode(&config.password),
-          config.host,
+          url_host(&config.host),
           config.port,
-          config.database.as_ref().unwrap_or(&"mysql".to_string())
+          encode(config.database.as_deref().unwrap_or("mysql"))
         );
 
         let mut params = Vec::new();
@@ -209,9 +211,9 @@ impl DatabaseType {
           "postgres://{}:{}@{}:{}/{}",
           encode(&config.username),
           encode(&config.password),
-          config.host,
+          url_host(&config.host),
           config.port,
-          config.database.as_ref().unwrap_or(&"postgres".to_string())
+          encode(config.database.as_deref().unwrap_or("postgres"))
         );
 
         let mut params = Vec::new();
@@ -499,6 +501,14 @@ impl Default for ConnectionProfile {
   }
 }
 
+/// URL 里的主机。IPv6 地址加方括号（与 `http_endpoint` 同一个判断），已经写了方括号的照原样
+fn url_host(host: &str) -> std::borrow::Cow<'_, str> {
+  match host.parse::<std::net::Ipv6Addr>() {
+    Ok(address) => std::borrow::Cow::Owned(format!("[{address}]")),
+    Err(_) => std::borrow::Cow::Borrowed(host),
+  }
+}
+
 #[cfg(test)]
 mod tests {
   const ALL_DATABASE_TYPES: [super::DatabaseType; 11] = [
@@ -676,6 +686,44 @@ mod tests {
       ssl,
       tls_mode,
       ..ConnectionProfile::default()
+    }
+  }
+
+  /// 主机填 IPv6 地址：不加方括号时 sqlx 报 `EmptyHost`（本机 `::1` 上的 PG 16 / MySQL 8.4 实测，
+  /// 加了就连得上）；库名里的 `#` 后面全成了 URL 片段——连到的是另一个库，TLS 参数也被吞掉
+  #[test]
+  fn connection_string_survives_ipv6_hosts_and_odd_database_names() {
+    use std::str::FromStr;
+    for host in ["::1", "fd00::5", "[::1]"] {
+      let config = ConnectionProfile {
+        host: host.to_string(),
+        database: Some("a#b?c d".to_string()),
+        ..mysql_config(Some(TlsMode::Required), false)
+      };
+      let mysql = DatabaseType::MySQL.to_connection_string(&config);
+      let options = match sqlx::mysql::MySqlConnectOptions::from_str(&mysql) {
+        Ok(options) => options,
+        Err(error) => panic!("{mysql}: {error}"),
+      };
+      let described = format!("{options:?}");
+      assert!(described.contains("database: Some(\"a#b?c d\")"), "{mysql} → {described}");
+      assert!(described.contains("ssl_mode: Required"), "{mysql} → {described}");
+
+      let postgres = DatabaseType::PostgreSQL.to_connection_string(&ConnectionProfile {
+        db_type: DatabaseType::PostgreSQL,
+        port: 5432,
+        ..config
+      });
+      let options = match sqlx::postgres::PgConnectOptions::from_str(&postgres) {
+        Ok(options) => options,
+        Err(error) => panic!("{postgres}: {error}"),
+      };
+      assert_eq!(options.get_database(), Some("a#b?c d"), "{postgres}");
+      assert!(matches!(options.get_ssl_mode(), sqlx::postgres::PgSslMode::Require), "{postgres}");
+      assert!(
+        options.get_host().starts_with('[') || !options.get_host().contains(':'),
+        "{postgres}"
+      );
     }
   }
 
