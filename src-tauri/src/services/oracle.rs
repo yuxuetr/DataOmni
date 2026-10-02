@@ -311,10 +311,25 @@ impl OraclePool {
   ) -> Result<Vec<QueryRow>, QueryError> {
     let (idle, stale) = self.idle.take();
     release_in_background(stale);
-    let connection = match idle {
-      Some(connection) => connection,
-      None => connect(&self.target).await?,
+    let Some(connection) = idle else {
+      return self.select_on(connect(&self.target).await?, sql, params).await;
     };
+    let result = self.select_on(connection, sql, params).await;
+    if keeps_connection(&result) {
+      return result;
+    }
+    // 池里的连接被服务端断掉了（重启、DBA 清会话）：只读，换一条新连接再读一次。
+    // 不然池里有几条，对象树和表数据页就连着报几次「连接已断开」
+    release_in_background(self.idle.drain());
+    self.select_on(connect(&self.target).await?, sql, params).await
+  }
+
+  async fn select_on(
+    self: &Arc<Self>,
+    connection: Arc<Connection>,
+    sql: &str,
+    params: &[JsonValue],
+  ) -> Result<Vec<QueryRow>, QueryError> {
     let sql = sql.to_string();
     let params = params.to_vec();
     let worker = Arc::clone(&connection);
@@ -360,6 +375,9 @@ impl OraclePool {
     };
     if reusable {
       self.idle.put(connection);
+    } else {
+      // 写不重试（不知道写进去没有），但同一批旧连接一起丢掉，下一次不再撞上
+      release_in_background(self.idle.drain());
     }
     outcome.map_err(|(index, error)| WriteBatchError::at(index, error))
   }

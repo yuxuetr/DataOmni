@@ -65,6 +65,15 @@ impl<T> IdleConnections<T> {
     (None, stale)
   }
 
+  /// 全部交回给调用方处置。一条拿出来的连接报了断开，同一批的多半也断了：
+  /// 服务端重启、DBA 清会话、故障转移都是一起断的
+  pub fn drain(&self) -> Vec<T> {
+    match self.entries.lock() {
+      Ok(mut entries) => entries.drain(..).map(|(connection, _)| connection).collect(),
+      Err(_) => Vec::new(),
+    }
+  }
+
   pub fn put(&self, connection: T) {
     if let Ok(mut entries) = self.entries.lock() {
       if entries.len() < self.max {
@@ -95,6 +104,14 @@ mod tests {
     // 新放回的先拿到；再拿一次，放太久的那条被交回处置，而不是拿去用
     assert_eq!(idle.take(), (Some("fresh"), vec![]));
     assert_eq!(idle.take(), (None, vec!["first"]));
+  }
+
+  #[test]
+  fn draining_hands_back_every_waiting_connection() {
+    let idle = IdleConnections::new(1, 4);
+    idle.put(2);
+    assert_eq!(idle.drain(), vec![1, 2]);
+    assert_eq!(idle.take(), (None, vec![]));
   }
 
   #[test]

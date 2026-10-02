@@ -1489,3 +1489,49 @@ async fn oracle_reads_a_table_again_after_its_columns_change() {
   assert_eq!(text(&rows[0]["EXTRA"]), "x");
   drop_quietly(&pool, "om_reshaped").await;
 }
+
+/// 池里放满连接，再在服务端结束它们（重启、DBA 清会话、故障转移之后就是这样）
+async fn fill_the_pool_and_kill_it(pool: &Arc<OraclePool>) {
+  let read = || pool.select("SELECT 1 AS x FROM dual", &[]);
+  let _ = tokio::join!(read(), read(), read(), read());
+  let mut killer = session(pool).await;
+  let rows = rows_of(
+    killer
+      .execute(
+        "SELECT sid || ',' || serial# AS \"t\" FROM v$session WHERE username = USER \
+         AND sid <> SYS_CONTEXT('USERENV', 'SID')",
+        100,
+      )
+      .await
+      .expect("sessions"),
+  );
+  assert!(rows.len() >= 4, "池里该有 4 条连接：{}", rows.len());
+  for row in &rows {
+    let target = row.get("t").map(text).unwrap_or_default();
+    killer
+      .execute(&format!("ALTER SYSTEM KILL SESSION '{target}' IMMEDIATE"), 10)
+      .await
+      .expect("要 ALTER SYSTEM 权限");
+  }
+}
+
+/// 池里的连接被服务端断掉之后，对象树、表数据页不能一次次报「连接已断开」——
+/// 原先池里有几条就连着错几次（4 次），sqlx 那几家取连接前先 ping，一次都不错
+#[tokio::test]
+async fn oracle_pool_reads_survive_the_server_dropping_its_connections() {
+  let Some(pool) = pool().await else { return };
+  write_fixture(&pool).await;
+  fill_the_pool_and_kill_it(&pool).await;
+  for attempt in 0..2 {
+    pool
+      .select("SELECT 1 AS x FROM dual", &[])
+      .await
+      .unwrap_or_else(|error| panic!("第 {attempt} 次读：{error:?}"));
+  }
+
+  // 写不重试（不知道写进去没有），但只错这一次：同一批旧连接一起丢掉
+  fill_the_pool_and_kill_it(&pool).await;
+  let update = || write("UPDATE om_write SET note = 'w' WHERE id = 1", vec![], Some(1));
+  let _ = pool.write_batch(&[update()]).await;
+  pool.write_batch(&[update()]).await.expect("第二次写换一条新连接");
+}
