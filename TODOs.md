@@ -821,6 +821,9 @@
     不退回按全部列排序（json、point 没有排序运算符，大视图每页一次全量排序）。种类取自对象树，物化视图有 `ctid`、仍按表处理。
     打包版（rpm 0.4.72）：PG 聚合视图出 2 行、点表头排序生效，物化视图照旧，SQLite 视图出 10 行，都是只读。DuckDB 没在打包版里开。
     看到没修的：视图的只读横幅仍写「这张表既没有主键……」。
+    顺着查 Oracle（23ai 在 cu 上）：**没有主键、带 CLOB 的表或视图在数据页报 ORA-22848**（`592dc79`）。没有主键时按全部列排序，
+    而 CLOB / NCLOB / BLOB / BFILE / VECTOR、XMLTYPE 与对象类型、LONG 都不能做比较键（逐个试过；JSON、RAW、BOOLEAN、时间与区间可以）。
+    按白名单只排能排的类型，一列不剩时不写 ORDER BY。打包版 0.4.72 上复现、0.4.73 上 7 行照常出来。
   - 2026-10-02 Windows：在 Windows 上 `bun tauri build` 能构建（原先差的只是换行符，`643fcf0` 加 `.gitattributes` 统一 LF，并写了
     `docs/windows-build.md`）。顺着查带 Oracle 的打包：`fetch-oracle-client.sh` 的 windows-x64 文件集照 19c 的名字写，23ai 的 zip 里
     一个都没有，脚本在第一个 `cp` 就退出（本机拷到假仓库根下复现）。**修了一处**（`3e791b3`）：按 DLL 导入表重挑 5 个文件、补上校验和；
