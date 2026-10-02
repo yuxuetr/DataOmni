@@ -900,6 +900,16 @@
     配置文件里的值（实测 `reset_val` = UTC、`source` = client）。能选的只有 UTC 或本机时区（JDBC 的做法），两种都会在一部分部署上
     与 psql 不一致，不是对错之分。timestamptz 按 UTC 带偏移显示，存取的时刻是对的；受影响的是 SQL 里不带偏移的字面量与 `current_date`。
     重估条件：有人报东八区的库里 `current_date` 或写入的时刻不对，届时按 JDBC 用本机时区（`after_connect` 里 `SET TimeZone`）。
+  - 2026-10-02 顺着查 sqlx 对 MySQL 会话改的别的设置，又修两处（都在 `sqlx_pool::open` 的 `after_connect`）：
+    - **`||` 成了拼接、函数名成了保留字**（`621528e`）：sqlx 往 sql_mode 加 `PIPES_AS_CONCAT`，`WHERE id = 2 || n = 5` 成了
+      `id = (2 || n) = 5`，一行都不中（cu 上实测）；在这里建的存储过程、触发器、事件会把这个 sql_mode 记下来。握手时它还写死
+      `CLIENT_IGNORE_SPACE`，服务器据此加 `IGNORE_SPACE`，`CREATE TABLE position (x INT)` 报语法错。关掉加的两项，连上后去掉
+      `IGNORE_SPACE`（全局本来开着的不动——在 MariaDB 上临时开了全局验过，会话照样保留）。
+    - **用户变量与 `CAST` 跟列比较报 1267**（`0b7894b`）：sqlx `SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci`，MySQL 8 的列默认
+      `utf8mb4_0900_ai_ci`，`SET @v = 'a'; … WHERE name = @v` 报 Illegal mix of collations。服务器默认字符集是 utf8mb4 时
+      连接用 `collation_server`，不是的话（latin1 之类）列是什么说不准，不动。
+    用例比对会话与全局的 time_zone、sql_mode，并跑一条与 `CAST` 比较的查询，旧代码在 cu 的 MySQL 8.4 上各自红；
+    MySQL 8.4、MariaDB 11.4、TiDB 8.5 的 `mysql_` 冒烟各 35 条全过。OceanBase 没跑（本机那台不动）。
   - 2026-10-02 Windows：在 Windows 上 `bun tauri build` 能构建（原先差的只是换行符，`643fcf0` 加 `.gitattributes` 统一 LF，并写了
     `docs/windows-build.md`）。顺着查带 Oracle 的打包：`fetch-oracle-client.sh` 的 windows-x64 文件集照 19c 的名字写，23ai 的 zip 里
     一个都没有，脚本在第一个 `cp` 就退出（本机拷到假仓库根下复现）。**修了一处**（`3e791b3`）：按 DLL 导入表重挑 5 个文件、补上校验和；
