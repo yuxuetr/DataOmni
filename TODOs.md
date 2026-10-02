@@ -875,7 +875,12 @@
     （CockroachDB 不发结束语句也会停：旧连接一关它就取消），MySQL + PG 整套 87/87。
     顺着补了界面（`fb92eac`）：事务里停下一条语句会回滚整个事务（SQL Server、Oracle 本来就是），原先只有状态栏变了；
     现在那一行写「查询已取消」再加一句事务也回滚了。打包版（rpm 0.4.80 / 0.4.81，PG 16）中英文都看过，服务端那行没被改、`pg_sleep` 已停。
-    没查：SQLite 被放弃的语句是不是也要等它跑完（本机文件，sqlx 没有 interrupt 接口）；重估条件：有人报。
+    SQLite 接着查了，同样有（`2dfb5df`）：被放弃的语句在 sqlx 的工作线程上接着跑，一条 3 亿次的递归 CTE 让下一条 `SELECT` 等了 85 秒，
+    事务里连 `ROLLBACK` 都排在后面、10 秒超时，写语句跑完照样提交。会话开连接时从 `lock_handle` 取一次 `sqlite3*`，放弃时当场
+    `sqlite3_interrupt`（代码库第一处 `unsafe`，两处各写了安全前提）；连接不换（内存库换连接就是换库），之后按 `sqlite3_get_autocommit`
+    同步事务状态——打断写语句时 SQLite 自己回滚了事务，打断读语句时事务还在。`libsqlite3-sys` 钉死在 sqlx 用的 0.30.1。
+    用例旧代码红在 ROLLBACK 超时，不按 autocommit 同步时红在「事务回滚了」。提示改成不说「结束连接」（`ebb1562`），
+    打包版（rpm 0.4.82，SQLite 文件）看过。
   - 2026-10-02 Windows：在 Windows 上 `bun tauri build` 能构建（原先差的只是换行符，`643fcf0` 加 `.gitattributes` 统一 LF，并写了
     `docs/windows-build.md`）。顺着查带 Oracle 的打包：`fetch-oracle-client.sh` 的 windows-x64 文件集照 19c 的名字写，23ai 的 zip 里
     一个都没有，脚本在第一个 `cp` 就退出（本机拷到假仓库根下复现）。**修了一处**（`3e791b3`）：按 DLL 导入表重挑 5 个文件、补上校验和；
