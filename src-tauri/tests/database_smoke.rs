@@ -257,31 +257,34 @@ async fn mysql_reads_a_table_again_after_its_columns_change() {
   let pool =
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
   let db = DbPool::MySql(pool);
-  execute_query(&db, "CREATE TEMPORARY TABLE reshaped (id INTEGER, label VARCHAR(10))")
+  // 真表而不是临时表：TiDB 不许 ALTER 本地临时表
+  execute_query(&db, "DROP TABLE IF EXISTS om_reshaped").await.expect("clear leftovers");
+  execute_query(&db, "CREATE TABLE om_reshaped (id INTEGER, label VARCHAR(10))")
     .await
     .expect("create table");
-  execute_query(&db, "INSERT INTO reshaped VALUES (1, 'one')").await.expect("insert row");
-  execute_query(&db, "SELECT * FROM reshaped").await.expect("cache the star query");
-  execute_query(&db, "ALTER TABLE reshaped RENAME COLUMN label TO heading")
+  execute_query(&db, "INSERT INTO om_reshaped VALUES (1, 'one')").await.expect("insert row");
+  execute_query(&db, "SELECT * FROM om_reshaped").await.expect("cache the star query");
+  execute_query(&db, "ALTER TABLE om_reshaped RENAME COLUMN label TO heading")
     .await
     .expect("rename column");
-  match execute_query(&db, "SELECT * FROM reshaped").await.expect("read after rename") {
+  match execute_query(&db, "SELECT * FROM om_reshaped").await.expect("read after rename") {
     QueryExecutionResult::Rows { columns, rows, .. } => {
       assert_eq!(columns, vec!["id", "heading"]);
       assert_eq!(rows[0]["heading"], "one");
     }
     QueryExecutionResult::Affected { .. } => panic!("expected rows"),
   }
-  execute_query(&db, "ALTER TABLE reshaped MODIFY COLUMN id VARCHAR(5)")
+  execute_query(&db, "ALTER TABLE om_reshaped MODIFY COLUMN id VARCHAR(5)")
     .await
     .expect("change type");
-  match execute_query(&db, "SELECT * FROM reshaped").await.expect("read after type change") {
+  match execute_query(&db, "SELECT * FROM om_reshaped").await.expect("read after type change") {
     QueryExecutionResult::Rows { column_metadata, rows, .. } => {
       assert_eq!(column_metadata[0].database_type, "VARCHAR");
       assert_eq!(rows[0]["id"], "1");
     }
     QueryExecutionResult::Affected { .. } => panic!("expected rows"),
   }
+  execute_query(&db, "DROP TABLE om_reshaped").await.expect("drop table");
 }
 
 #[tokio::test]
@@ -670,7 +673,16 @@ async fn mysql_geometry_reads_as_its_stored_bytes() {
   };
   let pool =
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
-  let point = mysql_flavor(&pool).await.point_with_srid_4326();
+  let flavor = mysql_flavor(&pool).await;
+  // TiDB 没有空间类型（建表报 1064）。钉住：哪天它有了，这条会红
+  if flavor == MysqlFlavor::TiDb {
+    let refused = sqlx::raw_sql("CREATE TABLE om_geometry (id INT PRIMARY KEY, g GEOMETRY)")
+      .execute(&pool)
+      .await;
+    assert!(refused.is_err(), "TiDB 有空间类型了，回来把这条接上");
+    return;
+  }
+  let point = flavor.point_with_srid_4326();
   sqlx::raw_sql(&format!(
     "DROP TABLE IF EXISTS om_geometry;
      CREATE TABLE om_geometry (id INT PRIMARY KEY, g GEOMETRY, p {point});
@@ -5329,7 +5341,15 @@ async fn mysql_import_reads_exported_geometry() {
   let db_pool = DbPool::MySql(pool.clone());
 
   sqlx::query("DROP TABLE IF EXISTS import_smoke_geometry").execute(&pool).await.expect("drop");
-  let point = mysql_flavor(&pool).await.point_with_srid_4326();
+  let flavor = mysql_flavor(&pool).await;
+  // 同上一条：TiDB 没有空间类型
+  if flavor == MysqlFlavor::TiDb {
+    let refused =
+      sqlx::query("CREATE TABLE import_smoke_geometry (n int, g geometry)").execute(&pool).await;
+    assert!(refused.is_err(), "TiDB 有空间类型了，回来把这条接上");
+    return;
+  }
+  let point = flavor.point_with_srid_4326();
   sqlx::query(&format!("CREATE TABLE import_smoke_geometry (n int, g geometry, p {point})"))
     .execute(&pool)
     .await
@@ -5676,6 +5696,13 @@ async fn mysql_call_shows_the_procedures_first_result_set() {
   };
   let pool =
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  // TiDB 没有存储过程（8.5 上 `DROP PROCEDURE` 就报 8108）。钉住：哪天它有了，这条会红
+  if mysql_flavor(&pool).await == MysqlFlavor::TiDb {
+    let refused =
+      sqlx::raw_sql("CREATE PROCEDURE om_call_two() BEGIN SELECT 1; END").execute(&pool).await;
+    assert!(refused.is_err(), "TiDB 能建存储过程了，回来把这条接上");
+    return;
+  }
   for statement in [
     "DROP PROCEDURE IF EXISTS om_call_two",
     "DROP PROCEDURE IF EXISTS om_call_write",
