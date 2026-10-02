@@ -35,6 +35,8 @@ interface TableStructureEditorProps {
   dialect: SqlIdentifierDialect;
   /** `VERSION()` 的原话；只有 MySQL 连接会读，别的是 null */
   serverVersion?: string | null;
+  /** 视图与物化视图：列来自定义，`ALTER TABLE` 加列、改类型都会被服务端拒绝 */
+  readOnly?: boolean;
   /** 语句跑完之后重新读结构；改了表名时带上新名字 */
   onApplied: (newTableName: string) => void;
 }
@@ -56,6 +58,7 @@ export function TableStructureEditor({
   columns,
   dialect,
   serverVersion = null,
+  readOnly = false,
   onApplied
 }: TableStructureEditorProps) {
   const t = useLanguageStore((state) => state.t);
@@ -225,7 +228,7 @@ export function TableStructureEditor({
                 {t('ddl.preview')}
               </button>
             </>
-          ) : supportsFeature(dialect, 'structureEditing') && (
+          ) : !readOnly && supportsFeature(dialect, 'structureEditing') && (
             <button
               type="button"
               onClick={startEditing}

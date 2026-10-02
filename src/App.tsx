@@ -881,13 +881,16 @@ function App() {
       return <EsIndexStructureView key={activeTab.id} index={activeTab.object.table} />;
     }
 
-    // 种类来自对象树（标签都是从树或命令面板打开的，那时树已经读出来了）；读不到时按表 / 集合处理。
-    // 只认普通视图：物化视图有行标识，按表处理
-    const isView = databaseMetadata[activeTab.binding.profileId]?.objects.some((object) => (
-      object.kind === 'view'
-      && object.schema === activeTab.object.schema
-      && object.name === activeTab.object.table
-    )) ?? false;
+    // 种类来自对象树（标签都是从树或命令面板打开的，那时树已经读出来了）；读不到时按表 / 集合处理
+    // 只在视图里找：同名的函数排在前面时，按名字找到的是函数
+    const objectKind = databaseMetadata[activeTab.binding.profileId]?.objects.flatMap((object) => (
+      (object.kind === 'view' || object.kind === 'materialized-view')
+        && object.schema === activeTab.object.schema
+        && object.name === activeTab.object.table
+        ? [object.kind]
+        : []
+    ))[0] ?? 'table';
+    const isView = objectKind === 'view';
 
     // MongoDB 的集合开在同一种标签里（schema 那一格是库名），换一个浏览页：
     // 标签的身份、去重、持久化与关系库的表完全一样，不必另起一种标签
@@ -916,7 +919,7 @@ function App() {
         connection={activeConnection.config}
         tableName={activeTab.object.table}
         schema={activeTab.object.schema ?? undefined}
-        isView={isView}
+        objectKind={objectKind}
         initialTab={activeTab.kind === 'table-structure' ? 'schema' : 'data'}
         onClose={() => closeWorkspaceTab(activeTab.id)}
         onRenamed={(table) => {

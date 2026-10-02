@@ -715,6 +715,7 @@ export const zh = {
   'cell.binary': '二进制，{count} 字节',
   'cell.binary.one': '二进制，{count} 字节',
   'table.readOnly.badge': '只读',
+  'table.readOnly.view': '视图没有主键，也没有能锁定唯一一行的唯一索引，网格里不能改数据。分页按数据库的默认次序，数据变更时页边界可能移动。要改请在 SQL 编辑器里写明条件。',
   'table.readOnly.noUniqueKey': '这张表既没有主键，也没有一个非空、完整、无谓词的唯一索引，网格里不能改数据：UPDATE 和 DELETE 的条件无法锁定到唯一一行。分页也只能用数据库的回退顺序，数据变更时页边界可能移动。要改请在 SQL 编辑器里写明条件。',
   'result.readOnly.editInTable': 'ClickHouse 的查询结果里不能直接改，到表数据页改：那里一次提交一项，执行前后各核对一次。',
   'changes.oneAtATime': 'ClickHouse 一次只提交一项：先提交或撤销待提交的那一项，再改别的行。',

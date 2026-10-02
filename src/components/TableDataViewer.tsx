@@ -143,8 +143,11 @@ interface TableDataViewerProps {
   connection: ConnectionProfile;
   tableName: string;
   schema?: string;
-  /** 普通视图：没有 rowid / ctid，分页不能拿它排序 */
-  isView?: boolean;
+  /**
+   * 来自对象树。普通视图没有 rowid / ctid，分页不能拿它排序；视图与物化视图都不能
+   * `ALTER TABLE` 加列改类型，结构页不给编辑
+   */
+  objectKind?: 'table' | 'view' | 'materialized-view';
   initialTab?: TabType;
   onClose?: () => void;
   /**
@@ -168,12 +171,13 @@ export default function TableDataViewer({
   connection,
   tableName, 
   schema, 
-  isView = false,
+  objectKind = 'table',
   initialTab,
   onClose,
   onRenamed 
 }: TableDataViewerProps) {
   const t = useLanguageStore((state) => state.t);
+  const isView = objectKind === 'view';
   const [tableSchema, setTableSchema] = useState<TableSchema | null>(null);
   const [tableSchemaKey, setTableSchemaKey] = useState<string | null>(null);
   const [tableData, setTableData] = useState<any[]>([]);
@@ -620,7 +624,8 @@ export default function TableDataViewer({
     }
     switch (rowIdentity.absence) {
       case 'no-unique-key':
-        return t('table.readOnly.noUniqueKey');
+        // 视图不是「这张表少建了一个键」：那句话会让人去给视图加主键
+        return t(isView ? 'table.readOnly.view' : 'table.readOnly.noUniqueKey');
       case 'metadata-unavailable':
         return t('table.readOnly.metadataUnavailable');
       default:
@@ -1216,6 +1221,7 @@ export default function TableDataViewer({
                 columns={tableSchema.columns}
                 dialect={dialect}
                 serverVersion={serverVersion}
+                readOnly={objectKind !== 'table'}
                 onApplied={(appliedName) => {
                   if (appliedName !== tableName && onRenamed) {
                     onRenamed(appliedName);
@@ -1231,7 +1237,8 @@ export default function TableDataViewer({
               <SchemaObjectSections
                 objects={schemaObjects}
                 dbType={connection.db_type}
-                indexActions={supportsFeature(connection.db_type, 'structureEditing') ? {
+                // 普通视图建不了索引；PostgreSQL 的物化视图可以
+                indexActions={supportsFeature(connection.db_type, 'structureEditing') && !isView ? {
                   onCreate: () => setCreatingIndex(true),
                   onDrop: (index) => {
                     setIndexError(null);
