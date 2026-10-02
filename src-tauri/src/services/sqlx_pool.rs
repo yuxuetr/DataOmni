@@ -47,13 +47,31 @@ pub async fn open(connection_string: &str) -> Result<DbPool, String> {
     return Ok(DbPool::Postgres(pool));
   }
   if handles(connection_string) {
-    // sqlx 默认连上就 `SET time_zone='+00:00'`，为的是它自己按 UTC 解 TIMESTAMP；我们按字节照原样显示，
-    // 用不着它。留着的话服务器在东八区时 `NOW()` 差 8 小时，写进 DATETIME 的就是 UTC 的钟点
+    // 会话照服务器的设置，sqlx 改的几处都还回去，它们都是为 sqlx 自己方便：
+    // - 默认连上就 `SET time_zone='+00:00'`，为的是按 UTC 解 TIMESTAMP；我们按字节照原样显示，用不着。
+    //   留着的话服务器在东八区时 `NOW()` 差 8 小时，写进 DATETIME 的就是 UTC 的钟点
+    // - sql_mode 里加 `PIPES_AS_CONCAT`：`id = 2 || n = 5` 成了 `id = (2 || n) = 5`，一行都不中；
+    //   在这里建的存储过程、触发器、事件还会把它记下来，以后谁调用都照拼接算
     let options = MySqlConnectOptions::from_str(connection_string)
       .map_err(|error| error.to_string())?
-      .timezone(None);
+      .timezone(None)
+      .pipes_as_concat(false)
+      .no_engine_substitution(false);
     let pool = MySqlPoolOptions::new()
       .idle_timeout(IDLE_TIMEOUT)
+      // 握手时 sqlx 写死了 `CLIENT_IGNORE_SPACE`，服务器据此往会话的 sql_mode 加 `IGNORE_SPACE`，
+      // 函数名成了保留字：`CREATE TABLE position (x INT)` 报语法错。服务器本来就开着的不动
+      .after_connect(|connection, _| {
+        Box::pin(async move {
+          sqlx::Executor::execute(
+            connection,
+            "SET SESSION sql_mode = IF(FIND_IN_SET('IGNORE_SPACE', @@GLOBAL.sql_mode), @@SESSION.sql_mode, \
+             TRIM(BOTH ',' FROM REPLACE(CONCAT(',', @@SESSION.sql_mode, ','), ',IGNORE_SPACE,', ',')))",
+          )
+          .await
+          .map(|_| ())
+        })
+      })
       .connect_with(options)
       .await
       .map_err(|error| error.to_string())?;

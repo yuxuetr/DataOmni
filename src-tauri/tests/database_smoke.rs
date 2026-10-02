@@ -623,23 +623,27 @@ async fn mysql_zero_dates_read_as_mysql_writes_them() {
 }
 
 /// sqlx 默认连上就 `SET time_zone='+00:00'`。服务器在东八区时，`NOW()`、`CURDATE()` 差 8 小时，
-/// 写进 DATETIME 的 `NOW()` 成了 UTC 的钟点，TIMESTAMP 列读写都按 UTC——与应用和其他客户端都对不上
+/// 写进 DATETIME 的 `NOW()` 成了 UTC 的钟点，TIMESTAMP 列读写都按 UTC——与应用和其他客户端都对不上。
+/// 它还往 sql_mode 里加 `PIPES_AS_CONCAT`：`a = 1 || b = 2` 成了拼字符串，而在这里建的存储过程、
+/// 触发器、事件会把这个 sql_mode 记下来，此后谁调用都照拼接算
 #[tokio::test]
-async fn mysql_session_keeps_the_servers_time_zone() {
+async fn mysql_session_keeps_the_servers_time_zone_and_sql_mode() {
   let Some(url) = network_database_url(MYSQL_URL_ENV) else {
     return;
   };
   let pool = dataomni_lib::services::sqlx_pool::open(&url).await.expect("open the app's pool");
   let result = execute_query(
     &pool,
-    "SELECT @@session.time_zone AS session_zone, @@global.time_zone AS server_zone",
+    "SELECT @@session.time_zone AS session_zone, @@global.time_zone AS server_zone, \
+     @@session.sql_mode AS session_mode, @@global.sql_mode AS server_mode",
   )
   .await
-  .expect("read time zones");
+  .expect("read session settings");
   let QueryExecutionResult::Rows { rows, .. } = result else {
     panic!("expected a row result");
   };
   assert_eq!(rows[0]["session_zone"], rows[0]["server_zone"], "{:?}", rows[0]);
+  assert_eq!(rows[0]["session_mode"], rows[0]["server_mode"], "{:?}", rows[0]);
 }
 
 /// FLOAT 是单精度，直接放宽成 f64 的话 0.1 读成 0.10000000149011612；照 mysql 客户端写成 0.1
