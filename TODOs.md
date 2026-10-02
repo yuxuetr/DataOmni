@@ -884,6 +884,13 @@
     顺着查了池里的连接（MySQL 8.4、PG 16，池只给一条连接）：导出取消到一半、读到行数上限中途不再读流、池上的查询超时被丢掉，
     之后同一个池上的 `SELECT 42` 三家各读回自己的一行——sqlx 的池连接被还回或丢掉时自己会读完或关掉。出问题的只有会话那种一直拿在手里、
     从不还回池的连接。没留用例：这道门造不出让它红的输入（除非改 sqlx）。重估条件：升级 sqlx 之后，或有人报表数据页读到别的查询的结果。
+  - 2026-10-02 连接串里的主机与库名（本机 Docker 的 PG 16 / MySQL 8.4 监听 `::1`；cu 的 SQL Server 2022、Oracle 23ai 经绑在 `[::1]` 的隧道）：
+    **主机填 IPv6 地址连不上**，**库名里的 `#` 吞掉 TLS 参数**（`09cddfa`）。MySQL / PG 的串原样拼主机：`::1` 报 sqlx 的 `EmptyHost`，
+    加方括号才连得上；库名里 `#` 之后成了 URL 片段——连到的是另一个库，`sslmode` / `ssl-mode` 一起丢掉，设了必须 TLS 的连接悄悄降级。
+    主机按 `http_endpoint` 的判断加方括号，库名百分号编码（sqlx 解码回原样）；单元测试旧代码红，本机经 `::1` 连名为 `a#b` 的库两家都读回 `a#b`。
+    Oracle 同样（`bb223a4`）：Easy Connect 串 `//::1:1521/…` 报 ORA-12262，加方括号后 `oracle_smoke` 经 `::1` 24 条全过。
+    SQL Server 本来就行（tokio 按最后一个冒号切主机与端口），ClickHouse / Elasticsearch 的 `http_endpoint` 早就加了方括号。
+    没验：MongoDB、Redis、Neo4j 与 SSH 隧道的跳板机填 IPv6 地址（都按结构化的主机与端口交给驱动，没经过 URL）；重估条件：有人报。
   - 2026-10-02 Windows：在 Windows 上 `bun tauri build` 能构建（原先差的只是换行符，`643fcf0` 加 `.gitattributes` 统一 LF，并写了
     `docs/windows-build.md`）。顺着查带 Oracle 的打包：`fetch-oracle-client.sh` 的 windows-x64 文件集照 19c 的名字写，23ai 的 zip 里
     一个都没有，脚本在第一个 `cp` 就退出（本机拷到假仓库根下复现）。**修了一处**（`3e791b3`）：按 DLL 导入表重挑 5 个文件、补上校验和；
