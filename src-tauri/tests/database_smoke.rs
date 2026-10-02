@@ -178,31 +178,33 @@ async fn postgres_reads_a_table_again_after_its_columns_change() {
   let pool =
     PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
   let db = DbPool::Postgres(pool);
-  execute_query(&db, "CREATE TEMP TABLE reshaped (id INTEGER, label VARCHAR(10))")
+  // 真表而不是临时表：CockroachDB 改临时表的列类型报「only implemented in the declarative schema changer」
+  execute_query(&db, "DROP TABLE IF EXISTS om_reshaped").await.expect("clear leftovers");
+  execute_query(&db, "CREATE TABLE om_reshaped (id INTEGER, label VARCHAR(10))")
     .await
     .expect("create table");
-  execute_query(&db, "INSERT INTO reshaped VALUES (1, 'one')").await.expect("insert row");
+  execute_query(&db, "INSERT INTO om_reshaped VALUES (1, 'one')").await.expect("insert row");
   assert_single_row_result(
-    execute_query(&db, "SELECT label FROM reshaped").await.expect("read before"),
+    execute_query(&db, "SELECT label FROM om_reshaped").await.expect("read before"),
     "label",
     "one",
   );
 
-  execute_query(&db, "ALTER TABLE reshaped RENAME COLUMN label TO title")
+  execute_query(&db, "ALTER TABLE om_reshaped RENAME COLUMN label TO title")
     .await
     .expect("rename column");
   assert_single_row_result(
-    execute_query(&db, "SELECT label AS title FROM (SELECT title AS label FROM reshaped) AS r")
+    execute_query(&db, "SELECT label AS title FROM (SELECT title AS label FROM om_reshaped) AS r")
       .await
       .expect("read renamed through a fresh statement"),
     "title",
     "one",
   );
-  execute_query(&db, "SELECT * FROM reshaped").await.expect("cache the star query");
-  execute_query(&db, "ALTER TABLE reshaped RENAME COLUMN title TO heading")
+  execute_query(&db, "SELECT * FROM om_reshaped").await.expect("cache the star query");
+  execute_query(&db, "ALTER TABLE om_reshaped RENAME COLUMN title TO heading")
     .await
     .expect("rename again");
-  match execute_query(&db, "SELECT * FROM reshaped").await.expect("read after rename") {
+  match execute_query(&db, "SELECT * FROM om_reshaped").await.expect("read after rename") {
     QueryExecutionResult::Rows { columns, rows, .. } => {
       assert_eq!(columns, vec!["id", "heading"]);
       assert_eq!(rows[0]["heading"], "one");
@@ -210,14 +212,17 @@ async fn postgres_reads_a_table_again_after_its_columns_change() {
     QueryExecutionResult::Affected { .. } => panic!("expected rows"),
   }
 
-  execute_query(&db, "ALTER TABLE reshaped ALTER COLUMN id TYPE TEXT").await.expect("change type");
-  match execute_query(&db, "SELECT * FROM reshaped").await.expect("read after type change") {
+  execute_query(&db, "ALTER TABLE om_reshaped ALTER COLUMN id TYPE TEXT")
+    .await
+    .expect("change type");
+  match execute_query(&db, "SELECT * FROM om_reshaped").await.expect("read after type change") {
     QueryExecutionResult::Rows { column_metadata, rows, .. } => {
       assert_eq!(column_metadata[0].database_type, "TEXT");
       assert_eq!(rows[0]["id"], "1");
     }
     QueryExecutionResult::Affected { .. } => panic!("expected rows"),
   }
+  execute_query(&db, "DROP TABLE om_reshaped").await.expect("drop table");
 }
 
 /// 同上，SQLite。
@@ -2897,6 +2902,18 @@ async fn postgres_foreign_keys_to_a_partitioned_table_are_listed_once() {
   let parent = "dataomni_part_parent";
   let referrer = "dataomni_part_referrer";
   let target = "dataomni_part_target";
+  // CockroachDB 没有 PostgreSQL 的声明式分区：分区是表自己的属性，不另建子表，也就没有
+  // 每个分区克隆一条的外键。钉住：哪天它认了 PARTITION BY RANGE (col) 这种写法，这条会红
+  if is_cockroach(&pool).await {
+    let refused = sqlx::query(&format!(
+      "CREATE TABLE {parent} (id INT NOT NULL, created DATE NOT NULL, PRIMARY KEY (id, created))
+         PARTITION BY RANGE (created)"
+    ))
+    .execute(&pool)
+    .await;
+    assert!(refused.is_err(), "CockroachDB 认 PostgreSQL 的分区写法了，回来把这条接上");
+    return;
+  }
   for statement in [
     format!("DROP TABLE IF EXISTS {referrer}"),
     format!("DROP TABLE IF EXISTS {parent}"),
