@@ -569,10 +569,14 @@ async fn execute_sqlite_connection_with_limits(
   summary_with_rows(summary, rows)
 }
 
+/// 先清掉语句缓存，理由同 [`describe_postgres_columns`]，后果更重：SQLite 遇到结构变化会自己
+/// 重新准备，而 sqlx 还按缓存里旧的列数取值——加了一列之后再跑同一句 `SELECT *`，sqlx 的
+/// 工作线程下标越界 panic，这一句返回空结果。SQLite 在本机，清缓存没有往返
 async fn describe_sqlite_columns(
   connection: &mut SqliteConnection,
   sql: &str,
 ) -> Result<Vec<QueryColumnMetadata>, QueryError> {
+  connection.clear_cached_statements().await.map_err(QueryError::from)?;
   let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
   Ok(
     description

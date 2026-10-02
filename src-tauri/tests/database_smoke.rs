@@ -220,6 +220,34 @@ async fn postgres_reads_a_table_again_after_its_columns_change() {
   }
 }
 
+/// 同上，SQLite。
+#[tokio::test]
+async fn sqlite_reads_a_table_again_after_its_columns_change() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("open SQLite");
+  let db = DbPool::Sqlite(pool);
+  execute_query(&db, "CREATE TABLE reshaped (id INTEGER, label TEXT)").await.expect("create table");
+  execute_query(&db, "INSERT INTO reshaped VALUES (1, 'one')").await.expect("insert row");
+  execute_query(&db, "SELECT * FROM reshaped").await.expect("cache the star query");
+  execute_query(&db, "ALTER TABLE reshaped RENAME COLUMN label TO heading")
+    .await
+    .expect("rename column");
+  execute_query(&db, "ALTER TABLE reshaped ADD COLUMN extra TEXT DEFAULT 'x'")
+    .await
+    .expect("add column");
+  match execute_query(&db, "SELECT * FROM reshaped").await.expect("read after change") {
+    QueryExecutionResult::Rows { columns, rows, .. } => {
+      assert_eq!(columns, vec!["id", "heading", "extra"]);
+      assert_eq!(rows[0]["heading"], "one");
+      assert_eq!(rows[0]["extra"], "x");
+    }
+    QueryExecutionResult::Affected { .. } => panic!("expected rows"),
+  }
+}
+
 /// 同上，MySQL。服务端自己重新准备，每个结果集也重发列定义，sqlx 的缓存不碍事——钉住这一点
 #[tokio::test]
 async fn mysql_reads_a_table_again_after_its_columns_change() {
