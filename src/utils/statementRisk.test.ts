@@ -92,6 +92,58 @@ describe('语句风险判定', () => {
       .toBe('append');
   });
 
+  it('PostgreSQL 的 CTE 里本身就能写：括号里的 DELETE / UPDATE 照样定级', () => {
+    // 归档写法：删掉的行由外层 SELECT 交回来，顶层只看得到 SELECT
+    expect(classifyStatementRisk(
+      'WITH gone AS (DELETE FROM orders RETURNING *) SELECT count(*) FROM gone'
+    )).toBe('bulk-write');
+    expect(classifyStatementRisk(
+      'WITH x AS (UPDATE t SET a = 1 RETURNING *) SELECT * FROM x'
+    )).toBe('bulk-write');
+    // 它自己括号里的 WHERE 才限制它；外层 SELECT 的 WHERE 不算
+    expect(classifyStatementRisk(
+      'WITH gone AS (DELETE FROM orders WHERE id = 1 RETURNING *) SELECT * FROM gone'
+    )).toBe('scoped-write');
+    expect(classifyStatementRisk(
+      'WITH gone AS (DELETE FROM orders RETURNING id) SELECT * FROM gone WHERE id > 0'
+    )).toBe('bulk-write');
+    expect(classifyStatementRisk(
+      'WITH a AS (DELETE FROM t RETURNING *), b AS (SELECT * FROM u WHERE true) SELECT 1'
+    )).toBe('bulk-write');
+    expect(classifyStatementRisk(
+      'WITH moved AS (INSERT INTO archive SELECT * FROM t RETURNING *) SELECT * FROM moved'
+    )).toBe('append');
+  });
+
+  it('CTE 里的 FOR UPDATE、ON CONFLICT DO UPDATE 不是改写语句', () => {
+    expect(classifyStatementRisk(
+      'WITH x AS (SELECT * FROM t WHERE id = 1 FOR UPDATE) SELECT * FROM x'
+    )).toBe('read');
+    expect(classifyStatementRisk(
+      'WITH x AS (SELECT * FROM t FOR NO KEY UPDATE) SELECT * FROM x'
+    )).toBe('read');
+    expect(classifyStatementRisk(
+      'WITH x AS (INSERT INTO t VALUES (1) ON CONFLICT (id) DO UPDATE SET n = 2 RETURNING *) '
+        + 'SELECT * FROM x'
+    )).toBe('append');
+  });
+
+  it('EXPLAIN ANALYZE 真的执行，按被解释的那条定级', () => {
+    expect(classifyStatementRisk('EXPLAIN ANALYZE DELETE FROM t')).toBe('bulk-write');
+    expect(classifyStatementRisk('EXPLAIN (ANALYZE, BUFFERS) UPDATE t SET a = 1')).toBe('bulk-write');
+    expect(classifyStatementRisk('EXPLAIN ANALYZE VERBOSE DELETE FROM t WHERE id = 1'))
+      .toBe('scoped-write');
+    // MySQL 8 的 EXPLAIN ANALYZE 同样执行多表 DELETE
+    expect(classifyStatementRisk('EXPLAIN ANALYZE DELETE t FROM t JOIN u ON t.id = u.id'))
+      .toBe('bulk-write');
+    expect(classifyStatementRisk(
+      'EXPLAIN ANALYZE WITH gone AS (DELETE FROM t RETURNING *) SELECT * FROM gone'
+    )).toBe('bulk-write');
+    // 不带 ANALYZE 只出计划，不执行
+    expect(classifyStatementRisk('EXPLAIN DELETE FROM t')).toBe('read');
+    expect(classifyStatementRisk('EXPLAIN ANALYZE SELECT * FROM t')).toBe('read');
+  });
+
   it('建表这类改状态但不抹数据的按有界写入处理', () => {
     expect(classifyStatementRisk('CREATE TABLE t (id INT)')).toBe('scoped-write');
   });

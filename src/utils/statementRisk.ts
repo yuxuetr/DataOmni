@@ -4,7 +4,7 @@ import {
   type ConfirmationPolicy
 } from './confirmationPolicy';
 import type { SqlDialect } from '../contracts/queryExecution';
-import { splitSqlStatements, topLevelKeywords } from './sqlStatements';
+import { splitSqlStatements, sqlWords, topLevelKeywords, type SqlWord } from './sqlStatements';
 import type { TranslationKey } from '../i18n/translate';
 
 /**
@@ -24,11 +24,33 @@ export type StatementRisk =
 const READ_KEYWORDS = ['SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN', 'PRAGMA', 'VALUES'];
 
 export function classifyStatementRisk(sql: string): StatementRisk {
-  const keywords = topLevelKeywords(sql);
+  return riskOfWords(sqlWords(sql));
+}
+
+/** `EXPLAIN ANALYZE` 后面被解释（也就被执行）的那条语句的开头 */
+const EXPLAINED_VERBS = new Set([
+  'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'MERGE', 'WITH', 'REPLACE', 'TABLE', 'VALUES',
+  'CREATE', 'EXECUTE'
+]);
+
+function riskOfWords(words: readonly SqlWord[]): StatementRisk {
+  const keywords = words.filter((word) => word.group === 0).map((word) => word.word);
   const first = keywords[0];
 
   if (!first) {
     return 'read';
+  }
+
+  // PostgreSQL 与 MySQL 8 的 `EXPLAIN ANALYZE` 真的执行那条语句，只是不交回结果。
+  // `EXPLAIN (ANALYZE, BUFFERS)` 的选项在括号里，所以不只看顶层
+  if (first === 'EXPLAIN') {
+    if (!words.some((word) => word.word === 'ANALYZE' || word.word === 'ANALYSE')) {
+      return 'read';
+    }
+    const verb = words.findIndex(
+      (word, index) => index > 0 && word.group === 0 && EXPLAINED_VERBS.has(word.word)
+    );
+    return verb < 0 ? 'read' : riskOfWords(words.slice(verb));
   }
 
   if (first === 'DROP' || first === 'TRUNCATE') {
@@ -60,13 +82,12 @@ export function classifyStatementRisk(sql: string): StatementRisk {
     const action = keywords.find(
       (keyword) => keyword === 'DELETE' || keyword === 'UPDATE' || keyword === 'INSERT'
     );
-    if (action === 'INSERT') {
-      return 'append';
-    }
-    if (action === 'DELETE' || action === 'UPDATE') {
-      return keywords.includes('WHERE') ? 'scoped-write' : 'bulk-write';
-    }
-    return 'read';
+    const outer: StatementRisk = action === 'INSERT'
+      ? 'append'
+      : action === 'DELETE' || action === 'UPDATE'
+        ? keywords.includes('WHERE') ? 'scoped-write' : 'bulk-write'
+        : 'read';
+    return worse(outer, nestedWriteRisk(words));
   }
 
   // `SELECT … INTO 新表` 在 SQL Server 与 PostgreSQL 里是建表，
@@ -81,6 +102,40 @@ export function classifyStatementRisk(sql: string): StatementRisk {
 
   // CREATE、GRANT、SET、BEGIN 等：会改状态，但不会抹掉已有数据
   return 'scoped-write';
+}
+
+/**
+ * PostgreSQL 的 CTE 本身就能写：`WITH gone AS (DELETE FROM t RETURNING *) SELECT …`。
+ * 括号里那条写语句只受它自己括号里的 WHERE 限制。`FOR UPDATE` 是锁、
+ * `ON CONFLICT DO UPDATE` 是插入的一部分，都不是另一条改写语句
+ */
+function nestedWriteRisk(words: readonly SqlWord[]): StatementRisk {
+  return words.reduce<StatementRisk>((risk, word, index) => {
+    if (word.group === 0) {
+      return risk;
+    }
+    if (word.word === 'INSERT') {
+      return worse(risk, 'append');
+    }
+    if (word.word === 'MERGE') {
+      return worse(risk, 'bulk-write');
+    }
+    if (word.word !== 'DELETE' && word.word !== 'UPDATE') {
+      return risk;
+    }
+    const previous = words.slice(0, index).reverse().find((other) => other.group === word.group);
+    if (word.word === 'UPDATE' && ['FOR', 'KEY', 'DO'].includes(previous?.word ?? '')) {
+      return risk;
+    }
+    const scoped = words
+      .slice(index + 1)
+      .some((other) => other.group === word.group && other.word === 'WHERE');
+    return worse(risk, scoped ? 'scoped-write' : 'bulk-write');
+  }, 'read');
+}
+
+function worse(left: StatementRisk, right: StatementRisk): StatementRisk {
+  return RISK_ORDER.indexOf(right) > RISK_ORDER.indexOf(left) ? right : left;
 }
 
 /** 由轻到重。阈值比较和「一批里最危险的那条」都按这个次序。 */

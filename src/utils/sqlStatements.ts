@@ -452,9 +452,26 @@ function firstTopLevelKeyword(sql: string): string | undefined {
  * 和注释、又不把子查询里的词算进来的扫描。再写一个更弱的分词器是重复。
  */
 export function topLevelKeywords(sql: string): string[] {
-  const keywords: string[] = [];
+  return sqlWords(sql).filter((word) => word.group === 0).map((word) => word.word);
+}
+
+/** 一个标识符（大写），和它所在的那对括号：`group` 0 是顶层，每对括号各一个编号 */
+export interface SqlWord {
+  word: string;
+  group: number;
+}
+
+/**
+ * 语句里不在字符串、注释内的全部标识符，带上各自所在的括号。
+ *
+ * 风险判定要看括号里的语句：PostgreSQL 的 `WITH gone AS (DELETE …) SELECT …`
+ * 在顶层只看得到 SELECT，而那条 DELETE 的 WHERE 只在同一对括号里才限制它
+ */
+export function sqlWords(sql: string): SqlWord[] {
+  const keywords: SqlWord[] = [];
   let state: LexerState = NORMAL_STATE;
-  let depth = 0;
+  const groups: number[] = [0];
+  let opened = 0;
   let index = 0;
 
   while (index < sql.length) {
@@ -498,21 +515,24 @@ export function topLevelKeywords(sql: string): string[] {
       }
 
       if (character === '(') {
-        depth += 1;
+        opened += 1;
+        groups.push(opened);
         index += 1;
         continue;
       }
 
       if (character === ')') {
-        depth = Math.max(0, depth - 1);
+        if (groups.length > 1) {
+          groups.pop();
+        }
         index += 1;
         continue;
       }
 
-      if (depth === 0 && /[A-Za-z_]/.test(character)) {
+      if (/[A-Za-z_]/.test(character)) {
         const match = sql.slice(index).match(/^[A-Za-z_][A-Za-z0-9_$]*/);
         if (match) {
-          keywords.push(match[0].toUpperCase());
+          keywords.push({ word: match[0].toUpperCase(), group: groups[groups.length - 1] });
           index += match[0].length;
           continue;
         }
