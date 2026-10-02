@@ -95,6 +95,26 @@ describe('createTablePaginationOrder', () => {
     expect(pageClause(createSortedOrderClause(none, null, 'sqlserver'), 50, 0, 'sqlserver'))
       .toBe('ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY');
   });
+
+  it('Oracle 没有主键时只按能排序的类型排：有一列 CLOB，整张表就打不开（ORA-22848）', () => {
+    const typed = (name: string, dataType: string): ColumnInfo => ({
+      name, data_type: dataType, is_nullable: true, is_primary_key: false
+    });
+    // 23ai 上逐个试过：CLOB / NCLOB / BLOB / BFILE / VECTOR 报 ORA-22848，XMLTYPE 与没有 MAP 方法的
+    // 对象类型报 ORA-22950，LONG 报 ORA-00997。对象类型的名字列不全，所以按白名单
+    const order = createTablePaginationOrder([
+      typed('n', 'NUMBER(10,2)'), typed('i', 'INTEGER'), typed('v', 'VARCHAR2(20 CHAR)'),
+      typed('c', 'CLOB'), typed('nc', 'NCLOB'), typed('b', 'BLOB'), typed('f', 'BFILE'),
+      typed('x', 'XMLTYPE'), typed('l', 'LONG'), typed('lr', 'LONG RAW'), typed('vec', 'VECTOR'),
+      typed('geo', 'SDO_GEOMETRY'), typed('r', 'RAW(16)'), typed('d', 'DATE'),
+      typed('ts', 'TIMESTAMP(6) WITH TIME ZONE'), typed('iv', 'INTERVAL YEAR(2) TO MONTH'),
+      typed('j', 'JSON'), typed('ok', 'BOOLEAN'), typed('bd', 'BINARY_DOUBLE')
+    ], 'oracle');
+    expect(order.clause).toBe('ORDER BY "n", "i", "v", "r", "d", "ts", "iv", "j", "ok", "bd"');
+    const none = createTablePaginationOrder([typed('c', 'CLOB')], 'oracle');
+    expect(none.clause).toBe('');
+    expect(pageClause(none.clause, 50, 0, 'oracle')).toBe('OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY');
+  });
 });
 
 describe('用户排序与分页排序的合并', () => {

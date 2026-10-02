@@ -85,6 +85,17 @@ export function createTablePaginationOrder(
       : { clause: '', strategy: 'all-columns', columns: [], stableAcrossChanges: false };
   }
 
+  // Oracle 同理（CLOB / BLOB / VECTOR 是 ORA-22848，XMLTYPE 与对象类型 ORA-22950，LONG ORA-00997）。
+  // 对象类型的名字是用户起的、列不全，这里反过来按白名单；不写 ORDER BY 也合法
+  if (dialect === 'oracle') {
+    const sortable = columns
+      .filter(column => ORACLE_SORTABLE_TYPES.has(columnTypeToken(column.data_type)))
+      .map(column => column.name);
+    return sortable.length > 0
+      ? createOrder(sortable, dialect, 'all-columns', false)
+      : { clause: '', strategy: 'all-columns', columns: [], stableAcrossChanges: false };
+  }
+
   return createOrder(
     columns.map(column => column.name),
     dialect,
@@ -92,6 +103,11 @@ export function createTablePaginationOrder(
     false
   );
 }
+
+const ORACLE_SORTABLE_TYPES = new Set([
+  'number', 'integer', 'float', 'binary_float', 'binary_double', 'varchar2', 'nvarchar2', 'char', 'nchar',
+  'raw', 'date', 'timestamp', 'interval', 'boolean', 'json', 'rowid', 'urowid'
+]);
 
 const SQL_SERVER_UNSORTABLE_TYPES = new Set(['xml', 'text', 'ntext', 'image', 'geography', 'geometry']);
 
