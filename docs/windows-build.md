@@ -3,8 +3,8 @@
 ## 产物说明
 当前打包配置位于 `src-tauri/tauri.conf.json`，`bundle.targets` 为 `all`。执行完整发布构建后会生成：
 - 未安装的发布版可执行程序：`src-tauri/target/release/dataomni.exe`
-- MSI 安装包：`src-tauri/target/release/bundle/msi/DataOmni_0.1.0_x64_en-US.msi`
-- NSIS 安装程序：`src-tauri/target/release/bundle/nsis/DataOmni_0.1.0_x64-setup.exe`
+- MSI 安装包：`src-tauri/target/release/bundle/msi/DataOmni_<版本>_x64_en-US.msi`
+- NSIS 安装程序：`src-tauri/target/release/bundle/nsis/DataOmni_<版本>_x64-setup.exe`
 
 版本号与产品名来自 `src-tauri/tauri.conf.json`；版本变更后，安装包文件名会相应变化。
 ## 前置环境
@@ -96,6 +96,18 @@ bun tauri build --bundles nsis
 ```
 
 MSI 便于企业软件分发、组策略或软件管理系统部署；NSIS 的 `-setup.exe` 更适合直接向个人用户分发。
+
+### 带上 Oracle Instant Client
+上面的 `bun tauri build` 打出的安装包**不带** Instant Client，装好后连 Oracle 会报「找不到 Oracle Instant Client」，其余数据库不受影响。
+要带上它，在 Git Bash 里先取文件（需要 `curl` 与 `unzip`），再用 Oracle 的配置打包：
+```bash
+bash scripts/fetch-oracle-client.sh windows-x64
+bun tauri build --config src-tauri/tauri.oracle.conf.json
+```
+
+平台要写明 `windows-x64`：不写时脚本按 `uname` 判断，而 `bash` 若解析到 WSL 的那一个会被认成 `linux-x64`，取来的是 Linux 的库。
+`bun run package` 就是这两步，但不点名平台，所以 Windows 上不要用它。文件集按 DLL 导入表挑出（`oci.dll`、`oraociicus.dll`
+与三个加密模块，约 115 MB），**还没在 Windows 上真连过 Oracle**。
 ## 构建前检查
 完整检查会运行前端静态检查、单元测试、Rust 格式检查、Clippy 和 Rust 测试：
 ```powershell
