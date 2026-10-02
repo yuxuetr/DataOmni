@@ -836,6 +836,14 @@
     从分区表或继承的父表读时各个子表各自从 (0,1) 数起；8 个分区 2 万行、每页 50 行翻完只拿到 19777 个不同的行（2 个分区 1000 行时碰巧不出），
     改成 `ORDER BY tableoid, ctid` 后 20000 行一行不差。外部表（file_fdw）的 `ctid` 每行都是 `(4294967295,0)`，不报错、按它排等于不排，没动；
     CockroachDB 没有 `ctid`，但没有主键的表都有隐藏的 `rowid` 主键（`pg_index` 里看得到），走不到这条路。
+  - 2026-10-02 ClickHouse 没法排序的类型（25.8 在 cu 上）：**AggregatingMergeTree 表在数据页打不开**（`199e8c9`）。分页按排序键加其余全部列排，
+    而查询的 ORDER BY 不收 `AggregateFunction`、`Variant`、`Dynamic`，嵌在 Array / Map / Tuple 里也不收（Code 44，逐个试过；
+    `SimpleAggregateFunction`、JSON、Map、Tuple、Point 可以）。这几种列不进分页排序。
+    顺着发现（`cb1af89`，各方言都有）：**点不能排序的列的表头后，这张表只能关掉重开**——查询报错、行清空、表头跟着没了，排序只能在表头上取消，
+    刷新又带着它。现在数据那条失败、且设了排序时，取消排序再读一次，横幅写「按 s 排序失败，已取消排序：原因」。
+    打包版（rpm 0.4.76 / 0.4.77）：聚合表 3 行照常出来，删一行的定位条件只用排序键；点 `s` 表头出横幅、行与表头都在，再点 `total` 正常排序、横幅消失。
+    没改：聚合状态是二进制，恰好是合法 UTF-8 的（`sumState`）按文本画出控制字符，不是的（`uniqState`）画成十六进制，两种都看不懂；
+    重估条件：有人要在网格里看聚合状态（该用 `…Merge` 查）。
   - 2026-10-02 Windows：在 Windows 上 `bun tauri build` 能构建（原先差的只是换行符，`643fcf0` 加 `.gitattributes` 统一 LF，并写了
     `docs/windows-build.md`）。顺着查带 Oracle 的打包：`fetch-oracle-client.sh` 的 windows-x64 文件集照 19c 的名字写，23ai 的 zip 里
     一个都没有，脚本在第一个 `cp` 就退出（本机拷到假仓库根下复现）。**修了一处**（`3e791b3`）：按 DLL 导入表重挑 5 个文件、补上校验和；
