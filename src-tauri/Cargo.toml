@@ -31,6 +31,9 @@ serde_json = "1"
 indexmap = { version = "2", features = ["serde"] }
 tauri-plugin-sql = { version = "2", features = ["sqlite", "mysql", "postgres"] }
 sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "mysql", "postgres", "sqlite", "json", "time", "chrono", "bigdecimal", "uuid"] }
+# 只为 `sqlite3_interrupt` / `sqlite3_get_autocommit`：钉死在 sqlx 用的那一版（sqlx 的文档要求直接调它时这么做），
+# 不开任何 feature，构建方式跟着 sqlx 走
+libsqlite3-sys = { version = "=0.30.1", default-features = false }
 time = "0.3"
 futures-util = "0.3"
 uuid = { version = "1.17.0", features = ["v4"] }

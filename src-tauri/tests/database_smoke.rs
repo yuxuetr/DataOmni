@@ -5991,3 +5991,104 @@ async fn mysql_abandoned_statement_stops_on_the_server() {
   .await;
   sqlx::query("DROP TABLE om_abandoned").execute(&pool).await.expect("drop om_abandoned");
 }
+
+/// SQLite 同样：被放弃的语句在 sqlx 的工作线程上接着跑，同一个标签页的下一条排在它后面
+/// （一条 3 亿次的递归 CTE 让 `SELECT 42` 等了 85 秒），写语句跑完照样提交
+#[tokio::test]
+async fn sqlite_abandoned_statement_is_interrupted() {
+  let path = std::env::temp_dir().join(format!("dataomni-abandoned-{}.db", std::process::id()));
+  let _ = std::fs::remove_file(&path);
+  let url = format!("sqlite://{}?mode=rwc", path.display());
+  let pool = SqlitePoolOptions::new().max_connections(2).connect(&url).await.expect("sqlite");
+  sqlx::raw_sql("CREATE TABLE om_abandoned (id INTEGER PRIMARY KEY, v INTEGER NOT NULL); INSERT INTO om_abandoned VALUES (1, 0)")
+    .execute(&pool)
+    .await
+    .expect("create om_abandoned");
+  let db_pool = DbPool::Sqlite(pool.clone());
+  let sessions = QuerySessionState::default();
+  let options = |sql: &'static str, timeout_ms: u64| StreamingQueryOptions {
+    session_id: "abandoned-sqlite",
+    pool_key: &url,
+    pool: (&db_pool).into(),
+    sql,
+    autocommit: true,
+    explain_plan: false,
+    row_limit: 100,
+    byte_limit: 1 << 20,
+    batch_size: 10,
+    timeout_duration: Duration::from_millis(timeout_ms),
+  };
+  const SLOW: &str = "UPDATE om_abandoned SET v = (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 300000000) SELECT count(*) FROM c) WHERE id = 1";
+
+  // 事务里先写一行，再让一条读语句被放弃：只读的那条被打断，事务还在
+  sessions.execute_streaming(options("BEGIN", 10_000), &mut |_| Ok(())).await.expect("begin");
+  sessions
+    .execute_streaming(options("UPDATE om_abandoned SET v = 7 WHERE id = 1", 10_000), &mut |_| {
+      Ok(())
+    })
+    .await
+    .expect("write inside transaction");
+  sessions
+    .execute_streaming(
+      options("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 300000000) SELECT count(*) FROM c", 300),
+      &mut |_| Ok(()),
+    )
+    .await
+    .expect_err("该超时");
+  let started = std::time::Instant::now();
+  assert!(
+    sessions.transaction("abandoned-sqlite").await.in_transaction(),
+    "打断一条读语句，事务还在"
+  );
+  sessions.execute_streaming(options("ROLLBACK", 10_000), &mut |_| Ok(())).await.expect("rollback");
+  assert!(
+    started.elapsed() < Duration::from_secs(5),
+    "回滚等了 {:?}：在等被放弃的那条跑完",
+    started.elapsed()
+  );
+
+  // 事务里被打断的是写语句：SQLite 自己回滚了整个事务，状态栏不能还说「事务中」
+  sessions.execute_streaming(options("BEGIN", 10_000), &mut |_| Ok(())).await.expect("begin");
+  sessions
+    .execute_streaming(options("UPDATE om_abandoned SET v = 7 WHERE id = 1", 10_000), &mut |_| {
+      Ok(())
+    })
+    .await
+    .expect("write inside transaction");
+  sessions.execute_streaming(options(SLOW, 300), &mut |_| Ok(())).await.expect_err("该超时");
+  assert!(
+    !sessions.transaction("abandoned-sqlite").await.in_transaction(),
+    "打断事务里的写语句，SQLite 回滚了整个事务"
+  );
+
+  // 自动提交下的慢写语句被放弃：不该提交，下一条也不该排在它后面
+  sessions.execute_streaming(options(SLOW, 300), &mut |_| Ok(())).await.expect_err("该超时");
+  let started = std::time::Instant::now();
+  let mut rows = Vec::new();
+  sessions
+    .execute_streaming(options("SELECT 42 AS answer", 120_000), &mut |batch| {
+      rows.extend(batch.rows);
+      Ok(())
+    })
+    .await
+    .expect("下一条照常能跑");
+  assert!(
+    started.elapsed() < Duration::from_secs(5),
+    "下一条等了 {:?}：在等被放弃的那条跑完",
+    started.elapsed()
+  );
+  assert_eq!(rows.len(), 1);
+  assert_eq!(
+    sessions.transaction("abandoned-sqlite").await,
+    dataomni_lib::services::TransactionState::default()
+  );
+  let v: i64 = sqlx::query_scalar("SELECT v FROM om_abandoned WHERE id = 1")
+    .fetch_one(&pool)
+    .await
+    .expect("read v");
+  assert_eq!(v, 0, "放弃了的 UPDATE 照样提交了");
+
+  sessions.release("abandoned-sqlite").await;
+  pool.close().await;
+  let _ = std::fs::remove_file(&path);
+}

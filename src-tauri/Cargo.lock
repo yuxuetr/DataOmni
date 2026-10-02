@@ -1529,6 +1529,7 @@ dependencies = [
  "futures-util",
  "indexmap 2.14.2",
  "keyring",
+ "libsqlite3-sys",
  "mongodb",
  "neo4j",
  "oracle",

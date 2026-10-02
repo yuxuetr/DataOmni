@@ -45,11 +45,26 @@ type PendingTermination = Arc<std::sync::Mutex<Option<JoinHandle<()>>>>;
 /// 下一条要等它跑完，MySQL 的下一条读到残包，报协议错或者给出 0 行。所以结束的是
 /// 整条连接而不只是那条语句：它反正不能再用，服务端随之回滚它上面的事务，
 /// 与状态栏上「事务没了」一致。SQL Server、Oracle、ClickHouse 各自在驱动里处理
+///
+/// SQLite 没有网络连接可断：被放弃的语句在 sqlx 的工作线程上接着跑，同一个标签页的
+/// 下一条（包括 `ROLLBACK`）排在它后面，写语句跑完照样提交。它用 `sqlite3_interrupt`
+/// 当场打断，连接接着用——内存库换一条连接就是换了一个库
 #[derive(Clone)]
 enum Terminator {
   MySql(sqlx::MySqlPool, String),
   Postgres(sqlx::PgPool, String),
+  Sqlite(SqliteHandle),
 }
+
+/// 会话连接的 `sqlite3*`。只拿来调 `sqlite3_interrupt`（SQLite 文档说可以从别的线程调）
+/// 与工作线程空闲时的 `sqlite3_get_autocommit`
+#[derive(Clone, Copy)]
+struct SqliteHandle(std::ptr::NonNull<libsqlite3_sys::sqlite3>);
+
+// SAFETY: 指针只交给 `sqlite3_interrupt`，它本来就是给别的线程用的；
+// `sqlite3_get_autocommit` 只在 `lock_handle` 拿着工作线程时调
+unsafe impl Send for SqliteHandle {}
+unsafe impl Sync for SqliteHandle {}
 
 /// 发结束语句要先从池里取一条连接，池满时会等；等不到就算了，下一条语句照样换连接
 const TERMINATE_LIMIT: Duration = Duration::from_secs(10);
@@ -76,6 +91,10 @@ impl Terminator {
         let pid: u64 = pid.parse().ok()?;
         Some(Self::Postgres(pool.clone(), format!("SELECT pg_terminate_backend({pid})")))
       }
+      (SessionConnection::Sqlite(connection), _) => {
+        let mut locked = connection.lock_handle().await.ok()?;
+        Some(Self::Sqlite(SqliteHandle(locked.as_raw_handle())))
+      }
       _ => None,
     }
   }
@@ -85,6 +104,7 @@ impl Terminator {
       match self {
         Self::MySql(pool, sql) => pool.execute(sql.as_str()).await.map(drop),
         Self::Postgres(pool, sql) => pool.execute(sql.as_str()).await.map(drop),
+        Self::Sqlite(_) => Ok(()),
       }
     })
     .await;
@@ -108,6 +128,12 @@ impl Drop for TerminateOnDrop {
     let Some(terminator) = self.terminator.take() else {
       return;
     };
+    if let Terminator::Sqlite(SqliteHandle(handle)) = terminator {
+      // SAFETY: 守卫在执行它的 future 里，排在会话锁与 `SessionEntry` 之后声明、先被丢掉，
+      // 这时连接还在会话里，句柄有效；`sqlite3_interrupt` 可以从任何线程调
+      unsafe { libsqlite3_sys::sqlite3_interrupt(handle.as_ptr()) };
+      return;
+    }
     let Ok(runtime) = tokio::runtime::Handle::try_current() else {
       return;
     };
@@ -118,8 +144,8 @@ impl Drop for TerminateOnDrop {
   }
 }
 
-/// 执行被放弃之后还能不能接着用这条连接。sqlx 的两家网络库不能，见 [`Terminator`]。
-/// SQLite 没有在真库上查过：它的语句排在 sqlx 的工作线程上，没有网络回包可读错位
+/// 执行被放弃之后还能不能接着用这条连接。sqlx 的两家网络库不能，见 [`Terminator`]；
+/// SQLite 被打断之后照常能用
 fn breaks_when_abandoned(connection: &SessionConnection) -> bool {
   matches!(connection, SessionConnection::MySql(_) | SessionConnection::Postgres(_))
 }
@@ -167,6 +193,7 @@ impl SessionRuntime {
 
   /// 上一条语句被放弃了：等服务端结束那条连接，再换一条
   async fn recover_if_abandoned(&mut self, pool: PoolRef<'_>) -> Result<(), QueryError> {
+    self.settle_interrupted().await;
     if !self.in_flight {
       return Ok(());
     }
@@ -177,9 +204,29 @@ impl SessionRuntime {
     self.replace_connection(pool).await
   }
 
+  /// SQLite 被打断的语句停下之后，问它事务还在不在：打断的是写语句时 SQLite
+  /// 自己回滚了整个事务，打断的是读语句时事务还在
+  async fn settle_interrupted(&mut self) {
+    if !self.in_flight || breaks_when_abandoned(&self.connection) {
+      return;
+    }
+    if let SessionConnection::Sqlite(connection) = &mut self.connection {
+      // 拿到句柄要等工作线程空下来，也就是被打断的那条真的停了
+      if let Ok(mut locked) = connection.lock_handle().await {
+        // SAFETY: `lock_handle` 拿着工作线程，这期间没有别人在用这个句柄
+        let autocommit =
+          unsafe { libsqlite3_sys::sqlite3_get_autocommit(locked.as_raw_handle().as_ptr()) };
+        if autocommit != 0 {
+          self.transaction = TransactionState::default();
+        }
+      }
+    }
+    self.in_flight = false;
+  }
+
   /// 语句开始执行。守卫在语句回来之后交给 `statement_returned`
   fn statement_started(&mut self) -> TerminateOnDrop {
-    self.in_flight = breaks_when_abandoned(&self.connection);
+    self.in_flight = breaks_when_abandoned(&self.connection) || self.terminator.is_some();
     TerminateOnDrop {
       terminator: if self.in_flight { self.terminator.clone() } else { None },
       pending: Arc::clone(&self.pending_termination),
@@ -214,7 +261,7 @@ impl SessionRuntime {
   /// 服务端报得出就用服务端的，否则用从语句推出来的。
   /// 上一条被放弃了的话，连接已经结束，事务随之回滚
   fn current_transaction(&self) -> TransactionState {
-    if self.in_flight {
+    if self.in_flight && breaks_when_abandoned(&self.connection) {
       return TransactionState::default();
     }
     self.connection.observed_transaction().unwrap_or_else(|| self.transaction.clone())
@@ -308,7 +355,11 @@ impl QuerySessionState {
   pub async fn transaction(&self, session_id: &str) -> TransactionState {
     let entry = self.sessions.lock().await.get(session_id).cloned();
     match entry {
-      Some(entry) => entry.runtime.lock().await.current_transaction(),
+      Some(entry) => {
+        let mut runtime = entry.runtime.lock().await;
+        runtime.settle_interrupted().await;
+        runtime.current_transaction()
+      }
       None => TransactionState::default(),
     }
   }
@@ -329,7 +380,9 @@ impl QuerySessionState {
       .cloned()
       .collect();
     for entry in entries {
-      if entry.runtime.lock().await.current_transaction().in_transaction() {
+      let mut runtime = entry.runtime.lock().await;
+      runtime.settle_interrupted().await;
+      if runtime.current_transaction().in_transaction() {
         return true;
       }
     }
