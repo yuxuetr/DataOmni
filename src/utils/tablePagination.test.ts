@@ -98,7 +98,18 @@ describe('createTablePaginationOrder', () => {
       .toBe('ORDER BY (SELECT NULL) OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY');
   });
 
-  it('Oracle 没有主键时只按能排序的类型排：有一列 CLOB，整张表就打不开（ORA-22848）', () => {
+  it('Oracle 没有主键的表按 ROWID 翻页：唯一（分区表也是），只在 CLOB 上不同的两行也分得开', () => {
+    const typed = (name: string, dataType: string): ColumnInfo => ({
+      name, data_type: dataType, is_nullable: true, is_primary_key: false
+    });
+    const order = createTablePaginationOrder([typed('lvl', 'VARCHAR2(10)'), typed('msg', 'CLOB')], 'oracle');
+    expect(order.clause).toBe('ORDER BY ROWID');
+    // 伪列不加引号：加了就是一个叫 ROWID 的普通列，ORA-00904
+    expect(createSortedOrderClause(order, { column: 'lvl', direction: 'asc' }, 'oracle'))
+      .toBe('ORDER BY "lvl" ASC, ROWID');
+  });
+
+  it('Oracle 的视图没有主键时只按能排序的类型排：有一列 CLOB，整个视图就打不开（ORA-22848）', () => {
     const typed = (name: string, dataType: string): ColumnInfo => ({
       name, data_type: dataType, is_nullable: true, is_primary_key: false
     });
@@ -111,9 +122,10 @@ describe('createTablePaginationOrder', () => {
       typed('geo', 'SDO_GEOMETRY'), typed('r', 'RAW(16)'), typed('d', 'DATE'),
       typed('ts', 'TIMESTAMP(6) WITH TIME ZONE'), typed('iv', 'INTERVAL YEAR(2) TO MONTH'),
       typed('j', 'JSON'), typed('ok', 'BOOLEAN'), typed('bd', 'BINARY_DOUBLE')
-    ], 'oracle');
+    ], 'oracle', { isView: true });
     expect(order.clause).toBe('ORDER BY "n", "i", "v", "r", "d", "ts", "iv", "j", "ok", "bd"');
-    const none = createTablePaginationOrder([typed('c', 'CLOB')], 'oracle');
+    // 聚合视图取不了 ROWID（ORA-01446），所以视图不用它
+    const none = createTablePaginationOrder([typed('c', 'CLOB')], 'oracle', { isView: true });
     expect(none.clause).toBe('');
     expect(pageClause(none.clause, 50, 0, 'oracle')).toBe('OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY');
   });

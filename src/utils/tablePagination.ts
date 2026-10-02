@@ -10,6 +10,7 @@ export type TablePaginationOrderStrategy =
   | 'primary-key'
   | 'sqlite-rowid'
   | 'postgres-ctid'
+  | 'oracle-rowid'
   | 'all-columns';
 
 export interface TablePaginationOrder {
@@ -87,7 +88,13 @@ export function createTablePaginationOrder(
       : { clause: '', strategy: 'all-columns', columns: [], stableAcrossChanges: false };
   }
 
-  // Oracle 同理（CLOB / BLOB / VECTOR 是 ORA-22848，XMLTYPE 与对象类型 ORA-22950，LONG ORA-00997）。
+  // Oracle 的表有 ROWID：唯一（分区表、外部表上也取得到），只在 CLOB 上不同的两行按全部列排是并列的，
+  // 跨页边界时重复或漏掉。视图不用它：聚合视图取不了（ORA-01446）
+  if (dialect === 'oracle' && !isView) {
+    return { clause: 'ORDER BY ROWID', strategy: 'oracle-rowid', columns: ['ROWID'], stableAcrossChanges: false };
+  }
+
+  // Oracle 的视图同 SQL Server（CLOB / BLOB / VECTOR 是 ORA-22848，XMLTYPE 与对象类型 ORA-22950，LONG ORA-00997）。
   // 对象类型的名字是用户起的、列不全，这里反过来按白名单；不写 ORDER BY 也合法
   if (dialect === 'oracle') {
     const sortable = columns
@@ -159,9 +166,10 @@ export function createSortedOrderClause(
     if (column === sort.column) {
       continue;
     }
-    // rowid / ctid 是伪列，createTablePaginationOrder 生成时就没加引号
+    // rowid / ctid / ROWID 是伪列，createTablePaginationOrder 生成时就没加引号
     const isPseudoColumn = paginationOrder.strategy === 'sqlite-rowid'
-      || paginationOrder.strategy === 'postgres-ctid';
+      || paginationOrder.strategy === 'postgres-ctid'
+      || paginationOrder.strategy === 'oracle-rowid';
     terms.push(isPseudoColumn ? column : quoteSqlIdentifier(column, dialect));
   }
 
