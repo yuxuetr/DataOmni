@@ -924,6 +924,15 @@
     - 没修：经 pgbouncer 改了表结构之后，同一句查询报 `cached plan must not change result type`。pgbouncer 在服务端按原文缓存预备语句，
       我们发的 Close 只关掉它那边的名字映射（pgbouncer 文档里写着这条限制）。重估条件：有人经连接池用结构编辑后报这个错，
       届时考虑让 PG 的查询不走具名语句。Supabase 的 Supavisor 本身没验，只验了 pgbouncer。
+  - 2026-10-02 事务开着时服务端断开连接（PG 的 `idle_in_transaction_session_timeout`，托管库常设；MySQL 的 `wait_timeout`；
+    被结束、重启、掉线同理）：**标签页一直卡住**（`c95be77`）。状态停在「事务失败 / 事务中」，`ROLLBACK` 与之后每一条都报连接已断，
+    只能关掉标签页。会话在事务里不换连接是对的，可「连接没了」也没记下来。现在会话连接报出连接已断时记下：事务报无事务，
+    下一条之前换连接。服务端说完就断开的也算：MySQL 的 4031（SQLSTATE 只是 HY000）、PG 的 FATAL / PANIC（建连时的认证、库不存在、
+    连接数满不算），原话留在消息里。CockroachDB 的闲置事务超时报 ERROR 级的 XXUUU 再断开，第二条才认出来。用例旧代码在 PG 16（Failed）
+    与 MySQL 8.4（Active）上红，PG 16、MySQL 8.4、MariaDB、TiDB、CockroachDB 过（openGauss 没有这个参数，没跑）；cu 上冒烟 94 条全过。
+    前端两处：出错那一行在事务没了时说清整个事务回滚了（`4648370`，原来只在取消 / 超时时问），执行成功就清掉「连接已断开」
+    （`f78bed7`，原来只在重连时清，换了连接照常能跑却还摆着重连按钮）。打包版 rpm 0.4.84 / 0.4.85 在 PG 16 上看过。
+    没改：断开的提示仍写「请重新连接后再试」——会话自己会换连接，但池整个断了（网络没了）时这句仍对。
   - 2026-10-02 同一轮看过、没修的：
     - PostgreSQL 库编码是 `SQL_ASCII`、里面存着 GBK 字节：服务端在转成 UTF8 时就报 22021（psql 设成 UTF8 客户端编码报同一句），
       sqlx 写死 `client_encoding=UTF8`，没有开关。重估条件：有人拿着这样的老库来。
