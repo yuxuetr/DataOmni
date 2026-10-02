@@ -1162,6 +1162,42 @@ async fn sql_server_session_transaction_state_follows_the_server() {
   assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Idle);
 }
 
+/// 事务开着时会话被服务端结束（DBA `KILL`、故障转移、网络断开）：状态栏要回到
+/// 无事务，下一条语句换一条连接照常跑，而不是一直报连接已断
+#[tokio::test]
+async fn sql_server_session_recovers_after_the_server_kills_it_mid_transaction() {
+  let Some(pool) = pool().await else { return };
+  write_fixture(&pool).await;
+  let sessions = QuerySessionState::default();
+  let id = "sql-server-killed";
+
+  run_in(&sessions, &pool, id, "BEGIN TRANSACTION", true).await.expect("begin");
+  run_in(&sessions, &pool, id, "UPDATE dbo.dataomni_write SET note = N'x' WHERE id = 1", true)
+    .await
+    .expect("update");
+  let mut spid = String::new();
+  sessions
+    .execute_streaming(session_options(&pool, id, "SELECT @@SPID AS spid", true), &mut |batch| {
+      spid = batch.rows[0].get("spid").map(text).unwrap_or_default();
+      Ok(())
+    })
+    .await
+    .expect("spid");
+  run_all(&pool, &[&format!("KILL {spid}")]).await;
+
+  let error = run_in(&sessions, &pool, id, "SELECT 1 AS one", true).await.expect_err("killed");
+  assert_eq!(
+    sessions.transaction(id).await.status,
+    TransactionStatus::Idle,
+    "连接没了，事务也就没了：{error:?}"
+  );
+  run_in(&sessions, &pool, id, "SELECT 1 AS one", true).await.expect("下一条换一条连接照常跑");
+  let notes =
+    pool.select("SELECT note FROM dbo.dataomni_write WHERE id = 1", &[]).await.expect("n");
+  assert_eq!(notes[0]["note"], JsonValue::Null, "服务端回滚了事务");
+  sessions.release(id).await;
+}
+
 /// SQL Server 的读已提交是加锁读：编辑器里开着一个改过这张表的事务时，表数据页
 /// 的查询会一直等。等满了要报出来，而不是让界面停在「加载中」。
 #[tokio::test]

@@ -978,6 +978,59 @@ async fn oracle_session_transactions_follow_the_server_and_the_autocommit_switch
   run_in(&sessions, &pool, id, "DROP TABLE om_tx_ddl PURGE", true).await;
 }
 
+/// 事务开着时会话被服务端结束（DBA `ALTER SYSTEM KILL SESSION`、profile 的 `IDLE_TIME`、
+/// 网络断开）：状态栏要回到无事务，下一条换一条连接照常跑，而不是一直报错。
+///
+/// 结束会话要 `ALTER SYSTEM` 权限，测试用户没有就跳过
+#[tokio::test]
+async fn oracle_session_recovers_after_the_server_kills_it_mid_transaction() {
+  use dataomni_lib::services::TransactionStatus;
+  let Some(pool) = pool().await else { return };
+  write_fixture(&pool).await;
+  let sessions = QuerySessionState::default();
+  let id = "oracle-killed";
+
+  run_in(&sessions, &pool, id, "UPDATE om_write SET note = 'x' WHERE id = 1", false).await;
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Active);
+  let mut target = String::new();
+  sessions
+    .execute_streaming(
+      session_options(
+        &pool,
+        id,
+        "SELECT sid || ',' || serial# AS \"target\" FROM v$session \
+         WHERE sid = SYS_CONTEXT('USERENV', 'SID')",
+        false,
+      ),
+      &mut |batch| {
+        target = batch.rows[0].get("target").map(text).unwrap_or_default();
+        Ok(())
+      },
+    )
+    .await
+    .expect("sid");
+  let mut killer = session(&pool).await;
+  if let Err(error) = killer.execute(&format!("ALTER SYSTEM KILL SESSION '{target}'"), 10).await {
+    eprintln!("跳过：结束不了会话（{error:?}）");
+    return;
+  }
+
+  let error = sessions
+    .execute_streaming(session_options(&pool, id, "SELECT 1 FROM dual", false), &mut |_| Ok(()))
+    .await
+    .expect_err("killed");
+  assert_eq!(
+    sessions.transaction(id).await.status,
+    TransactionStatus::Idle,
+    "连接没了，事务也就没了：{error:?}"
+  );
+  run_in(&sessions, &pool, id, "SELECT 1 FROM dual", false).await;
+  let notes = pool.select("SELECT note FROM om_write WHERE id = 1", &[]).await.expect("n");
+  assert_eq!(notes[0]["NOTE"], JsonValue::Null, "服务端回滚了事务");
+  run_in(&sessions, &pool, id, "ROLLBACK", true).await;
+  sessions.release(id).await;
+}
+
 // ---------------------------------------------------------------------------
 // 第三阶段：执行计划、整表导出、CSV 导入、改结构
 // ---------------------------------------------------------------------------
