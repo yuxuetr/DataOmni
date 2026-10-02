@@ -501,8 +501,9 @@ impl Default for ConnectionProfile {
   }
 }
 
-/// URL 里的主机。IPv6 地址加方括号（与 `http_endpoint` 同一个判断），已经写了方括号的照原样
-fn url_host(host: &str) -> std::borrow::Cow<'_, str> {
+/// URL（与 Oracle 的 Easy Connect 串）里的主机。IPv6 地址加方括号（与 `http_endpoint` 同一个判断），
+/// 已经写了方括号的照原样
+pub(crate) fn url_host(host: &str) -> std::borrow::Cow<'_, str> {
   match host.parse::<std::net::Ipv6Addr>() {
     Ok(address) => std::borrow::Cow::Owned(format!("[{address}]")),
     Err(_) => std::borrow::Cow::Borrowed(host),

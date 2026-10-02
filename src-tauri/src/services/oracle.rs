@@ -211,9 +211,10 @@ pub struct OracleTarget {
 impl OracleTarget {
   pub fn from_profile(profile: &ConnectionProfile) -> Self {
     Self {
+      // IPv6 地址不加方括号是 ORA-12262「Could not resolve hostname」
       connect_string: format!(
         "//{}:{}/{}",
-        profile.host,
+        crate::models::url_host(&profile.host),
         profile.port,
         profile.database.as_deref().unwrap_or("")
       ),
@@ -1260,6 +1261,22 @@ fn query_error(error: &oracle::Error, sql: Option<&str>) -> QueryError {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn easy_connect_brackets_ipv6_hosts() {
+    let target = |host: &str| {
+      OracleTarget::from_profile(&ConnectionProfile {
+        host: host.to_string(),
+        port: 1521,
+        database: Some("FREEPDB1".to_string()),
+        ..ConnectionProfile::default()
+      })
+      .connect_string
+    };
+    assert_eq!(target("::1"), "//[::1]:1521/FREEPDB1");
+    assert_eq!(target("[::1]"), "//[::1]:1521/FREEPDB1");
+    assert_eq!(target("db.example.com"), "//db.example.com:1521/FREEPDB1");
+  }
 
   #[test]
   fn numbers_keep_their_declared_scale_and_a_leading_zero() {
