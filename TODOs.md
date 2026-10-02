@@ -806,6 +806,10 @@
     打包版（rpm 0.4.69）：结构页改列名加改类型（int → bigint）后切到数据页，新列名、新类型、值都在；另一个会话 `LOCK TABLE … ACCESS EXCLUSIVE`
     让取数超时，页面只剩超时横幅，解锁后刷新恢复。`database_smoke` 82 条（两条备份用例与其它并行时照旧撞表，单独跑过）。
     看到没修的：取数失败后工具栏的「N 行」仍是上次缓存的行数。
+    同一个问题逐个库查过（同一条连接上 `SELECT *`、改结构、再 `SELECT *`）：**SQLite 更糟，已修**（`7207ebc`）——SQLite 自己重新准备语句，
+    sqlx 却按缓存里旧的列数取值，加一列之后 sqlx-sqlite 的工作线程下标越界 panic、这一句返回空结果；同样 describe 前清缓存（本机，没有往返）。
+    MySQL（服务端重新准备并重发列定义）与 Oracle 23ai（OCI 自己重新描述，`07e7306`）本来就对，各有一条用例钉住；
+    DuckDB 每次现准备、SQL Server 与 ClickHouse 不缓存语句，不涉及。
 
   - 还不能勾：Windows——构建要改 `src-tauri/Cargo.toml` 且需 Windows 开发环境，这一轮不处理。
 
