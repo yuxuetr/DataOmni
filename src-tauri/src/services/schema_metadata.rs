@@ -161,6 +161,8 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
 ///   缺的读出来是 NULL。openGauss 的计算列记在 `pg_attrdef.adgencol = 's'`。
 /// - 不用 `LATERAL` / `WITH ORDINALITY`（PG 9.3 / 9.4 起才有）：集合返回函数放进子查询的
 ///   选择列表里，PostgreSQL、CockroachDB、openGauss 三家都认。
+/// - 不和 `''` 比：openGauss 默认建的库是 A 模式（Oracle 语义），`''` 就是 NULL，
+///   `COALESCE(x, '') <> ''` 恒为 NULL。点名取值，再整体兜成 false。
 const POSTGRES_COLUMNS: &str = r#"
 SELECT
   a.attname::text AS column_name,
@@ -169,9 +171,9 @@ SELECT
   pg_get_expr(d.adbin, d.adrelid)::text AS column_default,
   (pk.ord IS NOT NULL) AS is_primary_key,
   pk.ord::int AS primary_key_ordinal,
-  (COALESCE(row_to_json(a)->>'attidentity', '') <> ''
-    OR COALESCE(row_to_json(a)->>'attgenerated', '') <> ''
-    OR COALESCE(row_to_json(d)->>'adgencol', '') = 's') AS is_generated,
+  COALESCE(row_to_json(a)->>'attidentity' IN ('a', 'd')
+    OR row_to_json(a)->>'attgenerated' IN ('s', 'v')
+    OR row_to_json(d)->>'adgencol' = 's', false) AS is_generated,
   CASE row_to_json(a)->>'attidentity' WHEN 'a' THEN 'ALWAYS' WHEN 'd' THEN 'BY DEFAULT' END
     AS identity_generation,
   (COALESCE(CASE WHEN ic.collation_schema::text <> 'pg_catalog' THEN quote_ident(ic.collation_schema::text) || '.' END, '')
