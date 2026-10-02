@@ -4,10 +4,12 @@ use crate::services::{
   transaction_state::TransactionState, QueryError, QueryExecutionResult, QueryExecutionSummary,
   QueryResultBatch, SessionConnection, StreamOptions, QUERY_TIMEOUT_CODE,
 };
+use sqlx::Executor;
 use std::{collections::HashMap, sync::Arc};
 use tauri_plugin_sql::DbPool;
 use tokio::{
   sync::Mutex,
+  task::JoinHandle,
   time::{timeout, Duration},
 };
 
@@ -25,6 +27,101 @@ struct SessionRuntime {
   connection: SessionConnection,
   transaction: TransactionState,
   last_used: std::time::Instant,
+  /// 怎么在服务端结束这条连接；问不到编号时是 `None`
+  terminator: Option<Terminator>,
+  /// 一条语句开始了还没回来。锁已经放开时它还是 true，就是执行的 future 被丢掉了（超时、取消）
+  in_flight: bool,
+  pending_termination: PendingTermination,
+}
+
+/// 被放弃的语句在服务端停下了没有。下一条语句先等它：不然换上的新连接可能
+/// 撞上旧连接还拿着的行锁
+type PendingTermination = Arc<std::sync::Mutex<Option<JoinHandle<()>>>>;
+
+/// 另取池里一条连接，结束一条 sqlx 会话连接（PostgreSQL、MySQL）。
+///
+/// 丢掉执行的 future 时服务端并不知道：点了取消的 `UPDATE` 照样跑完、提交
+/// （PostgreSQL 16、MySQL 8.4 实测）。连接上还留着它没读完的回包——PostgreSQL 的
+/// 下一条要等它跑完，MySQL 的下一条读到残包，报协议错或者给出 0 行。所以结束的是
+/// 整条连接而不只是那条语句：它反正不能再用，服务端随之回滚它上面的事务，
+/// 与状态栏上「事务没了」一致。SQL Server、Oracle、ClickHouse 各自在驱动里处理
+#[derive(Clone)]
+enum Terminator {
+  MySql(sqlx::MySqlPool, String),
+  Postgres(sqlx::PgPool, String),
+}
+
+/// 发结束语句要先从池里取一条连接，池满时会等；等不到就算了，下一条语句照样换连接
+const TERMINATE_LIMIT: Duration = Duration::from_secs(10);
+
+impl Terminator {
+  /// 问这条连接在服务端的编号。问不到就只换连接、不停服务端那条——
+  /// 不为了这个让整个会话开不起来
+  async fn for_connection(connection: &mut SessionConnection, pool: PoolRef<'_>) -> Option<Self> {
+    match (connection, pool) {
+      (SessionConnection::MySql(connection), PoolRef::Sqlx(DbPool::MySql(pool))) => {
+        let id: String = sqlx::query_scalar("SELECT CAST(CONNECTION_ID() AS CHAR)")
+          .fetch_one(&mut **connection)
+          .await
+          .ok()?;
+        let id: u64 = id.parse().ok()?;
+        Some(Self::MySql(pool.clone(), format!("KILL {id}")))
+      }
+      // openGauss 的编号是线程号，超出 int4，按文本取
+      (SessionConnection::Postgres(connection), PoolRef::Sqlx(DbPool::Postgres(pool))) => {
+        let pid: String = sqlx::query_scalar("SELECT pg_backend_pid()::text")
+          .fetch_one(&mut **connection)
+          .await
+          .ok()?;
+        let pid: u64 = pid.parse().ok()?;
+        Some(Self::Postgres(pool.clone(), format!("SELECT pg_terminate_backend({pid})")))
+      }
+      _ => None,
+    }
+  }
+
+  async fn run(self) {
+    let _ = timeout(TERMINATE_LIMIT, async {
+      match self {
+        Self::MySql(pool, sql) => pool.execute(sql.as_str()).await.map(drop),
+        Self::Postgres(pool, sql) => pool.execute(sql.as_str()).await.map(drop),
+      }
+    })
+    .await;
+  }
+}
+
+/// 执行期间拿着；没走到 `finish` 就被丢掉时，在服务端结束那条连接
+struct TerminateOnDrop {
+  terminator: Option<Terminator>,
+  pending: PendingTermination,
+}
+
+impl TerminateOnDrop {
+  fn finish(mut self) {
+    self.terminator = None;
+  }
+}
+
+impl Drop for TerminateOnDrop {
+  fn drop(&mut self) {
+    let Some(terminator) = self.terminator.take() else {
+      return;
+    };
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+      return;
+    };
+    let handle = runtime.spawn(terminator.run());
+    if let Ok(mut pending) = self.pending.lock() {
+      *pending = Some(handle);
+    }
+  }
+}
+
+/// 执行被放弃之后还能不能接着用这条连接。sqlx 的两家网络库不能，见 [`Terminator`]。
+/// SQLite 没有在真库上查过：它的语句排在 sqlx 的工作线程上，没有网络回包可读错位
+fn breaks_when_abandoned(connection: &SessionConnection) -> bool {
+  matches!(connection, SessionConnection::MySql(_) | SessionConnection::Postgres(_))
 }
 
 /// 会话连接空闲超过这么久，下一条语句之前先问一句它还在不在。
@@ -45,6 +142,55 @@ struct SessionEntry {
 }
 
 impl SessionRuntime {
+  async fn open(pool: PoolRef<'_>) -> Result<Self, QueryError> {
+    let mut connection = SessionConnection::acquire(pool).await?;
+    let terminator = Terminator::for_connection(&mut connection, pool).await;
+    Ok(Self {
+      connection,
+      transaction: TransactionState::default(),
+      last_used: std::time::Instant::now(),
+      terminator,
+      in_flight: false,
+      pending_termination: PendingTermination::default(),
+    })
+  }
+
+  /// 换一条新连接。旧连接上的会话变量（SET @x、search_path）与事务随它一起没了
+  async fn replace_connection(&mut self, pool: PoolRef<'_>) -> Result<(), QueryError> {
+    let fresh = Self::open(pool).await?;
+    std::mem::replace(&mut self.connection, fresh.connection).discard();
+    self.terminator = fresh.terminator;
+    self.transaction = TransactionState::default();
+    self.in_flight = false;
+    Ok(())
+  }
+
+  /// 上一条语句被放弃了：等服务端结束那条连接，再换一条
+  async fn recover_if_abandoned(&mut self, pool: PoolRef<'_>) -> Result<(), QueryError> {
+    if !self.in_flight {
+      return Ok(());
+    }
+    let pending = self.pending_termination.lock().ok().and_then(|mut pending| pending.take());
+    if let Some(handle) = pending {
+      let _ = handle.await;
+    }
+    self.replace_connection(pool).await
+  }
+
+  /// 语句开始执行。守卫在语句回来之后交给 `statement_returned`
+  fn statement_started(&mut self) -> TerminateOnDrop {
+    self.in_flight = breaks_when_abandoned(&self.connection);
+    TerminateOnDrop {
+      terminator: if self.in_flight { self.terminator.clone() } else { None },
+      pending: Arc::clone(&self.pending_termination),
+    }
+  }
+
+  fn statement_returned(&mut self, guard: TerminateOnDrop) {
+    guard.finish();
+    self.in_flight = false;
+  }
+
   /// 关掉自动提交时，不在事务里就先开一个。
   ///
   /// 只在语句本身与事务无关时补：用户自己写的 `BEGIN` 不需要前面再来一条，
@@ -65,8 +211,12 @@ impl SessionRuntime {
     Ok(())
   }
 
-  /// 服务端报得出就用服务端的，否则用从语句推出来的
+  /// 服务端报得出就用服务端的，否则用从语句推出来的。
+  /// 上一条被放弃了的话，连接已经结束，事务随之回滚
   fn current_transaction(&self) -> TransactionState {
+    if self.in_flight {
+      return TransactionState::default();
+    }
     self.connection.observed_transaction().unwrap_or_else(|| self.transaction.clone())
   }
 
@@ -131,7 +281,10 @@ impl QuerySessionState {
 
     timeout(timeout_duration, async {
       let mut runtime = entry.runtime.lock().await;
+      runtime.recover_if_abandoned(pool.into()).await?;
+      let guard = runtime.statement_started();
       let result = runtime.connection.execute(sql, row_limit).await;
+      runtime.statement_returned(guard);
       runtime.record(sql, result.is_ok());
       result
     })
@@ -199,18 +352,17 @@ impl QuerySessionState {
 
     timeout(options.timeout_duration, async {
       let mut runtime = entry.runtime.lock().await;
+      runtime.recover_if_abandoned(options.pool).await?;
       let idle = runtime.last_used.elapsed();
       if should_revalidate(idle, runtime.current_transaction().in_transaction())
         && !runtime.connection.responds_within(PING_LIMIT).await
       {
-        // 旧连接上的会话变量（SET @x、search_path）随它一起没了——连接本来就死了，
-        // 留着它也拿不回来
-        let fresh = SessionConnection::acquire(options.pool).await?;
-        std::mem::replace(&mut runtime.connection, fresh).discard();
-        runtime.transaction = TransactionState::default();
+        // 连接本来就死了，上面的会话变量留着它也拿不回来
+        runtime.replace_connection(options.pool).await?;
       }
       runtime.last_used = std::time::Instant::now();
       runtime.begin_if_needed(options.autocommit, options.sql).await?;
+      let guard = runtime.statement_started();
       let result = runtime
         .connection
         .execute_streaming(
@@ -227,6 +379,7 @@ impl QuerySessionState {
           sink,
         )
         .await;
+      runtime.statement_returned(guard);
       runtime.record(options.sql, result.is_ok());
       result
     })
@@ -249,14 +402,9 @@ impl QuerySessionState {
       return Ok(entry);
     }
 
-    let connection = SessionConnection::acquire(pool).await?;
     let entry = Arc::new(SessionEntry {
       pool_key: pool_key.to_string(),
-      runtime: Mutex::new(SessionRuntime {
-        connection,
-        transaction: TransactionState::default(),
-        last_used: std::time::Instant::now(),
-      }),
+      runtime: Mutex::new(SessionRuntime::open(pool).await?),
     });
     let mut sessions = self.sessions.lock().await;
     Ok(sessions.entry(session_id.to_string()).or_insert_with(|| entry.clone()).clone())

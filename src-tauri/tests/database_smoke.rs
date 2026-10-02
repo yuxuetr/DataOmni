@@ -5876,3 +5876,118 @@ async fn postgres_structure_edit_changes_a_column_type_through_the_write_batch()
   assert!(split.is_ok(), "改类型加设非空: {split:?}");
   assert_eq!(stored, ("7".into(), "x".into()));
 }
+
+/// 超时与取消是同一条路：丢掉执行的 future。被放弃的那条还在服务端跑——
+/// 一条点了取消的 `UPDATE` 照样提交；连接上也还留着它没读完的回包：
+/// PostgreSQL 的下一条要等它跑完，MySQL 的下一条读到它的残包，报协议错或给出 0 行
+async fn assert_abandoned_statement_stops_on_the_server(
+  db_pool: &DbPool,
+  url: &str,
+  read_value: impl std::future::Future<Output = i64>,
+  slow_update: &'static str,
+) {
+  let sessions = QuerySessionState::default();
+  let options = |sql: &'static str, timeout_ms: u64| StreamingQueryOptions {
+    session_id: "abandoned",
+    pool_key: url,
+    pool: db_pool.into(),
+    sql,
+    autocommit: true,
+    explain_plan: false,
+    row_limit: 100,
+    byte_limit: 1 << 20,
+    batch_size: 10,
+    timeout_duration: Duration::from_millis(timeout_ms),
+  };
+  sessions.execute_streaming(options("SELECT 1", 20_000), &mut |_| Ok(())).await.expect("warm up");
+  let started = std::time::Instant::now();
+  // 超时放宽到秒级：到 cu 的链路一个往返几百毫秒，太短的话死在预处理那一步，语句根本没发出去
+  let error = sessions
+    .execute_streaming(options(slow_update, 2_500), &mut |_| Ok(()))
+    .await
+    .expect_err("该超时");
+  assert_eq!(error.code.as_deref(), Some(QUERY_TIMEOUT_CODE));
+
+  let mut rows = Vec::new();
+  sessions
+    .execute_streaming(options("SELECT 42 AS answer", 20_000), &mut |batch| {
+      rows.extend(batch.rows);
+      Ok(())
+    })
+    .await
+    .expect("下一条照常能跑");
+  assert_eq!(rows.len(), 1, "下一条读到的是被放弃那条的残包");
+  // MySQL 的 bigint 带着类型回来（`{"type":"bigint","value":"42"}`）
+  let answer = rows[0].get("answer").map(ToString::to_string).unwrap_or_default();
+  assert!(answer.contains("42"), "下一条读回 {answer}");
+  assert!(started.elapsed() < Duration::from_secs(8), "下一条等到了被放弃的那条跑完");
+
+  // 那条 UPDATE 睡 8 秒；过了这个点它若还活着就已经提交了
+  tokio::time::sleep(Duration::from_secs(10).saturating_sub(started.elapsed())).await;
+  assert_eq!(read_value.await, 0, "放弃了的 UPDATE 在服务端照样跑完、提交了");
+  sessions.release("abandoned").await;
+}
+
+#[tokio::test]
+async fn postgres_abandoned_statement_stops_on_the_server() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(3).connect(&url).await.expect("connect to PostgreSQL");
+  sqlx::raw_sql(
+    "DROP TABLE IF EXISTS om_abandoned; CREATE TABLE om_abandoned (id int PRIMARY KEY, v int NOT NULL); \
+     INSERT INTO om_abandoned VALUES (1, 0)",
+  )
+  .execute(&pool)
+  .await
+  .expect("create om_abandoned");
+  let reader = pool.clone();
+  assert_abandoned_statement_stops_on_the_server(
+    &DbPool::Postgres(pool.clone()),
+    &url,
+    async move {
+      // CockroachDB 的 int 是 INT8
+      sqlx::query_scalar::<_, String>("SELECT v::text FROM om_abandoned WHERE id = 1")
+        .fetch_one(&reader)
+        .await
+        .expect("read om_abandoned")
+        .parse()
+        .expect("v is a number")
+    },
+    "UPDATE om_abandoned SET v = (SELECT 1 FROM pg_sleep(8)) WHERE id = 1",
+  )
+  .await;
+  sqlx::query("DROP TABLE om_abandoned").execute(&pool).await.expect("drop om_abandoned");
+}
+
+#[tokio::test]
+async fn mysql_abandoned_statement_stops_on_the_server() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(3).connect(&url).await.expect("connect to MySQL");
+  sqlx::raw_sql(
+    "DROP TABLE IF EXISTS om_abandoned; CREATE TABLE om_abandoned (id int PRIMARY KEY, v int NOT NULL); \
+     INSERT INTO om_abandoned VALUES (1, 0)",
+  )
+  .execute(&pool)
+  .await
+  .expect("create om_abandoned");
+  let reader = pool.clone();
+  assert_abandoned_statement_stops_on_the_server(
+    &DbPool::MySql(pool.clone()),
+    &url,
+    async move {
+      sqlx::query_scalar::<_, i32>("SELECT v FROM om_abandoned WHERE id = 1")
+        .fetch_one(&reader)
+        .await
+        .expect("read om_abandoned")
+        .into()
+    },
+    "UPDATE om_abandoned SET v = 1 + SLEEP(8) * 0 WHERE id = 1",
+  )
+  .await;
+  sqlx::query("DROP TABLE om_abandoned").execute(&pool).await.expect("drop om_abandoned");
+}
