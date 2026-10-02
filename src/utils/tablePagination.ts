@@ -65,11 +65,13 @@ export function createTablePaginationOrder(
     };
   }
 
+  // ctid 只在一张物理表里唯一：从分区表或继承的父表读时，各个子表的 ctid 各自从 (0,1)
+  // 数起，并列的行跨页边界时重复或漏掉。前面加 tableoid（系统列，用户列不能叫这个名字）
   if (dialect === 'postgresql') {
     return {
-      clause: 'ORDER BY ctid',
+      clause: 'ORDER BY tableoid, ctid',
       strategy: 'postgres-ctid',
-      columns: ['ctid'],
+      columns: ['tableoid', 'ctid'],
       stableAcrossChanges: false
     };
   }

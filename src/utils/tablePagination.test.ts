@@ -41,8 +41,10 @@ describe('createTablePaginationOrder', () => {
       .toBe('ORDER BY rowid');
     expect(createTablePaginationOrder([column('rowid'), column('value')], 'sqlite').clause)
       .toBe('ORDER BY _rowid_');
+    // 只按 ctid 不够：从分区表（或继承的父表）读时各个子表的 ctid 各自从 (0,1) 数起，
+    // 实测 2 个分区 6 行只有 3 个不同的 ctid，并列的行跨页边界时会重复或漏掉。加上 tableoid 才唯一
     expect(createTablePaginationOrder([column('value')], 'postgresql').clause)
-      .toBe('ORDER BY ctid');
+      .toBe('ORDER BY tableoid, ctid');
   });
 
   it('视图没有 rowid / ctid：不排序，按数据库默认次序翻页', () => {
@@ -58,7 +60,7 @@ describe('createTablePaginationOrder', () => {
     }
     // 物化视图是堆表，有 ctid：仍按表处理（调用方只对普通视图传 isView）
     expect(createTablePaginationOrder([column('value')], 'postgresql', { isView: false }).clause)
-      .toBe('ORDER BY ctid');
+      .toBe('ORDER BY tableoid, ctid');
   });
 
   it('DuckDB 的表同样按 rowid 翻页；只有这一个别名，被列名占了就退回全部列', () => {
@@ -159,7 +161,7 @@ describe('用户排序与分页排序的合并', () => {
     ] as ColumnInfo[];
     const order = createTablePaginationOrder(noPrimaryKey, 'postgresql');
     expect(createSortedOrderClause(order, { column: 'city', direction: 'asc' }, 'postgresql'))
-      .toBe('ORDER BY "city" ASC, ctid');
+      .toBe('ORDER BY "city" ASC, tableoid, ctid');
   });
 
   it('没有主键时 SQLite 用 rowid 决胜，且不加引号', () => {
