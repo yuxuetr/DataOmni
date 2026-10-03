@@ -361,7 +361,7 @@ pub(crate) fn mongodump_command(
       None => (profile.host.as_str(), profile.port),
     };
     parameters.push("directConnection=true".into());
-    format!("mongodb://{host}:{port}/")
+    format!("mongodb://{}:{port}/", crate::models::url_host(host))
   };
   let auth_source = profile.database.as_deref().filter(|database| !database.is_empty());
   let username = profile.mongo_username();
@@ -726,6 +726,16 @@ mod tests {
       "mongodb://127.0.0.1:40123/?directConnection=true&authMechanism=MONGODB-X509&authSource=%24external\
        &tls=true&tlsCAFile=%2Fcerts%2Fmy%20ca.pem&tlsCertificateKeyFile=%2Fcerts%2Fclient.pem"
     );
+  }
+
+  /// IPv6 的地址在 URI 里要方括号，不然 mongodump 报 `too many colons in address`（mongo:8.0 上验过）
+  #[test]
+  fn an_ipv6_mongodump_host_is_bracketed() {
+    let mut profile = mongo_profile();
+    profile.host = "::1".into();
+    let command =
+      mongodump_command(Path::new("/x/mongodump"), &profile, "shop", None, Path::new("/tmp/o"));
+    assert!(uri_of(&command).starts_with("mongodb://[::1]:27018/?"), "{}", uri_of(&command));
   }
 
   /// SRV 交给工具解析；没填认证库时不写，TXT 里的 authSource 才生效。Required 只加密不校验
