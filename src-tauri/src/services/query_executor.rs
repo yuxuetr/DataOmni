@@ -720,8 +720,20 @@ fn mysql_column_metadata(description: &sqlx::Describe<MySql>) -> Vec<QueryColumn
     .collect()
 }
 
-/// MySQL 的预处理协议不收这条语句（1295）：8.4 上试过的有 `CHECK TABLE`、`SHOW WARNINGS`、
-/// `LOCK TABLES` / `UNLOCK TABLES`、`HELP`、`HANDLER`、`XA`。`USE` 也是，但它在前面就被拒了
+/// MySQL 8.4 上 prepare 报 1295 的那几种，不先 prepare 直接走文本协议。
+///
+/// 先试一下再退回不行：`SHOW WARNINGS` 说的是上一条语句，那次失败的 prepare 本身就成了「上一条」，
+/// 用户看到的是 1295 而不是自己那条的警告。`USE` 也报 1295，但它在前面就被拒了
+fn refused_by_prepared_protocol(sql: &str) -> bool {
+  let (first, second) = crate::services::transaction_state::leading_keywords(sql);
+  matches!(first.as_str(), "LOCK" | "UNLOCK" | "HELP" | "HANDLER" | "XA")
+    || matches!(
+      (first.as_str(), second.as_str()),
+      ("CHECK", "TABLE") | ("SHOW", "WARNINGS" | "ERRORS" | "COUNT")
+    )
+}
+
+/// 上面那张表没列到、prepare 时报了 1295 的，同样退回文本协议
 fn unsupported_by_prepared_protocol(error: &sqlx::Error) -> bool {
   const ER_UNSUPPORTED_PS: u16 = 1295;
   error
@@ -743,6 +755,10 @@ async fn execute_mysql_connection_streaming(
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
+  if refused_by_prepared_protocol(sql) {
+    refuse_non_query(options.non_query)?;
+    return stream_mysql_undescribed(connection, sql, options, sink, false).await;
+  }
   let column_metadata = match (&mut *connection).describe(sql).await {
     Err(error) if unsupported_by_prepared_protocol(&error) => {
       refuse_non_query(options.non_query)?;

@@ -3513,6 +3513,9 @@ async fn mysql_runs_what_the_prepared_protocol_refuses_as_plain_text() {
   let opened = execute_query(&db, "HANDLER om_check OPEN").await;
   let read = execute_query(&db, "HANDLER om_check READ FIRST").await;
   let closed = execute_query(&db, "HANDLER om_check CLOSE").await;
+  // SHOW WARNINGS 说的是上一条语句：先 prepare 失败的那一下不能把它顶掉
+  execute_query(&db, "SELECT 1 / 0 AS x").await.expect("division by zero only warns");
+  let warnings = execute_query(&db, "SHOW WARNINGS").await;
   sqlx::raw_sql("DROP TABLE om_check").execute(&pool).await.expect("drop table");
   assert!(opened.is_ok() && closed.is_ok(), "HANDLER OPEN / CLOSE: {opened:?} {closed:?}");
   let QueryExecutionResult::Rows { rows: handler_rows, .. } = read.expect("HANDLER READ runs")
@@ -3523,6 +3526,12 @@ async fn mysql_runs_what_the_prepared_protocol_refuses_as_plain_text() {
   assert_eq!(handler_rows[0]["amount"]["value"], "12345678901234567890.0123456789");
   assert_eq!(handler_rows[0]["at"]["value"], "2026-10-03 04:05:06.789");
   assert_eq!(handler_rows[0]["note"], "x");
+  let QueryExecutionResult::Rows { rows: warning_rows, .. } = warnings.expect("SHOW WARNINGS runs")
+  else {
+    panic!("SHOW WARNINGS returns rows");
+  };
+  assert_eq!(warning_rows.len(), 1, "{warning_rows:?}");
+  assert_eq!(warning_rows[0]["Message"], "Division by 0");
 
   let QueryExecutionResult::Rows { columns, rows, .. } = result.expect("CHECK TABLE runs") else {
     panic!("CHECK TABLE returns its report as rows");
