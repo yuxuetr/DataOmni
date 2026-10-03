@@ -889,6 +889,84 @@ async fn clickhouse_exports_stream_to_a_file_and_refuse_non_queries() {
   run(&mut connection, "DROP TABLE smoke_export SYNC").await;
 }
 
+/// 导出成 INSERT 的复合类型要能原样跑回去：数组、Map、Tuple 读出来是服务端的文本写法
+/// （里面的字符串已带一层引号与反斜杠转义），外面再包一层字符串字面量
+#[tokio::test]
+async fn clickhouse_exported_inserts_carry_composite_values_back() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool);
+  for sql in [
+    "DROP TABLE IF EXISTS smoke_round_src SYNC",
+    "DROP TABLE IF EXISTS smoke_round_dst SYNC",
+    "CREATE TABLE smoke_round_src (
+       id UInt64,
+       words Array(Nullable(String)),
+       pairs Map(String, String),
+       pair Tuple(String, Int32),
+       note String,
+       kind Enum8('a''b' = 1, 'c\\d' = 2),
+       address IPv6,
+       at DateTime64(9)
+     ) ENGINE = MergeTree ORDER BY id",
+    "CREATE TABLE smoke_round_dst AS smoke_round_src",
+    r"INSERT INTO smoke_round_src VALUES
+       (1, ['it''s', 'C:\\temp', 'tab	here', 'two
+lines', NULL, '中文'], {'k''1': 'v\\1', '': ''}, ('x''y', -1), 'a''b\\c
+d', 'a''b', '::ffff:1.2.3.4', '2024-01-02 03:04:05.123456789'),
+       (2, [], {}, ('', 0), '', 'c\\d', '::1', '1970-01-01 00:00:00')",
+  ] {
+    run(&mut connection, sql).await;
+  }
+  let dir = std::env::temp_dir().join(format!("dataomni-clickhouse-round-{}", std::process::id()));
+  std::fs::create_dir_all(&dir).expect("temp dir");
+  let target = dir.join("out.sql");
+  let options = dataomni_lib::services::ExportOptions {
+    format: dataomni_lib::services::ExportFormat::Sql,
+    delimiter: ",".to_string(),
+    include_header: true,
+    null_text: String::new(),
+    byte_order_mark: false,
+    sql_table: "smoke_round_dst".to_string(),
+    sql_dialect: Some(dataomni_lib::services::export_writer::SqlDialect::Clickhouse),
+    sql_computed_columns: Vec::new(),
+    sql_identity_columns: Vec::new(),
+    sql_sequence_columns: Vec::new(),
+  };
+  let summary = dataomni_lib::services::export_query(
+    PoolRef::ClickHouse(&pool),
+    "SELECT * FROM smoke_round_src ORDER BY id",
+    &target,
+    options,
+    &mut |_| {},
+    &mut || false,
+  )
+  .await
+  .expect("export");
+  assert_eq!(summary.rows_written, 2);
+  let script = std::fs::read_to_string(&target).expect("read back");
+  std::fs::remove_dir_all(&dir).ok();
+  // 值里有换行，按行切不开；每条都以这一段开头
+  let head = "INSERT INTO `smoke_round_dst`";
+  for statement in script.split(&format!(";\n{head}")) {
+    let statement = statement.strip_prefix(head).unwrap_or(statement);
+    let statement = format!("{head}{}", statement.strip_suffix(';').unwrap_or(statement));
+    run(&mut connection, &statement).await;
+  }
+  let differ = |left: &str, right: &str| {
+    format!("SELECT count() AS n FROM (SELECT * FROM {left} EXCEPT SELECT * FROM {right})")
+  };
+  for sql in
+    [differ("smoke_round_src", "smoke_round_dst"), differ("smoke_round_dst", "smoke_round_src")]
+  {
+    let rows = rows_of(run(&mut connection, &sql).await);
+    assert_eq!(rows[0]["n"], json!(0), "{sql}\n{script}");
+  }
+  let rows = rows_of(run(&mut connection, "SELECT count() AS n FROM smoke_round_dst").await);
+  assert_eq!(rows[0]["n"], json!(2));
+  run(&mut connection, "DROP TABLE smoke_round_src SYNC").await;
+  run(&mut connection, "DROP TABLE smoke_round_dst SYNC").await;
+}
+
 /// 经 SSH 隧道：和 Elasticsearch 同一段 `http_endpoint`，地址是 IP 时直接改写成本地端口，
 /// 是域名时经 `resolve` 落到本地端口、证书仍按原名校验。两种各连一次。
 ///
