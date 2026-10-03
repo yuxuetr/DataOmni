@@ -1301,6 +1301,7 @@ export const zh = {
   'er.exportPdf': 'PDF（位图页）',
   'er.exported': '已导出到 {path}',
   'er.exportFailed': '导出失败',
+  'er.rasterizeFailed': '图太大，画不成位图。可以先用筛选只留一部分表，或者导出 SVG',
   'er.resetPositions': '复位所有卡片',
   'er.refresh': '重新读取',
   'er.searchPlaceholder': '搜索表名或列名',

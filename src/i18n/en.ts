@@ -1291,6 +1291,7 @@ export const en: Translations = {
   'er.exportPdf': 'PDF (bitmap page)',
   'er.exported': 'Exported to {path}',
   'er.exportFailed': 'Export failed',
+  'er.rasterizeFailed': 'The diagram is too large to render as an image. Filter it down to fewer tables, or export SVG',
   'er.resetPositions': 'Reset card positions',
   'er.refresh': 'Reload',
   'er.searchPlaceholder': 'Search tables or columns',

@@ -5,6 +5,9 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  JPEG_MAX_SIDE,
+  rasterPayload,
+  rasterScale,
   dataUrlToBase64,
   readCssColor,
   serializeSvgWithInlineStyles,
@@ -112,5 +115,32 @@ describe('dataUrlToBase64', () => {
 
   it('不是 data URL 时返回空串，不把整串当成 base64 发出去', () => {
     expect(dataUrlToBase64('nonsense')).toBe('');
+  });
+});
+
+describe('rasterScale', () => {
+  it('JPEG 的边长上限以内照常用两倍', () => {
+    expect(rasterScale(1300, 16000, 2, JPEG_MAX_SIDE)).toBe(2);
+  });
+
+  it('放大后超过上限就缩到正好放得下——622 张表的关系图高 34036', () => {
+    // 原先照两倍画成 68072 高，libjpeg 编不了，PDF 里是一张 0 字节的图
+    const scale = rasterScale(1312, 34036, 2, JPEG_MAX_SIDE);
+    expect(Math.round(34036 * scale)).toBeLessThanOrEqual(JPEG_MAX_SIDE);
+    expect(scale).toBeGreaterThan(1.9);
+  });
+});
+
+describe('rasterPayload', () => {
+  it('编码失败时 toDataURL 给的是 data:, ——要报错，不能写出一个空文件', () => {
+    expect(() => rasterPayload('data:,', 'image/jpeg')).toThrow('SVG_RASTERIZE_FAILED');
+  });
+
+  it('要的是 JPEG 却退回了 PNG 也算失败', () => {
+    expect(() => rasterPayload('data:image/png;base64,AAAA', 'image/jpeg')).toThrow('SVG_RASTERIZE_FAILED');
+  });
+
+  it('正常时取出 base64 正文', () => {
+    expect(rasterPayload('data:image/jpeg;base64,QUJD', 'image/jpeg')).toBe('QUJD');
   });
 });

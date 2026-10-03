@@ -97,6 +97,32 @@ export function dataUrlToBase64(dataUrl: string): string {
 }
 
 /**
+ * libjpeg 能编的最长边（`JPEG_MAX_DIMENSION`）。WebKitGTK 上超过它 `toDataURL` 给的是 `data:,`，
+ * 日志里是 Maximum supported image dimension is 65500 pixels。PNG 没有这个限制（68072 高照样出）
+ */
+export const JPEG_MAX_SIDE = 65500;
+
+/** 光栅化的倍率：照 `preferred` 放大，但最长边不超过 `maxSide`——宁可糊一点，也要画得出来 */
+export function rasterScale(width: number, height: number, preferred: number, maxSide: number): number {
+  const longest = Math.max(width, height, 1);
+  return Math.min(preferred, maxSide / longest);
+}
+
+/**
+ * 从 `toDataURL` 的结果里取正文，编码失败时报错。
+ *
+ * 画布编不出来时浏览器不抛错，给的是 `data:,`（或者退回 PNG）：不查的话写出去的是一个空文件，
+ * 界面上还说「已导出」
+ */
+export function rasterPayload(dataUrl: string, type: string): string {
+  const payload = dataUrlToBase64(dataUrl);
+  if (!dataUrl.startsWith(`data:${type}`) || payload === '') {
+    throw new Error('SVG_RASTERIZE_FAILED');
+  }
+  return payload;
+}
+
+/**
  * 把 SVG 光栅化成 PNG，返回 base64 正文。
  *
  * 走 `<img>` + canvas：SVG 必须是自包含的（颜色已内联、没有外部引用），
@@ -108,7 +134,7 @@ export async function rasterizeSvgToPngBase64(
   height: number,
   scale: number = PNG_SCALE
 ): Promise<string> {
-  return dataUrlToBase64(await rasterizeSvg(svg, width, height, scale, 'image/png'));
+  return rasterPayload(await rasterizeSvg(svg, width, height, scale, 'image/png'), 'image/png');
 }
 
 /**
@@ -124,16 +150,17 @@ export async function rasterizeSvgToJpegBytes(
   scale: number = PNG_SCALE,
   quality = 0.95
 ): Promise<{ bytes: Uint8Array; width: number; height: number }> {
-  const dataUrl = await rasterizeSvg(svg, width, height, scale, 'image/jpeg', quality);
-  const binary = atob(dataUrlToBase64(dataUrl));
+  const fitted = rasterScale(width, height, scale, JPEG_MAX_SIDE);
+  const dataUrl = await rasterizeSvg(svg, width, height, fitted, 'image/jpeg', quality);
+  const binary = atob(rasterPayload(dataUrl, 'image/jpeg'));
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) {
     bytes[i] = binary.charCodeAt(i);
   }
   return {
     bytes,
-    width: Math.max(1, Math.round(width * scale)),
-    height: Math.max(1, Math.round(height * scale))
+    width: Math.max(1, Math.round(width * fitted)),
+    height: Math.max(1, Math.round(height * fitted))
   };
 }
 

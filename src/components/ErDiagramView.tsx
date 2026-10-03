@@ -387,7 +387,12 @@ export function ErDiagramCanvas({
       setExported(path);
       window.setTimeout(() => setExported(null), 2500);
     } catch (cause) {
-      setExportError(describeError(cause, t('er.exportFailed')));
+      // 画布编不出图（超出编码器的尺寸、SVG 载不进来）时只有一个内部码，换成能照着做的话
+      setExportError(
+        cause instanceof Error && cause.message === 'SVG_RASTERIZE_FAILED'
+          ? t('er.rasterizeFailed')
+          : describeError(cause, t('er.exportFailed'))
+      );
     } finally {
       setExporting(false);
     }
