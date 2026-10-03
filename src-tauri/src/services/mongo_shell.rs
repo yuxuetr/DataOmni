@@ -491,7 +491,12 @@ impl Parser {
       ("ObjectId", []) => Some(Bson::ObjectId(ObjectId::new())),
       ("ObjectId", [Bson::String(hex)]) => ObjectId::parse_str(hex).ok().map(Bson::ObjectId),
       ("ISODate" | "Date", []) => Some(Bson::DateTime(DateTime::now())),
-      ("ISODate" | "Date", [Bson::String(text)]) => parse_date(text).map(Bson::DateTime),
+      ("ISODate", [Bson::String(text)]) => {
+        parse_date(text, DateSyntax::MongoshIsoDate).map(Bson::DateTime)
+      }
+      ("Date", [Bson::String(text)]) => {
+        parse_date(text, DateSyntax::JavaScript).map(Bson::DateTime)
+      }
       ("ISODate" | "Date", [millis]) => {
         integral(millis).map(|ms| Bson::DateTime(DateTime::from_millis(ms)))
       }
@@ -633,21 +638,174 @@ fn regex(pattern: String, flags: &str) -> Option<Bson> {
   Some(Bson::RegularExpression(Regex { pattern, options: options.into_iter().collect() }))
 }
 
-/// `ISODate` 收的写法：完整的 RFC 3339；不带时区的按 UTC（与 mongosh 一致）；
-/// 只有日期的是当天零点
-fn parse_date(text: &str) -> Option<DateTime> {
-  let text = text.trim();
-  if let Ok(date) = DateTime::parse_rfc3339_str(text) {
-    return Some(date);
+/// 日期串是谁的写法：两者在 mongosh 里读法不同，不能共用一个
+#[derive(Clone, Copy, PartialEq)]
+enum DateSyntax {
+  /// mongosh 的 `ISODate`：横线可省、分秒可省、时间与日期之间是 `T` 或空格；不带时区按 UTC
+  MongoshIsoDate,
+  /// JavaScript 的 `new Date`：只有日期（`2024`、`2024-01`、`2024-01-01`）按 UTC，
+  /// 带时间而不带时区按**本机时间**——同一个串在北京与 `ISODate` 差八小时
+  JavaScript,
+}
+
+/// 照 mongosh 读一个日期串（两种写法都与 mongosh 2.x 逐条对过）。两边都不认的写法
+/// 是 `None`，由调用方报「参数不对」，不猜
+fn parse_date(text: &str, syntax: DateSyntax) -> Option<DateTime> {
+  let written = read_date(text.trim(), syntax)?;
+  let millis = match written.offset_minutes {
+    Some(minutes) => written.naive.and_utc().timestamp_millis() - i64::from(minutes) * 60_000,
+    None if syntax == DateSyntax::JavaScript && written.has_time => {
+      use chrono::TimeZone;
+      chrono::Local.from_local_datetime(&written.naive).earliest()?.timestamp_millis()
+    }
+    None => written.naive.and_utc().timestamp_millis(),
+  };
+  Some(DateTime::from_millis(millis))
+}
+
+/// 日期串里写出来的部分：没写的时分秒是零，时区偏移按分钟
+struct WrittenDate {
+  naive: chrono::NaiveDateTime,
+  has_time: bool,
+  offset_minutes: Option<i32>,
+}
+
+fn read_date(text: &str, syntax: DateSyntax) -> Option<WrittenDate> {
+  let iso = syntax == DateSyntax::MongoshIsoDate;
+  let mut cursor = DateCursor { bytes: text.as_bytes(), at: 0 };
+  let year = cursor.digits(4)?;
+  let (month, day, full_date) = if iso {
+    cursor.eat(b'-');
+    let month = cursor.digits(2)?;
+    cursor.eat(b'-');
+    (month, cursor.digits(2)?, true)
+  } else if cursor.eat(b'-') {
+    let month = cursor.digits(2)?;
+    if cursor.eat(b'-') {
+      (month, cursor.digits(2)?, true)
+    } else {
+      (month, 1, false)
+    }
+  } else {
+    (1, 1, false)
+  };
+  let date = chrono::NaiveDate::from_ymd_opt(i32::try_from(year).ok()?, month, day)?;
+  if cursor.done() {
+    return Some(WrittenDate {
+      naive: date.and_hms_opt(0, 0, 0)?,
+      has_time: false,
+      offset_minutes: None,
+    });
   }
-  if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S%.f") {
-    return Some(DateTime::from_millis(naive.and_utc().timestamp_millis()));
+  if !full_date || !(cursor.eat(b'T') || cursor.eat(b' ')) {
+    return None;
   }
-  if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S%.f") {
-    return Some(DateTime::from_millis(naive.and_utc().timestamp_millis()));
+
+  let hour = cursor.digits(2)?;
+  let (mut minute, mut second, mut millis) = (0, 0, 0);
+  if iso {
+    let colon = cursor.eat(b':');
+    match cursor.digits(2) {
+      Some(value) => {
+        minute = value;
+        let colon = cursor.eat(b':');
+        match cursor.digits(2) {
+          Some(value) => {
+            second = value;
+            if cursor.eat(b'.') {
+              millis = cursor.fraction_millis()?;
+            }
+          }
+          None if colon => return None,
+          None => {}
+        }
+      }
+      None if colon => return None,
+      None => {}
+    }
+  } else {
+    if !cursor.eat(b':') {
+      return None;
+    }
+    minute = cursor.digits(2)?;
+    if cursor.eat(b':') {
+      second = cursor.digits(2)?;
+      if cursor.eat(b'.') {
+        millis = cursor.fraction_millis()?;
+      }
+    }
   }
-  let date = chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d").ok()?;
-  Some(DateTime::from_millis(date.and_hms_opt(0, 0, 0)?.and_utc().timestamp_millis()))
+  let time = chrono::NaiveTime::from_hms_milli_opt(hour, minute, second, millis)?;
+
+  // 时区：`Z`，或带分钟的偏移（`+0800`、`+08:00`）；只写小时的 `+08` 两边都不认
+  let offset_minutes = if cursor.eat(b'Z') {
+    Some(0)
+  } else if let Some(sign) = cursor.sign() {
+    let hours = cursor.digits(2)?;
+    cursor.eat(b':');
+    let minutes = cursor.digits(2)?;
+    Some(sign * i32::try_from(hours * 60 + minutes).ok()?)
+  } else {
+    None
+  };
+  if !cursor.done() {
+    return None;
+  }
+  Some(WrittenDate { naive: date.and_time(time), has_time: true, offset_minutes })
+}
+
+struct DateCursor<'a> {
+  bytes: &'a [u8],
+  at: usize,
+}
+
+impl DateCursor<'_> {
+  fn done(&self) -> bool {
+    self.at == self.bytes.len()
+  }
+
+  fn eat(&mut self, byte: u8) -> bool {
+    let matched = self.bytes.get(self.at) == Some(&byte);
+    if matched {
+      self.at += 1;
+    }
+    matched
+  }
+
+  fn sign(&mut self) -> Option<i32> {
+    if self.eat(b'+') {
+      Some(1)
+    } else if self.eat(b'-') {
+      Some(-1)
+    } else {
+      None
+    }
+  }
+
+  /// 恰好 `count` 位数字；不够时一位也不吃
+  fn digits(&mut self, count: usize) -> Option<u32> {
+    let run = self.bytes.get(self.at..self.at + count)?;
+    if !run.iter().all(u8::is_ascii_digit) {
+      return None;
+    }
+    self.at += count;
+    Some(run.iter().fold(0, |value, digit| value * 10 + u32::from(digit - b'0')))
+  }
+
+  /// 小数点后的秒：至少一位，只留到毫秒（与 JavaScript 的 Date 一样截断）
+  fn fraction_millis(&mut self) -> Option<u32> {
+    let start = self.at;
+    while self.bytes.get(self.at).is_some_and(u8::is_ascii_digit) {
+      self.at += 1;
+    }
+    let run = &self.bytes[start..self.at];
+    if run.is_empty() {
+      return None;
+    }
+    Some((0..3).fold(0, |value, index| {
+      value * 10 + run.get(index).map_or(0, |digit| u32::from(digit - b'0'))
+    }))
+  }
 }
 
 fn parse_uuid(text: &str) -> Option<Vec<u8>> {
@@ -1075,6 +1233,46 @@ mod tests {
     }
     // 查询运算符不是 EJSON 包装，不能被碰
     assert_eq!(parse_value("{ $gt: Long('1') }"), Ok(Bson::Document(doc! { "$gt": 1_i64 })));
+  }
+
+  /// 与 mongosh 2.x 逐条对过（`TZ=Asia/Shanghai`）：`ISODate` 不带时区按 UTC；`new Date` 照
+  /// JavaScript——只有日期按 UTC，带时间不带时区按本机时间。两边都不认的写法报错，不猜
+  #[test]
+  fn iso_date_and_js_date_read_strings_the_way_mongosh_does() {
+    use chrono::TimeZone;
+    let utc = |text: &str| chrono::DateTime::parse_from_rfc3339(text).unwrap().timestamp_millis();
+    let local = |text: &str| {
+      let naive = chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S").unwrap();
+      chrono::Local.from_local_datetime(&naive).earliest().unwrap().timestamp_millis()
+    };
+    let millis = |text: &str| match parse_value(text) {
+      Ok(Bson::DateTime(date)) => Some(date.timestamp_millis()),
+      _ => None,
+    };
+    let midnight = Some(utc("2024-01-01T00:00:00Z"));
+    let eight_utc = Some(utc("2024-01-01T08:00:00Z"));
+    let eight_local = Some(local("2024-01-01T08:00:00"));
+    let half = Some(utc("2024-01-01T08:00:00.5Z"));
+    for (written, iso, js) in [
+      ("2024-01-01", midnight, midnight),
+      ("2024-01-01T08:00:00", eight_utc, eight_local),
+      ("2024-01-01 08:00:00", eight_utc, eight_local),
+      ("2024-01-01T08:00", eight_utc, eight_local),
+      ("2024-01-01 08:00", eight_utc, eight_local),
+      ("20240101", midnight, None),
+      ("2024-01-01T08:00:00+0800", midnight, midnight),
+      ("2024-01-01T08:00:00+08:00", midnight, midnight),
+      ("2024-01-01T08:00:00+08", None, None),
+      ("2024-01-01T08:00:00.5Z", half, half),
+      ("2024-01-01T08", eight_utc, None),
+      ("2024-01", None, midnight),
+      ("2024", None, midnight),
+      ("2024-13-01", None, None),
+      ("昨天", None, None),
+    ] {
+      assert_eq!(millis(&format!("ISODate('{written}')")), iso, "ISODate {written}");
+      assert_eq!(millis(&format!("new Date('{written}')")), js, "new Date {written}");
+    }
   }
 
   #[test]
