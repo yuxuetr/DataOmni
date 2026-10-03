@@ -17,6 +17,7 @@ pub struct ConnectionProfile {
   pub id: String,
   pub name: String,
   pub db_type: DatabaseType,
+  #[serde(deserialize_with = "network_host")]
   pub host: String,
   pub port: u16,
   pub database: Option<String>,
@@ -501,6 +502,19 @@ impl Default for ConnectionProfile {
   }
 }
 
+/// 主机读进来时去掉两头的空白和 IPv6 的方括号。粘贴带出的空格让各家驱动报「解析不了主机名」，
+/// 看起来像网络不通；`[::1]` 只有拼 URL 的几家认，Redis、MongoDB、Neo4j 与备份工具都当主机名去解析。
+/// 要方括号的地方由 [`url_host`] 再加上。放在反序列化这一处，已存的连接也一并收拾
+fn network_host<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+  let host = String::deserialize(deserializer)?;
+  let host = host.trim();
+  let unbracketed = host
+    .strip_prefix('[')
+    .and_then(|rest| rest.strip_suffix(']'))
+    .filter(|inner| inner.parse::<std::net::Ipv6Addr>().is_ok());
+  Ok(unbracketed.unwrap_or(host).to_string())
+}
+
 /// URL（与 Oracle 的 Easy Connect 串）里的主机。IPv6 地址加方括号（与 `http_endpoint` 同一个判断），
 /// 已经写了方括号的照原样
 pub(crate) fn url_host(host: &str) -> std::borrow::Cow<'_, str> {
@@ -687,6 +701,27 @@ mod tests {
       ssl,
       tls_mode,
       ..ConnectionProfile::default()
+    }
+  }
+
+  /// 主机两头的空白与 IPv6 的方括号读进来时就去掉：粘贴带出的空格让 Redis 报「解析不了主机名」，
+  /// `[::1]` 在 Redis、MongoDB、Neo4j、mysqldump 那里同样解析不了（本机 Redis 7 上实测）
+  #[test]
+  fn hosts_lose_surrounding_blanks_and_ipv6_brackets() {
+    for (written, read) in [
+      ("db.example.com ", "db.example.com"),
+      (r"\t 10.0.0.5\n", "10.0.0.5"),
+      (" [::1] ", "::1"),
+      ("[fd00::5]", "fd00::5"),
+      ("[not-an-address]", "[not-an-address]"),
+      ("localhost", "localhost"),
+    ] {
+      let text = format!(
+        r#"{{"name":"n","db_type":"redis","host":"{written}","port":6379,"database":null,
+            "username":"","ssl":false,"options":{{}},"tags":[]}}"#
+      );
+      let profile = serde_json::from_str::<ConnectionProfile>(&text).map(|profile| profile.host);
+      assert_eq!(profile.ok().as_deref(), Some(read), "{written:?}");
     }
   }
 
