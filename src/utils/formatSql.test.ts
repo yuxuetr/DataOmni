@@ -105,6 +105,17 @@ describe('排版不改内容', () => {
     expectContentPreserved('SELECT "订单备注" FROM "订单"', DatabaseType.PostgreSQL);
   });
 
+  it('ClickHouse 的名字区分大小写：撞上关键字的表名、列名一个字母都不改', () => {
+    // 上面的比对不分大小写，抓不到这个。`type` 改成 `TYPE` 服务端就报
+    // Unknown expression identifier，`events` 改成 `EVENTS` 报 UNKNOWN_TABLE
+    const sql = 'SELECT date, type, name, key FROM events WHERE type = 1 SETTINGS max_threads = 1';
+    const result = formatSql(sql, 'clickhouse');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.sql.replace(/\s+/g, '')).toBe(sql.replace(/\s+/g, ''));
+    }
+  });
+
   it('再排一次不会继续变（幂等）', () => {
     const once = formatSql('select id,name from users where id=1', 'postgresql');
     expect(once.ok).toBe(true);

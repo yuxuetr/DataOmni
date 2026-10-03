@@ -55,7 +55,9 @@ export function formatSql(sql: string, language: SqlLanguage): FormatSqlResult {
       ok: true,
       sql: format(sql, {
         language,
-        keywordCase: 'upper',
+        // ClickHouse 例外：它的名字区分大小写，而 sql-formatter 把 type、name、key、
+        // events 这些词当关键字，列名表名跟着被改成大写，语句就找不到对象了
+        keywordCase: language === 'clickhouse' ? 'preserve' : 'upper',
         // 和编辑器与整个项目的缩进一致
         tabWidth: 2,
         // 语句之间空一行
