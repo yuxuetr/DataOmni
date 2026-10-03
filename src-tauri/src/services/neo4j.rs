@@ -671,13 +671,9 @@ impl From<ValueReceive> for CypherValue {
       ValueReceive::LocalDateTime(moment) => CypherValue::Temporal {
         value: format!("localdatetime('{}')", moment.format("%Y-%m-%dT%H:%M:%S%.f")),
       },
-      ValueReceive::DateTime(moment) => CypherValue::Temporal {
-        value: format!(
-          "datetime('{}[{}]')",
-          moment.format("%Y-%m-%dT%H:%M:%S%.f%:z"),
-          moment.timezone()
-        ),
-      },
+      ValueReceive::DateTime(moment) => {
+        CypherValue::Temporal { value: zoned_datetime_text(&moment) }
+      }
       ValueReceive::DateTimeFixed(moment) => CypherValue::Temporal {
         value: format!("datetime('{}')", moment.format("%Y-%m-%dT%H:%M:%S%.f%:z")),
       },
@@ -738,8 +734,26 @@ fn float_text(value: f64) -> String {
   }
 }
 
+/// 带时区名的时刻。偏移照写，夏令时回拨那一小时靠它分清是哪一次；但 1900 年前后的地方平时
+/// （上海 +08:05:43）带秒，Neo4j 不认带秒的偏移，这时只写时区名——那时没有回拨，不会认错
+fn zoned_datetime_text(moment: &neo4j::value::time::DateTime) -> String {
+  use chrono::Offset;
+  let offset = if moment.offset().fix().local_minus_utc() % 60 == 0 { "%:z" } else { "" };
+  format!(
+    "datetime('{}[{}]')",
+    moment.format(&format!("%Y-%m-%dT%H:%M:%S%.f{offset}")),
+    moment.timezone()
+  )
+}
+
 /// ISO 8601 的时长，与 Neo4j 自己的写法一样把月拆成年、秒拆成时分：`P1Y2M3DT4H5M6.5S`
 fn duration_text(months: i64, days: i64, seconds: i64, nanoseconds: i32) -> String {
+  // Bolt 的纳秒总是非负：−0.5 秒到这里是「秒 −1、纳秒 5 亿」。换成同号再拆，不然写成 −1.5 秒
+  let (seconds, nanoseconds) = if seconds < 0 && nanoseconds > 0 {
+    (seconds + 1, nanoseconds - 1_000_000_000)
+  } else {
+    (seconds, nanoseconds)
+  };
   let mut text = String::from("P");
   for (amount, unit) in [(months / 12, 'Y'), (months % 12, 'M'), (days, 'D')] {
     if amount != 0 {
@@ -874,6 +888,29 @@ mod tests {
     assert_eq!(duration_text(0, 1, 0, 0), "P1D");
     assert_eq!(duration_text(0, 0, 0, 1), "PT0.000000001S");
     assert_eq!(duration_text(0, -1, 0, 0), "P-1D");
+    // Bolt 的纳秒总在 [0, 1e9)，负的小数秒到这里是「秒 −1、纳秒 +0.5 秒」
+    assert_eq!(duration_text(0, 0, -1, 500_000_000), "PT-0.5S");
+    assert_eq!(duration_text(0, 0, -2, 500_000_000), "PT-1.5S");
+    assert_eq!(duration_text(0, 1, -1, 750_000_000), "P1DT-0.25S");
+    assert_eq!(duration_text(0, 0, -61, 500_000_000), "PT-1M-0.5S");
+  }
+
+  #[test]
+  fn zoned_datetimes_leave_out_an_offset_neo4j_cannot_read_back() {
+    use chrono::TimeZone;
+    use neo4j::value::time::Tz;
+    let summer = Tz::Europe__Berlin.with_ymd_and_hms(2024, 10, 27, 2, 30, 0).earliest();
+    assert_eq!(
+      summer.map(|moment| zoned_datetime_text(&moment)).as_deref(),
+      Some("datetime('2024-10-27T02:30:00+02:00[Europe/Berlin]')"),
+      "回拨那一小时靠偏移分清是哪一次"
+    );
+    // 1900 年上海用地方平时 +08:05:43，Neo4j 不认带秒的偏移，写了就读不回去
+    let old = Tz::Asia__Shanghai.with_ymd_and_hms(1900, 1, 1, 0, 0, 0).single();
+    assert_eq!(
+      old.map(|moment| zoned_datetime_text(&moment)).as_deref(),
+      Some("datetime('1900-01-01T00:00:00[Asia/Shanghai]')")
+    );
   }
 
   #[test]

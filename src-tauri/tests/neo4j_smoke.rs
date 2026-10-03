@@ -361,3 +361,43 @@ async fn the_tree_lists_databases_labels_and_relationship_types() {
   assert!(objects.iter().all(|object| object.object_schema != "system"));
   fresh_label(&pool, "SmokeTree").await;
 }
+
+/// 时间、空间与浮点数的写法是后端给的 Cypher 构造式：抄回查询里得是同一个值
+#[tokio::test]
+async fn written_temporals_points_and_floats_read_back_as_the_same_value() {
+  let Some(profile) = profile() else { return };
+  let pool = pool(&profile).await;
+  let expressions = [
+    "duration({seconds: -0.5})",
+    "duration({days: 1, seconds: -0.25})",
+    "duration.between(datetime('2024-01-02T00:00:00.7Z'), datetime('2024-01-01T00:00:00Z'))",
+    "duration({minutes: -90})",
+    "duration({months: -1, days: 2})",
+    "date('+10000-01-01')",
+    "date('-0001-01-01')",
+    "time('12:00:00.123456789+05:45')",
+    "localdatetime('-0044-03-15T12:00:00.000000001')",
+    "datetime('2024-10-27T02:30:00+01:00[Europe/Berlin]')",
+    "datetime('1900-01-01T00:00:00[Asia/Shanghai]')",
+    "1e-300",
+    "1e16",
+    "-0.0",
+    "point({x: -1e-7, y: 1e300})",
+    "point({longitude: -0.0, latitude: 90, height: -12.5})",
+  ];
+  for expression in expressions {
+    let first = cypher(&pool, &format!("RETURN {expression} AS v")).await;
+    let written = match &first.rows[0][0] {
+      CypherValue::Temporal { value }
+      | CypherValue::Point { value }
+      | CypherValue::Float { value } => value.clone(),
+      other => panic!("{expression}: {}", text(other)),
+    };
+    let back = cypher(&pool, &format!("RETURN {expression} = {written} AS same")).await;
+    assert_eq!(
+      text(&back.rows[0][0]),
+      r#"{"kind":"boolean","value":true}"#,
+      "{expression} 写成 {written}"
+    );
+  }
+}
