@@ -822,7 +822,7 @@ fn format_timestamp(unit: TimeUnit, value: i64) -> String {
   let Some(stamp) = chrono::DateTime::from_timestamp(seconds, nanos as u32) else {
     return value.to_string();
   };
-  let mut text = stamp.format("%Y-%m-%d %H:%M:%S").to_string();
+  let mut text = without_plus(stamp.format("%Y-%m-%d %H:%M:%S").to_string());
   push_fraction(&mut text, nanos as u32);
   text
 }
@@ -836,8 +836,17 @@ fn format_date(days: i32) -> String {
   }
   chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
     .and_then(|epoch| epoch.checked_add_signed(chrono::TimeDelta::days(i64::from(days))))
-    .map(|date| date.format("%Y-%m-%d").to_string())
+    .map(|date| without_plus(date.format("%Y-%m-%d").to_string()))
     .unwrap_or_else(|| days.to_string())
+}
+
+/// chrono 的 `%Y` 给五位数的年份前面加 `+`（`+10000-01-01`），DuckDB 自己不这么写，也不认这种写法：
+/// 网格改值、CSV 导回时会报 `invalid date field format`。公元前的 `-0043` 它认，留着
+fn without_plus(text: String) -> String {
+  match text.strip_prefix('+') {
+    Some(rest) => rest.to_owned(),
+    None => text,
+  }
 }
 
 /// 一天里的时刻，微秒计
@@ -989,6 +998,34 @@ fn display_width(c: char) -> usize {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  /// 网格改值与 CSV 导回都把显示的文本交回 DuckDB，所以写法要是它认的。
+  /// chrono 的 `%Y` 给五位数的年份前面加 `+`，DuckDB 不认（`invalid date field format`）；
+  /// 公元前写成天文纪年 `-0043-03-15` 它认，读回来就是公元前 44 年
+  #[test]
+  fn dates_and_timestamps_read_back_as_text_duckdb_accepts() {
+    let connection = Connection::open_in_memory().expect("in-memory DuckDB");
+    for (cast, text) in [
+      ("DATE", "10000-01-01"),
+      ("DATE", "-0043-03-15"),
+      ("DATE", "2026-10-03"),
+      ("TIMESTAMP", "10000-01-01 01:02:03"),
+      ("TIMESTAMP", "-0043-03-15 12:00:00.5"),
+    ] {
+      let value: Value = connection
+        .query_row(&format!("SELECT CAST(? AS {cast})"), [text], |row| row.get(0))
+        .expect("cast the literal");
+      let type_id = if cast == "DATE" { LogicalTypeId::Date } else { LogicalTypeId::Timestamp };
+      let shown = decode(&value, type_id);
+      assert_eq!(shown["value"], text, "{cast} {text}");
+      let same: bool = connection
+        .query_row(&format!("SELECT CAST(? AS {cast}) = CAST(? AS {cast})"), [text, text], |row| {
+          row.get(0)
+        })
+        .expect("DuckDB accepts what we showed");
+      assert!(same);
+    }
+  }
 
   #[test]
   fn statements_are_told_apart_by_their_leading_keyword() {
