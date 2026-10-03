@@ -98,6 +98,15 @@ describe('suggestChartSpec', () => {
     expect(spec.categoryIndex).toBeNull();
   });
 
+  it('全是数值列时第一列当横轴：GROUP BY year 的年份是分类，不是要画的量', () => {
+    // 原先按行号排、默认画第一列，画出来是 2021、2022、2023 三根柱子，count 那列看不到
+    const spec = suggestChartSpec(
+      ['year', 'count'],
+      [[{ type: 'decimal', value: '2021' }, { type: 'bigint', value: '12' }], [{ type: 'decimal', value: '2022' }, { type: 'bigint', value: '30' }]]
+    );
+    expect(spec).toEqual({ type: 'bar', categoryIndex: 0, valueIndexes: [1] });
+  });
+
   it('空结果与超过上限的结果都明确说不画', () => {
     expect(suggestChartSpec(['a'], [])).toBe('no-rows');
 

@@ -104,7 +104,7 @@ function isNumericColumn(rows: readonly SerializedResultValue[][], index: number
 /**
  * 给这份结果挑一组默认的画法。
  *
- * 规则简单到能一句话说清：所有数值列当纵轴，第一个非数值列当横轴。挑不出
+ * 规则简单到能一句话说清：所有数值列当纵轴，第一个非数值列当横轴（没有就拿第一列）。挑不出
  * 纵轴就不画。**默认用柱状图**——查询结果里最常见的形状是「分组 + 聚合值」，
  * 那是柱状图；折线图要求横轴本身有次序，而一份 `GROUP BY` 的结果没有。
  */
@@ -131,6 +131,14 @@ export function suggestChartSpec(
 
   if (valueIndexes.length === 0) {
     return 'no-numeric-column';
+  }
+
+  // 全是数值列时第一列当横轴：`SELECT year, count(*) … GROUP BY year`、按月份号或部门 id 分组，
+  // 分组键都在最前面且是数字。按行号排的话默认画的是年份本身，量那一列反倒要自己去勾，
+  // 勾上了横轴也只有 1、2、3。只剩一列时没得分，照旧按行号
+  if (categoryIndex === null && valueIndexes.length > 1) {
+    const [first, ...rest] = valueIndexes;
+    return { type: 'bar', categoryIndex: first ?? null, valueIndexes: rest };
   }
 
   return { type: 'bar', categoryIndex, valueIndexes };
