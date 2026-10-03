@@ -391,6 +391,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
       setFormatError(plan.message);
       return;
     }
+    if (plan.kind === 'delimiterScript') {
+      setFormatError(t('editor.formatDelimiterScript'));
+      return;
+    }
 
     setFormatError(null);
     if (plan.kind === 'unchanged') {

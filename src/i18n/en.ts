@@ -725,6 +725,7 @@ export const en: Translations = {
   'editor.format': 'Format SQL',
   'editor.formatTitle': 'Format SQL, the selection only when there is one ({shortcut})',
   'editor.formatFailed': 'Formatting failed; the editor was left unchanged',
+  'editor.formatDelimiterScript': 'Scripts with DELIMITER cannot be formatted: the formatter would break the delimiters. Select a part that uses semicolons to format just that part.',
 
   // Query history
   'history.title': 'Query history',

@@ -746,6 +746,7 @@ export const zh = {
   'editor.format': '格式化 SQL',
   'editor.formatTitle': '格式化 SQL，有选区时只排选区（{shortcut}）',
   'editor.formatFailed': '格式化失败，编辑器内容未改动',
+  'editor.formatDelimiterScript': '含 DELIMITER 的脚本不能格式化：分隔符会被排坏。可以选中分隔符是分号的那一段单独排。',
 
   // 执行历史
   'history.title': '查询历史',

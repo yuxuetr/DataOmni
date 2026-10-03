@@ -193,6 +193,27 @@ describe('planFormat', () => {
     expect(plan.kind).toBe('failed');
   });
 
+  describe('MySQL 客户端的 DELIMITER 脚本', () => {
+    // 格式化器不认这条客户端指令：`//` 被拆成 `/ /`，`DELIMITER ;` 被并进上一行，排完的脚本再跑就报错
+    const script = 'DELIMITER //\ncreate procedure p() begin select 1; end //\nDELIMITER ;\ncall p();';
+
+    it('含 DELIMITER 的整份不排', () => {
+      expect(planFormat(script, { from: 0, to: 0, head: 0 }, 'mysql')).toEqual({ kind: 'delimiterScript' });
+    });
+
+    it('选区落在换了分隔符的那一段里也不排', () => {
+      const from = script.indexOf('create');
+      const to = script.indexOf('//', from) + 2;
+      expect(planFormat(script, { from, to, head: to }, 'mysql')).toEqual({ kind: 'delimiterScript' });
+    });
+
+    it('分隔符换回分号之后的那一段照常排', () => {
+      const from = script.indexOf('call');
+      const plan = planFormat(script, { from, to: script.length, head: script.length }, 'mysql');
+      expect(plan).toMatchObject({ kind: 'replace', insert: 'CALL p ();' });
+    });
+  });
+
   it('只排选区时，选区里解析不了也不动整份', () => {
     const plan = planFormat(
       "SELECT 1; SELECT 'unterminated",

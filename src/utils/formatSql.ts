@@ -107,6 +107,8 @@ export interface EditorSelection {
 export type FormatPlan =
   | { kind: 'unchanged' }
   | { kind: 'failed'; message: string }
+  /** MySQL 客户端的 DELIMITER 脚本，格式化器会把它排坏 */
+  | { kind: 'delimiterScript' }
   | { kind: 'replace'; from: number; to: number; insert: string; anchor: number; head: number };
 
 /**
@@ -126,6 +128,9 @@ export function planFormat(
   const onlySelection = selection.from !== selection.to;
   const from = onlySelection ? selection.from : 0;
   const to = onlySelection ? selection.to : doc.length;
+  if (delimiterInEffect(doc, from, to)) {
+    return { kind: 'delimiterScript' };
+  }
   const source = doc.slice(from, to);
 
   const result = formatSql(source, language);
@@ -146,4 +151,24 @@ export function planFormat(
     anchor,
     head: onlySelection ? from + result.sql.length : anchor
   };
+}
+
+/** 同 `sqlStatements` 里认的写法：行首的 `DELIMITER <分隔符>` */
+const DELIMITER_DIRECTIVE = /^[\t ]*delimiter[\t ]+(\S+)/gim;
+
+/**
+ * 要排的这一段碰不碰 DELIMITER。
+ *
+ * 格式化器不认这条客户端指令：`//` 被拆成 `/ /`、`DELIMITER ;` 被并进上一行，排完的脚本再跑就报错。
+ * 选区里有这条指令，或者选区之前把分隔符换成了别的、还没换回分号，都不排
+ */
+function delimiterInEffect(doc: string, from: number, to: number): boolean {
+  let delimiter = ';';
+  for (const match of doc.slice(0, to).matchAll(DELIMITER_DIRECTIVE)) {
+    if (match.index >= from) {
+      return true;
+    }
+    delimiter = match[1];
+  }
+  return delimiter !== ';';
 }
