@@ -985,6 +985,15 @@
       截断的记录不给「在新标签里打开」（半截的 DELETE 可能截在 WHERE 前）。rpm 0.4.96 上 9 条都在，截断的点了不打开。
     没改：几 MB 的草稿超过 localStorage 配额，工作区快照写不进去，重启后这个标签回到打开它之前的样子（文件本身在磁盘上）。
     重估条件：有人报重启丢了大脚本的标签，届时让关联了文件的标签只存路径。
+  - 2026-10-03 表数据页的筛选（`tableFilters.ts`，各方言拿 LIKE 的边角值在真库上跑）：**修了两处**：
+    - **SQL Server 上「包含 `[draft]`」筛出所有含 d / r / a / f / t 的行**（`de93deb`）：它的 LIKE 把 `[…]` 当字符类，
+      2022 上实测 `'raw'` 也中，只是结果比预期多、不报错。只在 SQL Server 上把 `[` 跟 `!` 一起转义；别家的 `[` 不是通配符。
+    - **PostgreSQL、DuckDB、ClickHouse 对数字、uuid、日期列选「包含」直接报错**（`45ecae9`）：这三家的 LIKE 只收字符串
+      （PG 16 `operator does not exist: integer ~~ text`，DuckDB `No function matches like_escape(UUID, …)`，
+      ClickHouse 25.8 `Illegal type Date of argument of function like`）。非字符串列先转成文本；字符串列（含 citext）不转——
+      转了 citext 就区分大小写、前缀匹配也用不上索引。MySQL、SQLite、SQL Server、Oracle 自己会转，不动。
+    两条用例先红后绿，生成的语句在 SQL Server 2022、PG 16、ClickHouse 25.8、DuckDB 上原样跑过；前端 1772 条全过。
+    rpm 0.4.97 连 cu 的 PG 16：整数列「包含 5」筛出 15 与 205，行数也写 2。
   - 2026-10-02 同一轮看过、没修的：
     - PostgreSQL 库编码是 `SQL_ASCII`、里面存着 GBK 字节：服务端在转成 UTF8 时就报 22021（psql 设成 UTF8 客户端编码报同一句），
       sqlx 写死 `client_encoding=UTF8`，没有开关。重估条件：有人拿着这样的老库来。
