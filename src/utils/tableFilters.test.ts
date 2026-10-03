@@ -143,6 +143,25 @@ describe('buildFilterClause', () => {
     ).toBe("WHERE `name` = 'O''Brien\\\\'");
   });
 
+  it('SQL Server 的 LIKE 把 [ 当字符类，搜 [draft] 要转义', () => {
+    // 2022 上跑过：不转义时 '%[draft]%' 也匹配 'raw'（含 d/r/a/f/t 任一字符即中）
+    expect(
+      buildFilterClause(
+        [filter({ column: 'note', operator: 'contains', value: '[draft]' })],
+        COLUMNS,
+        'sqlserver'
+      )
+    ).toBe("WHERE [note] LIKE N'%![draft]%' ESCAPE N'!'");
+    // 其余方言的 [ 不是通配符，原样留着
+    expect(
+      buildFilterClause(
+        [filter({ column: 'note', operator: 'contains', value: '[draft]' })],
+        COLUMNS,
+        'postgresql'
+      )
+    ).toBe(`WHERE "note" LIKE '%[draft]%' ESCAPE '!'`);
+  });
+
   it('MySQL 的反斜杠在 LIKE 模式里也只转义一层', () => {
     // 转义符选 `!` 而不是 `\` 就是为了避开字面量层与 LIKE 层的双重转义
     expect(

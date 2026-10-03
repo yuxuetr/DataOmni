@@ -55,11 +55,17 @@ export function escapeClickHouseLikePattern(text: string): string {
  *
  * 不转义的话，一个想搜 `100%` 的用户会搜到所有以 100 开头的值，而且完全
  *看不出哪里不对——结果集只是比预期大，不会报错。
+ *
+ * SQL Server 另把 `[…]` 当字符类：搜 `[draft]` 会匹配任何含 d、r、a、f、t 的值。
+ * 只在它那里转义 `[`——别家的 `!` 后跟普通字符怎么解释各不相同
  */
-export function escapeLikePattern(text: string): string {
+export function escapeLikePattern(text: string, dialect: SqlIdentifierDialect): string {
   let escaped = '';
   for (const character of text) {
-    if (character === LIKE_ESCAPE_CHAR || character === '%' || character === '_') {
+    if (
+      character === LIKE_ESCAPE_CHAR || character === '%' || character === '_'
+      || (character === '[' && dialect === 'sqlserver')
+    ) {
       escaped += LIKE_ESCAPE_CHAR;
     }
     escaped += character;

@@ -29,20 +29,20 @@ describe('quoteSqlStringLiteral', () => {
 describe('escapeLikePattern', () => {
   it('把通配符变成字面字符', () => {
     // 想搜 `100%` 的人不转义会搜到所有 100 开头的值，且结果不会报错
-    expect(escapeLikePattern('100%')).toBe('100!%');
-    expect(escapeLikePattern('a_b')).toBe('a!_b');
+    expect(escapeLikePattern('100%', 'postgresql')).toBe('100!%');
+    expect(escapeLikePattern('a_b', 'postgresql')).toBe('a!_b');
   });
 
   it('转义字符本身也要转义', () => {
-    expect(escapeLikePattern('a!b')).toBe('a!!b');
+    expect(escapeLikePattern('a!b', 'postgresql')).toBe('a!!b');
   });
 
   it('反斜杠不参与——转义符不是它', () => {
-    expect(escapeLikePattern('C:\\temp')).toBe('C:\\temp');
+    expect(escapeLikePattern('C:\\temp', 'postgresql')).toBe('C:\\temp');
   });
 
   it('普通文本原样返回', () => {
-    expect(escapeLikePattern('hello')).toBe('hello');
+    expect(escapeLikePattern('hello', 'postgresql')).toBe('hello');
   });
 });
 

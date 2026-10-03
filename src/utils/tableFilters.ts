@@ -86,7 +86,7 @@ function likeTerm(
     const literal = quoteSqlStringLiteral(pattern.replace('{}', escapeClickHouseLikePattern(text)), dialect);
     return `${quotedColumn} LIKE ${literal}`;
   }
-  const literal = quoteSqlStringLiteral(pattern.replace('{}', escapeLikePattern(text)), dialect);
+  const literal = quoteSqlStringLiteral(pattern.replace('{}', escapeLikePattern(text, dialect)), dialect);
   return `${quotedColumn} LIKE ${literal} ESCAPE ${quoteSqlStringLiteral(LIKE_ESCAPE_CHAR, dialect)}`;
 }
 
