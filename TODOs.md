@@ -1004,7 +1004,7 @@
       Oracle 那几条只有单测（cu 上的 Oracle 停着）。
     - `ALTER TABLE … TRUNCATE PARTITION` 按普通有界写入算（`f92965b`），生产连接上不弹确认；`DROP PARTITION` 早就算破坏性。只有单测，确认框本身没改。
     每处的用例先红后绿，前端 1793 条全过。
-    没改：`IDENTIFIED BY VALUES '…'`（Oracle 的口令散列）不打；DuckDB 等的 `CALL`、`DO $$…$$`、`EXEC` 里包着的写入看不进去，按有界写入算。
+    没改：`IDENTIFIED BY VALUES '…'`（Oracle 的口令散列）不打；`CALL`、`DO $$…$$`、`EXEC` 里包着的写入看不进去，按有界写入算。
     重估条件：有人报这几种进了历史或在生产库上没被拦。
   - 2026-10-03 结果里的同名列：**MySQL、PostgreSQL、SQLite 上后一列顶掉前一列**（`c427193`）。行按列名做键，
     `SELECT 1 AS id, 'a' AS name, 2 AS id` 在 rpm 0.4.103 连 PG 16 显示 `2 · a · 2`，表头两个 `id`，看不出少了什么；
