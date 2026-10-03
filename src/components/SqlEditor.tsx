@@ -318,14 +318,14 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
           return;
         }
       }
-      // 写回原来那个文件时照它的换行写；另存为新文件用 `\n`
+      // 写回原来那个文件时照它的换行与 BOM 写；另存为新文件用 `\n`、不带 BOM
       const sameFile = path === sqlFile?.path;
       await invoke<number>('write_text_file', {
         path,
         contents: sqlFileContents(contents, sameFile ? sqlFile : undefined)
       });
       if (documentId) {
-        linkSqlTabFile(documentId, linkSqlFile(path, contents, sameFile && sqlFile?.crlf === true));
+        linkSqlTabFile(documentId, linkSqlFile(path, contents, sameFile ? sqlFile : {}));
       }
       setSavedPath(path);
     } catch (error) {

@@ -49,7 +49,12 @@ export interface SqlFileLink {
   contentHash: string;
   /** 文件用 CRLF 换行（Windows 上的编辑器、SSMS 存的）。不写是 `\n` */
   crlf?: true;
+  /** 文件开头有 UTF-8 BOM（SSMS、Windows 记事本默认加）。读进来时去掉，存回去补上 */
+  bom?: true;
 }
+
+/** 写文件时要照原文件保留的两样 */
+export type SqlFileFormat = Pick<SqlFileLink, 'crlf' | 'bom'>;
 
 /**
  * 换行统一成 `\n`。编辑器（CodeMirror）把 CRLF 与单独的 CR 都读成一个换行，
@@ -63,12 +68,17 @@ export function normalizeLineBreaks(text: string): string {
 /** 读进来的文件 → 编辑器里的文本，和记下来的来源（换行照原文件记） */
 export function readSqlFileText(contents: string, path = ''): { text: string; link: SqlFileLink } {
   const text = normalizeLineBreaks(stripBom(contents));
-  return { text, link: linkSqlFile(path, text, contents.includes('\r\n')) };
+  const format: SqlFileFormat = {
+    ...(contents.includes('\r\n') ? { crlf: true } : {}),
+    ...(contents.charCodeAt(0) === 0xfeff ? { bom: true } : {})
+  };
+  return { text, link: linkSqlFile(path, text, format) };
 }
 
-/** 要写进文件的内容：原文件是 CRLF 就还写 CRLF，不悄悄改掉别人仓库里的换行 */
+/** 要写进文件的内容：原文件是 CRLF、带 BOM 就照样写，不悄悄改掉别人仓库里的文件 */
 export function sqlFileContents(text: string, link: SqlFileLink | undefined): string {
-  return link?.crlf ? normalizeLineBreaks(text).replace(/\n/g, '\r\n') : text;
+  const body = link?.crlf ? normalizeLineBreaks(text).replace(/\n/g, '\r\n') : text;
+  return link?.bom ? `\ufeff${body}` : body;
 }
 
 /**
@@ -88,9 +98,14 @@ function fingerprint(text: string): string {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
 }
 
-export function linkSqlFile(path: string, text: string, crlf = false): SqlFileLink {
+export function linkSqlFile(path: string, text: string, format: SqlFileFormat = {}): SqlFileLink {
   const contentHash = fingerprint(normalizeLineBreaks(text));
-  return crlf ? { path, contentHash, crlf } : { path, contentHash };
+  return {
+    path,
+    contentHash,
+    ...(format.crlf ? { crlf: true } : {}),
+    ...(format.bom ? { bom: true } : {})
+  };
 }
 
 /** 编辑器里的内容就是文件里的内容：标签上不画「未保存」，关的时候也不用问 */

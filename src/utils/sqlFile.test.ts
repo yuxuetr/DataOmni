@@ -97,11 +97,19 @@ describe('Windows 换行（CRLF）的脚本', () => {
     expect(readSqlFileText('SELECT 1;\rSELECT 2;').text).toBe('SELECT 1;\nSELECT 2;');
   });
 
-  it('存回去还是 CRLF，不悄悄改掉别人仓库里的换行', () => {
+  it('存回去还是 CRLF、还带 BOM，不悄悄改掉别人仓库里的文件', () => {
     const { text, link } = readSqlFileText(disk, '/work/cleanup.sql');
     expect(sqlFileContents(`${text}SELECT 2;\n`, link)).toBe(
-      'SELECT 1;\r\n-- 清掉测试数据\r\nDELETE FROM t WHERE id = 1;\r\nSELECT 2;\r\n'
+      '\ufeffSELECT 1;\r\n-- 清掉测试数据\r\nDELETE FROM t WHERE id = 1;\r\nSELECT 2;\r\n'
     );
+    // 两样各管各的：只有 BOM 的照 `\n` 写，只有 CRLF 的不加 BOM
+    const bomOnly = readSqlFileText('\ufeffSELECT 1;\n', '/work/bom.sql');
+    expect(sqlFileContents(bomOnly.text, bomOnly.link)).toBe('\ufeffSELECT 1;\n');
+    const crlfOnly = readSqlFileText('SELECT 1;\r\n', '/work/crlf.sql');
+    expect(sqlFileContents(crlfOnly.text, crlfOnly.link)).toBe('SELECT 1;\r\n');
+    // 存过一次之后再存，格式还跟着原文件
+    const resaved = linkSqlFile(link.path, text, link);
+    expect(sqlFileContents(text, resaved)).toBe(disk);
     expect(sqlFileContents('SELECT 1;\n', linkSqlFile('/work/new.sql', 'SELECT 1;\n'))).toBe('SELECT 1;\n');
     expect(sqlFileContents('SELECT 1;\n', undefined)).toBe('SELECT 1;\n');
   });
