@@ -36,7 +36,14 @@ const CREDENTIAL_KEYWORD =
 
 /** `password = '…'`、`` `api_key` := '…' ``、`user_password = '…'`：按列名判断，列名可能被引号包着 */
 const SECRET_COLUMN =
-  /[`"'[]?\b(?:\w+_)?(?:password|passwd|pwd|token|access_token|refresh_token|api_key|apikey|secret|private_key|credential|credentials)\b[`"'\]]?\s*(?::=|=)\s*$/i;
+  /[`"'[]?\b(?:\w+_)?(?:password|passwd|pwd|token|access_token|refresh_token|api_key|apikey|secret|secret_access_key|secret_key|account_key|private_key|connection_string|credential|credentials)\b[`"'\]]?\s*(?::=|=)\s*$/i;
+
+/**
+ * 选项清单里名字与值之间只隔空白的：DuckDB 的 `CREATE SECRET (TYPE s3, SECRET '…', BEARER_TOKEN '…')`。
+ * 要求前面是 `(` 或 `,`，免得 `SELECT 'x' AS secret, 'y'` 这种也被打
+ */
+const SECRET_OPTION =
+  /[(,]\s*(?:\w+_)?(?:secret|token|account_key|secret_access_key|connection_string)\s+$/i;
 
 /**
  * 字面量里塞了一整条连接串：`postgres://user:pw@host/db`。
@@ -281,7 +288,7 @@ export function redactSqlForHistory(sql: string, dialect: SqlDialect): RedactedS
     // 只看前面 200 个字符：两个正则都锚在 `$` 且能匹配的前缀远短于此，
     // 每个字面量都从头切一次会把长脚本变成平方级
     const preceding = sql.slice(Math.max(0, literal.from - 200), literal.from);
-    if (CREDENTIAL_KEYWORD.test(preceding) || SECRET_COLUMN.test(preceding)) {
+    if (CREDENTIAL_KEYWORD.test(preceding) || SECRET_COLUMN.test(preceding) || SECRET_OPTION.test(preceding)) {
       targets.add(index);
     }
   });

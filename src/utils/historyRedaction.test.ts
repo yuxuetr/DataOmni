@@ -57,6 +57,23 @@ describe('redactSqlForHistory', () => {
     );
   });
 
+  it('打掉 DuckDB 的 CREATE SECRET 与 ClickHouse 命名集合里的密钥', () => {
+    expect(
+      redact("CREATE SECRET s (TYPE s3, KEY_ID 'AKIAEXAMPLE', SECRET 'wJalr', REGION 'us-east-1')", 'duckdb').sql
+    ).toBe("CREATE SECRET s (TYPE s3, KEY_ID 'AKIAEXAMPLE', SECRET '***', REGION 'us-east-1')");
+    expect(redact("CREATE PERSISTENT SECRET h (TYPE http, BEARER_TOKEN 'tok')", 'duckdb').sql).toBe(
+      "CREATE PERSISTENT SECRET h (TYPE http, BEARER_TOKEN '***')"
+    );
+    expect(redact("CREATE SECRET a (TYPE azure, CONNECTION_STRING 'AccountName=a;AccountKey=k')", 'duckdb').sql).toBe(
+      "CREATE SECRET a (TYPE azure, CONNECTION_STRING '***')"
+    );
+    expect(
+      redact("CREATE NAMED COLLECTION c AS access_key_id = 'id', secret_access_key = 'k'", 'clickhouse').sql
+    ).toBe("CREATE NAMED COLLECTION c AS access_key_id = 'id', secret_access_key = '***'");
+    // 选项清单之外，词后面跟个字面量不算
+    expect(redact("SELECT 'x' AS secret, 'y'", 'duckdb').redacted).toBe(false);
+  });
+
   it('打掉按敏感列名赋的值，列名带引号也认', () => {
     expect(redact("UPDATE users SET password = 'hunter2' WHERE id = 1").sql).toBe(
       "UPDATE users SET password = '***' WHERE id = 1"
