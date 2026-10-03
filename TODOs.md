@@ -969,6 +969,12 @@
     得到 `FROM "om_Orders" o WHERE o."OrderId" = 7 AND o."order" = 'x' AND o."unit price" > 1`，执行出那一行。
     同一轮看过、没问题的：结果网格复制（选区行号对当前页、多格按 TSV 转义、NULL 与空串分开）；对象树「复制限定名」本来就加引号。
     没改：SQL Server 在 `.` 后面也给关键字候选，输入正好是关键字（`u.use`）时回车选中的是关键字，是 lang-sql 的行为。
+  - 2026-10-03 格式化会不会改名字的大小写（各方言拿 60 个常见词当表名、列名逐个排）：**ClickHouse 上改坏了**（`4004561`）。
+    关键字统一大写，而 sql-formatter 的 ClickHouse 方言把 `type`、`name`、`key`、`events`、`settings` 等当关键字，名字跟着成了大写；
+    ClickHouse 区分大小写，cu 上的 25.8 报 Unknown expression identifier `TYPE`、UNKNOWN_TABLE 'EVENTS'。ClickHouse 改成保留原样。
+    其余方言不用改：PostgreSQL 折小写，Oracle、SQLite、SQL Server、DuckDB 不分大小写，MySQL 被大写的都是它的保留字（本来就不能裸写）。
+    原有的「排版不改内容」比对前转了小写，抓不到这个；新用例按原大小写比，先红后绿。rpm 0.4.90 连 ClickHouse 输入小写语句、点格式化、执行，查出那一行。
+    没改：同一方言把 `type` 当子句关键字排，`type` 单独起一行、逗号落在下一行，难看但能跑，是 sql-formatter 的方言表所致。
   - 2026-10-02 同一轮看过、没修的：
     - PostgreSQL 库编码是 `SQL_ASCII`、里面存着 GBK 字节：服务端在转成 UTF8 时就报 22021（psql 设成 UTF8 客户端编码报同一句），
       sqlx 写死 `client_encoding=UTF8`，没有开关。重估条件：有人拿着这样的老库来。
