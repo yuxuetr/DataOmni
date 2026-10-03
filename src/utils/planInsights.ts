@@ -71,23 +71,26 @@ export function worstEstimate(plan: QueryPlan): PlanNode | null {
     close: 1,
     unknown: 0
   };
-  let worst: { node: PlanNode; rank: number } | null = null;
+  let worst: { node: PlanNode; rank: number; depth: number } | null = null;
   // 深度优先、从上到下；带着「上面有没有 Limit」
-  const pending = plan.roots.map((node) => ({ node, underLimit: false })).reverse();
+  const pending = plan.roots.map((node) => ({ node, underLimit: false, depth: 0 })).reverse();
   for (let item = pending.pop(); item; item = pending.pop()) {
-    const { node, underLimit } = item;
+    const { node, underLimit, depth } = item;
     const rank = ranking[estimateAccuracy(node, underLimit)];
+    const rows = node.actualRows ?? 0;
+    const worstRows = worst?.node.actualRows ?? 0;
+    // 行数也一样时取更靠下的：估错从下往上传，上面几层只是跟着错
     const better = rank >= 2 && (
       !worst
         || rank > worst.rank
-        || (rank === worst.rank && (node.actualRows ?? 0) > (worst.node.actualRows ?? 0))
+        || (rank === worst.rank && (rows > worstRows || (rows === worstRows && depth > worst.depth)))
     );
     if (better) {
-      worst = { node, rank };
+      worst = { node, rank, depth };
     }
     const childrenUnderLimit = underLimit || stopsEarly(node);
     for (let index = node.children.length - 1; index >= 0; index -= 1) {
-      pending.push({ node: node.children[index], underLimit: childrenUnderLimit });
+      pending.push({ node: node.children[index], underLimit: childrenUnderLimit, depth: depth + 1 });
     }
   }
   return worst?.node ?? null;

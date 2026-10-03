@@ -83,6 +83,14 @@ describe('worstEstimate', () => {
     expect(worstEstimate(plan([limited]))).toBe(under);
   });
 
+  // 回归：估 9 实际 2000 的 Seq Scan 上面套着 Limit，两层的数一样，横幅点的是 Limit——
+  // 估错是从下往上传的，源头在下面那层
+  it('同一档、行数一样时点更靠下的那个', () => {
+    const scan = node({ operation: 'Seq Scan', estimatedRows: 9, actualRows: 2_000 });
+    const limit = node({ operation: 'Limit', estimatedRows: 9, actualRows: 2_000, children: [scan] });
+    expect(worstEstimate(plan([limit]))).toBe(scan);
+  });
+
   it('没跑过的计划里一个也挑不出来', () => {
     expect(worstEstimate(plan([node({ estimatedRows: 1 })], false))).toBeNull();
   });
