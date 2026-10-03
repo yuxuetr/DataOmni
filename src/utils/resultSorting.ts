@@ -165,7 +165,7 @@ function durationSeconds(text: string): string | null {
 /**
  * 日期与时间戳。年份之后的部分按文本比就对（月、日、时刻都补足了位），年份本身不行：
  * PostgreSQL 照 psql 写公元前（`0044-03-15 BC`，年份越大越早），也存得下五位数的年份，
- * 两端是 `-infinity` / `infinity`。两边都认得出才比，否则交回调用方按文本比
+ * 两端是 `-infinity` / `infinity`；DuckDB 的年份带符号。两边都认得出才比，否则交回调用方按文本比
  */
 function compareCalendar(left: SerializedResultValue, right: SerializedResultValue): number | null {
   const leftKey = calendarKey(left);
@@ -187,7 +187,8 @@ function calendarKey(value: SerializedResultValue): { year: number; rest: string
   if (value.value === '-infinity' || value.value === 'infinity') {
     return { year: value.value === 'infinity' ? Infinity : -Infinity, rest: '' };
   }
-  const match = /^(\d{4,})(-.*?)( BC)?$/.exec(value.value);
+  // DuckDB 那一路经 chrono 的 `%Y`，本来就是天文纪年：`-0043-03-15`、`+10000-01-01`
+  const match = /^([+-]?\d{4,})(-.*?)( BC)?$/.exec(value.value);
   if (!match) {
     return null;
   }

@@ -107,6 +107,12 @@ describe('单元格比较', () => {
       '-infinity', '0100-06-01 BC', '0044-01-01 BC', '0044-03-15 BC',
       '0010-01-01', '2026-10-03', '10000-01-01', 'infinity'
     ]);
+    // DuckDB 那一路经 chrono 的 `%Y`：天文纪年带符号，公元前 44 年是 -0043，五位数的年份前面有 +
+    expect([
+      date('+10000-01-01'), date('-0099-06-01'), date('0010-01-01'), date('-0043-03-15')
+    ].sort(compareResultValues).map((value) => value.value)).toEqual(
+      ['-0099-06-01', '-0043-03-15', '0010-01-01', '+10000-01-01']
+    );
     const datetime = (value: string) => ({ type: 'datetime' as const, value });
     expect(compareResultValues(
       datetime('0001-01-01 00:00:00 BC'), datetime('0001-01-01 00:00:00')
