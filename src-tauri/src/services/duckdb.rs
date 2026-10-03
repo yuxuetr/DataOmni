@@ -731,18 +731,37 @@ fn decode(value: &Value, type_id: LogicalTypeId) -> JsonValue {
 /// 列表与结构体写成 JSON 之后原样填回去，DuckDB 转得回列的类型；MAP 不行——
 /// `{"k":1}` 报「can't be cast to the destination type MAP」，`{k=1}` 可以（都实验过）。
 /// 表格里改一格就是把显示的文字填回去，所以 MAP 用它认的那种。
+///
+/// 键和值里有 `=`、`,`、引号这些字、或者是空串、`NULL`、首尾有空白时要加引号，
+/// 不然 `{k'1=1}`、`{=1}` 转不回去；嵌套的列表与结构体仍写成 JSON，转得回去
 fn map_text(entries: &duckdb::types::OrderedMap<Value, Value>) -> String {
   let part = |value: &Value| match value {
     Value::Null => "NULL".to_string(),
-    Value::Text(text) | Value::Enum(text) => text.clone(),
+    Value::Text(text) | Value::Enum(text) => nested_text(text),
     other => match plain(other) {
-      JsonValue::String(text) => text,
+      JsonValue::String(text) => nested_text(&text),
       json => json.to_string(),
     },
   };
   let pairs: Vec<String> =
     entries.iter().map(|(key, value)| format!("{}={}", part(key), part(value))).collect();
   format!("{{{}}}", pairs.join(", "))
+}
+
+/// DuckDB 把嵌套值转成文本时一个字符串成员的写法（照 1.5 的 `::VARCHAR` 逐字核对过）
+fn nested_text(text: &str) -> String {
+  let edge_space = |character: Option<char>| {
+    character.is_some_and(|character| " \t\n\r\u{b}\u{c}".contains(character))
+  };
+  let needs_quotes = text.is_empty()
+    || text.eq_ignore_ascii_case("null")
+    || edge_space(text.chars().next())
+    || edge_space(text.chars().last())
+    || text.contains(|character: char| "\"'(),:=[]{}".contains(character));
+  if !needs_quotes {
+    return text.to_string();
+  }
+  format!("'{}'", text.replace('\\', "\\\\").replace('\'', "\\'"))
 }
 
 fn integer(value: i128) -> JsonValue {
@@ -1156,6 +1175,21 @@ mod tests {
       (Value::Text("n".into()), Value::Null),
     ]));
     assert_eq!(decode(&map, LogicalTypeId::Map), JsonValue::from("{k=1, n=NULL}"));
+    // 和 DuckDB 1.5 的 `MAP {…}::VARCHAR` 逐字相同（命令行里对过），这样才转得回 MAP
+    let text = |text: &str| Value::Text(text.into());
+    let quoted = Value::Map(duckdb::types::OrderedMap::from(vec![
+      (text("k'1"), text("a\\b")),
+      (text(""), text("NULL")),
+      (text("a=b"), text(" sp")),
+      (text("c, d"), Value::Timestamp(TimeUnit::Second, 0)),
+      (text("a\\b"), text("tab\tin")),
+    ]));
+    assert_eq!(
+      decode(&quoted, LogicalTypeId::Map),
+      JsonValue::from(
+        "{'k\\'1'=a\\b, ''='NULL', 'a=b'=' sp', 'c, d'='1970-01-01 00:00:00', a\\b=tab\tin}"
+      )
+    );
     let nested = Value::Struct(duckdb::types::OrderedMap::from(vec![
       ("a".to_string(), Value::HugeInt(1 << 60)),
       ("b".to_string(), Value::List(vec![Value::Int(1), Value::Null])),

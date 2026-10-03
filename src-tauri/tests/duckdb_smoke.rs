@@ -876,6 +876,93 @@ async fn duckdb_exports_stream_to_a_file_and_refuse_non_queries_before_running_t
   std::fs::remove_dir_all(&dir).ok();
 }
 
+/// 导出成 INSERT 的每种值都要能原样跑回去：列表、结构、映射读出来是 DuckDB 自己的文本写法，
+/// 外面再包一层字符串字面量，靠插入时的隐式转换读回去
+#[tokio::test]
+async fn duckdb_exported_inserts_carry_every_value_back() {
+  let pool = pool("round").await;
+  let columns = "id INTEGER, t VARCHAR, b BLOB, huge HUGEINT, uhuge UHUGEINT, d DECIMAL(38, 10), \
+    x DOUBLE, r REAL, day DATE, stamp TIMESTAMP, atz TIMESTAMPTZ, tm TIME, span INTERVAL, id2 UUID, \
+    nums INTEGER[], words VARCHAR[], pair STRUCT(a INTEGER, b VARCHAR), m MAP(VARCHAR, INTEGER), \
+    nest STRUCT(k VARCHAR[], v STRUCT(z DOUBLE))[], mood mood, bits BIT, flag BOOLEAN";
+  let create_source = format!("CREATE TABLE src ({columns})");
+  let create_target = format!("CREATE TABLE dst ({columns})");
+  run_all(
+    &pool,
+    &[
+      "CREATE TYPE mood AS ENUM ('ok', 'it''s')",
+      &create_source,
+      &create_target,
+      "INSERT INTO src VALUES
+        (1, 'it''s C:\\temp
+第二行	😀', '\\x00\\xFF''\\x5C'::BLOB, 170141183460469231731687303715884105727,
+         340282366920938463463374607431768211455, -1234567890123456789012345678.0123456789,
+         'nan', 1.1, DATE '-0043-03-15', TIMESTAMP '10000-01-01 01:02:03.5',
+         TIMESTAMPTZ '2024-01-02 03:04:05.123456+08', TIME '23:59:59.999999',
+         INTERVAL '1 year -2 days 03:04:05.5', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+         [1, NULL, -3], ['a''b', NULL, 'c, d', '[x]', 'NULL', '', ' sp ', 'q\"r', '{y}'],
+         {'a': 1, 'b': 'x''y, z'}, MAP {'k''1': 1, '': NULL},
+         [{'k': ['a', 'b''c'], 'v': {'z': -0.5}}], 'it''s', '0101'::BIT, true),
+        (2, '', ''::BLOB, 0, 0, 0, '-inf', 'inf', DATE '0001-01-01', TIMESTAMP '1970-01-01',
+         TIMESTAMPTZ '1970-01-01 00:00:00+00', TIME '00:00:00', INTERVAL '0 seconds',
+         '00000000-0000-0000-0000-000000000000', [], [], {'a': NULL, 'b': NULL}, MAP {}, [],
+         'ok', '1'::BIT, false),
+        (3, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+         NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+    ],
+  )
+  .await;
+  let dir = std::env::temp_dir().join(format!("dataomni-duckdb-round-{}", std::process::id()));
+  std::fs::create_dir_all(&dir).expect("temp dir");
+  let target = dir.join("out.sql");
+  let options = dataomni_lib::services::ExportOptions {
+    format: dataomni_lib::services::ExportFormat::Sql,
+    delimiter: ",".to_string(),
+    include_header: true,
+    null_text: String::new(),
+    byte_order_mark: false,
+    sql_table: "dst".to_string(),
+    sql_dialect: Some(dataomni_lib::services::export_writer::SqlDialect::Duckdb),
+    sql_computed_columns: Vec::new(),
+    sql_identity_columns: Vec::new(),
+    sql_sequence_columns: Vec::new(),
+  };
+  dataomni_lib::services::export_query(
+    PoolRef::DuckDb(&pool),
+    "SELECT * FROM src ORDER BY id",
+    &target,
+    options,
+    &mut |_| {},
+    &mut || false,
+  )
+  .await
+  .expect("export");
+  let script = std::fs::read_to_string(&target).expect("read back");
+  std::fs::remove_dir_all(&dir).ok();
+  // 值里有换行，按行切不开；每条都以这一段开头
+  let head = "INSERT INTO \"dst\"";
+  let mut connection = session(&pool).await;
+  for statement in script.split(&format!(";\n{head}")) {
+    let statement = statement.strip_prefix(head).unwrap_or(statement);
+    let statement = format!("{head}{}", statement.strip_suffix(';').unwrap_or(statement));
+    connection
+      .execute(&statement, 10)
+      .await
+      .unwrap_or_else(|error| panic!("{statement}: {error:?}"));
+  }
+  for (left, right) in [("src", "dst"), ("dst", "src")] {
+    let rows = pool
+      .select(&format!("SELECT count(*) AS n FROM (FROM {left} EXCEPT ALL FROM {right})"), &[])
+      .await
+      .expect("compare");
+    assert_eq!(rows[0]["n"], json!(0), "{left} − {right}\n{script}");
+  }
+  assert_eq!(
+    pool.select("SELECT count(*) AS n FROM dst", &[]).await.expect("count")[0]["n"],
+    json!(3)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 改结构与建表、对象级结构操作：跑前端生成的那几条语句（共用语料），跑完读目录核对
 // ---------------------------------------------------------------------------
