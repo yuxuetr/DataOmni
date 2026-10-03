@@ -3,7 +3,7 @@ use futures_util::TryStreamExt;
 use serde::Serialize;
 use serde_json::{Map, Value as JsonValue};
 use sqlx::{
-  mysql::{MySqlRow, MySqlValueRef},
+  mysql::{types::MySqlTime, MySqlRow, MySqlValueRef},
   postgres::{PgRow, PgValueRef},
   sqlite::{SqliteRow, SqliteValueRef},
   Column, Connection, Executor, MySql, MySqlConnection, PgConnection, Pool, Postgres, Row, Sqlite,
@@ -1367,12 +1367,7 @@ fn decode_mysql(value: MySqlValueRef<'_>) -> Result<JsonValue, QueryError> {
       Ok(number) => Ok(tagged_value("bigint", number.to_string())),
       Err(_) => tagged_display_value("bigint", ValueRef::to_owned(&value).try_decode::<u64>()),
     },
-    // MySQL 的 TIME 是时长而非时刻（-838:59:59 ~ 838:59:59），装不进 time::Time
-    "TIME" => {
-      let duration =
-        ValueRef::to_owned(&value).try_decode::<time::Duration>().map_err(QueryError::from)?;
-      Ok(tagged_value("time", format_mysql_time(duration)))
-    }
+    "TIME" => mysql_time(&value),
     "TINYBLOB" | "MEDIUMBLOB" | "BLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => {
       let bytes = ValueRef::to_owned(&value).try_decode::<Vec<u8>>().map_err(display_error)?;
       Ok(mysql_bytes_value(bytes))
@@ -1663,14 +1658,41 @@ fn pg_numeric_display_scale(value: &PgValueRef<'_>) -> Option<i64> {
   }
 }
 
-/// MySQL 的 TIME 是带符号时长，按它自己的 `[-]HH:MM:SS` 文本形式呈现。
-fn format_mysql_time(duration: time::Duration) -> String {
-  let sign = if duration.is_negative() { "-" } else { "" };
-  let total = duration.abs();
-  let hours = total.whole_hours();
-  let minutes = total.whole_minutes() % 60;
-  let seconds = total.whole_seconds() % 60;
-  format!("{sign}{hours:02}:{minutes:02}:{seconds:02}")
+/// MySQL 的 TIME 是时长而非时刻（-838:59:59 ~ 838:59:59），装不进 time::Time。
+///
+/// sqlx 0.8.6 在两条路上都把负号弄丢过：转 time::Duration 时符号只给了整秒（`-00:00:01.25`
+/// 成了 -0.75 秒），解析文本时把 `-00` 当整数读成 0（`-00:00:01.25` 成了正的）。
+/// 所以二进制只借它拆字段，文本直接用服务端的写法。认格式的办法同 [`mysql_date_time`]：
+/// 二进制是长度字节加 0、8 或 12 个字节，文本最短的 `00:00:00` 也有 8 字节且不以这几个字节开头
+fn mysql_time(value: &MySqlValueRef<'_>) -> Result<JsonValue, QueryError> {
+  let Ok(bytes) = ValueRef::to_owned(value).try_decode_unchecked::<Vec<u8>>() else {
+    return Ok(JsonValue::Null);
+  };
+  let binary = matches!(
+    bytes.as_slice(),
+    [length @ (0 | 8 | 12), rest @ ..] if usize::from(*length) == rest.len()
+  );
+  if !binary {
+    // 服务端按列的精度补足了小数位（`TIME(6)` 的 `12:00:00.500000`）；去掉，与二进制那一路一样
+    let text = String::from_utf8_lossy(&bytes);
+    let trimmed =
+      if text.contains('.') { text.trim_end_matches('0').trim_end_matches('.') } else { &text };
+    return Ok(tagged_value("time", trimmed.to_owned()));
+  }
+  let time = ValueRef::to_owned(value).try_decode::<MySqlTime>().map_err(QueryError::from)?;
+  Ok(tagged_value("time", format_mysql_time(&time)))
+}
+
+/// 按 MySQL 自己的 `[-]HH:MM:SS[.ffffff]` 写，小数秒去掉末尾的 0
+fn format_mysql_time(time: &MySqlTime) -> String {
+  // 问 `sign()`，不问 `is_negative()`：sqlx 0.8.6 的后者返回的是 `is_positive()`
+  let sign = if time.sign().is_negative() { "-" } else { "" };
+  let whole = format!("{sign}{:02}:{:02}:{:02}", time.hours(), time.minutes(), time.seconds());
+  // 小数秒的写法与 `format_time` 相同
+  match time.microseconds() {
+    0 => whole,
+    micros => format!("{whole}.{}", format!("{micros:06}").trim_end_matches('0')),
+  }
 }
 
 /// PostgreSQL 的 interval 由「月 / 日 / 微秒」三段组成，没有统一的标量表示，
@@ -1928,6 +1950,23 @@ pub(crate) fn tagged_value(value_type: &str, value: String) -> JsonValue {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  /// 期望值是 MySQL 8.4 对同一个 `TIME(6)` 值的输出去掉末尾的 0（与 DATETIME 的小数秒同一个写法）
+  #[test]
+  fn a_mysql_time_keeps_its_fractional_seconds_and_sign() {
+    use sqlx::mysql::types::MySqlTimeSign::{Negative, Positive};
+    let cases = [
+      (Positive, 12, 0, 0, 500_000, "12:00:00.5"),
+      (Negative, 0, 0, 1, 250_000, "-00:00:01.25"),
+      (Negative, 838, 59, 59, 0, "-838:59:59"),
+      (Positive, 0, 0, 0, 1, "00:00:00.000001"),
+      (Positive, 0, 0, 0, 0, "00:00:00"),
+    ];
+    for (sign, hours, minutes, seconds, micros, expected) in cases {
+      let time = MySqlTime::new(sign, hours, minutes, seconds, micros).expect("a valid TIME");
+      assert_eq!(format_mysql_time(&time), expected);
+    }
+  }
 
   /// 期望值是 PostgreSQL 16 对同一个值的文本输出（默认 IntervalStyle `postgres`），逐条跑过
   #[test]

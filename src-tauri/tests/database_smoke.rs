@@ -3543,6 +3543,40 @@ async fn mysql_runs_what_the_prepared_protocol_refuses_as_plain_text() {
   assert!(unlocked.is_ok(), "UNLOCK TABLES: {unlocked:?}");
 }
 
+/// MySQL 的 TIME 是带符号的时长，最长 838 小时，可以带小数秒。预处理协议（SELECT）
+/// 与文本协议（HANDLER READ）各读一遍：两条路径解码不同，写法要一样
+#[tokio::test]
+async fn mysql_time_reads_with_its_sign_and_fractional_seconds() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  sqlx::raw_sql(
+    "DROP TABLE IF EXISTS om_time;
+     CREATE TABLE om_time (id INT PRIMARY KEY, t TIME(6));
+     INSERT INTO om_time VALUES (1, '12:00:00.5'), (2, '-00:00:01.25'), (3, '-838:59:59'), (4, '00:00:00.000001')",
+  )
+  .execute(&pool)
+  .await
+  .expect("create table");
+  let db = DbPool::MySql(pool.clone());
+  let selected = execute_query(&db, "SELECT id, t FROM om_time ORDER BY id").await;
+  execute_query(&db, "HANDLER om_time OPEN").await.expect("HANDLER OPEN");
+  let read = execute_query(&db, "HANDLER om_time READ `PRIMARY` FIRST LIMIT 10").await;
+  execute_query(&db, "HANDLER om_time CLOSE").await.expect("HANDLER CLOSE");
+  sqlx::raw_sql("DROP TABLE om_time").execute(&pool).await.expect("drop table");
+
+  let expected = ["12:00:00.5", "-00:00:01.25", "-838:59:59", "00:00:00.000001"];
+  for (path, result) in [("prepared", selected), ("text", read)] {
+    let QueryExecutionResult::Rows { rows, .. } = result.expect("reads the table") else {
+      panic!("{path}: returns rows");
+    };
+    let times: Vec<_> = rows.iter().map(|row| row["t"]["value"].clone()).collect();
+    assert_eq!(times, expected, "{path}");
+  }
+}
+
 #[tokio::test]
 async fn mysql_use_is_rejected_by_the_prepared_protocol() {
   let Some(url) = network_database_url(MYSQL_URL_ENV) else {
