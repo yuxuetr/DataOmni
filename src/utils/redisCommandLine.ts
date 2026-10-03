@@ -19,7 +19,7 @@ const ESCAPES: Record<string, number> = { n: 0x0a, r: 0x0d, t: 0x09, b: 0x08, a:
 const encoder = new TextEncoder();
 
 /**
- * 按 redis-cli 的规矩把一行拆成参数（它的 `sdssplitargs`）：空白分隔；双引号里认
+ * 按 redis-cli 的规矩把一行拆成参数（它的 `sdssplitargs`）：ASCII 空白分隔；双引号里认
  * `\n \r \t \b \a \\ \"` 与 `\xHH`（一个字节）；单引号里只认 `\'`；引号收尾后面必须是
  * 空白或行尾。结果是字节串，所以 `"\xff"` 发出去就是一个 0xff 字节，不是四个字符
  */
@@ -27,7 +27,11 @@ export function splitCommandLine(line: string): SplitResult {
   const args: Uint8Array[] = [];
   const chars = [...line];
   let index = 0;
-  const isSpace = (char: string | undefined) => char !== undefined && /\s/.test(char);
+  // 只认 ASCII 空白，和 C 的 isspace 一样：JS 的 `\s` 还认全角空格（U+3000）、不换行空格，
+  // 中文输入法下打出来的全角空格会把一个值拆成两个参数。没加引号的参数更窄，只在
+  // 空格、\t、\n、\r 处断开（`\v`、`\f` 留在值里）
+  const isSpace = (char: string | undefined) => char !== undefined && /^[ \t\n\v\f\r]$/.test(char);
+  const endsBareArgument = (char: string) => /^[ \t\n\r]$/.test(char);
   while (index < chars.length) {
     while (isSpace(chars[index])) index += 1;
     if (index >= chars.length) break;
@@ -36,7 +40,7 @@ export function splitCommandLine(line: string): SplitResult {
     let done = false;
     while (!done) {
       const char = chars[index];
-      if (char === undefined || isSpace(char)) {
+      if (char === undefined || endsBareArgument(char)) {
         done = true;
       } else if (char === '"') {
         index += 1;
@@ -63,6 +67,7 @@ export function splitCommandLine(line: string): SplitResult {
         if (!closed || (index < chars.length && !isSpace(chars[index]))) {
           return { ok: false, error: 'unbalancedQuotes' };
         }
+        done = true;
       } else if (char === "'") {
         index += 1;
         let closed = false;
@@ -83,6 +88,7 @@ export function splitCommandLine(line: string): SplitResult {
         if (!closed || (index < chars.length && !isSpace(chars[index]))) {
           return { ok: false, error: 'unbalancedQuotes' };
         }
+        done = true;
       } else {
         push(char);
         index += 1;

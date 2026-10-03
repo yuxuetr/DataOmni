@@ -69,7 +69,8 @@ export function RedisConsole({ database, active, onRan }: RedisConsoleProps) {
   const run = async () => {
     const text = line.trim();
     if (!text || running || !connectionString) return;
-    const split = splitCommandLine(text);
+    // 拆的是原样的一行：`trim()` 会连行尾的全角空格一起去掉，而 redis-cli 把它留在值里
+    const split = splitCommandLine(line);
     setHistoryIndex(-1);
     if (!split.ok) {
       record({ line: text, output: t(`redis.console.${split.error}`), failed: true });

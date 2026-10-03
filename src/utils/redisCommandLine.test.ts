@@ -24,6 +24,14 @@ describe('splitCommandLine', () => {
     expect([...args('GET 键')[1]]).toEqual([...new TextEncoder().encode('键')]);
   });
 
+  it('只有 ASCII 空白分隔：全角空格、不换行空格是值的一部分，和 redis-cli 一样', () => {
+    // 中文输入法下打出全角空格很常见；按它拆开，`RPUSH` 会悄悄推进两个元素
+    expect(args('RPUSH l 你好\u3000世界 a\u00a0b').map(text)).toEqual(['RPUSH', 'l', '你好\u3000世界', 'a\u00a0b']);
+    expect(splitCommandLine('SET "a"\u3000')).toEqual({ ok: false, error: 'unbalancedQuotes' });
+    // 没加引号的参数只在空格、\t、\n、\r 处断开，\v 留在值里；参数之间与引号收尾后的空白按 isspace 认
+    expect(args('RPUSH\tk\x0bw "a"\x0b x').map(text)).toEqual(['RPUSH', 'k\x0bw', 'a', 'x']);
+  });
+
   it('引号没收尾、收尾后紧跟着字符、空行都报出来', () => {
     expect(splitCommandLine('SET "abc')).toEqual({ ok: false, error: 'unbalancedQuotes' });
     expect(splitCommandLine('SET "a"b')).toEqual({ ok: false, error: 'unbalancedQuotes' });
