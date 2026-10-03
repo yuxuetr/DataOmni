@@ -42,6 +42,41 @@ describe('statementReversibility', () => {
     ).toEqual({ kind: 'not-transactional', keyword: 'TRUNCATE' });
   });
 
+  it('MySQL 隐式提交清单上不是 DDL 的那几条也认', () => {
+    // CHECK TABLE、CACHE INDEX 在 cu 的 8.4 上试过：之后的 ROLLBACK 撤不掉前面的 INSERT
+    const cases: Array<[string, string]> = [
+      ["SET PASSWORD FOR 'app'@'%' = 'x'", 'SET PASSWORD'],
+      ['CHECK TABLE orders', 'CHECK TABLE'],
+      ['CACHE INDEX orders IN hot', 'CACHE INDEX'],
+      ['LOAD INDEX INTO CACHE orders', 'LOAD INDEX'],
+      ["INSTALL PLUGIN p SONAME 'p.so'", 'INSTALL'],
+      ['RESET MASTER', 'RESET'],
+      ["CHANGE REPLICATION SOURCE TO SOURCE_HOST = 'h'", 'CHANGE'],
+      ['STOP REPLICA', 'STOP REPLICA'],
+    ];
+    for (const [sql, keyword] of cases) {
+      expect(statementReversibility([sql], 'mysql', false, 'active'), sql).toEqual({ kind: 'not-transactional', keyword });
+    }
+    // 普通的 SET 与 LOAD DATA 不隐式提交
+    expect(statementReversibility(['SET @x = 1'], 'mysql', false, 'active')).toEqual({ kind: 'transactional' });
+    expect(
+      statementReversibility(["LOAD DATA INFILE 'f' INTO TABLE t"], 'mysql', false, 'active')
+    ).toEqual({ kind: 'transactional' });
+  });
+
+  it('PostgreSQL 的 REINDEX DATABASE / SYSTEM 与 CONCURRENTLY 不许进事务', () => {
+    for (const [sql, keyword] of [
+      ['REINDEX DATABASE app', 'REINDEX DATABASE'],
+      ['REINDEX SYSTEM app', 'REINDEX SYSTEM'],
+      ['REINDEX TABLE CONCURRENTLY orders', 'REINDEX TABLE CONCURRENTLY'],
+      ['REINDEX INDEX CONCURRENTLY idx', 'REINDEX INDEX CONCURRENTLY'],
+      ['REINDEX SCHEMA CONCURRENTLY public', 'REINDEX SCHEMA CONCURRENTLY'],
+    ]) {
+      expect(statementReversibility([sql], 'postgresql', false, 'idle'), sql).toEqual({ kind: 'not-transactional', keyword });
+    }
+    expect(statementReversibility(['REINDEX TABLE orders'], 'postgresql', false, 'idle')).toEqual({ kind: 'transactional' });
+  });
+
   it('SQLite 的 DDL 是事务性的', () => {
     expect(
       statementReversibility(['DROP TABLE orders'], 'sqlite', false, 'idle')

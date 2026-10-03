@@ -39,7 +39,7 @@ type KeywordPrefix = readonly string[];
  * 猜错，代价是他以为能回滚。
  */
 const NON_TRANSACTIONAL: Record<SqlDialect, readonly KeywordPrefix[]> = {
-  // MySQL 的 DDL 与权限语句全部隐式提交
+  // MySQL 的 DDL 与权限语句全部隐式提交，清单上另有维护、插件与复制那几条
   mysql: [
     ['CREATE'],
     ['ALTER'],
@@ -48,12 +48,24 @@ const NON_TRANSACTIONAL: Record<SqlDialect, readonly KeywordPrefix[]> = {
     ['TRUNCATE'],
     ['GRANT'],
     ['REVOKE'],
+    ['SET', 'PASSWORD'],
     ['ANALYZE'],
     ['OPTIMIZE'],
     ['REPAIR'],
+    ['CHECK', 'TABLE'],
+    ['CACHE', 'INDEX'],
+    ['LOAD', 'INDEX'],
     ['FLUSH'],
+    ['RESET'],
     ['LOCK'],
-    ['UNLOCK']
+    ['UNLOCK'],
+    ['INSTALL'],
+    ['UNINSTALL'],
+    ['CHANGE'],
+    ['START', 'REPLICA'],
+    ['STOP', 'REPLICA'],
+    ['START', 'SLAVE'],
+    ['STOP', 'SLAVE']
   ],
   // PostgreSQL 的 DDL 是事务性的——`DROP TABLE` 能回滚。只有这几条不行
   postgresql: [
@@ -64,6 +76,11 @@ const NON_TRANSACTIONAL: Record<SqlDialect, readonly KeywordPrefix[]> = {
     ['DROP', 'TABLESPACE'],
     ['CREATE', 'INDEX', 'CONCURRENTLY'],
     ['DROP', 'INDEX', 'CONCURRENTLY'],
+    ['REINDEX', 'DATABASE'],
+    ['REINDEX', 'SYSTEM'],
+    ['REINDEX', 'TABLE', 'CONCURRENTLY'],
+    ['REINDEX', 'INDEX', 'CONCURRENTLY'],
+    ['REINDEX', 'SCHEMA', 'CONCURRENTLY'],
     ['ALTER', 'SYSTEM']
   ],
   // SQLite 的 DDL 也是事务性的

@@ -108,12 +108,35 @@ impl TransactionState {
 /// 另一个问题——执行**之前**要不要向用户承诺可以回滚。两处都照 MySQL 文档
 /// 的隐式提交清单写。
 fn commits_implicitly(sql: &str) -> bool {
-  const IMPLICIT_COMMIT: [&str; 13] = [
-    "CREATE", "ALTER", "DROP", "RENAME", "TRUNCATE", "GRANT", "REVOKE", "ANALYZE", "OPTIMIZE",
-    "REPAIR", "FLUSH", "LOCK", "UNLOCK",
+  const IMPLICIT_COMMIT: [&str; 17] = [
+    "CREATE",
+    "ALTER",
+    "DROP",
+    "RENAME",
+    "TRUNCATE",
+    "GRANT",
+    "REVOKE",
+    "ANALYZE",
+    "OPTIMIZE",
+    "REPAIR",
+    "FLUSH",
+    "RESET",
+    "LOCK",
+    "UNLOCK",
+    "INSTALL",
+    "UNINSTALL",
+    "CHANGE",
   ];
-  let (first, _) = leading_keywords(sql);
+  let (first, second) = leading_keywords(sql);
   IMPLICIT_COMMIT.contains(&first.as_str())
+    || matches!(
+      (first.as_str(), second.as_str()),
+      ("SET", "PASSWORD")
+        | ("CHECK", "TABLE")
+        | ("CACHE", "INDEX")
+        | ("LOAD", "INDEX")
+        | ("START" | "STOP", "REPLICA" | "SLAVE")
+    )
 }
 
 /// 只看开头的一两个关键字。
@@ -248,9 +271,21 @@ mod tests {
   fn mysql_ddl_ends_the_transaction_even_though_nobody_sent_commit() {
     // 带注释的那条也要认出来：`leading_keywords` 会跳过它，
     // 而按 `split_whitespace` 取第一个词的话第一个词是 `/*`
-    for sql in
-      ["DROP TABLE orders", "alter table orders add column note text", "/* 收尾 */ TRUNCATE t"]
-    {
+    // 后几条不是 DDL，也在 MySQL 的隐式提交清单上；CHECK TABLE 与 CACHE INDEX 在 cu 的 8.4 上试过：
+    // 之后的 ROLLBACK 撤不掉前面的 INSERT
+    for sql in [
+      "DROP TABLE orders",
+      "alter table orders add column note text",
+      "/* 收尾 */ TRUNCATE t",
+      "SET PASSWORD = 'x'",
+      "CHECK TABLE orders",
+      "CACHE INDEX orders IN hot",
+      "LOAD INDEX INTO CACHE orders",
+      "INSTALL PLUGIN p SONAME 'p.so'",
+      "RESET MASTER",
+      "CHANGE REPLICATION SOURCE TO SOURCE_HOST = 'h'",
+      "STOP REPLICA",
+    ] {
       let mut state = TransactionState::default();
       state.after_success("BEGIN", NOW, true);
       state.after_success(sql, "2026-09-21T02:00:00Z", true);
@@ -273,7 +308,14 @@ mod tests {
   /// 时候变灰，而这正是一批 DELETE 改错之后最需要它的时刻
   #[test]
   fn ordinary_writes_are_not_implicit_commits() {
-    for sql in ["DELETE FROM orders", "UPDATE t SET note = 'x'", "INSERT INTO t VALUES (1)"] {
+    for sql in [
+      "DELETE FROM orders",
+      "UPDATE t SET note = 'x'",
+      "INSERT INTO t VALUES (1)",
+      "SET @x = 1",
+      "LOAD DATA INFILE 'f' INTO TABLE t",
+      "CHECKSUM TABLE t",
+    ] {
       let mut state = TransactionState::default();
       state.after_success("BEGIN", NOW, true);
       state.after_success(sql, "2026-09-21T02:00:00Z", true);
