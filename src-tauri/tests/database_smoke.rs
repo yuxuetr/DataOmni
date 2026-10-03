@@ -3487,6 +3487,53 @@ async fn mysql_session_target_reports_database_and_read_only() {
   assert_eq!(row.get::<i64, _>("read_only"), 0, "测试库不是只读副本");
 }
 
+/// 预处理协议不收的语句（1295）改走文本协议：`CHECK TABLE`、`SHOW WARNINGS`、`LOCK TABLES` 这些在编辑器里
+/// 原先只得到一句「This command is not supported in the prepared statement protocol yet」。
+/// `USE` 照旧拒绝，见下一条
+#[tokio::test]
+async fn mysql_runs_what_the_prepared_protocol_refuses_as_plain_text() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  sqlx::raw_sql(
+    "DROP TABLE IF EXISTS om_check;
+     CREATE TABLE om_check (id INT PRIMARY KEY, amount DECIMAL(30, 10), at DATETIME(3), note VARCHAR(10));
+     INSERT INTO om_check VALUES (7, 12345678901234567890.0123456789, '2026-10-03 04:05:06.789', 'x')",
+  )
+  .execute(&pool)
+  .await
+  .expect("create table");
+  let db = DbPool::MySql(pool.clone());
+  let result = execute_query(&db, "CHECK TABLE om_check").await;
+  let locked = execute_query(&db, "LOCK TABLES om_check READ").await;
+  let unlocked = execute_query(&db, "UNLOCK TABLES").await;
+  // HANDLER 读出来的是表里带类型的行：文本协议下各列照样按类型取（池子只有一条连接，三句在同一个会话里）
+  let opened = execute_query(&db, "HANDLER om_check OPEN").await;
+  let read = execute_query(&db, "HANDLER om_check READ FIRST").await;
+  let closed = execute_query(&db, "HANDLER om_check CLOSE").await;
+  sqlx::raw_sql("DROP TABLE om_check").execute(&pool).await.expect("drop table");
+  assert!(opened.is_ok() && closed.is_ok(), "HANDLER OPEN / CLOSE: {opened:?} {closed:?}");
+  let QueryExecutionResult::Rows { rows: handler_rows, .. } = read.expect("HANDLER READ runs")
+  else {
+    panic!("HANDLER READ returns rows");
+  };
+  assert_eq!(handler_rows[0]["id"]["value"], "7");
+  assert_eq!(handler_rows[0]["amount"]["value"], "12345678901234567890.0123456789");
+  assert_eq!(handler_rows[0]["at"]["value"], "2026-10-03 04:05:06.789");
+  assert_eq!(handler_rows[0]["note"], "x");
+
+  let QueryExecutionResult::Rows { columns, rows, .. } = result.expect("CHECK TABLE runs") else {
+    panic!("CHECK TABLE returns its report as rows");
+  };
+  assert_eq!(columns, ["Table", "Op", "Msg_type", "Msg_text"]);
+  assert_eq!(rows.len(), 1);
+  assert_eq!(rows[0]["Msg_text"], "OK");
+  assert!(locked.is_ok(), "LOCK TABLES: {locked:?}");
+  assert!(unlocked.is_ok(), "UNLOCK TABLES: {unlocked:?}");
+}
+
 #[tokio::test]
 async fn mysql_use_is_rejected_by_the_prepared_protocol() {
   let Some(url) = network_database_url(MYSQL_URL_ENV) else {

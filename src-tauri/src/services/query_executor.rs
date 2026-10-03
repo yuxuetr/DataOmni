@@ -700,22 +700,34 @@ async fn describe_mysql_columns(
   sql: &str,
 ) -> Result<Vec<QueryColumnMetadata>, QueryError> {
   let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
+  Ok(mysql_column_metadata(&description))
+}
+
+fn mysql_column_metadata(description: &sqlx::Describe<MySql>) -> Vec<QueryColumnMetadata> {
   let names = number_duplicate_columns(description.columns().iter().map(|column| column.name()));
-  Ok(
-    description
-      .columns()
-      .iter()
-      .zip(names)
-      .enumerate()
-      .map(|(ordinal, (column, name))| QueryColumnMetadata {
-        name,
-        ordinal,
-        database_type: column.type_info().name().to_string(),
-        logical_type: mysql_logical_type(column.type_info().name()).to_string(),
-        nullable: description.nullable(ordinal),
-      })
-      .collect(),
-  )
+  description
+    .columns()
+    .iter()
+    .zip(names)
+    .enumerate()
+    .map(|(ordinal, (column, name))| QueryColumnMetadata {
+      name,
+      ordinal,
+      database_type: column.type_info().name().to_string(),
+      logical_type: mysql_logical_type(column.type_info().name()).to_string(),
+      nullable: description.nullable(ordinal),
+    })
+    .collect()
+}
+
+/// MySQL 的预处理协议不收这条语句（1295）：8.4 上试过的有 `CHECK TABLE`、`SHOW WARNINGS`、
+/// `LOCK TABLES` / `UNLOCK TABLES`、`HELP`、`HANDLER`、`XA`。`USE` 也是，但它在前面就被拒了
+fn unsupported_by_prepared_protocol(error: &sqlx::Error) -> bool {
+  const ER_UNSUPPORTED_PS: u16 = 1295;
+  error
+    .as_database_error()
+    .and_then(|database| database.try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>())
+    .is_some_and(|mysql| mysql.number() == ER_UNSUPPORTED_PS)
 }
 
 async fn execute_mysql_connection_streaming(
@@ -731,12 +743,18 @@ async fn execute_mysql_connection_streaming(
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let column_metadata = describe_mysql_columns(connection, sql).await?;
+  let column_metadata = match (&mut *connection).describe(sql).await {
+    Err(error) if unsupported_by_prepared_protocol(&error) => {
+      refuse_non_query(options.non_query)?;
+      return stream_mysql_undescribed(connection, sql, options, sink, false).await;
+    }
+    described => mysql_column_metadata(&described.map_err(QueryError::from)?),
+  };
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
   if columns.is_empty() && !options.explain_plan {
     refuse_non_query(options.non_query)?;
-    return stream_mysql_undescribed(connection, sql, options, sink).await;
+    return stream_mysql_undescribed(connection, sql, options, sink, true).await;
   }
 
   let mut stream = (&mut *connection).fetch(sqlx::query(sql));
@@ -782,14 +800,21 @@ async fn execute_mysql_connection_streaming(
 /// describe 说没有列的语句。多数是写语句，但 `CALL` 一个查询过程也是这样：过程里的 SELECT 要执行了才有
 /// 结果集。第一个结果集给用户看（与 SQL Server 一样），之后的读掉不留；一个结果集都没有就是影响行数。
 ///
-/// 列名取自第一行：结果集是空的时候拿不到列（sqlx 不给没有行的列定义），只能报影响行数
+/// 列名取自第一行：结果集是空的时候拿不到列（sqlx 不给没有行的列定义），只能报影响行数。
+///
+/// `prepared` 为假时走文本协议：预处理协议不收的语句（见 [`unsupported_by_prepared_protocol`]）
 async fn stream_mysql_undescribed(
   connection: &mut MySqlConnection,
   sql: &str,
   options: StreamOptions,
   sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+  prepared: bool,
 ) -> Result<QueryExecutionSummary, QueryError> {
-  let mut stream = (&mut *connection).fetch_many(sqlx::query(sql));
+  let mut stream = if prepared {
+    (&mut *connection).fetch_many(sqlx::query(sql))
+  } else {
+    (&mut *connection).fetch_many(sqlx::raw_sql(sql))
+  };
   let mut first: Option<Vec<QueryColumnMetadata>> = None;
   // 第一个结果集读完（或到了上限）之后，后面的只是读掉
   let mut first_done = false;
