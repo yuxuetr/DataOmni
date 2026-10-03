@@ -382,6 +382,9 @@ export function buildRowCountStatement(target: TableTarget, key: RowKey, atLeast
   return { sql: `SELECT ${projection} FROM ${tableReference(target)} WHERE ${condition}`, params };
 }
 
+/** 字符串与各家的引号标识符；成对的引号是转义 */
+const QUOTED_SEGMENT = String.raw`'(?:[^']|'')*'|"(?:[^"]|"")*"|\`(?:[^\`]|\`\`)*\`|\[(?:[^\]]|\]\])*\]`;
+
 /**
  * 把绑定参数填回语句，得到一条可以直接读、直接跑的 SQL。
  *
@@ -394,11 +397,16 @@ export function renderStatementForDisplay(
 ): string {
   let index = 0;
   const placeholder = dialect === 'oracle'
-    ? /:\d+/g
+    ? ':\\d+'
     : dialect === 'clickhouse'
-      ? /\{p\d+:[^}]*\}/g
-      : /\$\d+|@P\d+|\?/g;
-  return statement.sql.replace(placeholder, () => {
+      ? '\\{p\\d+:[^}]*\\}'
+      : '\\$\\d+|@P\\d+|\\?';
+  // 引号里的原样跳过：列名 `ok?`、表达式里的 '?' 不是占位符，当成占位符填进值，后面的参数就全错位了
+  const pattern = new RegExp(`${QUOTED_SEGMENT}|${placeholder}`, 'g');
+  return statement.sql.replace(pattern, (match) => {
+    if (/^["'`[]/.test(match)) {
+      return match;
+    }
     const value = statement.params[index];
     index += 1;
     if (value === null || value === undefined) {

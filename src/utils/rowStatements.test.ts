@@ -118,6 +118,22 @@ describe('renderStatementForDisplay', () => {
     );
   });
 
+  // 回归：列名里的 `?` 被当成占位符填了值，后面的参数全部错位，预览给的不是真正会发的那条
+  it('引号里的问号、冒号不是占位符', () => {
+    const statement = buildUpdateStatement(
+      { ...target('mysql'), columns: [column('ok?', 'varchar(10)'), column('id', 'int')] },
+      { columns: ['id'], values: { id: 'k' } },
+      { 'ok?': value('y'), id: { kind: 'expression', sql: "concat('?', id)" } }
+    );
+    expect(renderStatementForDisplay(statement, 'mysql')).toBe(
+      "UPDATE `orders` SET `ok?` = 'y', `id` = concat('?', id) WHERE `id` = 'k'"
+    );
+    expect(renderStatementForDisplay({ sql: 'UPDATE "T" SET "A:1" = :1', params: ['v'] }, 'oracle'))
+      .toBe(`UPDATE "T" SET "A:1" = 'v'`);
+    expect(renderStatementForDisplay({ sql: 'UPDATE [a?] SET [b@P1] = @P1', params: [2] }, 'sqlserver'))
+      .toBe('UPDATE [a?] SET [b@P1] = 2');
+  });
+
   it('NULL 与布尔不加引号', () => {
     expect(
       renderStatementForDisplay({ sql: 'UPDATE t SET a = ?, b = ?', params: [null, true] }, 'sqlite')
