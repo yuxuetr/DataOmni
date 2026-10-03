@@ -373,6 +373,21 @@ describe('PostgreSQL 的参数按列的声明类型转换', () => {
     expect(statement.sql).toBe('INSERT INTO "reg"."t" ("doc", "title") VALUES ($1::jsonb, $2)');
   });
 
+  // 回归：char(n) 读回来补满空格，按 text 比时 PG 把列这边去掉尾随空格再比，'ab   ' 永远对不上 'ab'——
+  // 有 char 列的行删不掉、char 主键的行改不了，报的却是「被别人改过」
+  it('char(n) 的比较转成 bpchar，按补空格的语义比', () => {
+    const charTarget: TableTarget = {
+      ...pgTarget,
+      columns: [column('code', 'character(5)'), column('tag', 'bpchar'), column('v', 'integer')]
+    };
+    const statement = buildDeleteStatement(
+      charTarget,
+      { columns: ['code'], values: { code: 'ab   ' } },
+      { values: { tag: 'x   ', v: 1 } }
+    );
+    expect(statement.sql).toBe('DELETE FROM "reg"."t" WHERE "code" = $1::bpchar AND "tag" = $2::bpchar AND "v" = 1');
+  });
+
   it('别的方言不转', () => {
     const statement = buildUpdateStatement({ ...pgTarget, dialect: 'mysql' }, key, { doc: value('{}') });
     expect(statement.sql).toBe('UPDATE `reg`.`t` SET `doc` = ? WHERE `id` = 1');

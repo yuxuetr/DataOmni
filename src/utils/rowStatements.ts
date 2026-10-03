@@ -83,11 +83,17 @@ function parameterCast(column: ColumnInfo | undefined, dialect: SqlIdentifierDia
   if (dialect !== 'postgresql' || !column?.data_type || TEXT_FAMILY.test(column.data_type)) {
     return '';
   }
+  // char(n) 读回来补满了空格，而 `bpchar = text` 是把列这边去掉尾随空格再按 text 比，
+  // 'ab   ' 永远等不上。转成不带长度的 bpchar：比较按补空格的语义，赋值超长照样报错（带长度的显式转换会悄悄截断）
+  if (CHAR_FAMILY.test(column.data_type)) {
+    return '::bpchar';
+  }
   return `::${column.data_type}`;
 }
 
 /** 这几种收 text 参数不用转；带上 `::varchar(32)` 只会让预览里的语句更难读 */
-const TEXT_FAMILY = /^(text|citext|name|character varying(\(\d+\))?|varchar(\(\d+\))?|character(\(\d+\))?|char(\(\d+\))?|bpchar)$/i;
+const TEXT_FAMILY = /^(text|citext|name|character varying(\(\d+\))?|varchar(\(\d+\))?)$/i;
+const CHAR_FAMILY = /^(character(\(\d+\))?|char(\(\d+\))?|bpchar)$/i;
 
 function tableReference(target: TableTarget): string {
   return quoteQualifiedSqlIdentifier(
