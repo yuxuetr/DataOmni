@@ -991,6 +991,27 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-03 结果排序、事务状态与 MySQL 的预处理协议（rpm 0.4.107 / 0.4.108，连 cu 的 MySQL 8.4 与容器里的 DuckDB 文件）：**修了四处**：
+    - 结果表点表头排序时，浮点列里的无穷与 NaN 按显示文本比（`6e487b2`）：JSON 没有这几个数，它们是字符串，负无穷排在 -2 与 3.5 之间。
+      现在负无穷最小、正无穷最大、NaN 在最后（同 PostgreSQL），各家拼法（`Infinity`、`Inf`、`inf`、`NaN`、`Nan`、`nan`）都认。
+      打包版上 DuckDB 的 `3.5, -inf, -2, inf, nan, -100` 升序排成 `-inf, -100, -2, 3.5, inf, NaN`。
+    - MySQL 隐式提交清单上不是 DDL 的那几条认不出（`a4c2e63`）：`SET PASSWORD`、`CHECK TABLE`、`CACHE INDEX`、`LOAD INDEX`、`RESET`、
+      `INSTALL` / `UNINSTALL`、`CHANGE REPLICATION SOURCE`、`START` / `STOP REPLICA`。8.4 上用命令行试过 `CHECK TABLE` 与 `CACHE INDEX`：
+      之后的 ROLLBACK 撤不掉前面的 INSERT。原先后端仍记着「事务中」，下一条写入不再补 BEGIN、当场提交，回滚撤不掉；
+      确认框也说「改成在事务里跑就能回滚」。前后端两份清单一起补，PostgreSQL 另补不许进事务的 `REINDEX DATABASE / SYSTEM` 与
+      `REINDEX … CONCURRENTLY`。打包版上关掉自动提交：INSERT 1 → `CHECK TABLE` 之后状态栏回到「无事务」→ INSERT 2 → 回滚，
+      表里只剩 1。
+    - 上一步时发现的：MySQL 预处理协议不收的语句在编辑器里直接报错（`6b3c39d`、`c04b006`）。8.4 上逐条 `PREPARE` 过，
+      `CHECK TABLE`、`SHOW WARNINGS`、`LOCK` / `UNLOCK TABLES`、`HELP`、`HANDLER`、`XA` 报 1295「not supported in the prepared statement
+      protocol yet」。这几种直接走文本协议，其余 prepare 报 1295 的同样退回；`USE` 照旧在前面拒绝。
+      第一版是「先 prepare、失败再退回」，新用例当场红了：`SHOW WARNINGS` 说的是上一条语句，那次失败的 prepare 本身成了上一条，
+      `SELECT 1 / 0` 之后看到的是 1295 而不是 Division by 0。改成按语句开头先分流；从表里拿掉 HANDLER 时用例照样绿，
+      退回那条路是通的。HANDLER READ 读出的 DECIMAL(30,10)、DATETIME(3) 与预处理时取值相同。
+      打包版上 `SELECT 1 / 0; SHOW WARNINGS;` 第二条显示 `Warning 1365 Division by 0`，`CHECK TABLE om_tx` 显示 `check status OK`。
+    每处的用例先红后绿；前端 1796 条、Rust 311 条全过，clippy（带与不带 `ai`）干净；连 cu 的 `database_smoke` 95 条单线程全过。
+    同一轮看过、没问题的：行定位（`rowIdentity.ts`）不用可空唯一列、部分索引与表达式索引；`sqlLiterals.ts` 按方言转义反斜杠。
+    没改：MySQL 的负 TIME（`-10:00:00` 排在 `-01:00:00` 后面）与 PostgreSQL 公元前日期在客户端排序里按文本比；
+    `SET autocommit = 1` 也会隐式提交，没认。重估条件：有人报这几种排错或状态栏说错。
   - 2026-10-03 格式化、历史脱敏与风险判定的边角写法（rpm 0.4.106，连 cu 的 MySQL 与容器里的 DuckDB 文件）：**修了四处**：
     - 含 `DELIMITER` 的脚本点格式化被排坏（`b5cedc7`）：sql-formatter 不认这条客户端指令，`//` 被拆成 `/ /`、`DELIMITER ;` 被并进
       上一行，存储过程脚本排完再跑就报错。选区里有这条指令、或处在换了分隔符的那一段里时不排，横幅说明原因；换回分号之后的部分照常排。
