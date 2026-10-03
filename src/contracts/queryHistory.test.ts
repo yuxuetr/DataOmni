@@ -9,7 +9,15 @@ import {
   type QueryExecution
 } from './queryExecution';
 import type { DatabaseSession } from './session';
-import { annotateEntry, historyEntryFromConsole, historyEntryFromExecution, historyLanguage, isAnnotated, normalizeTags } from './queryHistory';
+import {
+  annotateEntry,
+  historyEntryFromConsole,
+  historyEntryFromExecution,
+  historyLanguage,
+  isAnnotated,
+  MAX_HISTORY_SQL_CHARS,
+  normalizeTags
+} from './queryHistory';
 
 const SESSION = {
   id: 's1',
@@ -218,5 +226,47 @@ describe('historyEntryFromConsole', () => {
   it('超时说不出行数；没写语言的旧记录是 SQL', () => {
     expect(historyEntryFromConsole({ ...run, language: 'cypher', text: 'MATCH (n) RETURN n', status: 'timed-out', rowsAffected: 5 }).rowsAffected).toBeNull();
     expect(historyLanguage({ ...historyEntryFromConsole(run), language: undefined })).toBe('sql');
+  });
+});
+
+describe('太长的语句只记开头', () => {
+  // mysqldump 的扩展 INSERT 一条 1MB。整条记下来，几条就撑满 localStorage 的配额，
+  // 写不下时从旧的砍起：打包版上跑一份 6 条的 dump，之前的历史全没了，dump 自己也只剩 4 条
+  const long = `INSERT INTO t VALUES ('${'x'.repeat(1_000_000)}');`;
+
+  it('SQL 截到上限并标出来', () => {
+    const entry = historyEntryFromExecution(completeQueryExecution(running(long), []), CONTEXT);
+    expect(entry?.sql.length).toBe(MAX_HISTORY_SQL_CHARS);
+    expect(entry?.sql).toBe(long.slice(0, MAX_HISTORY_SQL_CHARS));
+    expect(entry?.truncated).toBe(true);
+  });
+
+  it('先脱敏再截：口令就算落在截掉的那段外面也已经换掉了', () => {
+    const sql = `ALTER USER app IDENTIFIED BY 'hunter2'; -- ${'x'.repeat(MAX_HISTORY_SQL_CHARS)}`;
+    const entry = historyEntryFromExecution(completeQueryExecution(running(sql), []), CONTEXT);
+    expect(entry?.sql.startsWith("ALTER USER app IDENTIFIED BY '***';")).toBe(true);
+    expect(entry?.truncated).toBe(true);
+  });
+
+  it('不长的不带这个标记', () => {
+    const entry = historyEntryFromExecution(completeQueryExecution(running('SELECT 1'), []), CONTEXT);
+    expect(entry && 'truncated' in entry).toBe(false);
+  });
+
+  it('控制台跑的也一样', () => {
+    const entry = historyEntryFromConsole({
+      id: 'r2',
+      language: 'elasticsearch',
+      profileId: 'p1',
+      connectionName: 'search',
+      database: null,
+      text: `POST _bulk\n${'{"index":{}}\n'.repeat(200_000)}`,
+      startedAt: Date.parse('2026-10-03T00:00:00.000Z'),
+      durationMs: 5,
+      status: 'succeeded',
+      rowsAffected: null
+    });
+    expect(entry.sql.length).toBe(MAX_HISTORY_SQL_CHARS);
+    expect(entry.truncated).toBe(true);
   });
 });

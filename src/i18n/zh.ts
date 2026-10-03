@@ -769,6 +769,8 @@ export const zh = {
   'history.remove': '从历史中删除',
   'history.openInNewTab': '在新标签里打开',
   'history.redacted': '这条语句里的口令已被替换，照原样重跑会失败。',
+  'history.truncated': '这条太长，历史里只留了开头 {count} 个字符；半截语句不能在新标签里打开，免得照着跑。',
+  'history.truncated.one': '这条太长，历史里只留了开头 {count} 个字符；半截语句不能在新标签里打开，免得照着跑。',
   'history.empty': '还没有执行记录。',
   'history.noMatch': '没有符合条件的记录。',
   'history.count': '显示 {visible} / 共 {total} 条',

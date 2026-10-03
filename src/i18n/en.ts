@@ -748,6 +748,8 @@ export const en: Translations = {
   'history.remove': 'Remove from history',
   'history.openInNewTab': 'Open in a new tab',
   'history.redacted': 'A password in this statement was replaced, so running it as-is will fail.',
+  'history.truncated': 'This statement was too long, so history kept only its first {count} characters. A partial statement can’t be opened in a new tab, so it doesn’t get run by mistake.',
+  'history.truncated.one': 'This statement was too long, so history kept only its first {count} character. A partial statement can’t be opened in a new tab, so it doesn’t get run by mistake.',
   'history.empty': 'No executions recorded yet.',
   'history.noMatch': 'No entry matches these filters.',
   'history.count': 'Showing {visible} of {total}',

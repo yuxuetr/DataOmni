@@ -53,6 +53,8 @@ export interface QueryHistoryEntry {
   language?: ConsoleLanguage;
   /** 语句里有口令被替换过，照原样重跑会失败 */
   redacted: boolean;
+  /** 语句太长，只记了开头 `MAX_HISTORY_SQL_CHARS` 个字符。半截语句不能拿去重跑 */
+  truncated?: true;
   durationMs: number;
   status: QueryHistoryStatus;
   /** 查询记返回行数，写入记受影响行数；取消与超时没有这个数 */
@@ -62,6 +64,25 @@ export interface QueryHistoryEntry {
   favorite?: boolean;
   name?: string;
   tags?: string[];
+}
+
+/**
+ * 一条记录最多留这么多字符。
+ *
+ * 手写的查询到不了这么长；到得了的是 mysqldump 的扩展 INSERT（一条 1MB）这类脚本。
+ * 整条记下来，几条就撑满 localStorage 的配额，写不下时从旧的砍起——打包版上跑一份
+ * 6 条的 dump，之前的历史全没了。历史本来就是用来认「跑过什么」的，开头足够
+ */
+export const MAX_HISTORY_SQL_CHARS = 20_000;
+
+/** 截到上限，不把一个代理对从中间切开 */
+function capHistoryText(text: string): { sql: string; truncated?: true } {
+  if (text.length <= MAX_HISTORY_SQL_CHARS) {
+    return { sql: text };
+  }
+  const last = text.charCodeAt(MAX_HISTORY_SQL_CHARS - 1);
+  const end = last >= 0xd800 && last <= 0xdbff ? MAX_HISTORY_SQL_CHARS - 1 : MAX_HISTORY_SQL_CHARS;
+  return { sql: text.slice(0, end), truncated: true };
 }
 
 export function isFinishedStatus(status: QueryExecutionStatus): status is QueryHistoryStatus {
@@ -114,7 +135,9 @@ export function historyEntryFromExecution(
     return null;
   }
 
-  const { sql, redacted } = redactSqlForHistory(execution.sqlSnapshot, execution.dialect);
+  // 先脱敏再截：脱敏要看整条语句的结构（INSERT 的列清单与值对位）
+  const { sql: redactedSql, redacted } = redactSqlForHistory(execution.sqlSnapshot, execution.dialect);
+  const { sql, truncated } = capHistoryText(redactedSql);
   return {
     id: execution.id,
     startedAt: execution.startedAt ?? execution.createdAt,
@@ -123,6 +146,7 @@ export function historyEntryFromExecution(
     database: execution.session.database,
     sql,
     redacted,
+    ...(truncated ? { truncated } : {}),
     durationMs: execution.durationMs ?? 0,
     status: execution.status,
     // 取消和超时没跑完，说不出影响了几行。写 0 会被读成「没有匹配的行」
@@ -151,7 +175,8 @@ export interface ConsoleRun {
 }
 
 export function historyEntryFromConsole(run: ConsoleRun): QueryHistoryEntry {
-  const { sql, redacted } = redactConsoleForHistory(run.language, run.text);
+  const { sql: redactedText, redacted } = redactConsoleForHistory(run.language, run.text);
+  const { sql, truncated } = capHistoryText(redactedText);
   return {
     id: run.id,
     startedAt: new Date(run.startedAt).toISOString(),
@@ -160,6 +185,7 @@ export function historyEntryFromConsole(run: ConsoleRun): QueryHistoryEntry {
     database: run.database,
     sql,
     redacted,
+    ...(truncated ? { truncated } : {}),
     language: run.language,
     durationMs: run.durationMs,
     status: run.status,

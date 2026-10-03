@@ -4,6 +4,7 @@ import { Check, Copy, Search, Star, Tag, Timer, Trash2, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import {
   historyLanguage,
+  MAX_HISTORY_SQL_CHARS,
   normalizeTags,
   QUERY_HISTORY_STATUSES,
   type QueryHistoryEntry,
@@ -335,7 +336,7 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab, openLanguage = nul
                     </span>
                   </div>
 
-                  {onOpenInNewTab && historyLanguage(entry) === openLanguage ? (
+                  {onOpenInNewTab && historyLanguage(entry) === openLanguage && !entry.truncated ? (
                     <button
                       type="button"
                       onClick={() => {
@@ -384,6 +385,11 @@ export function QueryHistoryDialog({ onClose, onOpenInNewTab, openLanguage = nul
                   {entry.redacted && (
                     // 不说这句，用户会拿着一条 '***' 的语句去跑然后不明白为什么失败
                     <p className="mt-0.5 text-xs text-warning">{t('history.redacted')}</p>
+                  )}
+                  {entry.truncated && (
+                    <p className="mt-0.5 text-xs text-warning">
+                      {t('history.truncated', { count: MAX_HISTORY_SQL_CHARS })}
+                    </p>
                   )}
                   {entry.errorMessage && (
                     <p className="mt-0.5 truncate text-xs text-danger" title={entry.errorMessage}>
