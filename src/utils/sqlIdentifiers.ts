@@ -25,6 +25,38 @@ export const quoteQualifiedSqlIdentifier = (
 ): string => identifiers.map(identifier => quoteSqlIdentifier(identifier, dialect)).join('.');
 
 /**
+ * 各家都保留、裸写当名字会报语法错的词。宁多勿少：多引一个只是难看一点，
+ * 少引一个就是一条跑不通的语句
+ */
+const RESERVED_WORDS = new Set(`
+  all alter analyse analyze and any array as asc between both by case cast check collate column
+  constraint create cross current_date current_time current_timestamp current_user default delete
+  desc distinct do drop else end except exists false fetch for foreign from full grant group having
+  in index inner insert intersect into is join key leading left like limit localtime localtimestamp
+  natural not null offset on only or order outer placing primary references returning right select
+  session_user set some symmetric table then to trailing true union unique update user using values
+  view when where window with
+`.trim().split(/\s+/));
+
+/**
+ * 名字原样能裸写就裸写，否则加引号。给补全用：选中的名字插进去必须能执行，
+ * 而每个名字都加引号（`"orders"."id"`）没人会这么手写。
+ *
+ * 能不能裸写看大小写怎么折：PostgreSQL 折成小写，所以 `Orders` 要引号；
+ * Oracle 折成大写，小写建的才要；其余几家按原样比或不分大小写
+ */
+export function sqlIdentifierAsTyped(identifier: string, dialect: SqlIdentifierDialect): string {
+  const plain = dialect === 'postgresql'
+    ? /^[a-z_][a-z0-9_]*$/
+    : dialect === 'oracle'
+      ? /^[A-Z][A-Z0-9_$#]*$/
+      : /^[A-Za-z_][A-Za-z0-9_]*$/;
+  return plain.test(identifier) && !RESERVED_WORDS.has(identifier.toLowerCase())
+    ? identifier
+    : quoteSqlIdentifier(identifier, dialect);
+}
+
+/**
  * 连接类型 → 标识符引用方言。
  *
  * 已经是第三个调用点了。不认识的类型按 `sqlite` 走（双引号是 SQL 标准写法），

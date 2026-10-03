@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { SUPPORTED_DATABASE_TYPES, speaksSql } from '../contracts/databaseSupport';
-import { identifierDialectFor, quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from './sqlIdentifiers';
+import {
+  identifierDialectFor,
+  quoteQualifiedSqlIdentifier,
+  quoteSqlIdentifier,
+  sqlIdentifierAsTyped
+} from './sqlIdentifiers';
 
 describe('quoteSqlIdentifier', () => {
   it('quotes and escapes MySQL identifiers', () => {
@@ -34,5 +39,25 @@ describe('identifierDialectFor', () => {
         expect(identifierDialectFor(type), type).toBe(type);
       }
     }
+  });
+});
+
+describe('sqlIdentifierAsTyped', () => {
+  it('能裸写的原样给，不能的加上各方言的引号', () => {
+    expect(sqlIdentifierAsTyped('orders', 'postgresql')).toBe('orders');
+    expect(sqlIdentifierAsTyped('Orders', 'postgresql')).toBe('"Orders"');
+    expect(sqlIdentifierAsTyped('ORDERS', 'oracle')).toBe('ORDERS');
+    expect(sqlIdentifierAsTyped('Orders', 'oracle')).toBe('"Orders"');
+    expect(sqlIdentifierAsTyped('Orders', 'sqlite')).toBe('Orders');
+    expect(sqlIdentifierAsTyped('Orders', 'duckdb')).toBe('Orders');
+    expect(sqlIdentifierAsTyped('a b', 'clickhouse')).toBe('`a b`');
+    expect(sqlIdentifierAsTyped('2fa', 'mysql')).toBe('`2fa`');
+    expect(sqlIdentifierAsTyped('订单', 'sqlserver')).toBe('[订单]');
+  });
+
+  it('保留字不分大小写都加引号', () => {
+    expect(sqlIdentifierAsTyped('Order', 'mysql')).toBe('`Order`');
+    expect(sqlIdentifierAsTyped('USER', 'oracle')).toBe('"USER"');
+    expect(sqlIdentifierAsTyped('group', 'sqlite')).toBe('"group"');
   });
 });

@@ -16,6 +16,7 @@ import type {
   RelationKind
 } from '../contracts/databaseMetadata';
 import { showsSchemaLevel } from './databaseObjects';
+import { identifierDialectFor, sqlIdentifierAsTyped, type SqlIdentifierDialect } from './sqlIdentifiers';
 
 export type { CompletionColumn, CompletionRelation, RelationKind };
 
@@ -95,10 +96,11 @@ export function buildCompletionSchema(
   /** 连接上填的库。ClickHouse 不带前缀的名字落在当前库里，空着是 `default` */
   database?: string | null
 ): CompletionSchemaResult {
+  const dialect = identifierDialectFor(dbType);
   if (!showsSchemaLevel(dbType)) {
     const flat: Record<string, SQLNamespace> = {};
     for (const relation of relations) {
-      flat[relation.name] = relationNamespace(relation, labels);
+      flat[relation.name] = relationNamespace(relation, labels, dialect);
     }
     return { schema: flat };
   }
@@ -107,14 +109,14 @@ export function buildCompletionSchema(
   for (const relation of relations) {
     const schema = relation.schema ?? '';
     const group = bySchema.get(schema) ?? {};
-    group[relation.name] = relationNamespace(relation, labels);
+    group[relation.name] = relationNamespace(relation, labels, dialect);
     bySchema.set(schema, group);
   }
 
   const schema: Record<string, SQLNamespace> = {};
   for (const [name, children] of bySchema) {
     schema[name] = {
-      self: { label: name, type: 'type', detail: labels.schema },
+      self: completionName(name, dialect, { type: 'type', detail: labels.schema }),
       children
     };
   }
@@ -179,23 +181,38 @@ function columnBoost(index: number): number {
 
 function relationNamespace(
   relation: CompletionRelation,
-  labels: CompletionLabels
+  labels: CompletionLabels,
+  dialect: SqlIdentifierDialect
 ): SQLNamespace {
-  const self: Completion = {
-    label: relation.name,
+  const self = completionName(relation.name, dialect, {
     type: 'type',
     detail: relation.kind === 'view' ? labels.view : labels.table
-  };
+  });
 
   // 类型放在 detail 里：选列的时候最想知道的就是它是什么类型
-  const children: Completion[] = relation.columns.map((column, index) => ({
-    label: column.name,
-    type: 'property',
-    detail: column.dataType,
-    boost: columnBoost(index)
-  }));
+  const children: Completion[] = relation.columns.map((column, index) => completionName(
+    column.name,
+    dialect,
+    { type: 'property', detail: column.dataType, boost: columnBoost(index) }
+  ));
 
   return { self, children };
+}
+
+/**
+ * 按名字筛（`label` 是原名），插进去的是这个方言里能执行的写法。
+ *
+ * lang-sql 只给**字符串**形式的候选自动加引号，而我们传的是带说明的对象，
+ * 不写 `apply` 就插裸名字：PostgreSQL 的 `Orders`、叫 `order` 的列补进去就报错。
+ * 已经敲了左引号时 lang-sql 会丢掉 `apply`、自己补右引号，不会引两层
+ */
+function completionName(
+  name: string,
+  dialect: SqlIdentifierDialect,
+  rest: Omit<Completion, 'label' | 'apply'>
+): Completion {
+  const typed = sqlIdentifierAsTyped(name, dialect);
+  return typed === name ? { label: name, ...rest } : { label: name, apply: typed, ...rest };
 }
 
 function text(value: unknown): string {

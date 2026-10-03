@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CompletionContext,
+  acceptCompletion,
   autocompletion,
   currentCompletions,
   startCompletion
@@ -387,5 +388,100 @@ describe('弹出来的次序', () => {
     const shown = await shownOptions('SELECT * FROM orders o WHERE o.am', ambiguous);
     expect(shown).toContain('a_m_code');
     expect(shown[0]).toBe('amount');
+  });
+});
+
+describe('选中补全后插进编辑器的名字', () => {
+  /**
+   * 选中之后插进去的文本，必须是这个方言里**原样能执行**的名字。
+   * PostgreSQL 不带引号的名字折成小写，`Orders` 写裸了指的是另一张（不存在的）表；
+   * Oracle 折成大写，小写建的表同理；`order`、`user` 是保留字，空格更不用说。
+   */
+  const accepted = async (
+    doc: string,
+    dbType: DatabaseType,
+    relations: CompletionRelation[],
+    username?: string
+  ) => {
+    const { schema, defaultSchema } = buildCompletionSchema(relations, dbType, LABELS, username);
+    const parent = document.createElement('div');
+    document.body.appendChild(parent);
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc,
+        selection: { anchor: doc.length },
+        extensions: [autocompletion(), sql({ dialect: sqlDialectFor(dbType), schema, defaultSchema })]
+      })
+    });
+    startCompletion(view);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    acceptCompletion(view);
+    const text = view.state.doc.toString();
+    view.destroy();
+    parent.remove();
+    return text;
+  };
+
+  const relation = (
+    schema: string | null,
+    name: string,
+    columns: string[]
+  ): CompletionRelation => ({
+    schema,
+    name,
+    kind: 'table',
+    columns: columns.map(column => ({ name: column, dataType: 'text' }))
+  });
+
+  it('PostgreSQL：大小写混写、保留字、带空格的名字加双引号', async () => {
+    const pg = [relation('public', 'Orders', ['OrderId', 'order', 'unit price', 'total'])];
+    expect(await accepted('SELECT * FROM Ord', DatabaseType.PostgreSQL, pg))
+      .toBe('SELECT * FROM "Orders"');
+    expect(await accepted('SELECT * FROM "Orders" o WHERE o.OrderI', DatabaseType.PostgreSQL, pg))
+      .toBe('SELECT * FROM "Orders" o WHERE o."OrderId"');
+    expect(await accepted('SELECT * FROM "Orders" o WHERE o.orde', DatabaseType.PostgreSQL, pg))
+      .toBe('SELECT * FROM "Orders" o WHERE o."order"');
+    expect(await accepted('SELECT * FROM "Orders" o WHERE o.unit', DatabaseType.PostgreSQL, pg))
+      .toBe('SELECT * FROM "Orders" o WHERE o."unit price"');
+    // 本来就能裸写的不加
+    expect(await accepted('SELECT * FROM "Orders" o WHERE o.tot', DatabaseType.PostgreSQL, pg))
+      .toBe('SELECT * FROM "Orders" o WHERE o.total');
+  });
+
+  it('PostgreSQL：Schema 名同样按需加引号', async () => {
+    const pg = [relation('Sales', 'items', ['id'])];
+    expect(await accepted('SELECT * FROM Sal', DatabaseType.PostgreSQL, pg))
+      .toBe('SELECT * FROM "Sales"');
+  });
+
+  it('Oracle：大写是常态，小写建的才要引号', async () => {
+    const ora = [
+      relation('APP', 'ORDERS', ['ID']),
+      relation('APP', 'lower_case', ['Mixed'])
+    ];
+    expect(await accepted('SELECT * FROM ORDE', DatabaseType.Oracle, ora, 'app'))
+      .toBe('SELECT * FROM ORDERS');
+    expect(await accepted('SELECT * FROM lower_', DatabaseType.Oracle, ora, 'app'))
+      .toBe('SELECT * FROM "lower_case"');
+  });
+
+  it('MySQL 用反引号，SQL Server 用方括号；大小写不用管', async () => {
+    const my = [relation(null, 'Order Items', ['Qty', 'key'])];
+    expect(await accepted('SELECT * FROM Orde', DatabaseType.MySQL, my))
+      .toBe('SELECT * FROM `Order Items`');
+    expect(await accepted('SELECT * FROM `Order Items` o WHERE o.Qt', DatabaseType.MySQL, my))
+      .toBe('SELECT * FROM `Order Items` o WHERE o.Qty');
+    const mss = [relation('dbo', 'Users', ['user'])];
+    expect(await accepted('SELECT * FROM Use', DatabaseType.SqlServer, mss))
+      .toBe('SELECT * FROM Users');
+    expect(await accepted('SELECT * FROM Users u WHERE u.us', DatabaseType.SqlServer, mss))
+      .toBe('SELECT * FROM Users u WHERE u.[user]');
+  });
+
+  it('已经敲了左引号时不再多加一层', async () => {
+    const pg = [relation('public', 'Orders', ['id'])];
+    expect(await accepted('SELECT * FROM "Ord', DatabaseType.PostgreSQL, pg))
+      .toBe('SELECT * FROM "Orders"');
   });
 });
