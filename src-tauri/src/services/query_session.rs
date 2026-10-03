@@ -2,8 +2,9 @@ use crate::services::query_error::CONNECTION_LOST_CODE;
 use crate::services::query_executor::PoolRef;
 use crate::services::query_executor::QUERY_TIMEOUT;
 use crate::services::{
-  transaction_state::TransactionState, QueryError, QueryExecutionResult, QueryExecutionSummary,
-  QueryResultBatch, SessionConnection, StreamOptions, QUERY_TIMEOUT_CODE,
+  transaction_state::{autocommit_assignment, TransactionState},
+  QueryError, QueryExecutionResult, QueryExecutionSummary, QueryResultBatch, SessionConnection,
+  StreamOptions, QUERY_TIMEOUT_CODE,
 };
 use sqlx::Executor;
 use std::{collections::HashMap, sync::Arc};
@@ -36,6 +37,8 @@ struct SessionRuntime {
   /// 不记下来的话状态一直停在「事务中 / 事务失败」，而 `ROLLBACK` 和之后每一条都报连接已断
   connection_gone: bool,
   pending_termination: PendingTermination,
+  /// 用户在这条 MySQL 连接上执行过 `SET autocommit = 0`，见 `TransactionState::after_success`
+  autocommit_off: bool,
 }
 
 /// 被放弃的语句在服务端停下了没有。下一条语句先等它：不然换上的新连接可能
@@ -233,6 +236,7 @@ impl SessionRuntime {
       in_flight: false,
       connection_gone: false,
       pending_termination: PendingTermination::default(),
+      autocommit_off: false,
     })
   }
 
@@ -244,6 +248,7 @@ impl SessionRuntime {
     self.transaction = TransactionState::default();
     self.in_flight = false;
     self.connection_gone = false;
+    self.autocommit_off = false;
     Ok(())
   }
 
@@ -333,11 +338,16 @@ impl SessionRuntime {
       return;
     }
     if succeeded {
+      let mysql = self.connection.commits_implicitly_on_ddl();
       self.transaction.after_success(
         sql,
         &chrono::Utc::now().to_rfc3339(),
-        self.connection.commits_implicitly_on_ddl(),
+        mysql,
+        self.autocommit_off,
       );
+      if let Some(on) = autocommit_assignment(sql).filter(|_| mysql) {
+        self.autocommit_off = !on;
+      }
     } else {
       self.transaction.after_failure(self.connection.aborts_transaction_on_error());
     }

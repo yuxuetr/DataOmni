@@ -51,8 +51,13 @@ impl TransactionState {
   /// 语句跑成功之后。`now` 由调用方给，这样这段逻辑能被直接测。
   ///
   /// `ddl_commits` 只有 MySQL 是真，见 [`commits_implicitly`]。
-  pub fn after_success(&mut self, sql: &str, now: &str, ddl_commits: bool) {
-    if ddl_commits && commits_implicitly(sql) {
+  ///
+  /// `autocommit_off`：这条语句之前，会话被 `SET autocommit = 0` 关掉了自动提交（只有 MySQL，
+  /// 见 [`autocommit_assignment`]）。那时每条语句都在事务里，`COMMIT` 之后的下一条又开一个；
+  /// 设回 1 则提交开着的事务。
+  pub fn after_success(&mut self, sql: &str, now: &str, ddl_commits: bool, autocommit_off: bool) {
+    let turned_back_on = autocommit_off && autocommit_assignment(sql) == Some(true);
+    if ddl_commits && (commits_implicitly(sql) || turned_back_on) {
       // 事务到此为止了，不管我们发没发过 COMMIT
       self.status = TransactionStatus::Idle;
       self.started_at = None;
@@ -77,6 +82,9 @@ impl TransactionState {
         // 的那条语句。任何一条在 Failed 下成功的语句都说明事务又能用了
         if self.status == TransactionStatus::Failed {
           self.status = TransactionStatus::Active;
+        } else if autocommit_off && !self.in_transaction() {
+          self.status = TransactionStatus::Active;
+          self.started_at = Some(now.to_string());
         }
       }
     }
@@ -137,6 +145,33 @@ fn commits_implicitly(sql: &str) -> bool {
         | ("LOAD", "INDEX")
         | ("START" | "STOP", "REPLICA" | "SLAVE")
     )
+}
+
+/// MySQL 的 `SET autocommit = …` 把**这个会话**的自动提交设成了什么。
+///
+/// 不是这条语句、设的是全局（`GLOBAL` / `PERSIST` 只管以后的新会话）、值是个表达式
+/// 看不出来，都是 `None`。`DEFAULT` 取全局值，服务端默认是开着的。
+pub(crate) fn autocommit_assignment(sql: &str) -> Option<bool> {
+  let (keyword, assignments) = skip_ignorable(sql).split_at_checked(3)?;
+  if !keyword.eq_ignore_ascii_case("SET") || !assignments.starts_with(char::is_whitespace) {
+    return None;
+  }
+  // 按逗号切：字符串值里的逗号会切错，但切出来的那半截不会像 `autocommit = 0`
+  assignments.split(',').find_map(|assignment| {
+    let assignment = assignment.trim().to_ascii_lowercase();
+    let name = ["session ", "local ", "@@session.", "@@local.", "@@"]
+      .iter()
+      .find_map(|prefix| assignment.strip_prefix(prefix))
+      .unwrap_or(&assignment)
+      .trim_start();
+    let value = name.strip_prefix("autocommit")?.trim_start();
+    let value = value.strip_prefix(":=").or_else(|| value.strip_prefix('='))?;
+    match value.trim().trim_end_matches(';').trim().trim_matches(|c| c == '\'' || c == '"') {
+      "0" | "off" | "false" => Some(false),
+      "1" | "on" | "true" | "default" => Some(true),
+      _ => None,
+    }
+  })
 }
 
 /// 只看开头的一两个关键字。
@@ -228,20 +263,20 @@ mod tests {
   fn a_second_begin_keeps_the_original_start_time() {
     // 覆盖成现在会让状态栏上的计时凭空归零，而事务其实已经开了很久
     let mut state = TransactionState::default();
-    state.after_success("BEGIN", NOW, false);
-    state.after_success("BEGIN", "2026-09-21T01:00:00Z", false);
+    state.after_success("BEGIN", NOW, false, false);
+    state.after_success("BEGIN", "2026-09-21T01:00:00Z", false, false);
     assert_eq!(state.started_at.as_deref(), Some(NOW));
   }
 
   #[test]
   fn postgres_marks_the_transaction_failed_but_the_others_do_not() {
     let mut postgres = TransactionState::default();
-    postgres.after_success("BEGIN", NOW, false);
+    postgres.after_success("BEGIN", NOW, false, false);
     postgres.after_failure(true);
     assert_eq!(postgres.status, TransactionStatus::Failed);
 
     let mut mysql = TransactionState::default();
-    mysql.after_success("BEGIN", NOW, true);
+    mysql.after_success("BEGIN", NOW, true, false);
     mysql.after_failure(false);
     assert_eq!(mysql.status, TransactionStatus::Active);
   }
@@ -257,9 +292,9 @@ mod tests {
   #[test]
   fn succeeding_again_clears_the_failed_state_without_ending_the_transaction() {
     let mut state = TransactionState::default();
-    state.after_success("BEGIN", NOW, false);
+    state.after_success("BEGIN", NOW, false, false);
     state.after_failure(true);
-    state.after_success("ROLLBACK TO SAVEPOINT s", "2026-09-21T02:00:00Z", false);
+    state.after_success("ROLLBACK TO SAVEPOINT s", "2026-09-21T02:00:00Z", false, false);
     assert_eq!(state.status, TransactionStatus::Active);
     assert_eq!(state.started_at.as_deref(), Some(NOW), "回到保存点不重开事务");
   }
@@ -287,8 +322,8 @@ mod tests {
       "STOP REPLICA",
     ] {
       let mut state = TransactionState::default();
-      state.after_success("BEGIN", NOW, true);
-      state.after_success(sql, "2026-09-21T02:00:00Z", true);
+      state.after_success("BEGIN", NOW, true, false);
+      state.after_success(sql, "2026-09-21T02:00:00Z", true, false);
       assert_eq!(state, TransactionState::default(), "{sql}");
     }
   }
@@ -298,8 +333,8 @@ mod tests {
   #[test]
   fn the_same_ddl_stays_inside_the_transaction_on_the_other_two() {
     let mut state = TransactionState::default();
-    state.after_success("BEGIN", NOW, false);
-    state.after_success("DROP TABLE orders", "2026-09-21T02:00:00Z", false);
+    state.after_success("BEGIN", NOW, false, false);
+    state.after_success("DROP TABLE orders", "2026-09-21T02:00:00Z", false, false);
     assert_eq!(state.status, TransactionStatus::Active);
     assert_eq!(state.started_at.as_deref(), Some(NOW));
   }
@@ -317,17 +352,81 @@ mod tests {
       "CHECKSUM TABLE t",
     ] {
       let mut state = TransactionState::default();
-      state.after_success("BEGIN", NOW, true);
-      state.after_success(sql, "2026-09-21T02:00:00Z", true);
+      state.after_success("BEGIN", NOW, true, false);
+      state.after_success(sql, "2026-09-21T02:00:00Z", true, false);
       assert_eq!(state.status, TransactionStatus::Active, "{sql}");
     }
   }
 
   #[test]
+  fn reads_what_set_autocommit_sets_the_session_to() {
+    for sql in [
+      "SET autocommit = 0",
+      "set @@session.autocommit=OFF",
+      "SET LOCAL autocommit := false",
+      "SET SESSION autocommit = 'off'",
+      "/* 脚本开头 */ SET @x = 1, autocommit = 0;",
+    ] {
+      assert_eq!(autocommit_assignment(sql), Some(false), "{sql}");
+    }
+    for sql in [
+      "SET autocommit = 1",
+      "SET @@autocommit = ON",
+      "set autocommit=true",
+      "SET autocommit = DEFAULT",
+    ] {
+      assert_eq!(autocommit_assignment(sql), Some(true), "{sql}");
+    }
+    // 全局的只管以后的新会话；用户变量与别的系统变量不是它；值看不出来就不猜
+    for sql in [
+      "SET GLOBAL autocommit = 0",
+      "SET @@global.autocommit = 0",
+      "SET PERSIST autocommit = 0",
+      "SET @autocommit = 0",
+      "SET autocommit_x = 0",
+      "SET autocommit = @saved",
+      "SELECT @@autocommit",
+    ] {
+      assert_eq!(autocommit_assignment(sql), None, "{sql}");
+    }
+  }
+
+  /// 自动提交关着时每条语句都在事务里：提交或回滚之后的下一条又开一个
+  #[test]
+  fn with_autocommit_off_every_statement_runs_inside_a_transaction() {
+    let mut state = TransactionState::default();
+    state.after_success("INSERT INTO t VALUES (1)", NOW, true, true);
+    assert_eq!(state.status, TransactionStatus::Active);
+    assert_eq!(state.started_at.as_deref(), Some(NOW));
+    state.after_success("UPDATE t SET a = 2", "2026-09-21T01:00:00Z", true, true);
+    assert_eq!(state.started_at.as_deref(), Some(NOW), "还是同一个事务");
+    state.after_success("COMMIT", NOW, true, true);
+    assert_eq!(state, TransactionState::default());
+    state.after_success("SELECT 1", NOW, true, true);
+    assert_eq!(state.status, TransactionStatus::Active);
+    state.after_success("CREATE TABLE t2 (a INT)", NOW, true, true);
+    assert_eq!(state, TransactionState::default(), "DDL 照样隐式提交");
+  }
+
+  /// 从 0 设回 1 提交开着的事务；原来就是 1 时不提交（cu 的 8.4 上试过两种）
+  #[test]
+  fn turning_autocommit_back_on_commits_only_when_it_was_off() {
+    let mut off = TransactionState::default();
+    off.after_success("INSERT INTO t VALUES (1)", NOW, true, true);
+    off.after_success("SET autocommit = 1", NOW, true, true);
+    assert_eq!(off, TransactionState::default());
+
+    let mut on = TransactionState::default();
+    on.after_success("START TRANSACTION", NOW, true, false);
+    on.after_success("SET autocommit = 1", NOW, true, false);
+    assert_eq!(on.status, TransactionStatus::Active);
+  }
+
+  #[test]
   fn ending_clears_the_start_time() {
     let mut state = TransactionState::default();
-    state.after_success("BEGIN", NOW, false);
-    state.after_success("COMMIT", NOW, false);
+    state.after_success("BEGIN", NOW, false, false);
+    state.after_success("COMMIT", NOW, false, false);
     assert_eq!(state, TransactionState::default());
   }
 }

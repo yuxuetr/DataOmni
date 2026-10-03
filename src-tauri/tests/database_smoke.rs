@@ -4847,6 +4847,81 @@ async fn mysql_keeps_the_transaction_usable_after_a_failed_statement() {
   sessions.release("tx-my").await;
 }
 
+/// 编辑器里写 `SET autocommit = 0`：之后每条语句都在事务里，提交要等 COMMIT。
+/// 状态栏仍说「无事务」的话，这些写入看着已经生效，断开连接就没了。
+/// `SET autocommit = 1` 则提交开着的事务——只在它原来是 0 时（cu 的 8.4 上试过：
+/// `START TRANSACTION` 里设成 1 不提交）
+#[tokio::test]
+async fn mysql_tracks_the_transaction_that_autocommit_off_keeps_open() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  // 另一条连接只看得见提交了的行
+  let committed =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  sqlx::raw_sql(
+    "DROP TABLE IF EXISTS om_autocommit; CREATE TABLE om_autocommit (id INT PRIMARY KEY)",
+  )
+  .execute(&committed)
+  .await
+  .expect("create table");
+  let sessions = QuerySessionState::default();
+  let db_pool = DbPool::MySql(pool);
+  let options = |sql: &'static str| StreamingQueryOptions {
+    session_id: "autocommit-my",
+    pool_key: &url,
+    pool: (&db_pool).into(),
+    sql,
+    autocommit: true,
+    explain_plan: false,
+    row_limit: 100,
+    byte_limit: 1 << 20,
+    batch_size: 10,
+    timeout_duration: Duration::from_secs(10),
+  };
+  let (sessions, options) = (&sessions, &options);
+  let run = |sql: &'static str| async move {
+    sessions.execute_streaming(options(sql), &mut |_| Ok(())).await.unwrap_or_else(|error| {
+      panic!("{sql}: {error:?}");
+    });
+    sessions.transaction("autocommit-my").await.status
+  };
+  let count = || async {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM om_autocommit")
+      .fetch_one(&committed)
+      .await
+      .expect("count rows")
+  };
+  use dataomni_lib::services::TransactionStatus::{Active, Idle};
+
+  assert_eq!(run("SET autocommit = 0").await, Idle);
+  assert_eq!(
+    run("INSERT INTO om_autocommit VALUES (1)").await,
+    Active,
+    "自动提交关了，写入在事务里"
+  );
+  assert_eq!(run("ROLLBACK").await, Idle);
+  assert_eq!(count().await, 0, "回滚撤掉了它");
+  assert_eq!(
+    run("INSERT INTO om_autocommit VALUES (2)").await,
+    Active,
+    "提交或回滚之后的下一条又开一个"
+  );
+  assert_eq!(run("SET @@session.autocommit = ON").await, Idle, "从 0 设成 1 提交开着的事务");
+  assert_eq!(count().await, 1);
+  assert_eq!(run("INSERT INTO om_autocommit VALUES (3)").await, Idle, "又是自动提交了");
+  assert_eq!(count().await, 2);
+
+  assert_eq!(run("START TRANSACTION").await, Active);
+  assert_eq!(run("SET autocommit = 1").await, Active, "原来就是 1：不提交");
+  assert_eq!(run("ROLLBACK").await, Idle);
+
+  sessions.release("autocommit-my").await;
+  sqlx::raw_sql("DROP TABLE om_autocommit").execute(&committed).await.expect("drop table");
+}
+
 /// 执行计划的三个解析器，各自拿真库跑一遍。
 ///
 /// 单测里的那几份 JSON 是**从这些库上抄下来的**，但抄下来的那一刻之后，
