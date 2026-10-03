@@ -347,7 +347,10 @@ fn postgres_node(plan: &Map<String, JsonValue>) -> PlanNode {
     .find_map(|key| plan.get(*key).and_then(JsonValue::as_str))
     .map(str::to_string);
   node.estimated_rows = number(plan.get("Plan Rows"));
-  node.actual_rows = number(plan.get("Actual Rows"));
+  // `Actual Loops: 0` 是一次也没跑（文本格式写 never executed），那时的 `Actual Rows: 0` 不是实际行数：
+  // 当成 0 去和估算比，会把「连接另一侧为空、这边根本没扫」点名成估错
+  let never_ran = number(plan.get("Actual Loops")) == Some(0.0);
+  node.actual_rows = if never_ran { None } else { number(plan.get("Actual Rows")) };
   node.cost = number(plan.get("Total Cost"));
   node.actual_ms = number(plan.get("Actual Total Time"));
 
@@ -1043,6 +1046,22 @@ mod tests {
     let plan = parse_plan(&DatabaseType::PostgreSQL, &json_row(text), true).expect("parse");
     assert_eq!(plan.execution_ms, Some(0.042));
     assert_eq!(plan.planning_ms, None);
+  }
+
+  /// 回归：空表做哈希连接，大表那一侧根本没扫（PG 16 实测 `Actual Loops: 0`、`Actual Rows: 0`），
+  /// 却被当成「估 200000、实际 0」点名成估错
+  #[test]
+  fn a_postgres_node_that_never_ran_has_no_actual_rows() {
+    let text = r#"[{"Plan": {"Node Type": "Hash Join", "Plan Rows": 1, "Actual Rows": 0, "Actual Loops": 1,
+      "Plans": [
+        {"Node Type": "Seq Scan", "Relation Name": "om_big", "Plan Rows": 200000, "Actual Rows": 0, "Actual Loops": 0},
+        {"Node Type": "Hash", "Plan Rows": 1, "Actual Rows": 0, "Actual Loops": 1}
+      ]}}]"#;
+    let plan = parse_plan(&DatabaseType::PostgreSQL, &json_row(text), true).expect("parse");
+    let join = &plan.roots[0];
+    assert_eq!(join.actual_rows, Some(0.0));
+    assert_eq!(join.children[0].actual_rows, None);
+    assert_eq!(join.children[1].actual_rows, Some(0.0));
   }
 
   #[test]
