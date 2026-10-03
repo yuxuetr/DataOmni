@@ -240,12 +240,16 @@ pub fn preview_csv(
   })
 }
 
-/// 开头这一段是 UTF-8（末尾截断了半个字符也算）就按 UTF-8 读，否则按 GB18030。
+/// 有 BOM 就照 BOM；开头这一段是 UTF-8（末尾截断了半个字符也算）就按 UTF-8 读，否则按 GB18030。
 ///
 /// 中文 Windows 上 Excel 另存的「CSV（逗号分隔）」是 GBK，GB18030 是它的超集。
+/// 「Unicode 文本」与 Windows PowerShell 的 `Out-File` 是带 BOM 的 UTF-16。
 /// 别的单字节编码（Latin-1 之类）也会落到这里，读出来是乱码——预览里写着编码名，
 /// 看得出来；而原来是在第一行就报错，同样导不进去
 fn detect_encoding(head: &[u8]) -> &'static encoding_rs::Encoding {
+  if let Some((encoding, _)) = encoding_rs::Encoding::for_bom(head) {
+    return encoding;
+  }
   match std::str::from_utf8(head) {
     Ok(_) => encoding_rs::UTF_8,
     Err(error) if error.error_len().is_none() => encoding_rs::UTF_8,
@@ -266,6 +270,7 @@ fn open_decoded(
   }
   Ok(Box::new(DecodingReader {
     inner: file,
+    // UTF-16 的 BOM 转出来就是 UTF-8 的 BOM，由 csv 去掉
     decoder: encoding.new_decoder_without_bom_handling(),
     decoded: Vec::new(),
     position: 0,
@@ -1439,6 +1444,25 @@ mod tests {
     assert_eq!(preview.rows, vec![vec!["1", "张三"]]);
   }
 
+  /// Excel 另存的「Unicode 文本」与 Windows PowerShell 的 `Out-File` 是带 BOM 的 UTF-16（Excel 那种用制表符分隔）。
+  /// 它不是 UTF-8，原先落到 GB18030，读出来整份是乱码
+  #[test]
+  fn a_utf16_file_with_a_bom_reads_as_utf16() {
+    let text = "\u{feff}id\t名称\r\n1\t张三\r\n";
+    for (name, bytes, encoding) in [
+      ("utf16le", text.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>(), "UTF-16LE"),
+      ("utf16be", text.encode_utf16().flat_map(u16::to_be_bytes).collect::<Vec<_>>(), "UTF-16BE"),
+    ] {
+      let path = std::env::temp_dir().join(format!("dataomni-csv-{name}.csv"));
+      std::fs::write(&path, bytes).expect("write fixture");
+      let preview = preview_csv(&path, None, true, 10).expect("preview");
+      assert_eq!(preview.encoding, encoding);
+      assert_eq!(preview.delimiter, "\t");
+      assert_eq!(preview.headers, vec!["id", "名称"], "{name}: BOM 不进第一个列名");
+      assert_eq!(preview.rows, vec![vec!["1", "张三"]]);
+    }
+  }
+
   #[test]
   fn a_utf8_file_with_a_bom_stays_utf8() {
     let path = write_csv("bom", "\u{feff}id,名称\r\n1,a\r\n");
@@ -1623,6 +1647,19 @@ mod tests {
     // 停下来之前也要说清是哪一行——「这一批失败了」帮不上任何忙
     assert_eq!(summary.errors[0].line, 3);
     assert!(rows_in(&pool).await.is_empty());
+  }
+
+  #[tokio::test]
+  async fn a_utf16_file_imports_with_the_bom_left_out_of_the_first_value() {
+    let pool = sqlite_pool().await;
+    let path = std::env::temp_dir().join("dataomni-csv-utf16-import.csv");
+    let text = "\u{feff}id,name\r\n1,张三\r\n2,bob\r\n";
+    std::fs::write(&path, text.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>())
+      .expect("write fixture");
+    let summary = run(&pool, &request(&path, 10)).await;
+
+    assert!(summary.errors.is_empty(), "{:?}", summary.errors);
+    assert_eq!(rows_in(&pool).await, vec![(1, "张三".into()), (2, "bob".into())]);
   }
 
   #[tokio::test]
