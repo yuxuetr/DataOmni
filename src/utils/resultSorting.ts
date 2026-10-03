@@ -95,6 +95,11 @@ export function compareResultValues(
   const leftNumeric = numericText(left);
   const rightNumeric = numericText(right);
   if (leftNumeric !== null && rightNumeric !== null) {
+    const leftRank = specialRank(leftNumeric);
+    const rightRank = specialRank(rightNumeric);
+    if (leftRank !== 0 || rightRank !== 0) {
+      return leftRank - rightRank;
+    }
     return compareDecimalStrings(leftNumeric, rightNumeric);
   }
 
@@ -102,9 +107,31 @@ export function compareResultValues(
   return formatResultValue(left).localeCompare(formatResultValue(right), 'zh-Hans-CN');
 }
 
+/**
+ * 无穷与 NaN。JSON 里没有这几个数，浮点列里它们是字符串，各家拼法不同：PostgreSQL 的 `Infinity` / `NaN`，
+ * SQLite 与 Oracle 的 `Inf` / `Nan`，ClickHouse 与 DuckDB 的 `inf` / `nan`。
+ * NaN 排在正无穷后面，与 PostgreSQL 的排序一致
+ */
+const SPECIAL_NUMBER = /^([+-]?)(?:(inf(?:inity)?)|nan)$/i;
+
+/** 负无穷 -1、有限数 0、正无穷 1、NaN 2 */
+function specialRank(text: string): number {
+  const match = SPECIAL_NUMBER.exec(text);
+  if (!match) {
+    return 0;
+  }
+  if (match[2] === undefined) {
+    return 2;
+  }
+  return match[1] === '-' ? -1 : 1;
+}
+
 function numericText(value: SerializedResultValue): string | null {
   if (typeof value === 'number') {
     return String(value);
+  }
+  if (typeof value === 'string' && SPECIAL_NUMBER.test(value)) {
+    return value;
   }
   if (isTaggedResultValue(value) && (value.type === 'bigint' || value.type === 'decimal')) {
     return value.value;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { SerializedResultValue } from '../contracts/resultSet';
 import {
   compareDecimalStrings,
   compareResultValues,
@@ -65,6 +66,20 @@ describe('单元格比较', () => {
 
   it('数字与 bigint 混排也按数值比较', () => {
     expect(compareResultValues(5, bigint('10'))).toBe(-1);
+  });
+
+  it('无穷与 NaN 按数值排：负无穷最小，NaN 比正无穷还大（同 PostgreSQL）', () => {
+    // 浮点列里它们是字符串（JSON 没有这几个数），各家拼法不同
+    const sorted = (values: SerializedResultValue[]) => [...values].sort(compareResultValues);
+    expect(sorted([3.5, '-Infinity', -2, 'NaN', 'Infinity', -100])).toEqual(
+      ['-Infinity', -100, -2, 3.5, 'Infinity', 'NaN']
+    );
+    expect(sorted([1, '-Inf', 'Nan', 'Inf', -1])).toEqual(['-Inf', -1, 1, 'Inf', 'Nan']);
+    expect(sorted([0, 'inf', '-inf', 'nan'])).toEqual(['-inf', 0, 'inf', 'nan']);
+    const decimal = (value: string) => ({ type: 'decimal' as const, value });
+    expect(sorted([decimal('-2'), decimal('-Infinity'), decimal('5')])).toEqual(
+      [decimal('-Infinity'), decimal('-2'), decimal('5')]
+    );
   });
 
   it('文本按中文语序而不是码点比较', () => {
