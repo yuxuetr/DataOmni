@@ -991,6 +991,29 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-03 导出成 INSERT 的脚本能不能原样跑回去（七种方言各拿真库导出再执行、逐行比对；rpm 0.4.114 上看过 DuckDB 与 PostgreSQL）：**修了三处**：
+    - Oracle 超过 4000 字节的文本导出来跑不回去（`8433411`）：单个字面量最长 4000 字节（ORA-01704，按字节算，1400 个汉字就超），
+      `'…' || '…'` 拼起来也一样超（ORA-01489）。超长的按字符边界切成 `TO_CLOB('…') || TO_CLOB('…')`；正好 4000 字节的照旧一个字面量。
+      预览与写文件两侧同改，语料加一例。`oracle_smoke` 拿 23ai 导出再执行、`DBMS_LOB.COMPARE` 逐行相同，去掉修复报 ORA-01704。
+      BLOB 同样有 2000 字节的上限，没修：23ai 上 `TO_BLOB(…) || TO_BLOB(…)` 不报错、写进去的是 NULL，纯 SQL 里没有可靠的拼法。
+      重估条件：有人要把带大 BLOB 的表导成 INSERT。
+    - PostgreSQL numeric 的 `NaN`、`±Infinity` 原样写进 INSERT，不加引号就成了列名（`1173322`）：`column "nan" does not exist`。
+      不是数字写法的照字符串字面量写，两侧同改，语料加一例。打包版上导出预览与文件都是 `'NaN'`、`'Infinity'`，在 SQL 标签里跑回去逐行 `=` 为真。
+    - DuckDB 的 MAP 键或值里有 `=`、`,`、引号、是空串、`NULL`、首尾带空白时不加引号（`e9a1229`）：`{k'1=1, =NULL}` 转不回 MAP，
+      表格里改这一格提交不了，导出的 INSERT 也跑不回去。照 DuckDB 1.5 的 `::VARCHAR` 加引号、反斜杠转义（命令行逐字对过）。
+      打包版上显示成 `{'k\'1'=1, ''=NULL, 'a=b'=2}`，网格里把 2 改成 5 提交，按键取回 1 / NULL / 5、仍是 3 项。
+    往返用例（`*_exported_inserts_carry_*_back`）七家各一条：MySQL 16 种、PostgreSQL 27 种、SQLite 8 列（连 `typeof` 一起比）、
+    SQL Server 21 种、Oracle 长 CLOB、DuckDB 22 种（含嵌套）、ClickHouse 复合类型。各自做过反向验证（去掉反斜杠转义、`N` 前缀、
+    `X'…'`、MAP 引号或 NaN 引号即红）。前端 1800 条、Rust 318 条全过，clippy（带与不带 `ai`）干净。
+    同一轮看过、没问题的：Oracle 的 `Inf` / `Nan`、INTERVAL、23ai 的 BOOLEAN 与 JSON、带时区的 TIMESTAMP 文本都隐式转得回去；
+    SQL Server 的 rowversion 按计算列略去；ClickHouse 的数组、Map、Tuple 带着内层转义原样回去；SQL Server 的 hierarchyid、geography 按二进制回去。
+    没改：浮点的 `-0` 写成 `0`（照 JS 的 `String(-0)`，与预览一致，SQL 里两者相等）。SQLite REAL 的 ±Inf 读出来是字符串 `Inf`，
+    和文本分不开，导回去存成 TEXT——要改得给值加一种标签，网格显示、排序、编辑都要跟着动；重估条件：有人在 SQLite 里存无穷并要导出。
+    SQL Server 大额 money 在 SQL 标签里仍按驱动读（见上面 `ef6e46a` 那条）。
+    观察到、没复现：PG 的 SQL 标签里换一份同样条数的语句再「执行全部」后，前四张卡片的标题是新的语句与时间，正文却是上一轮的
+    「影响行数 / 耗时」（单行 INSERT 印成 0、0、0、4），第五张是新的；查询历史记的是这一次的 1 行与新耗时。照原顺序
+    （带确认框的一轮 → 导出 → 清空结果 → 粘贴 → 执行全部）重做三次都正常。代码里结果与时间戳是同一次写入，没找到能只更新一半的路径。
+    重估条件：再撞上时先复制卡片里的文字，分清是 DOM 里的旧数据还是 WebKitGTK 没重画。
   - 2026-10-03 DuckDB 五位数的年份与 UTF-16 的 CSV（rpm 0.4.112 / 0.4.113，容器里的 DuckDB 文件与 cu 的 MySQL 8.4）：**修了三处**：
     - DuckDB 五位数的年份显示成 `+10000-01-01`（`3a686fe`）：chrono 的 `%Y` 加的 `+`，DuckDB 自己不这么写，也不认，
       网格改值与 CSV 导回报 `invalid date field format`。日期与时间戳都去掉；上一轮记下的公元前 `-0043-03-15` 用 duckdb 命令行试过，
