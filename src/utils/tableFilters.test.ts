@@ -162,6 +162,27 @@ describe('buildFilterClause', () => {
     ).toBe(`WHERE "note" LIKE '%[draft]%' ESCAPE '!'`);
   });
 
+  it('PostgreSQL、DuckDB、ClickHouse 在非字符串列上「包含」先转成文本', () => {
+    // 这三家的 LIKE 只收字符串：PG 16 报 operator does not exist: integer ~~ text，DuckDB 报
+    // No function matches like_escape(UUID, …)，ClickHouse 25.8 报 Illegal type Date of argument of function like
+    const contains = (name: string) => filter({ column: name, operator: 'contains', value: '5' });
+    expect(buildFilterClause([contains('id')], COLUMNS, 'postgresql'))
+      .toBe(`WHERE CAST("id" AS text) LIKE '%5%' ESCAPE '!'`);
+    expect(buildFilterClause([contains('u')], [column('u', 'UUID')], 'duckdb'))
+      .toBe(`WHERE CAST("u" AS VARCHAR) LIKE '%5%' ESCAPE '!'`);
+    expect(buildFilterClause([contains('d')], [column('d', 'Nullable(Date)')], 'clickhouse'))
+      .toBe("WHERE toString(`d`) LIKE '%5%'");
+    // 字符串列不转：citext 转成 text 就成了区分大小写，前缀匹配也用不上索引
+    for (const dataType of ['text', 'character varying(20)', 'character(3)', 'citext']) {
+      expect(buildFilterClause([contains('s')], [column('s', dataType)], 'postgresql'))
+        .toBe(`WHERE "s" LIKE '%5%' ESCAPE '!'`);
+    }
+    expect(buildFilterClause([contains('s')], [column('s', 'LowCardinality(Nullable(String))')], 'clickhouse'))
+      .toBe("WHERE `s` LIKE '%5%'");
+    // 别家自己会转，原样
+    expect(buildFilterClause([contains('id')], COLUMNS, 'mysql')).toBe("WHERE `id` LIKE '%5%' ESCAPE '!'");
+  });
+
   it('MySQL 的反斜杠在 LIKE 模式里也只转义一层', () => {
     // 转义符选 `!` 而不是 `\` 就是为了避开字面量层与 LIKE 层的双重转义
     expect(

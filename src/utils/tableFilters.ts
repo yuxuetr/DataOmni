@@ -6,7 +6,7 @@ import {
   LIKE_ESCAPE_CHAR,
   quoteSqlStringLiteral
 } from './sqlLiterals';
-import { isNumericColumnType, NUMERIC_LITERAL } from './columnTypes';
+import { columnTypeToken, isNumericColumnType, NUMERIC_LITERAL } from './columnTypes';
 
 export type FilterOperator =
   | 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte'
@@ -90,12 +90,40 @@ function likeTerm(
   return `${quotedColumn} LIKE ${literal} ESCAPE ${quoteSqlStringLiteral(LIKE_ESCAPE_CHAR, dialect)}`;
 }
 
+/** 这几家的 LIKE 收得下的类型；`text[]` 的词是 `text[]`，不在里面，照样转 */
+const LIKE_STRING_TYPE_TOKENS = new Set([
+  'text', 'character', 'varchar', 'char', 'bpchar', 'citext', 'name', 'string', 'fixedstring'
+]);
+
+/**
+ * LIKE 左边的那一侧。
+ *
+ * PostgreSQL、DuckDB、ClickHouse 的 LIKE 只收字符串，在整数、uuid、日期列上选「包含」直接报错
+ * （MySQL、SQLite、SQL Server、Oracle 自己会转）。只转非字符串列：citext 转成 text 就区分大小写了
+ */
+function likeOperand(quotedColumn: string, column: ColumnInfo, dialect: SqlIdentifierDialect): string {
+  if (LIKE_STRING_TYPE_TOKENS.has(columnTypeToken(column.data_type))) {
+    return quotedColumn;
+  }
+  switch (dialect) {
+    case 'postgresql':
+      return `CAST(${quotedColumn} AS text)`;
+    case 'duckdb':
+      return `CAST(${quotedColumn} AS VARCHAR)`;
+    case 'clickhouse':
+      return `toString(${quotedColumn})`;
+    default:
+      return quotedColumn;
+  }
+}
+
 function filterTerm(
   filter: ColumnFilter,
   column: ColumnInfo,
   dialect: SqlIdentifierDialect
 ): string {
   const quoted = quoteSqlIdentifier(filter.column, dialect);
+  const likeLeft = likeOperand(quoted, column, dialect);
 
   switch (filter.operator) {
     case 'is-null':
@@ -103,11 +131,11 @@ function filterTerm(
     case 'is-not-null':
       return `${quoted} IS NOT NULL`;
     case 'contains':
-      return likeTerm(quoted, '%{}%', filter.value, dialect);
+      return likeTerm(likeLeft, '%{}%', filter.value, dialect);
     case 'starts-with':
-      return likeTerm(quoted, '{}%', filter.value, dialect);
+      return likeTerm(likeLeft, '{}%', filter.value, dialect);
     case 'ends-with':
-      return likeTerm(quoted, '%{}', filter.value, dialect);
+      return likeTerm(likeLeft, '%{}', filter.value, dialect);
     default:
       return `${quoted} ${COMPARISON_SYMBOL[filter.operator]} ${comparisonLiteral(filter, column, dialect)}`;
   }
