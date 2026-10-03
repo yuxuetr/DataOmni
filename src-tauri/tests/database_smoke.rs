@@ -6645,3 +6645,49 @@ async fn postgres_exported_inserts_carry_every_value_back() {
   ran.unwrap_or_else(|error| panic!("{error}\n{script}"));
   assert_eq!(differ.expect("compare"), 0, "{rows:#?}\n{script}");
 }
+
+/// 同上，SQLite：同一个值的存储类型也要一样（`typeof`），文本 '123' 不能变成整数 123，
+/// 整数列里存着的文本也不能变成数。不含 REAL 的 ±Inf：读出来是字符串 `Inf`，和文本分不开，
+/// 导回去存成 TEXT（见 TODOs）
+#[tokio::test]
+async fn sqlite_exported_inserts_carry_every_value_back() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("connect to in-memory SQLite");
+  let columns = "id INTEGER PRIMARY KEY, i INTEGER, r REAL, t TEXT, b BLOB, n NUMERIC, untyped, \
+    at DATETIME, flag BOOLEAN";
+  sqlx::raw_sql(&format!(
+    "CREATE TABLE src ({columns});
+     CREATE TABLE dst ({columns});
+     INSERT INTO src VALUES
+       (1, 9223372036854775807, 1e300, 'it''s C:\\temp
+第二行	😀', X'00ff275c', 1.10, '123', '2024-01-02 03:04:05', 1),
+       (2, -9223372036854775808, 3.14e-10, '', X'', '1e40', 1.5, 'not a date', 0),
+       (3, 'text in int', -1.5, '0012', NULL, 'abc', X'01', NULL, NULL),
+       (4, 2.5, 0.1, NULL, 'blob as text', 9007199254740993, -2.5, 1700000000, 'yes')"
+  ))
+  .execute(&pool)
+  .await
+  .expect("create tables");
+  let script = export_inserts_into(
+    &DbPool::Sqlite(pool.clone()),
+    "src",
+    "dst",
+    dataomni_lib::services::export_writer::SqlDialect::Sqlite,
+  )
+  .await;
+  sqlx::raw_sql(&script).execute(&pool).await.unwrap_or_else(|error| panic!("{error}\n{script}"));
+  let cells = |table: &str| {
+    let columns = ["i", "r", "t", "b", "n", "untyped", "at", "flag"];
+    let parts: Vec<String> =
+      columns.iter().map(|column| format!("typeof({column}) || ':' || quote({column})")).collect();
+    format!("SELECT {} FROM {table} ORDER BY id", parts.join(" || ' | ' || "))
+  };
+  let source: Vec<String> =
+    sqlx::query_scalar(&cells("src")).fetch_all(&pool).await.expect("read source");
+  let copied: Vec<String> =
+    sqlx::query_scalar(&cells("dst")).fetch_all(&pool).await.expect("read copy");
+  assert_eq!(copied, source, "{script}");
+}
