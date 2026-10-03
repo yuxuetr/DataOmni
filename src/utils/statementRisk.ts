@@ -57,9 +57,10 @@ function riskOfWords(words: readonly SqlWord[]): StatementRisk {
     return 'destructive';
   }
 
-  // ALTER 本身不一定危险，但 ALTER … DROP COLUMN 会丢掉一整列的数据
+  // ALTER 本身不一定危险，但 ALTER … DROP COLUMN 会丢掉一整列的数据，
+  // TRUNCATE PARTITION（MySQL、Oracle）清掉整个分区
   if (first === 'ALTER') {
-    return keywords.includes('DROP') ? 'destructive' : 'scoped-write';
+    return keywords.includes('DROP') || keywords.includes('TRUNCATE') ? 'destructive' : 'scoped-write';
   }
 
   if (first === 'DELETE' || first === 'UPDATE') {

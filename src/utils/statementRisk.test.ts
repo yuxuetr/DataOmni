@@ -56,6 +56,11 @@ describe('语句风险判定', () => {
     expect(classifyStatementRisk('ALTER TABLE users ADD COLUMN email TEXT')).toBe('scoped-write');
   });
 
+  it('清空分区和删分区一样算破坏性', () => {
+    // MySQL 与 Oracle 的 TRUNCATE PARTITION 清掉整个分区的数据，和 TRUNCATE TABLE 是一回事
+    expect(classifyStatementRisk('ALTER TABLE orders TRUNCATE PARTITION p2025')).toBe('destructive');
+  });
+
   it('字符串里的 DROP 不算数', () => {
     // 不跳过字符串的话，这条查询会被当成删表
     expect(classifyStatementRisk("SELECT 'DROP TABLE users' AS note")).toBe('read');
