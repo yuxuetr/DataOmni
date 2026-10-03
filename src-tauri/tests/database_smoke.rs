@@ -6505,3 +6505,143 @@ async fn mysql_session_recovers_after_the_server_drops_it_mid_transaction() {
   .await;
   sqlx::query("DROP TABLE om_dropped").execute(raw).await.ok();
 }
+
+/// 把 `source` 整表导出成写进 `target` 的 INSERT，再原样执行一遍
+async fn export_inserts_into(
+  pool: &DbPool,
+  source: &str,
+  target: &str,
+  dialect: dataomni_lib::services::export_writer::SqlDialect,
+) -> String {
+  let path = export_target(&format!("round-{target}"));
+  let options = ExportOptions {
+    format: ExportFormat::Sql,
+    sql_table: target.to_string(),
+    sql_dialect: Some(dialect),
+    ..csv_export_options()
+  };
+  let sql = format!("SELECT * FROM {source} ORDER BY id");
+  export_query(pool, &sql, &path, options, &mut |_| {}, &mut || false).await.expect("export");
+  let script = std::fs::read_to_string(&path).expect("read back");
+  std::fs::remove_file(&path).ok();
+  script
+}
+
+/// 导出成 INSERT 的每种值都要能原样跑回去：反斜杠、NUL、换行、四字节字符，
+/// BIT、JSON 里的转义、负的 TIME、无符号上限、空间类型
+#[tokio::test]
+async fn mysql_exported_inserts_carry_every_value_back() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  // 其余几家走同一份代码，类型却各缺几样（TiDB 没有空间类型、MariaDB 的 JSON 是文本）
+  if mysql_flavor(&pool).await != MysqlFlavor::MySql {
+    return;
+  }
+  let columns = "id INT PRIMARY KEY, t TEXT, b VARBINARY(16), bits BIT(10), j JSON, \
+    s SET('a', 'b''c'), e ENUM('x', 'y\\\\z'), y YEAR, tm TIME(6), dt DATETIME(6), \
+    d DECIMAL(30, 10), f FLOAT, g DOUBLE, u BIGINT UNSIGNED, flag TINYINT(1), geo GEOMETRY";
+  sqlx::raw_sql(&format!(
+    "DROP TABLE IF EXISTS om_round_src, om_round_dst;
+     CREATE TABLE om_round_src ({columns});
+     CREATE TABLE om_round_dst ({columns});
+     INSERT INTO om_round_src VALUES
+       (1, 'it''s C:\\\\temp\\n第二行\\t😀\\0end', X'00ff275c', b'1000000001',
+        '{{\"k\\\\\\\\\": \"a\\\\\"b\\\\u00e9\", \"n\": 1.5}}', 'a,b''c', 'y\\\\z', 2155, '-838:59:58.5',
+        '2024-02-29 23:59:59.999999', -12345678901234567890.0123456789, 1.1, 0.1,
+        18446744073709551615, 7, ST_GeomFromText('LINESTRING(0 0, 1.5 2)')),
+       (2, '', X'', b'0', 'null', '', 'x', 1901, '00:00:00', '1000-01-01 00:00:00', 0, -0, 1e300,
+        0, 0, NULL),
+       (3, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)"
+  ))
+  .execute(&pool)
+  .await
+  .expect("create tables");
+  let script = export_inserts_into(
+    &DbPool::MySql(pool.clone()),
+    "om_round_src",
+    "om_round_dst",
+    dataomni_lib::services::export_writer::SqlDialect::Mysql,
+  )
+  .await;
+  sqlx::raw_sql(&script).execute(&pool).await.unwrap_or_else(|error| panic!("{error}\n{script}"));
+  let same = "s.t <=> d.t AND s.b <=> d.b AND s.bits <=> d.bits AND s.j <=> d.j AND s.s <=> d.s \
+    AND s.e <=> d.e AND s.y <=> d.y AND s.tm <=> d.tm AND s.dt <=> d.dt AND s.d <=> d.d \
+    AND s.f <=> d.f AND s.g <=> d.g AND s.u <=> d.u AND s.flag <=> d.flag AND HEX(s.geo) <=> HEX(d.geo)";
+  let matched: i64 = sqlx::query_scalar(&format!(
+    "SELECT COUNT(*) FROM om_round_src s JOIN om_round_dst d ON d.id = s.id AND {same}"
+  ))
+  .fetch_one(&pool)
+  .await
+  .expect("compare");
+  sqlx::raw_sql("DROP TABLE om_round_src, om_round_dst").execute(&pool).await.expect("drop");
+  assert_eq!(matched, 3, "{script}");
+}
+
+/// 同上，PostgreSQL：数组里的引号与 NULL、bytea、BC 日期、无穷、NaN、interval、money、
+/// 位串、jsonb 里的转义、几何与网络类型、区间、枚举。按行的文本比，json / point / xml
+/// 这几种没有相等运算符。不含 float 的 -0：照 JS 的 `String(-0)` 写成 0（与预览一致），
+/// SQL 里两者相等
+#[tokio::test]
+async fn postgres_exported_inserts_carry_every_value_back() {
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let columns = "id INT PRIMARY KEY, t TEXT, b BYTEA, words TEXT[], grid INT[][], n NUMERIC, \
+    x FLOAT8, r REAL, day DATE, at TIMESTAMP, atz TIMESTAMPTZ, span INTERVAL, cash MONEY, \
+    bits BIT VARYING(8), doc JSONB, raw JSON, id2 UUID, ip INET, net CIDR, mac MACADDR, \
+    range INT4RANGE, tv TSVECTOR, pt POINT, x2 XML, flag BOOLEAN, mood om_round_mood, tz TIMETZ";
+  sqlx::raw_sql(&format!(
+    "DROP TABLE IF EXISTS om_round_src, om_round_dst;
+     DROP TYPE IF EXISTS om_round_mood;
+     CREATE TYPE om_round_mood AS ENUM ('ok', 'it''s');
+     CREATE TABLE om_round_src ({columns});
+     CREATE TABLE om_round_dst ({columns});
+     INSERT INTO om_round_src VALUES
+       (1, E'it''s C:\\\\temp\\n第二行\\t😀', '\\x00ff275c', ARRAY['a\"b', NULL, 'c\\\\d', '{{x}}', 'NULL', ''],
+        '{{{{1,2}},{{3,4}}}}', 'NaN', '-Infinity', 1.1, '0044-03-15 BC', 'infinity',
+        '2024-01-02 03:04:05.123456+08', '1 year -2 mons 3 days 04:05:06.5', 1234.56, B'0101',
+        '{{\"k\": \"a\\\"b\\u00e9\", \"n\": 1.50}}', '{{ \"spaced\" :  1 }}',
+        'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '192.168.0.1/24', '10.0.0.0/8', '08:00:2b:01:02:03',
+        '[1,5)', 'a:1 fat cat', '(1.5,-2)', '<a>x &amp; y</a>', true, 'it''s', '04:05:06+05:30'),
+       (2, '', '\\x', '{{}}', NULL, '-0.0010', '0', 'Infinity', 'infinity', '-infinity',
+        '1970-01-01 00:00:00+00', '0', 0, B'', 'null', '[]', NULL, '::1', '::/0', NULL, 'empty',
+        '', NULL, NULL, false, 'ok', NULL),
+       (3, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+        NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)"
+  ))
+  .execute(&pool)
+  .await
+  .expect("create tables");
+  let script = export_inserts_into(
+    &DbPool::Postgres(pool.clone()),
+    "om_round_src",
+    "om_round_dst",
+    dataomni_lib::services::export_writer::SqlDialect::Postgresql,
+  )
+  .await;
+  let ran = sqlx::raw_sql(&script).execute(&pool).await;
+  let differ: Result<i64, _> = sqlx::query_scalar(
+    "SELECT COUNT(*) FROM om_round_src s FULL JOIN om_round_dst d ON d.id = s.id \
+     WHERE s::text IS DISTINCT FROM d::text",
+  )
+  .fetch_one(&pool)
+  .await;
+  let rows: Vec<(String, String)> = sqlx::query_as(
+    "SELECT s::text, COALESCE(d::text, '-') FROM om_round_src s LEFT JOIN om_round_dst d ON d.id = s.id \
+     WHERE s::text IS DISTINCT FROM d::text",
+  )
+  .fetch_all(&pool)
+  .await
+  .unwrap_or_default();
+  sqlx::raw_sql("DROP TABLE om_round_src, om_round_dst; DROP TYPE om_round_mood")
+    .execute(&pool)
+    .await
+    .expect("drop");
+  ran.unwrap_or_else(|error| panic!("{error}\n{script}"));
+  assert_eq!(differ.expect("compare"), 0, "{rows:#?}\n{script}");
+}

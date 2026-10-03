@@ -438,7 +438,8 @@ pub fn sql_literal(value: &JsonValue, dialect: SqlDialect) -> String {
       JsonValue::String(text) => text_literal(text, dialect),
       other => text_literal(&other.to_string(), dialect),
     },
-    Some(("bigint" | "decimal", text)) => text.to_string(),
+    // PostgreSQL numeric 的 NaN、±Infinity 不加引号就成了列名
+    Some(("bigint" | "decimal", text)) if is_number_text(text) => text.to_string(),
     Some(("binary", hex)) => binary_literal(hex, dialect),
     Some(("date", text)) if dialect == SqlDialect::Oracle => format!("DATE '{text}'"),
     Some(("datetime", text)) if dialect == SqlDialect::Oracle => format!("TIMESTAMP '{text}'"),
@@ -470,6 +471,13 @@ fn text_literal(text: &str, dialect: SqlDialect) -> String {
     .map(|piece| format!("TO_CLOB({})", string_literal(piece, dialect)))
     .collect::<Vec<_>>()
     .join(" || ")
+}
+
+fn is_number_text(text: &str) -> bool {
+  text
+    .strip_prefix('-')
+    .unwrap_or(text)
+    .starts_with(|character: char| character.is_ascii_digit() || character == '.')
 }
 
 /// 与前端 `quoteSqlIdentifier` 一致

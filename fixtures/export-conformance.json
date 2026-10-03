@@ -576,6 +576,55 @@
       "expected": "INSERT INTO \"orders\" (\"text\", \"number\", \"float\", \"flag\", \"nothing\", \"big\", \"money\", \"day\", \"when\", \"doc\", \"blob\") VALUES ('O''Brien C:\\temp 中文', 42, 1.5, TRUE, NULL, 9007199254740993, 1.10, '2024-01-02', '2024-01-02 03:04:05.5', '{\"a\": \"it''s\"}', '\\xdeadbeef'::bytea);\nINSERT INTO \"orders\" (\"text\", \"number\", \"float\", \"flag\", \"nothing\", \"big\", \"money\", \"day\", \"when\", \"doc\", \"blob\") VALUES ('', -0.25, 1.5, FALSE, NULL, 9007199254740993, 1.10, '2024-01-02', '2024-01-02 03:04:05.5', '{\"a\": \"it''s\"}', '\\xdeadbeef'::bytea);"
     },
     {
+      "name": "sql-postgresql-numeric-nan-and-infinity-are-quoted",
+      "why": "PostgreSQL 的 numeric 有 NaN 与 ±Infinity（14 起），不加引号就成了列名（column \"nan\" does not exist）；带引号的各种数值类型都认",
+      "columns": [
+        "n"
+      ],
+      "rows": [
+        {
+          "n": {
+            "type": "decimal",
+            "value": "NaN"
+          }
+        },
+        {
+          "n": {
+            "type": "decimal",
+            "value": "Infinity"
+          }
+        },
+        {
+          "n": {
+            "type": "decimal",
+            "value": "-Infinity"
+          }
+        },
+        {
+          "n": {
+            "type": "decimal",
+            "value": "-0.0010"
+          }
+        },
+        {
+          "n": {
+            "type": "decimal",
+            "value": ".5"
+          }
+        }
+      ],
+      "options": {
+        "format": "sql",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "",
+        "byteOrderMark": false,
+        "sqlTable": "t",
+        "sqlDialect": "postgresql"
+      },
+      "expected": "INSERT INTO \"t\" (\"n\") VALUES ('NaN');\nINSERT INTO \"t\" (\"n\") VALUES ('Infinity');\nINSERT INTO \"t\" (\"n\") VALUES ('-Infinity');\nINSERT INTO \"t\" (\"n\") VALUES (-0.0010);\nINSERT INTO \"t\" (\"n\") VALUES (.5);"
+    },
+    {
       "name": "sql-every-value-kind-sqlite",
       "columns": [
         "text",

@@ -206,7 +206,8 @@ export function sqlLiteral(value: SerializedResultValue, dialect: SqlDialect): s
   switch (value.type) {
     case 'bigint':
     case 'decimal':
-      return value.value;
+      // PostgreSQL numeric 的 NaN、±Infinity 不加引号就成了列名
+      return /^-?[\d.]/.test(value.value) ? value.value : textLiteral(value.value, dialect);
     case 'binary':
       return binaryLiteral(value.value, dialect);
     case 'date':
