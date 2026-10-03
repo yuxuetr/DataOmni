@@ -746,7 +746,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
     try {
       const startTime = Date.now();
-      console.log('🔍 执行SQL:', statement.sql);
+      // 不打印语句原文：WebKitGTK 打印长字符串是平方级的，一条 200KB 的 INSERT
+      // 光打这一句就停了 38 秒（见 queryStore.console.test.ts）
       const { connectionString } = get();
       const safeConnectionString = connectionString?.replace(/:([^:@]+)@/, ':***@') || 'unknown';
       console.log('🔗 当前连接字符串:', safeConnectionString);
