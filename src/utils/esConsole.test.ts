@@ -67,6 +67,36 @@ describe('parseEsConsole', () => {
     expect(parseEsConsole('POST a/_doc\n{ "unclosed": 1\n')[0].problem?.line).toBe(2);
   });
 
+  it('reads Kibana triple-quoted strings, the way the ES|QL, SQL and painless docs write them', () => {
+    const source = [
+      'POST /_query',
+      '{',
+      '  "query": """',
+      '    FROM books',
+      '    | WHERE title == "dune" // the one with sandworms',
+      '  """,',
+      '  "x": [',
+      '}',
+      'POST books/_update/1',
+      '{ "script": { "source": """',
+      '// a painless comment, not a console comment',
+      'ctx._source.n += params.step; """, "params": { "step": 2 } } }'
+    ].join('\n');
+    const [esql, update] = parseEsConsole(source);
+    // 行号照原文：第 7 行的括号没收
+    expect(esql.problem?.line).toBe(2);
+    expect(parseEsConsole(source.replace('  "x": [', '  "x": []'))[0].body).toBe(
+      // 和 Kibana 一样只去掉开头那个换行：下一行的缩进留在字符串里；吞掉的换行补在后面，行号才对得上
+      '{\n  "query": "    FROM books\\n    | WHERE title == \\"dune\\" // the one with sandworms"\n,\n  "x": []\n}'
+    );
+    expect(update.problem).toBeNull();
+    expect(JSON.parse(update.body ?? '')).toEqual({
+      script: { source: '// a painless comment, not a console comment\nctx._source.n += params.step; ', params: { step: 2 } }
+    });
+    // 没收尾的三引号照样指到那一份 JSON 开头
+    expect(parseEsConsole('POST /_query\n{ "query": """FROM a\n}')[0].problem?.line).toBe(2);
+  });
+
   it('counts only the requests a broken body lets through', () => {
     const requests = parseEsConsole('GET a/_count\nPOST a/_search\n{ "size": , }\nDELETE a\n');
     expect(reachableRequests(requests).map((request) => request.method)).toEqual(['GET', 'POST']);

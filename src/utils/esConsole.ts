@@ -62,10 +62,12 @@ export function parseEsConsole(source: string): EsConsoleRequest[] {
     const end = position + 1 < starts.length ? starts[position + 1] : lines.length;
     const [, method, rawPath] = METHOD_LINE.exec(lines[start].trim()) ?? [];
     const path = normalizePath(rawPath ?? '/');
+    // 三引号先收成普通字符串，再按行去注释：里面 `//` 开头的那行是脚本的，不是控制台的注释
+    const body = collapseTripleQuotes(lines.slice(start + 1, end).join('\n')).split('\n');
     const bodyLines: Array<{ text: string; line: number }> = [];
-    for (let index = start + 1; index < end; index += 1) {
-      if (!isComment(lines[index]) && lines[index].trim() !== '') bodyLines.push({ text: lines[index], line: index + 1 });
-    }
+    body.forEach((text, index) => {
+      if (!isComment(text) && text.trim() !== '') bodyLines.push({ text, line: start + 2 + index });
+    });
     // 末尾的空行、注释不算这条请求的范围
     let last = start;
     for (let index = start + 1; index < end; index += 1) {
@@ -112,6 +114,20 @@ export function esRequestAt(source: string, offset: number): EsConsoleRequest | 
     if (request.from <= offset) found = request;
   }
   return found ?? requests[0] ?? null;
+}
+
+/**
+ * Kibana 的三引号字符串：`"""` 到 `"""` 之间原样是一个字符串，可以换行，引号与反斜杠不用转义。
+ * ES|QL、SQL 与 painless 脚本的官方文档都这么写，照抄过来就该能发。规则照 Kibana 的
+ * `collapseLiteralStrings`（同一个正则：只去掉开头紧跟的那个换行与收尾前的那个换行），
+ * 另把字符串吞掉的换行补在它后面——JSON 里那是空白，后面各行的行号就还是编辑器里的行号
+ */
+const TRIPLE_QUOTED = /"""(?:\s*\r?\n)?((?:.|\r?\n)*?)(?:\r?\n\s*)?"""/g;
+
+function collapseTripleQuotes(text: string): string {
+  return text.replace(TRIPLE_QUOTED, (match, literal: string) =>
+    JSON.stringify(literal) + '\n'.repeat(match.split('\n').length - 1)
+  );
 }
 
 /** `books/_search` 与 `/books/_search` 一样。只收路径：写了主机的在后端也会被拒 */
