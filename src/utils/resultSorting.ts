@@ -136,7 +136,25 @@ function numericText(value: SerializedResultValue): string | null {
   if (isTaggedResultValue(value) && (value.type === 'bigint' || value.type === 'decimal')) {
     return value.value;
   }
+  if (isTaggedResultValue(value) && value.type === 'time') {
+    return durationSeconds(value.value);
+  }
   return null;
+}
+
+/**
+ * `[-]H:MM:SS[.f]` 换成秒数。MySQL 的 TIME 是带符号的时长（-838:59:59 ~ 838:59:59），
+ * 按文本排 -01:00:00 在 -05:00:00 前面、100:00:00 在 99:00:00 前面。
+ * 别的写法（PostgreSQL 的 `1 day 02:00:00`）不认，照旧按文本
+ */
+function durationSeconds(text: string): string | null {
+  const match = /^(-?)(\d+):(\d{2}):(\d{2})(\.\d+)?$/.exec(text);
+  if (!match) {
+    return null;
+  }
+  const [, sign, hours, minutes, seconds, fraction = ''] = match;
+  const whole = Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds);
+  return `${sign}${whole}${fraction}`;
 }
 
 /**

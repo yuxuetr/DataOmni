@@ -82,6 +82,20 @@ describe('单元格比较', () => {
     );
   });
 
+  it('MySQL 的 TIME 是带符号的时长，按时长排而不是按文本', () => {
+    // 文本序里 -01:00:00 在 -05:00:00 前面、100:00:00 在 99:00:00 前面
+    const time = (value: string) => ({ type: 'time' as const, value });
+    const sorted = [
+      time('100:00:00'), time('-01:00:00'), time('99:00:00'), time('00:00:00.5'),
+      time('-05:00:00'), time('00:00:00'), time('-00:00:01.25')
+    ].sort(compareResultValues);
+    expect(sorted.map((value) => value.value)).toEqual(
+      ['-05:00:00', '-01:00:00', '-00:00:01.25', '00:00:00', '00:00:00.5', '99:00:00', '100:00:00']
+    );
+    // PostgreSQL 的 interval 不是这个写法，照旧按文本
+    expect(compareResultValues(time('1 day 02:00:00'), time('2 days'))).toBeLessThan(0);
+  });
+
   it('文本按中文语序而不是码点比较', () => {
     // 码点序里「张」(0x5F20) 在「李」(0x674E) 之前，拼音序相反
     expect(compareResultValues('李四', '张三')).toBeLessThan(0);
