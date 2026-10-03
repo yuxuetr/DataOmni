@@ -401,6 +401,12 @@ export const en: Translations = {
   'result.nextPage': 'Next page',
 
   // --- Background tasks ---
+  'app.closeWithTasks.title': 'Tasks are still running',
+  'app.closeWithTasks.import': '{count} background tasks are not finished: {tasks}. Closing the window stops them; for an import committed in batches, the batches already written stay in the table.',
+  'app.closeWithTasks.import.one': '1 background task is not finished: {tasks}. Closing the window stops it; for an import committed in batches, the batches already written stay in the table.',
+  'app.closeWithTasks.other': '{count} background tasks are not finished: {tasks}. Closing the window stops them and the files will not be written.',
+  'app.closeWithTasks.other.one': '1 background task is not finished: {tasks}. Closing the window stops it and the file will not be written.',
+  'app.closeWithTasks.confirm': 'Stop and close',
   'task.center': 'Background tasks',
   'task.empty': 'No background tasks yet',
   'task.status.running': 'Running',

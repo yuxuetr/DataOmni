@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   activeTaskCount,
   appendLog,
+  closeInterruption,
   describeTask,
   formatTaskElapsed,
   importOutcome,
@@ -207,5 +208,26 @@ describe('importOutcome', () => {
 
   it('一行没错就是成功', () => {
     expect(importOutcome(summary, 'abort')).toBe('succeeded');
+  });
+});
+
+describe('closeInterruption', () => {
+  it('没有进行中的任务时关窗口不用问', () => {
+    expect(closeInterruption([task({ status: 'succeeded' }), task({ status: 'failed' })])).toBeNull();
+  });
+
+  it('暂停与正在取消的也算：进程一退，它们同样被打断', () => {
+    // 原先关窗口不看任务，导入跑到一半就被掐掉，已提交的批次留在表里、下次打开什么也看不出来
+    const result = closeInterruption([
+      task({ id: 'a', status: 'paused', title: '导入 public.users' }),
+      task({ id: 'b', kind: 'export', status: 'cancel-requested', title: '导出 orders' }),
+      task({ id: 'c', status: 'succeeded', title: '导入 done' })
+    ]);
+    expect(result).toEqual({ count: 2, titles: ['导入 public.users', '导出 orders'], hasImport: true });
+  });
+
+  it('只有导出、备份时不提「留在表里」', () => {
+    expect(closeInterruption([task({ kind: 'backup', title: '备份 app.db' })]))
+      .toEqual({ count: 1, titles: ['备份 app.db'], hasImport: false });
   });
 });

@@ -48,6 +48,9 @@ import { isBrowsableKind, KIND_LABEL_KEYS } from './utils/databaseObjects';
 import { useLanguageStore, translateNow } from './stores/languageStore';
 import { tabTitle } from './utils/tabTitle';
 import { useAppStore } from './stores/appStore';
+import { useTaskStore } from './stores/taskStore';
+import { closeInterruption } from './utils/backgroundTasks';
+import { useConfirmPrompt } from './components/ConfirmPrompt';
 import { useConnectionStore } from './stores/connectionStore';
 import { selectSqlDocumentHasUnsavedContent, useQueryStore } from './stores/queryStore';
 import {
@@ -334,6 +337,8 @@ function App() {
     return () => sessionManager.setLeaveGuard(null);
   }, [sessionManager, mayLeaveTransaction]);
 
+  const { ask: askToClose, prompt: closePrompt } = useConfirmPrompt();
+
   useEffect(() => {
     const appWindow = getCurrentWindow();
     let closing = false;
@@ -349,6 +354,24 @@ function App() {
       // 退出前先问事务：窗口一关，数据库会把没提交的整个回滚掉
       if (!(await mayLeaveTransaction())) {
         return;
+      }
+
+      // 后台任务跑在这个进程里，窗口一关就停在半路：分批导入前面的批次已经提交，
+      // 下次打开任务中心是空的，看不出表里只进了一半
+      const interrupted = closeInterruption(useTaskStore.getState().tasks);
+      if (interrupted) {
+        const confirmed = await askToClose({
+          title: translateNow('app.closeWithTasks.title'),
+          message: translateNow(
+            interrupted.hasImport ? 'app.closeWithTasks.import' : 'app.closeWithTasks.other',
+            { count: interrupted.count, tasks: interrupted.titles.join(translateNow('common.listSeparator')) }
+          ),
+          confirmLabel: translateNow('app.closeWithTasks.confirm'),
+          destructive: true
+        });
+        if (!confirmed) {
+          return;
+        }
       }
 
       closing = true;
@@ -367,7 +390,7 @@ function App() {
     return () => {
       unlisten?.();
     };
-  }, [sessionManager, mayLeaveTransaction]);
+  }, [sessionManager, mayLeaveTransaction, askToClose]);
 
   useEffect(() => {
     const handleOffline = () => {
@@ -1095,6 +1118,8 @@ function App() {
       {pendingCloseTab && (
         <CloseTabPrompt tabTitle={tabTitle(pendingCloseTab, t)} onChoose={handleCloseChoice} />
       )}
+
+      {closePrompt}
 
       {leavingTransaction && (
         <UncommittedTransactionPrompt

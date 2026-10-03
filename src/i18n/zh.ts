@@ -419,6 +419,12 @@ export const zh = {
 
   // 导出
   // --- 后台任务 ---
+  'app.closeWithTasks.title': '还有任务在进行',
+  'app.closeWithTasks.import': '{count} 个后台任务还没做完：{tasks}。关闭窗口会中断它们；分批提交的导入，已经写进去的批次会留在表里。',
+  'app.closeWithTasks.import.one': '1 个后台任务还没做完：{tasks}。关闭窗口会中断它；分批提交的导入，已经写进去的批次会留在表里。',
+  'app.closeWithTasks.other': '{count} 个后台任务还没做完：{tasks}。关闭窗口会中断它们，文件不会写成。',
+  'app.closeWithTasks.other.one': '1 个后台任务还没做完：{tasks}。关闭窗口会中断它，文件不会写成。',
+  'app.closeWithTasks.confirm': '中断并关闭',
   'task.center': '后台任务',
   'task.empty': '还没有后台任务',
   'task.status.running': '正在进行',

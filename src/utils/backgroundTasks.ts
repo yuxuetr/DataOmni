@@ -167,6 +167,24 @@ export function activeTaskCount(tasks: readonly BackgroundTask[]): number {
   return tasks.filter((task) => isTaskActive(task.status)).length;
 }
 
+/**
+ * 关窗口会打断哪些任务。进程一退，导入停在半路（分批提交的话前面的批次已经在表里）、
+ * 导出与备份只留下一个 `.part`。没有就返回 null，不用问
+ */
+export function closeInterruption(
+  tasks: readonly BackgroundTask[]
+): { count: number; titles: string[]; hasImport: boolean } | null {
+  const active = tasks.filter((task) => isTaskActive(task.status));
+  if (active.length === 0) {
+    return null;
+  }
+  return {
+    count: active.length,
+    titles: active.map((task) => task.title),
+    hasImport: active.some((task) => task.kind === 'import')
+  };
+}
+
 export function formatTaskElapsed(elapsedMs: number): string {
   const seconds = Math.floor(elapsedMs / 1000);
   if (seconds < 60) {
