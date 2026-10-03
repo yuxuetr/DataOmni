@@ -36,8 +36,14 @@ const CREDENTIAL_KEYWORD =
 const SECRET_COLUMN =
   /[`"'[]?\b(?:password|passwd|pwd|token|access_token|refresh_token|api_key|apikey|secret|private_key|credential|credentials)\b[`"'\]]?\s*(?::=|=)\s*$/i;
 
-/** 字面量里塞了一整条连接串：`postgres://user:pw@host/db` */
-const URL_CREDENTIAL = /([a-z][a-z0-9+.-]*:\/\/[^:/\s?#]+:)([^@\s/?#]*)(@)/gi;
+/**
+ * 字面量里塞了一整条连接串：`postgres://user:pw@host/db`。
+ *
+ * 开头的后顾不能省：没有它，一长串字母里的每个位置都会被当成协议名的开头、
+ * 往后扫到串尾才失败，是平方级——mysqldump 的扩展 INSERT 一条 1MB，
+ * 记一次历史要十分钟，界面跟着卡死
+ */
+const URL_CREDENTIAL = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/[^:/\s?#]+:)([^@\s/?#]*)(@)/gi;
 
 interface Span {
   from: number;

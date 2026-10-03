@@ -126,6 +126,18 @@ describe('redactSqlForHistory', () => {
     // ClickHouse 也认 `#` 注释（25.8 上试过）
     expect(redact(commented, 'clickhouse').sql).toBe(commented);
   });
+
+  it('1MB 的一条语句也是线性时间：mysqldump 的扩展 INSERT 每条就这么长', () => {
+    // 连接串那条正则曾在一长串字母的每个位置都重新起头往后扫，是平方级：
+    // 8 万字符要 4 秒，1MB 一条要十分钟上下，执行完记历史时整个界面卡死。
+    // 线性实现在这里是几毫秒，平方级是几分钟，2 秒的门两边都离得很远
+    const value = 'x'.repeat(1_000_000);
+    const sql = `INSERT INTO t VALUES ('${value}', 'postgres://u:hunter2@db/app');`;
+    const startedAt = performance.now();
+    const { sql: redacted } = redact(sql);
+    expect(performance.now() - startedAt).toBeLessThan(2000);
+    expect(redacted).toBe(`INSERT INTO t VALUES ('${value}', 'postgres://u:***@db/app');`);
+  });
 });
 
 describe('redactConsoleForHistory', () => {
