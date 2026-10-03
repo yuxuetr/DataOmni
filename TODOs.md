@@ -991,6 +991,21 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-03 格式化、历史脱敏与风险判定的边角写法（rpm 0.4.106，连 cu 的 MySQL 与容器里的 DuckDB 文件）：**修了四处**：
+    - 含 `DELIMITER` 的脚本点格式化被排坏（`b5cedc7`）：sql-formatter 不认这条客户端指令，`//` 被拆成 `/ /`、`DELIMITER ;` 被并进
+      上一行，存储过程脚本排完再跑就报错。选区里有这条指令、或处在换了分隔符的那一段里时不排，横幅说明原因；换回分号之后的部分照常排。
+      打包版上整份点格式化弹出说明、编辑器一字未动；只选 `call om_p();` 那一行排成 `CALL om_p ();`。
+    - 历史里漏打的口令（`253d24c`）：Oracle 的口令是标识符，`IDENTIFIED BY tiger`、`"N3w#pw"`、建库链接的 `CONNECT TO … IDENTIFIED BY`
+      原样进了历史；另有改口令时 `REPLACE` 后的旧口令（MySQL、Oracle）、SQL Server 的 `OLD_PASSWORD`、MySQL 复制源的
+      `SOURCE_PASSWORD` / `MASTER_PASSWORD`、`user_password` 这类带前缀的列名。
+    - 同上（`a705d7e`）：DuckDB `CREATE SECRET` 的 `SECRET '…'`、`BEARER_TOKEN '…'`、`CONNECTION_STRING '…'`（名字与值只隔空白），
+      ClickHouse 命名集合的 `secret_access_key = '…'`。`KEY_ID` 照旧保留。打包版上 MySQL 的 `ALTER USER … IDENTIFIED BY … REPLACE …`
+      （用户不存在，执行失败）与 DuckDB 的 `CREATE SECRET`（执行成功）在历史里分别是 `'***' REPLACE '***'` 与 `SECRET '***'`。
+      Oracle 那几条只有单测（cu 上的 Oracle 停着）。
+    - `ALTER TABLE … TRUNCATE PARTITION` 按普通有界写入算（`f92965b`），生产连接上不弹确认；`DROP PARTITION` 早就算破坏性。只有单测，确认框本身没改。
+    每处的用例先红后绿，前端 1793 条全过。
+    没改：`IDENTIFIED BY VALUES '…'`（Oracle 的口令散列）不打；DuckDB 等的 `CALL`、`DO $$…$$`、`EXEC` 里包着的写入看不进去，按有界写入算。
+    重估条件：有人报这几种进了历史或在生产库上没被拦。
   - 2026-10-03 结果里的同名列：**MySQL、PostgreSQL、SQLite 上后一列顶掉前一列**（`c427193`）。行按列名做键，
     `SELECT 1 AS id, 'a' AS name, 2 AS id` 在 rpm 0.4.103 连 PG 16 显示 `2 · a · 2`，表头两个 `id`，看不出少了什么；
     连接查询里的 `a.id, b.id` 一样。SQL Server、Oracle、ClickHouse 早就给重名的列编号，这三家走 sqlx 的路径漏了。
