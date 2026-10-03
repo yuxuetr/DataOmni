@@ -578,13 +578,15 @@ async fn describe_sqlite_columns(
 ) -> Result<Vec<QueryColumnMetadata>, QueryError> {
   connection.clear_cached_statements().await.map_err(QueryError::from)?;
   let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
+  let names = number_duplicate_columns(description.columns().iter().map(|column| column.name()));
   Ok(
     description
       .columns()
       .iter()
+      .zip(names)
       .enumerate()
-      .map(|(ordinal, column)| QueryColumnMetadata {
-        name: column.name().to_string(),
+      .map(|(ordinal, (column, name))| QueryColumnMetadata {
+        name,
         ordinal,
         database_type: column.type_info().name().to_string(),
         logical_type: sqlite_logical_type(column.type_info().name()).to_string(),
@@ -625,7 +627,7 @@ async fn execute_sqlite_connection_streaming(
     let Some(row) = stream.try_next().await.map_err(QueryError::from)? else {
       break;
     };
-    let row = decode_sqlite_row(&row)?;
+    let row = decode_sqlite_row(&row, &columns)?;
     if !admit_row_bytes(&row, options.byte_limit, &mut bytes_read)? {
       truncation_reason = Some(QueryTruncationReason::ByteLimit);
       break;
@@ -698,13 +700,15 @@ async fn describe_mysql_columns(
   sql: &str,
 ) -> Result<Vec<QueryColumnMetadata>, QueryError> {
   let description = (&mut *connection).describe(sql).await.map_err(QueryError::from)?;
+  let names = number_duplicate_columns(description.columns().iter().map(|column| column.name()));
   Ok(
     description
       .columns()
       .iter()
+      .zip(names)
       .enumerate()
-      .map(|(ordinal, column)| QueryColumnMetadata {
-        name: column.name().to_string(),
+      .map(|(ordinal, (column, name))| QueryColumnMetadata {
+        name,
         ordinal,
         database_type: column.type_info().name().to_string(),
         logical_type: mysql_logical_type(column.type_info().name()).to_string(),
@@ -745,7 +749,7 @@ async fn execute_mysql_connection_streaming(
     let Some(row) = stream.try_next().await.map_err(QueryError::from)? else {
       break;
     };
-    let row = decode_mysql_row(&row)?;
+    let row = decode_mysql_row(&row, &columns)?;
     if !admit_row_bytes(&row, options.byte_limit, &mut bytes_read)? {
       truncation_reason = Some(QueryTruncationReason::ByteLimit);
       break;
@@ -789,6 +793,8 @@ async fn stream_mysql_undescribed(
   let mut first: Option<Vec<QueryColumnMetadata>> = None;
   // 第一个结果集读完（或到了上限）之后，后面的只是读掉
   let mut first_done = false;
+  // 第一个结果集的列名（重名的编了号），行按它做键
+  let mut names: Vec<String> = Vec::new();
   // 第一个结果集之后的每个结果集（空的也一样）各以一个 OK 收尾，最后还有 CALL 自己的那一个
   let mut results_after_first: usize = 0;
   let mut rows_affected = 0;
@@ -813,13 +819,15 @@ async fn stream_mysql_undescribed(
       continue;
     }
     if first.is_none() {
+      names = number_duplicate_columns(row.columns().iter().map(|column| column.name()));
       first = Some(
         row
           .columns()
           .iter()
+          .zip(names.iter().cloned())
           .enumerate()
-          .map(|(ordinal, column)| QueryColumnMetadata {
-            name: column.name().to_string(),
+          .map(|(ordinal, (column, name))| QueryColumnMetadata {
+            name,
             ordinal,
             database_type: column.type_info().name().to_string(),
             logical_type: mysql_logical_type(column.type_info().name()).to_string(),
@@ -832,7 +840,7 @@ async fn stream_mysql_undescribed(
       truncation_reason = Some(QueryTruncationReason::RowLimit);
       continue;
     }
-    let row = decode_mysql_row(&row)?;
+    let row = decode_mysql_row(&row, &names)?;
     if !admit_row_bytes(&row, options.byte_limit, &mut bytes_read)? {
       truncation_reason = Some(QueryTruncationReason::ByteLimit);
       continue;
@@ -919,13 +927,15 @@ async fn describe_postgres_columns(
   connection.clear_cached_statements().await.map_err(QueryError::from)?;
   let statement = (&mut *connection).prepare(sql).await.map_err(QueryError::from)?;
   let binary = statement.columns().iter().all(|column| pg_decodes_binary(column.type_info()));
+  let names = number_duplicate_columns(statement.columns().iter().map(|column| column.name()));
   Ok((
     statement
       .columns()
       .iter()
+      .zip(names)
       .enumerate()
-      .map(|(ordinal, column)| QueryColumnMetadata {
-        name: column.name().to_string(),
+      .map(|(ordinal, (column, name))| QueryColumnMetadata {
+        name,
         ordinal,
         database_type: column.type_info().name().to_string(),
         logical_type: postgres_logical_type(column.type_info().name()).to_string(),
@@ -970,7 +980,7 @@ async fn execute_postgres_connection_streaming(
     let Some(row) = stream.try_next().await.map_err(QueryError::from)? else {
       break;
     };
-    let row = decode_postgres_row(&row)?;
+    let row = decode_postgres_row(&row, &columns)?;
     if !admit_row_bytes(&row, options.byte_limit, &mut bytes_read)? {
       truncation_reason = Some(QueryTruncationReason::ByteLimit);
       break;
@@ -1189,38 +1199,53 @@ fn is_transaction_control_statement(sql: &str) -> bool {
   .any(|keyword| normalized == *keyword || normalized.starts_with(&format!("{keyword} ")))
 }
 
-fn decode_sqlite_row(row: &SqliteRow) -> Result<Map<String, JsonValue>, QueryError> {
+/// 行里这一列的键：描述出来的列名（重名的编了号）。描述报 0 列的语句（MySQL 的
+/// `EXPLAIN FORMAT=JSON`）照样有行，那时只有驱动给的原名可用
+fn row_key(names: &[String], index: usize, original: &str) -> String {
+  names.get(index).cloned().unwrap_or_else(|| original.to_string())
+}
+
+fn decode_sqlite_row(
+  row: &SqliteRow,
+  names: &[String],
+) -> Result<Map<String, JsonValue>, QueryError> {
   let mut values = Map::new();
   for (index, column) in row.columns().iter().enumerate() {
     let value = row.try_get_raw(index).map_err(QueryError::from)?;
     let decoded = decode_sqlite(value).map_err(|error| {
       format!("{COLUMN_DECODE_FAILED}: {} · {} · {error}", column.name(), column.type_info().name())
     })?;
-    values.insert(column.name().to_string(), decoded);
+    values.insert(row_key(names, index, column.name()), decoded);
   }
   Ok(values)
 }
 
-fn decode_mysql_row(row: &MySqlRow) -> Result<Map<String, JsonValue>, QueryError> {
+fn decode_mysql_row(
+  row: &MySqlRow,
+  names: &[String],
+) -> Result<Map<String, JsonValue>, QueryError> {
   let mut values = Map::new();
   for (index, column) in row.columns().iter().enumerate() {
     let value = row.try_get_raw(index).map_err(QueryError::from)?;
     let decoded = decode_mysql(value).map_err(|error| {
       format!("{COLUMN_DECODE_FAILED}: {} · {} · {error}", column.name(), column.type_info().name())
     })?;
-    values.insert(column.name().to_string(), decoded);
+    values.insert(row_key(names, index, column.name()), decoded);
   }
   Ok(values)
 }
 
-fn decode_postgres_row(row: &PgRow) -> Result<Map<String, JsonValue>, QueryError> {
+fn decode_postgres_row(
+  row: &PgRow,
+  names: &[String],
+) -> Result<Map<String, JsonValue>, QueryError> {
   let mut values = Map::new();
   for (index, column) in row.columns().iter().enumerate() {
     let value = row.try_get_raw(index).map_err(QueryError::from)?;
     let decoded = decode_postgres(value).map_err(|error| {
       format!("{COLUMN_DECODE_FAILED}: {} · {} · {error}", column.name(), column.type_info().name())
     })?;
-    values.insert(column.name().to_string(), decoded);
+    values.insert(row_key(names, index, column.name()), decoded);
   }
   Ok(values)
 }
@@ -2006,6 +2031,37 @@ mod tests {
       panic!("a closed pool handed out a connection");
     };
     assert_eq!(error.code.as_deref(), Some(crate::services::query_error::CONNECTION_LOST_CODE));
+  }
+
+  /// MySQL 的 `EXPLAIN FORMAT=JSON` 描述出 0 列却有一行：按空名字表取键，那一行整个是空的，计划解析不出来
+  #[test]
+  fn a_row_without_described_columns_keeps_the_driver_names() {
+    assert_eq!(row_key(&[], 0, "EXPLAIN"), "EXPLAIN");
+    assert_eq!(row_key(&["id".to_string(), "id 2".to_string()], 1, "id"), "id 2");
+  }
+
+  /// 回归：`SELECT 1 AS id, 'a' AS name, 2 AS id` 第一列显示的是 2——行按列名做键，后一列顶掉了前一列
+  /// （rpm 0.4.103 连 PG 16 实测）。SQL Server、Oracle、ClickHouse 早就给重名的列编了号
+  #[tokio::test]
+  async fn columns_with_the_same_name_keep_their_own_values() {
+    let pool = SqlitePoolOptions::new()
+      .max_connections(1)
+      .connect("sqlite::memory:")
+      .await
+      .expect("connect to SQLite");
+    let result = execute_query(&DbPool::Sqlite(pool), "SELECT 1 AS id, 'a' AS name, 2 AS id")
+      .await
+      .expect("execute");
+
+    match result {
+      QueryExecutionResult::Rows { columns, rows, .. } => {
+        assert_eq!(columns, vec!["id", "name", "id 2"]);
+        let value = |key: &str| rows[0].get(key).and_then(|cell| cell.get("value")).cloned();
+        assert_eq!(value("id"), Some(JsonValue::from("1")));
+        assert_eq!(value("id 2"), Some(JsonValue::from("2")));
+      }
+      QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
+    }
   }
 
   #[tokio::test]
