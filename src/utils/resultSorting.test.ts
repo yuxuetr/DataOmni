@@ -96,6 +96,26 @@ describe('单元格比较', () => {
     expect(compareResultValues(time('1 day 02:00:00'), time('2 days'))).toBeLessThan(0);
   });
 
+  it('日期按年份的数值排：公元前在公元前面，五位数的年份在四位数后面', () => {
+    // PostgreSQL 照 psql 写公元前（`0044-03-15 BC`），也存得下 294276 年；两端是 ±infinity
+    const date = (value: string) => ({ type: 'date' as const, value });
+    const sorted = [
+      date('0010-01-01'), date('infinity'), date('0044-03-15 BC'), date('10000-01-01'),
+      date('0100-06-01 BC'), date('2026-10-03'), date('-infinity'), date('0044-01-01 BC')
+    ].sort(compareResultValues);
+    expect(sorted.map((value) => value.value)).toEqual([
+      '-infinity', '0100-06-01 BC', '0044-01-01 BC', '0044-03-15 BC',
+      '0010-01-01', '2026-10-03', '10000-01-01', 'infinity'
+    ]);
+    const datetime = (value: string) => ({ type: 'datetime' as const, value });
+    expect(compareResultValues(
+      datetime('0001-01-01 00:00:00 BC'), datetime('0001-01-01 00:00:00')
+    )).toBeLessThan(0);
+    expect(compareResultValues(
+      datetime('2026-10-03 04:05:06.5'), datetime('2026-10-03 04:05:06')
+    )).toBeGreaterThan(0);
+  });
+
   it('文本按中文语序而不是码点比较', () => {
     // 码点序里「张」(0x5F20) 在「李」(0x674E) 之前，拼音序相反
     expect(compareResultValues('李四', '张三')).toBeLessThan(0);

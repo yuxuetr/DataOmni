@@ -103,6 +103,11 @@ export function compareResultValues(
     return compareDecimalStrings(leftNumeric, rightNumeric);
   }
 
+  const calendar = compareCalendar(left, right);
+  if (calendar !== null) {
+    return calendar;
+  }
+
   // 其余按显示文本比较；localeCompare 让中文按拼音而不是码点排
   return formatResultValue(left).localeCompare(formatResultValue(right), 'zh-Hans-CN');
 }
@@ -155,6 +160,39 @@ function durationSeconds(text: string): string | null {
   const [, sign, hours, minutes, seconds, fraction = ''] = match;
   const whole = Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds);
   return `${sign}${whole}${fraction}`;
+}
+
+/**
+ * 日期与时间戳。年份之后的部分按文本比就对（月、日、时刻都补足了位），年份本身不行：
+ * PostgreSQL 照 psql 写公元前（`0044-03-15 BC`，年份越大越早），也存得下五位数的年份，
+ * 两端是 `-infinity` / `infinity`。两边都认得出才比，否则交回调用方按文本比
+ */
+function compareCalendar(left: SerializedResultValue, right: SerializedResultValue): number | null {
+  const leftKey = calendarKey(left);
+  const rightKey = calendarKey(right);
+  if (!leftKey || !rightKey) {
+    return null;
+  }
+  if (leftKey.year !== rightKey.year) {
+    return leftKey.year < rightKey.year ? -1 : 1;
+  }
+  return leftKey.rest < rightKey.rest ? -1 : leftKey.rest > rightKey.rest ? 1 : 0;
+}
+
+/** 天文纪年的年份（公元前 1 年是 0）与年份之后的部分 */
+function calendarKey(value: SerializedResultValue): { year: number; rest: string } | null {
+  if (!isTaggedResultValue(value) || (value.type !== 'date' && value.type !== 'datetime')) {
+    return null;
+  }
+  if (value.value === '-infinity' || value.value === 'infinity') {
+    return { year: value.value === 'infinity' ? Infinity : -Infinity, rest: '' };
+  }
+  const match = /^(\d{4,})(-.*?)( BC)?$/.exec(value.value);
+  if (!match) {
+    return null;
+  }
+  const year = Number(match[1]);
+  return { year: match[3] ? 1 - year : year, rest: match[2] };
 }
 
 /**
