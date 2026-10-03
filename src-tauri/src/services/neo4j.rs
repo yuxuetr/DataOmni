@@ -719,12 +719,14 @@ fn sorted(entries: HashMap<String, ValueReceive>) -> Vec<(String, CypherValue)> 
 }
 
 /// Cypher 的写法：整数值的浮点数带 `.0`、大的写成 `1e20`（不然读回来是整数，大的还越界），
-/// `NaN`、`Infinity`
+/// 小于 1e-6 的照 JavaScript 写指数，`NaN`、`Infinity`
 fn float_text(value: f64) -> String {
   if value.is_nan() {
     "NaN".to_string()
   } else if value.is_infinite() {
     if value > 0.0 { "Infinity" } else { "-Infinity" }.to_string()
+  } else if value != 0.0 && value.abs() < 1e-6 {
+    format!("{value:e}")
   } else if value.fract() != 0.0 {
     value.to_string()
   } else if value.abs() < 1e16 {
@@ -836,6 +838,11 @@ mod tests {
     assert_eq!(float_text(f64::NEG_INFINITY), "-Infinity");
     assert_eq!(float_text(1e20), "1e20");
     assert_eq!(float_text(-1.5e17), "-1.5e17");
+    // 很小的数照 JavaScript 的界线写指数，不然 1e-300 是一格三百位的小数
+    assert_eq!(float_text(1e-300), "1e-300");
+    assert_eq!(float_text(-2.5e-7), "-2.5e-7");
+    assert_eq!(float_text(0.000001), "0.000001");
+    assert_eq!(float_text(-0.0), "-0.0");
   }
 
   #[test]
