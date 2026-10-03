@@ -262,8 +262,9 @@ export function validateImport(
     });
   }
 
-  if (preview.encoding !== 'UTF-8') {
-    // 多半是 Excel 另存的 GBK，读对了；也可能是别的编码、读出了乱码——样例里看得出来
+  if (preview.encoding === 'gb18030') {
+    // 不是 UTF-8 又没有 BOM 时后端猜的 GB18030。多半是 Excel 另存的 GBK，读对了；
+    // 也可能是别的编码、读出了乱码——样例里看得出来。带 BOM 的 UTF-16 是认出来的，不提
     issues.push({ level: 'warning', key: 'import.issue.notUtf8' });
   }
 

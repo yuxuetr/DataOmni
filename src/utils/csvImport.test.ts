@@ -141,6 +141,9 @@ describe('validateImport', () => {
       .find((found) => found.key === 'import.issue.notUtf8');
     expect(issue('gb18030')?.level).toBe('warning');
     expect(issue('UTF-8')).toBeUndefined();
+    // 带 BOM 的 UTF-16 是照 BOM 认的，不是猜的；说「按 GB18030 读」是假话
+    expect(issue('UTF-16LE')).toBeUndefined();
+    expect(issue('UTF-16BE')).toBeUndefined();
   });
 
   it('必填列没映射是 error，不是提醒', () => {
