@@ -39,9 +39,14 @@ export type EstimateAccuracy = 'unknown' | 'close' | 'off' | 'way-off';
  * 估 100 万实际 100 万零 100 无所谓。两侧都加 1 再比，免得估 0 行时除零，
  * 也免得把「估 0 实际 1」这种正常的取整误差报成无穷大。
  */
-export function estimateAccuracy(node: PlanNode): EstimateAccuracy {
+export function estimateAccuracy(node: PlanNode, underLimit = false): EstimateAccuracy {
   const { estimatedRows, actualRows } = node;
   if (estimatedRows === null || actualRows === null) {
+    return 'unknown';
+  }
+  // Limit 拿够了行就停，下面的节点只跑了一截：估算是整张表的，实际是那一截，少了不说明估错。
+  // 多了照样算——提前停只会让实际变少
+  if (underLimit && actualRows < estimatedRows) {
     return 'unknown';
   }
   const estimated = Math.max(0, estimatedRows) + 1;
@@ -67,19 +72,30 @@ export function worstEstimate(plan: QueryPlan): PlanNode | null {
     unknown: 0
   };
   let worst: { node: PlanNode; rank: number } | null = null;
-  for (const node of flattenPlan(plan)) {
-    const rank = ranking[estimateAccuracy(node)];
-    if (rank < 2) {
-      continue;
-    }
-    const better = !worst
-      || rank > worst.rank
-      || (rank === worst.rank && (node.actualRows ?? 0) > (worst.node.actualRows ?? 0));
+  // 深度优先、从上到下；带着「上面有没有 Limit」
+  const pending = plan.roots.map((node) => ({ node, underLimit: false })).reverse();
+  for (let item = pending.pop(); item; item = pending.pop()) {
+    const { node, underLimit } = item;
+    const rank = ranking[estimateAccuracy(node, underLimit)];
+    const better = rank >= 2 && (
+      !worst
+        || rank > worst.rank
+        || (rank === worst.rank && (node.actualRows ?? 0) > (worst.node.actualRows ?? 0))
+    );
     if (better) {
       worst = { node, rank };
     }
+    const childrenUnderLimit = underLimit || stopsEarly(node);
+    for (let index = node.children.length - 1; index >= 0; index -= 1) {
+      pending.push({ node: node.children[index], underLimit: childrenUnderLimit });
+    }
   }
   return worst?.node ?? null;
+}
+
+/** 拿够了行就不再向下要的节点（PostgreSQL、Neo4j 都叫 Limit） */
+export function stopsEarly(node: PlanNode): boolean {
+  return /^limit$/i.test(node.operation.trim());
 }
 
 /** 深度优先展开，顺序就是树上从上到下的顺序 */

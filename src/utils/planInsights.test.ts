@@ -70,6 +70,19 @@ describe('worstEstimate', () => {
     expect(worstEstimate(plan([fine]))).toBeNull();
   });
 
+  // 回归：`SELECT * FROM big LIMIT 10` 的 Seq Scan 估 200000、实际 10，被点名成「估错了」——
+  // 那是 Limit 拿够了行就停，估算本身没错（PG 16 实测）
+  it('Limit 下面实际少于估算不算估错；多于估算照样算', () => {
+    const stopped = node({ operation: 'Seq Scan', estimatedRows: 200_000, actualRows: 10 });
+    expect(worstEstimate(plan([node({ operation: 'Limit', estimatedRows: 10, actualRows: 10, children: [stopped] })])))
+      .toBeNull();
+    expect(estimateAccuracy(stopped, true)).toBe('unknown');
+
+    const under = node({ operation: 'Seq Scan', estimatedRows: 1, actualRows: 5_000 });
+    const limited = node({ operation: 'Limit', estimatedRows: 10, actualRows: 10, children: [node({ operation: 'Sort', children: [under] })] });
+    expect(worstEstimate(plan([limited]))).toBe(under);
+  });
+
   it('没跑过的计划里一个也挑不出来', () => {
     expect(worstEstimate(plan([node({ estimatedRows: 1 })], false))).toBeNull();
   });

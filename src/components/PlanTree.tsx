@@ -7,6 +7,7 @@ import {
   formatPlanCost,
   formatPlanMs,
   formatPlanRows,
+  stopsEarly,
   type PlanNode
 } from '../utils/planInsights';
 
@@ -15,7 +16,7 @@ export function PlanTree({ roots }: { roots: PlanNode[] }) {
   return (
     <ul className="space-y-1">
       {roots.map((node, index) => (
-        <PlanNodeRow key={index} node={node} depth={0} />
+        <PlanNodeRow key={index} node={node} depth={0} underLimit={false} />
       ))}
     </ul>
   );
@@ -28,11 +29,11 @@ const ACCURACY_CLASS = {
   'way-off': 'text-danger'
 } as const;
 
-function PlanNodeRow({ node, depth }: { node: PlanNode; depth: number }) {
+function PlanNodeRow({ node, depth, underLimit }: { node: PlanNode; depth: number; underLimit: boolean }) {
   const t = useLanguageStore((state) => state.t);
   // 细节默认收起：一个 PostgreSQL 节点有十几个字段，全摊开就看不见树了
   const [open, setOpen] = useState(false);
-  const accuracy = estimateAccuracy(node);
+  const accuracy = estimateAccuracy(node, underLimit);
   const hasDetail = node.detail.length > 0;
 
   return (
@@ -88,7 +89,7 @@ function PlanNodeRow({ node, depth }: { node: PlanNode; depth: number }) {
       {node.children.length > 0 && (
         <ul className="space-y-1">
           {node.children.map((child, index) => (
-            <PlanNodeRow key={index} node={child} depth={depth + 1} />
+            <PlanNodeRow key={index} node={child} depth={depth + 1} underLimit={underLimit || stopsEarly(node)} />
           ))}
         </ul>
       )}
