@@ -436,7 +436,11 @@ export default function TableDataViewer({
   };
 
   // 加载表数据
-  const loadTableData = async (page: number = 1, requestedPageSize: number = pageSize) => {
+  const loadTableData = async (
+    page: number = 1,
+    requestedPageSize: number = pageSize,
+    freshSchema?: TableSchema
+  ) => {
     if (!await ensureDatabaseConnection()) return;
     
     setLoading(true);
@@ -447,9 +451,8 @@ export default function TableDataViewer({
         schema ? [schema, tableName] : [tableName],
         dialect
       );
-      const loadedSchema = tableSchemaKey === currentTableKey
-        ? tableSchema
-        : await loadTableSchema();
+      const loadedSchema = freshSchema
+        ?? (tableSchemaKey === currentTableKey ? tableSchema : await loadTableSchema());
       if (!loadedSchema) {
         // 这里不再抛一条泛泛的「无法加载表结构」：loadTableSchema 的两条失败
         // 路径都已经把**原因**写进 error 了（读不到列 / 驱动报的错），再抛一条
@@ -1158,11 +1161,15 @@ export default function TableDataViewer({
                   // 结构页的刷新绕过缓存：外部改过的结构靠这个入口追上
                   void loadTableSchema(true);
                 } else if (activeTab === 'data') {
-                  // 数据页的刷新只重读数据。这里不顺手把结构也刷了：
-                  // loadTableData 用的是这一轮 render 闭包里的 tableSchema，
-                  // await 之后它并不会变成刚取回来的那份，那样只会读到旧列
+                  // 结构也重读：外面改了列名之后只重读数据，`SELECT *` 读回来的是新列名，
+                  // 网格按旧列名取值，那一列整列画成 NULL，看上去是数据没了。
+                  // 刚取回来的结构直接交给 loadTableData——闭包里的 tableSchema 在 await 之后还是旧的
                   rowCountCacheRef.current = null;
-                  loadTableData(currentPage);
+                  void loadTableSchema(true).then((fresh) => {
+                    if (fresh) {
+                      void loadTableData(currentPage, pageSize, fresh);
+                    }
+                  });
                 }
               }}
               className="flex items-center space-x-1 px-3 py-1.5 text-sm text-accent border border-accent-line rounded-control hover:bg-accent-soft transition-colors"
