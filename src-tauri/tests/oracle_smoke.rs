@@ -1182,6 +1182,72 @@ async fn oracle_exports_stream_to_a_file_and_refuse_non_queries_before_running_t
   std::fs::remove_dir_all(&dir).ok();
 }
 
+/// 导出成 INSERT 的长 CLOB 要能原样跑回去：单个字面量超过 4000 字节是 ORA-01704，
+/// 按字节算，所以 1400 个汉字（4200 字节）也超。正好 4000 字节的还是一个字面量
+#[tokio::test]
+async fn oracle_exported_inserts_carry_text_longer_than_a_literal_back() {
+  let Some(pool) = pool().await else { return };
+  drop_quietly(&pool, "om_clob_src").await;
+  drop_quietly(&pool, "om_clob_dst").await;
+  run_all(
+    &pool,
+    &[
+      "CREATE TABLE om_clob_src (id NUMBER(10) PRIMARY KEY, c CLOB)",
+      "CREATE TABLE om_clob_dst (id NUMBER(10) PRIMARY KEY, c CLOB)",
+      "INSERT INTO om_clob_src VALUES (1, RPAD(TO_CLOB('a'), 9000, 'a'))",
+      // RPAD 按显示宽度补：汉字占两格，2800 格是 1400 个字
+      "INSERT INTO om_clob_src VALUES (2, RPAD(TO_CLOB('中'), 2800, '中'))",
+      "INSERT INTO om_clob_src VALUES (3, RPAD(TO_CLOB(''''), 3998, '''') || '中')",
+      "INSERT INTO om_clob_src VALUES (4, RPAD(TO_CLOB('a'), 4000, 'a'))",
+    ],
+  )
+  .await;
+  let dir = std::env::temp_dir().join(format!("dataomni-oracle-clob-{}", std::process::id()));
+  std::fs::create_dir_all(&dir).expect("temp dir");
+  let target = dir.join("out.sql");
+  let mut options = export_options();
+  options.format = dataomni_lib::services::ExportFormat::Sql;
+  options.sql_table = "OM_CLOB_DST".into();
+  options.sql_dialect = Some(dataomni_lib::services::export_writer::SqlDialect::Oracle);
+  let summary = dataomni_lib::services::export_query(
+    PoolRef::Oracle(&pool),
+    "SELECT id, c FROM om_clob_src ORDER BY id",
+    &target,
+    options,
+    &mut |_| {},
+    &mut || false,
+  )
+  .await
+  .expect("export");
+  assert_eq!(summary.rows_written, 4);
+  let script = std::fs::read_to_string(&target).expect("read back");
+  std::fs::remove_dir_all(&dir).ok();
+  let mut connection = session(&pool).await;
+  for statement in script.lines() {
+    let statement = statement.strip_suffix(';').unwrap_or(statement);
+    connection
+      .execute(statement, 10)
+      .await
+      .unwrap_or_else(|error| panic!("{}…: {error:?}", &statement[..60]));
+  }
+  connection.execute("COMMIT", 1).await.expect("commit");
+  let same: Vec<String> = pool
+    .select(
+      "SELECT s.id || ':' || DBMS_LOB.GETLENGTH(d.c) || ':' || DBMS_LOB.COMPARE(s.c, d.c) AS r \
+       FROM om_clob_src s JOIN om_clob_dst d ON d.id = s.id ORDER BY s.id",
+      &[],
+    )
+    .await
+    .expect("compare")
+    .iter()
+    .map(|row| text(&row["R"]))
+    .collect();
+  assert_eq!(same, ["1:9000:0", "2:1400:0", "3:3999:0", "4:4000:0"]);
+  assert_eq!(script.matches("TO_CLOB").count(), 3 + 2 + 2, "正好 4000 字节的不拆");
+  drop_quietly(&pool, "om_clob_src").await;
+  drop_quietly(&pool, "om_clob_dst").await;
+}
+
 /// 和 SQL Server 那份同一个文件：转换失败（ORA-01722 / 01843）、主键冲突、太长、非空。
 /// Oracle 的这几种都只终止那一条语句，事务留着
 const IMPORT_CSV: &str = "id,n,at,name

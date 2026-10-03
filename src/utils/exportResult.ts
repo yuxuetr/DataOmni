@@ -197,11 +197,11 @@ export function sqlLiteral(value: SerializedResultValue, dialect: SqlDialect): s
     return String(value);
   }
   if (typeof value === 'string') {
-    return quoteSqlStringLiteral(value, dialect);
+    return textLiteral(value, dialect);
   }
   if (!isTaggedResultValue(value)) {
     // 契约之外的对象 / 数组：照 Rust 那侧的 `to_string()` 写成紧凑的 JSON 文本
-    return quoteSqlStringLiteral(JSON.stringify(value), dialect);
+    return textLiteral(JSON.stringify(value), dialect);
   }
   switch (value.type) {
     case 'bigint':
@@ -214,8 +214,39 @@ export function sqlLiteral(value: SerializedResultValue, dialect: SqlDialect): s
     case 'datetime':
       return dialect === 'oracle' ? `TIMESTAMP '${value.value}'` : quoteSqlStringLiteral(value.value, dialect);
     default:
-      return quoteSqlStringLiteral(value.value, dialect);
+      return textLiteral(value.value, dialect);
   }
+}
+
+/**
+ * Oracle 的字符串字面量最长 4000 字节（ORA-01704），`'…' || '…'` 拼出来也一样超
+ * （ORA-01489），一份长 CLOB 导出来就回不去。拼成 `TO_CLOB(…)` 才不受这个限制。
+ * 按 UTF-8 数字节：库的字符集不是 AL32UTF8 时一个字只会更短
+ */
+const ORACLE_LITERAL_BYTES = 4000;
+
+const utf8 = new TextEncoder();
+
+/** 与 Rust 那侧的 `text_literal` 一致 */
+function textLiteral(text: string, dialect: SqlDialect): string {
+  if (dialect !== 'oracle' || utf8.encode(text).length <= ORACLE_LITERAL_BYTES) {
+    return quoteSqlStringLiteral(text, dialect);
+  }
+  const pieces: string[] = [];
+  let piece = '';
+  let bytes = 0;
+  for (const character of text) {
+    const width = utf8.encode(character).length;
+    if (bytes + width > ORACLE_LITERAL_BYTES) {
+      pieces.push(piece);
+      piece = '';
+      bytes = 0;
+    }
+    piece += character;
+    bytes += width;
+  }
+  pieces.push(piece);
+  return pieces.map(part => `TO_CLOB(${quoteSqlStringLiteral(part, dialect)})`).join(' || ');
 }
 
 /**

@@ -435,15 +435,41 @@ pub fn sql_literal(value: &JsonValue, dialect: SqlDialect) -> String {
         (false, false) => "FALSE".to_string(),
       },
       JsonValue::Number(number) => number_text(number),
-      JsonValue::String(text) => string_literal(text, dialect),
-      other => string_literal(&other.to_string(), dialect),
+      JsonValue::String(text) => text_literal(text, dialect),
+      other => text_literal(&other.to_string(), dialect),
     },
     Some(("bigint" | "decimal", text)) => text.to_string(),
     Some(("binary", hex)) => binary_literal(hex, dialect),
     Some(("date", text)) if dialect == SqlDialect::Oracle => format!("DATE '{text}'"),
     Some(("datetime", text)) if dialect == SqlDialect::Oracle => format!("TIMESTAMP '{text}'"),
-    Some((_, text)) => string_literal(text, dialect),
+    Some((_, text)) => text_literal(text, dialect),
   }
+}
+
+/// Oracle 的字符串字面量最长 4000 字节（ORA-01704），`'…' || '…'` 拼出来也一样超
+/// （ORA-01489），一份长 CLOB 导出来就回不去。拼成 `TO_CLOB(…)` 才不受这个限制。
+/// 按 UTF-8 数字节：库的字符集不是 AL32UTF8 时一个字只会更短
+const ORACLE_LITERAL_BYTES: usize = 4000;
+
+/// 与前端 `textLiteral` 一致
+fn text_literal(text: &str, dialect: SqlDialect) -> String {
+  if dialect != SqlDialect::Oracle || text.len() <= ORACLE_LITERAL_BYTES {
+    return string_literal(text, dialect);
+  }
+  let mut pieces = Vec::new();
+  let mut start = 0;
+  for (index, character) in text.char_indices() {
+    if index + character.len_utf8() - start > ORACLE_LITERAL_BYTES {
+      pieces.push(&text[start..index]);
+      start = index;
+    }
+  }
+  pieces.push(&text[start..]);
+  pieces
+    .iter()
+    .map(|piece| format!("TO_CLOB({})", string_literal(piece, dialect)))
+    .collect::<Vec<_>>()
+    .join(" || ")
 }
 
 /// 与前端 `quoteSqlIdentifier` 一致
