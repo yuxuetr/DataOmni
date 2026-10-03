@@ -1383,6 +1383,105 @@ async fn sql_server_exports_stream_to_a_file_and_refuse_non_queries_before_runni
   std::fs::remove_dir_all(&dir).ok();
 }
 
+/// 导出成 INSERT 的每种值都要能原样跑回去。逐列转成文本（各用能看清全部精度的样式）
+/// 再按字节比：默认排序规则不分大小写与全半角，`=` 会把不同的串当成相同。
+/// money 不用大额：查询结果里按驱动读（f64），表数据页才转 decimal，见上一条
+#[tokio::test]
+async fn sql_server_exported_inserts_carry_every_value_back() {
+  let Some(pool) = pool().await else { return };
+  // (列定义, 这一列按字节比的文本；@ 是列)
+  let columns: &[(&str, &str)] = &[
+    ("t nvarchar(max)", "@"),
+    ("v varchar(40)", "@"),
+    ("nc nchar(4)", "@"),
+    ("b varbinary(16)", "CONVERT(nvarchar(max), @, 1)"),
+    ("dt datetime", "CONVERT(nvarchar(30), @, 121)"),
+    ("dt2 datetime2(7)", "CONVERT(nvarchar(40), @, 121)"),
+    ("dto datetimeoffset(7)", "CONVERT(nvarchar(40), @, 121)"),
+    ("sdt smalldatetime", "CONVERT(nvarchar(30), @, 121)"),
+    ("d date", "CONVERT(nvarchar(10), @, 23)"),
+    ("tm time(7)", "CAST(@ AS nvarchar(20))"),
+    ("dec decimal(38, 10)", "CAST(@ AS nvarchar(60))"),
+    ("m money", "CONVERT(nvarchar(40), @, 2)"),
+    ("f float", "CONVERT(nvarchar(40), @, 3)"),
+    ("r real", "CONVERT(nvarchar(40), @, 3)"),
+    ("flag bit", "CAST(@ AS nvarchar(1))"),
+    ("tiny tinyint", "CAST(@ AS nvarchar(3))"),
+    ("big bigint", "CAST(@ AS nvarchar(30))"),
+    ("uid uniqueidentifier", "CAST(@ AS nvarchar(36))"),
+    ("x xml", "CAST(@ AS nvarchar(max))"),
+    ("h hierarchyid", "@.ToString()"),
+    ("g geography", "CONCAT(@.STSrid, ':', @.STAsText())"),
+  ];
+  let declared: Vec<&str> = columns.iter().map(|(declaration, _)| *declaration).collect();
+  let declared = format!("id int PRIMARY KEY, {}", declared.join(", "));
+  let create_source = format!("CREATE TABLE dbo.dataomni_round_src ({declared})");
+  let create_target = format!("CREATE TABLE dbo.dataomni_round_dst ({declared})");
+  run_all(
+    &pool,
+    &[
+      "IF OBJECT_ID('dbo.dataomni_round_src') IS NOT NULL DROP TABLE dbo.dataomni_round_src",
+      "IF OBJECT_ID('dbo.dataomni_round_dst') IS NOT NULL DROP TABLE dbo.dataomni_round_dst",
+      &create_source,
+      &create_target,
+      "INSERT INTO dbo.dataomni_round_src VALUES
+        (1, N'it''s C:\\temp
+第二行	😀 Ａ', 'O''Brien\\x', N'中', 0x00ff275c, '2024-02-29 23:59:59.997',
+         '0001-01-01 00:00:00.0000001', '9999-12-31 23:59:59.9999999 +14:00', '2079-06-06 23:59',
+         '0001-01-01', '23:59:59.9999999', -1234567890123456789012345678.0123456789,
+         -123456789.1234, 1.7976931348623157e308, 3.4028235e38, 1, 255,
+         -9223372036854775808, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+         N'<a b=\"1\">x &amp; ''y''</a>', '/1/2.5/', geography::Point(30.5, 120.25, 4326)),
+        (2, N'', '', N'', 0x, '1753-01-01', '2024-01-01', '2024-01-01 00:00:00 +00:00',
+         '1900-01-01', '9999-12-31', '00:00:00', 0, 0, 0.1, 0.1, 0, 0, 0,
+         '00000000-0000-0000-0000-000000000000', N'', '/', geography::STGeomFromText('LINESTRING(0 0, 1 1)', 4326)),
+        (3, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+         NULL, NULL, NULL, NULL, NULL, NULL, NULL)",
+    ],
+  )
+  .await;
+  let dir = std::env::temp_dir().join(format!("dataomni-mssql-round-{}", std::process::id()));
+  std::fs::create_dir_all(&dir).expect("temp dir");
+  let target = dir.join("out.sql");
+  let mut options = export_options();
+  options.format = dataomni_lib::services::ExportFormat::Sql;
+  options.sql_table = "dataomni_round_dst".into();
+  options.sql_dialect = Some(dataomni_lib::services::export_writer::SqlDialect::Sqlserver);
+  dataomni_lib::services::export_query(
+    PoolRef::SqlServer(&pool),
+    "SELECT * FROM dbo.dataomni_round_src ORDER BY id",
+    &target,
+    options,
+    &mut |_| {},
+    &mut || false,
+  )
+  .await
+  .expect("export");
+  let script = std::fs::read_to_string(&target).expect("read back");
+  std::fs::remove_dir_all(&dir).ok();
+  let mut connection = session(&pool).await;
+  connection.execute(&script, 10).await.unwrap_or_else(|error| panic!("{error:?}\n{script}"));
+  for (declaration, text) in columns {
+    let column = declaration.split(' ').next().unwrap_or_default();
+    let side = |alias: &str| text.replace('@', &format!("{alias}.{column}"));
+    let sql = format!(
+      "SELECT COUNT(*) AS n FROM dbo.dataomni_round_src s JOIN dbo.dataomni_round_dst d ON d.id = s.id \
+       WHERE CAST({} AS varbinary(max)) IS NOT DISTINCT FROM CAST({} AS varbinary(max))",
+      side("s"),
+      side("d")
+    );
+    let rows = pool.select(&sql, &[]).await.unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    let shown = format!(
+      "SELECT s.id, {} AS was, {} AS now FROM dbo.dataomni_round_src s JOIN dbo.dataomni_round_dst d ON d.id = s.id",
+      side("s"),
+      side("d")
+    );
+    let detail = pool.select(&shown, &[]).await.map(|rows| format!("{rows:?}")).unwrap_or_default();
+    assert_eq!(rows[0]["n"], json!(3), "{column}: {detail}");
+  }
+  run_all(&pool, &["DROP TABLE dbo.dataomni_round_src", "DROP TABLE dbo.dataomni_round_dst"]).await;
+}
+
 /// 导出把二进制写成 `0x…`，导回来是这几个字节；不像十六进制的文本存它自己的字节。
 /// 绑进来的是 nvarchar，SQL Server 不肯隐式转成 varbinary，得由语句明说怎么转
 #[tokio::test]
