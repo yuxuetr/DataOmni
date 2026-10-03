@@ -27,14 +27,16 @@ export interface RedactedSql {
  * 口令出现在 SQL 里的三种形态，前两种都是「关键字之后紧跟的那个字符串字面量」。
  *
  * `IDENTIFIED WITH caching_sha2_password BY '…'`（MySQL 8）里插件名在中间，
- * 所以 `WITH` 后面允许跟一个标识符。
+ * 所以 `WITH` 后面允许跟一个标识符。`PASSWORD` 前面可以带前缀：SQL Server 改口令时的
+ * `OLD_PASSWORD`、MySQL 复制源的 `SOURCE_PASSWORD` / `MASTER_PASSWORD`。
+ * MySQL 改口令时 `REPLACE '…'` 给的是旧口令
  */
 const CREDENTIAL_KEYWORD =
-  /\b(?:IDENTIFIED\s+(?:WITH\s+[\w$.]+\s+)?(?:BY|AS)|(?:UNENCRYPTED\s+|ENCRYPTED\s+)?PASSWORD)\s*=?\s*$/i;
+  /\b(?:IDENTIFIED\s+(?:WITH\s+[\w$.]+\s+)?(?:BY|AS)|(?:UNENCRYPTED\s+|ENCRYPTED\s+)?(?:\w+_)?PASSWORD|IDENTIFIED\s+BY\s+'(?:[^'\\]|\\.|'')*'\s+REPLACE)\s*=?\s*$/i;
 
-/** `password = '…'`、`` `api_key` := '…' ``：按列名判断，列名可能被引号包着 */
+/** `password = '…'`、`` `api_key` := '…' ``、`user_password = '…'`：按列名判断，列名可能被引号包着 */
 const SECRET_COLUMN =
-  /[`"'[]?\b(?:password|passwd|pwd|token|access_token|refresh_token|api_key|apikey|secret|private_key|credential|credentials)\b[`"'\]]?\s*(?::=|=)\s*$/i;
+  /[`"'[]?\b(?:\w+_)?(?:password|passwd|pwd|token|access_token|refresh_token|api_key|apikey|secret|private_key|credential|credentials)\b[`"'\]]?\s*(?::=|=)\s*$/i;
 
 /**
  * 字面量里塞了一整条连接串：`postgres://user:pw@host/db`。
@@ -293,11 +295,27 @@ export function redactSqlForHistory(sql: string, dialect: SqlDialect): RedactedS
   }
   result += sql.slice(cursor);
 
-  const withoutUrlCredentials = result.replace(URL_CREDENTIAL, '$1***$3');
+  const withoutIdentifiers = dialect === 'oracle' ? result.replace(ORACLE_IDENTIFIED_BY, oracleRedaction) : result;
+  const withoutUrlCredentials = withoutIdentifiers.replace(URL_CREDENTIAL, '$1***$3');
   return {
     sql: withoutUrlCredentials,
     redacted: targets.size > 0 || withoutUrlCredentials !== result
   };
+}
+
+/**
+ * Oracle 的口令是标识符，不是字符串：`IDENTIFIED BY tiger`、`IDENTIFIED BY "N3w#pw" REPLACE "0ld#pw"`，
+ * 建库链接的 `CONNECT TO u IDENTIFIED BY pw` 也是。上面按字面量找的那一路看不见它们。
+ * `IDENTIFIED BY VALUES '…'` 给的是散列，是字面量，归上面那一路
+ */
+const ORACLE_PASSWORD = '"(?:[^"]|"")*"|[A-Za-z0-9_$#]+';
+const ORACLE_IDENTIFIED_BY = new RegExp(
+  `(\\bIDENTIFIED\\s+BY\\s+)(?!VALUES\\b)(?:${ORACLE_PASSWORD})(?:(\\s+REPLACE\\s+)(?:${ORACLE_PASSWORD}))?`,
+  'gi'
+);
+
+function oracleRedaction(_match: string, identifiedBy: string, replace: string | undefined): string {
+  return `${identifiedBy}${REDACTED}${replace === undefined ? '' : `${replace}${REDACTED}`}`;
 }
 
 /** 控制台那几种语言：Cypher、Elasticsearch 的请求、Redis 的命令、MongoDB 的命令文档 */

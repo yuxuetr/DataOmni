@@ -26,6 +26,37 @@ describe('redactSqlForHistory', () => {
     expect(redact("SET PASSWORD = 'hunter2'").sql).toBe("SET PASSWORD = '***'");
   });
 
+  it('打掉 Oracle 的 IDENTIFIED BY：口令是标识符，可以不带引号或带双引号', () => {
+    expect(redact('CREATE USER app IDENTIFIED BY tiger', 'oracle').sql).toBe("CREATE USER app IDENTIFIED BY '***'");
+    expect(redact('ALTER USER app IDENTIFIED BY "N3w#pw" REPLACE "0ld#pw"', 'oracle').sql).toBe(
+      "ALTER USER app IDENTIFIED BY '***' REPLACE '***'"
+    );
+    expect(
+      redact("CREATE DATABASE LINK l CONNECT TO scott IDENTIFIED BY tiger USING 'orcl'", 'oracle').sql
+    ).toBe("CREATE DATABASE LINK l CONNECT TO scott IDENTIFIED BY '***' USING 'orcl'");
+    // 别的库里口令只能是字符串，不带引号的那个词不是口令
+    expect(redact('CREATE USER app IDENTIFIED BY tiger').redacted).toBe(false);
+  });
+
+  it('改口令时一并给出的旧口令也打', () => {
+    expect(redact("ALTER USER app IDENTIFIED BY 'new' REPLACE 'old'").sql).toBe(
+      "ALTER USER app IDENTIFIED BY '***' REPLACE '***'"
+    );
+    expect(redact("ALTER LOGIN app WITH PASSWORD = 'new1' OLD_PASSWORD = 'old1'", 'sqlserver').sql).toBe(
+      "ALTER LOGIN app WITH PASSWORD = '***' OLD_PASSWORD = '***'"
+    );
+  });
+
+  it('打掉带前缀的口令选项与列名：复制源的 SOURCE_PASSWORD、user_password', () => {
+    expect(redact("CHANGE REPLICATION SOURCE TO SOURCE_USER='r', SOURCE_PASSWORD='s3cret'").sql).toBe(
+      "CHANGE REPLICATION SOURCE TO SOURCE_USER='r', SOURCE_PASSWORD='***'"
+    );
+    expect(redact("CHANGE MASTER TO MASTER_PASSWORD='s3cret'").sql).toBe("CHANGE MASTER TO MASTER_PASSWORD='***'");
+    expect(redact("UPDATE users SET user_password = 'x' WHERE id = 1").sql).toBe(
+      "UPDATE users SET user_password = '***' WHERE id = 1"
+    );
+  });
+
   it('打掉按敏感列名赋的值，列名带引号也认', () => {
     expect(redact("UPDATE users SET password = 'hunter2' WHERE id = 1").sql).toBe(
       "UPDATE users SET password = '***' WHERE id = 1"
