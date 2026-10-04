@@ -36,6 +36,42 @@ export function sqlFormatterLanguage(dbType: DatabaseType): SqlLanguage | null {
 }
 
 /**
+ * sql-formatter 当关键字大写、却能不加引号当名字用的词。这些词保留原来的写法。
+ *
+ * 只有名字区分大小写的方言要管：PostgreSQL 把不加引号的名字折成小写，Oracle 折成大写，
+ * SQLite、DuckDB 不分大小写，大写之后指的还是同一个对象。
+ * - MySQL：Linux 上表名区分大小写（`lower_case_table_names` 默认 0），`from commit` 排成
+ *   `FROM COMMIT` 就报 1146 表不存在。
+ * - SQL Server：库的排序规则区分大小写时（`_CS_`、`_BIN2`，SAP 一类常见）表名列名都区分，
+ *   `type` 排成 `TYPE` 报 208 对象名无效。
+ *
+ * 名单是实测的：sql-formatter 15.8 在表名位置会改的词（MySQL 207 个、T-SQL 216 个），逐个不加引号建表，
+ * MySQL 在 8.4 与 MariaDB 11.8 上建（`function`、`row`、`system` 等只在 MariaDB 上建得成），
+ * T-SQL 在 SQL Server 2022 的 `Latin1_General_CS_AS` 库里建。建得成的在这里；其余是保留字，
+ * 本来就得加引号，照旧大写。升级 sql-formatter 后它的关键字表变了，名单要照这个办法重算
+ */
+const NAMEABLE_KEYWORDS: Partial<Record<SqlLanguage, ReadonlySet<string>>> = {
+  mysql: new Set([
+    'binlog', 'clone', 'commit', 'cube', 'empty', 'end', 'execute', 'flush', 'function', 'generated',
+    'get', 'groups', 'handler', 'help', 'io_after_gtids', 'io_before_gtids', 'lateral', 'master_bind',
+    'master_pos_wait', 'master_ssl_verify_server_cert', 'modify', 'of', 'offset', 'optimizer_costs',
+    'option', 'prepare', 'reset', 'restart', 'rollback', 'row', 'savepoint', 'shutdown',
+    'source_pos_wait', 'stored', 'system', 'truncate', 'virtual', 'window', 'xa'
+  ]),
+  transactsql: new Set([
+    'aggregate', 'ansi_defaults', 'ansi_null_dflt_off', 'ansi_null_dflt_on', 'ansi_nulls', 'ansi_padding',
+    'ansi_warnings', 'arithabort', 'arithignore', 'assembly', 'certificate', 'concat_null_yields_null',
+    'context_info', 'contract', 'credential', 'cursor_close_on_commit', 'datefirst', 'dateformat',
+    'deadlock_priority', 'disk', 'dump', 'endpoint', 'fips_flagger', 'fmtonly', 'forceplan',
+    'get_transmission_status', 'go', 'implicit_transactions', 'language', 'load', 'lock_timeout', 'login',
+    'nocount', 'noexec', 'numeric_roundabort', 'offset', 'parseonly', 'query_governor_cost_limit', 'queue',
+    'quoted_identifier', 'receive', 'remote_proc_transactions', 'role', 'route', 'securityaudit', 'send',
+    'sequence', 'service', 'showplan_all', 'showplan_text', 'showplan_xml', 'signature', 'synonym', 'type',
+    'window', 'xact_abort'
+  ])
+};
+
+/**
  * 排版一段 SQL。
  *
  * 关键字统一大写：补全插入的关键字本来就是大写的（`upperCaseKeywords`），
@@ -51,18 +87,32 @@ export function formatSql(sql: string, language: SqlLanguage): FormatSqlResult {
   }
 
   try {
+    const layout = {
+      language,
+      // 和编辑器与整个项目的缩进一致
+      tabWidth: 2,
+      // 语句之间空一行
+      linesBetweenQueries: 1
+    };
+    // ClickHouse 例外：它的名字区分大小写，而 sql-formatter 把 type、name、key、
+    // events 这些词当关键字，列名表名跟着被改成大写，语句就找不到对象了
+    if (language === 'clickhouse') {
+      return { ok: true, sql: format(sql, { ...layout, keywordCase: 'preserve' }) };
+    }
+    const upper = format(sql, { ...layout, keywordCase: 'upper' });
+    const nameable = NAMEABLE_KEYWORDS[language];
+    if (!nameable) {
+      return { ok: true, sql: upper };
+    }
+    // 大小写不影响排版，两份逐字对齐；对不齐（不该发生）就整份保留原样，宁可不大写
+    const preserved = format(sql, { ...layout, keywordCase: 'preserve' });
     return {
       ok: true,
-      sql: format(sql, {
-        language,
-        // ClickHouse 例外：它的名字区分大小写，而 sql-formatter 把 type、name、key、
-        // events 这些词当关键字，列名表名跟着被改成大写，语句就找不到对象了
-        keywordCase: language === 'clickhouse' ? 'preserve' : 'upper',
-        // 和编辑器与整个项目的缩进一致
-        tabWidth: 2,
-        // 语句之间空一行
-        linesBetweenQueries: 1
-      })
+      sql: preserved.length === upper.length
+        ? upper.replace(/[A-Za-z_]+/g, (word, offset: number) => (
+          nameable.has(word.toLowerCase()) ? preserved.slice(offset, offset + word.length) : word
+        ))
+        : preserved
     };
   } catch (error) {
     // 解析错误里带着行号列号，正是排查时要看的，原话交出去

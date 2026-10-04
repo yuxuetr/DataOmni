@@ -116,6 +116,29 @@ describe('排版不改内容', () => {
     }
   });
 
+  it('MySQL 的表名区分大小写：能当表名的非保留字不改成大写，保留字照旧大写', () => {
+    // Linux 上 lower_case_table_names 默认 0：`commit` 改成 `COMMIT` 报 1146 表不存在（MySQL 8.4），
+    // `function`、`row`、`system` 在 MariaDB 11.8 上同样能裸写成表名
+    const result = formatSql('select a from commit join function on 1 = 1 where b in (select c from system)', 'mysql');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.sql).toMatch(/\bFROM\s+commit\b/);
+      expect(result.sql).toMatch(/\bJOIN\s+function\b/);
+      expect(result.sql).toMatch(/\bFROM\s+system\b/);
+      expect(result.sql).toMatch(/^SELECT\b/);
+      expect(result.sql).toMatch(/\bWHERE\b/);
+    }
+  });
+
+  it('SQL Server 区分大小写的库里同样：type、role、language 不改成大写', () => {
+    // `Latin1_General_CS_AS` 的库里 `FROM TYPE` 报 208 对象名无效（SQL Server 2022）
+    const result = formatSql('select type, role from language where login = 1', 'transactsql');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.sql.replace(/\s+/g, ' ')).toBe('SELECT type, role FROM language WHERE login = 1');
+    }
+  });
+
   it('再排一次不会继续变（幂等）', () => {
     const once = formatSql('select id,name from users where id=1', 'postgresql');
     expect(once.ok).toBe(true);
