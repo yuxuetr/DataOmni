@@ -1,6 +1,6 @@
 import type { SqlDialect } from '../contracts/queryExecution';
 import type { TransactionContext } from '../contracts/session';
-import { topLevelKeywords } from './sqlStatements';
+import { sqlWords, topLevelKeywords } from './sqlStatements';
 
 /**
  * 这一批语句执行完之后，还能不能反悔。
@@ -75,6 +75,7 @@ const NON_TRANSACTIONAL: Record<SqlDialect, readonly KeywordPrefix[]> = {
     ['CREATE', 'TABLESPACE'],
     ['DROP', 'TABLESPACE'],
     ['CREATE', 'INDEX', 'CONCURRENTLY'],
+    ['CREATE', 'UNIQUE', 'INDEX', 'CONCURRENTLY'],
     ['DROP', 'INDEX', 'CONCURRENTLY'],
     ['REINDEX', 'DATABASE'],
     ['REINDEX', 'SYSTEM'],
@@ -151,6 +152,10 @@ function blockingKeyword(
       if (prefix.every((word, position) => keywords[position] === word)) {
         return prefix.join(' ');
       }
+    }
+    // PostgreSQL 14 起 `REINDEX (CONCURRENTLY) TABLE t`：选项在括号里，顶层关键字看不到
+    if (dialect === 'postgresql' && keywords[0] === 'REINDEX' && sqlWords(sql).some(({ word }) => word === 'CONCURRENTLY')) {
+      return 'REINDEX CONCURRENTLY';
     }
   }
   return null;

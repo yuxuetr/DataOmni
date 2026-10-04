@@ -77,6 +77,18 @@ describe('statementReversibility', () => {
     expect(statementReversibility(['REINDEX TABLE orders'], 'postgresql', false, 'idle')).toEqual({ kind: 'transactional' });
   });
 
+  it('PostgreSQL 的 CONCURRENTLY 写在 UNIQUE 后面或 REINDEX 的选项括号里也认', () => {
+    for (const [sql, keyword] of [
+      ['CREATE UNIQUE INDEX CONCURRENTLY idx ON orders (id)', 'CREATE UNIQUE INDEX CONCURRENTLY'],
+      ['REINDEX (CONCURRENTLY) TABLE orders', 'REINDEX CONCURRENTLY'],
+      ['REINDEX (VERBOSE, CONCURRENTLY) INDEX idx', 'REINDEX CONCURRENTLY']
+    ]) {
+      expect(statementReversibility([sql], 'postgresql', true, 'idle'), sql).toEqual({ kind: 'not-transactional', keyword });
+    }
+    expect(statementReversibility(['REINDEX (VERBOSE) TABLE orders'], 'postgresql', true, 'idle')).toEqual({ kind: 'autocommit' });
+    expect(statementReversibility(['CREATE UNIQUE INDEX idx ON orders (id)'], 'postgresql', true, 'idle')).toEqual({ kind: 'autocommit' });
+  });
+
   it('SQLite 的 DDL 是事务性的', () => {
     expect(
       statementReversibility(['DROP TABLE orders'], 'sqlite', false, 'idle')
