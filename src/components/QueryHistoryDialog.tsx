@@ -6,6 +6,7 @@ import {
   historyLanguage,
   MAX_HISTORY_SQL_CHARS,
   normalizeTags,
+  historyPreview,
   QUERY_HISTORY_STATUSES,
   type QueryHistoryEntry,
   type QueryHistoryStatus
@@ -488,7 +489,8 @@ function AnnotationEditor({ entry, onSubmit, onCancel }: AnnotationEditorProps) 
 /** 记录按它自己的语言上色；Redis 的命令没有合适的词法器，照原样 */
 function HistoryText({ entry }: { entry: QueryHistoryEntry }) {
   const language = HISTORY_CODE_LANGUAGES[historyLanguage(entry)];
-  return language ? <HighlightedCode code={entry.sql} language={language} /> : <>{entry.sql}</>;
+  const text = historyPreview(entry.sql);
+  return language ? <HighlightedCode code={text} language={language} /> : <>{text}</>;
 }
 
 const HISTORY_CODE_LANGUAGES: Record<ReturnType<typeof historyLanguage>, CodeLanguage | null> = {

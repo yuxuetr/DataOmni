@@ -14,6 +14,8 @@ import {
   historyEntryFromConsole,
   historyEntryFromExecution,
   historyLanguage,
+  historyPreview,
+  HISTORY_PREVIEW_CHARS,
   isAnnotated,
   MAX_HISTORY_SQL_CHARS,
   normalizeTags
@@ -268,5 +270,19 @@ describe('太长的语句只记开头', () => {
     });
     expect(entry.sql.length).toBe(MAX_HISTORY_SQL_CHARS);
     expect(entry.truncated).toBe(true);
+  });
+});
+
+describe('historyPreview', () => {
+  // 历史列表一行只露出开头一截，整条 2 万字符拿去上色是几千个片段一条；
+  // 打包版上 240 条这样的记录，点「执行历史」要十几秒才出来
+  it('长语句只留开头一截', () => {
+    expect(historyPreview('x'.repeat(MAX_HISTORY_SQL_CHARS))).toHaveLength(HISTORY_PREVIEW_CHARS);
+    expect(historyPreview('SELECT 1')).toBe('SELECT 1');
+  });
+
+  it('不把代理对从中间切开', () => {
+    const text = `${'x'.repeat(HISTORY_PREVIEW_CHARS - 1)}😀tail`;
+    expect(historyPreview(text)).toBe('x'.repeat(HISTORY_PREVIEW_CHARS - 1));
   });
 });

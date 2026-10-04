@@ -75,14 +75,32 @@ export interface QueryHistoryEntry {
  */
 export const MAX_HISTORY_SQL_CHARS = 20_000;
 
-/** 截到上限，不把一个代理对从中间切开 */
+/** 截到 `limit` 个 UTF-16 单元，不把一个代理对从中间切开 */
+function cutAt(text: string, limit: number): string {
+  if (text.length <= limit) {
+    return text;
+  }
+  const last = text.charCodeAt(limit - 1);
+  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? limit - 1 : limit);
+}
+
 function capHistoryText(text: string): { sql: string; truncated?: true } {
   if (text.length <= MAX_HISTORY_SQL_CHARS) {
     return { sql: text };
   }
-  const last = text.charCodeAt(MAX_HISTORY_SQL_CHARS - 1);
-  const end = last >= 0xd800 && last <= 0xdbff ? MAX_HISTORY_SQL_CHARS - 1 : MAX_HISTORY_SQL_CHARS;
-  return { sql: text.slice(0, end), truncated: true };
+  return { sql: cutAt(text, MAX_HISTORY_SQL_CHARS), truncated: true };
+}
+
+/**
+ * 历史列表里一行显示多少字符。
+ *
+ * 那一行是单行截断的，露出来的不过一百多个字符；整条拿去上色，2 万字符的
+ * INSERT 一条就是几千个片段。打包版上 240 条这样的记录，打开历史要十几秒。
+ */
+export const HISTORY_PREVIEW_CHARS = 400;
+
+export function historyPreview(text: string): string {
+  return cutAt(text, HISTORY_PREVIEW_CHARS);
 }
 
 export function isFinishedStatus(status: QueryExecutionStatus): status is QueryHistoryStatus {
