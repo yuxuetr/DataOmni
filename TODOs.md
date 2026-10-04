@@ -991,6 +991,16 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-04 改表结构时 MySQL 的时间默认值（rpm 0.4.136，本机 Docker 的 MySQL 8.4 与 MariaDB 11.8）：**修了一处**（`f196418`）。
+    `DEFAULT CURRENT_TIMESTAMP` 在 `EXTRA` 里也带 `DEFAULT_GENERATED`，改类型、改可空时被当成表达式默认值拒绝——最常见的
+    `created_at` 列 `timestamp` 改不成 `datetime`、改不了 NOT NULL。它不是表达式：两家的目录里逐类看过，`NOW(3)`、`LOCALTIMESTAMP`
+    归一成 `CURRENT_TIMESTAMP[(n)]`，真正的表达式 `(CURRENT_TIMESTAMP)` 存成 `now()`、`(NOW() + INTERVAL 1 DAY)` 带括号；
+    MariaDB 存 `current_timestamp()`，分不出两者但写回都是同一个默认值。`MODIFY` 原样重述之后 `SHOW CREATE TABLE` 一致。
+    只放行 `current_timestamp` 加可选精度这一种写法，`now()` 等照旧拒绝。两条单测，放行那条先红后绿；前端 1833 条全过。
+    打包版：`created_at timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP` 在结构页改成 `datetime`，预览是
+    `MODIFY COLUMN `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP`，执行后 `SHOW CREATE TABLE` 一致。
+    同一轮看过、没问题的：SQL Server `datetime2` 按纳秒写出（`format_time`），7 位小数不截，当键定位不受影响；MariaDB 的 `COLUMN_DEFAULT` 形状
+    在目录查询里已经换成 MySQL 的（带引号的字符串、字符串 `NULL`），不会被再引一层。
   - 2026-10-04 SQL 标签里就地改查询结果（rpm 0.4.134 / 0.4.135，本机 Docker 的 MySQL 8.4）：**修了一处**（`864356f`）。
     上一条的二进制主键修正只在表视图：结果表自己拼键、先拆了包装，`SELECT * FROM` 一张 `BINARY(16)` 主键的表，删一行发的是
     `WHERE id = 'ff01…'`，报 ROW_COUNT_MISMATCH（0.4.134 上复现）。取键那段从 `rowKeyOf` 拆成 `rowKeyFromColumns`，两处共用。
