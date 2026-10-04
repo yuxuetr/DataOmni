@@ -2,10 +2,13 @@ import { RotateCcw, Trash2 } from 'lucide-react';
 import { PLAIN_TEXT_INPUT } from './FormControls';
 import { clsx } from 'clsx';
 import { useLanguageStore } from '../stores/languageStore';
-import type { ColumnDraft } from '../utils/tableDdl';
+import { clickHouseNullable, type ColumnDraft } from '../utils/tableDdl';
+import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
 
 interface ColumnDraftTableProps {
   drafts: readonly ColumnDraft[];
+  /** ClickHouse 的可空是类型（`Nullable(…)`），那一格跟着类型显示、不能单独勾 */
+  dialect: SqlIdentifierDialect;
   /** false 时整张表只读，输入框换成展示用的标签 */
   editing: boolean;
   /**
@@ -36,6 +39,7 @@ const HEADER_KEYS = [
  */
 export function ColumnDraftTable({
   drafts,
+  dialect,
   editing,
   primaryKeyEditable,
   onChange,
@@ -103,7 +107,7 @@ export function ColumnDraftTable({
               )}
             </td>
             <td className="px-4 py-2 text-sm text-fg-muted">
-              {editing ? (
+              {editing && dialect !== 'clickhouse' ? (
                 <input
                   type="checkbox"
                   checked={draft.nullable && !draft.primaryKey}
@@ -112,12 +116,18 @@ export function ColumnDraftTable({
                   disabled={draft.dropped || draft.primaryKey}
                   onChange={(event) => onChange(index, { nullable: event.target.checked })}
                 />
-              ) : draft.nullable ? (
-                <span className="inline-flex items-center rounded-control bg-success-soft px-2 py-1 text-xs font-medium text-success">
+              ) : (dialect === 'clickhouse' ? clickHouseNullable(draft.dataType) : draft.nullable) ? (
+                <span
+                  title={editing ? t('ddl.nullableInType') : undefined}
+                  className="inline-flex items-center rounded-control bg-success-soft px-2 py-1 text-xs font-medium text-success"
+                >
                   {t('table.yes')}
                 </span>
               ) : (
-                <span className="inline-flex items-center rounded-control bg-danger-soft px-2 py-1 text-xs font-medium text-danger">
+                <span
+                  title={editing ? t('ddl.nullableInType') : undefined}
+                  className="inline-flex items-center rounded-control bg-danger-soft px-2 py-1 text-xs font-medium text-danger"
+                >
                   {t('table.no')}
                 </span>
               )}

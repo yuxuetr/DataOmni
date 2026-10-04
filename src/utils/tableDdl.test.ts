@@ -3,6 +3,7 @@ import type { ColumnInfo } from '../contracts';
 import {
   buildCreateTable,
   buildTableDdl,
+  clickHouseNullable,
   defaultCreateSchema,
   columnDefaultSql,
   incompleteDraftColumns,
@@ -453,6 +454,22 @@ describe('buildTableDdl / DuckDB', () => {
   });
 });
 
+describe('buildTableDdl / ClickHouse', () => {
+  const note = column({ name: 'note', data_type: 'String', is_nullable: false });
+
+  it('可空写在类型里，不出 SET NOT NULL / DROP NOT NULL：25.8 上两句都是语法错', () => {
+    const plan = buildTableDdl(request('clickhouse', [
+      { ...draftOf(note, 'clickhouse'), nullable: true },
+      {
+        origin: null, name: 'qty', dataType: 'Int32',
+        nullable: false, defaultValue: null, dropped: false, primaryKey: false
+      }
+    ]));
+    expect(plan.statements).toEqual(['ALTER TABLE `orders` ADD COLUMN `qty` Int32']);
+  });
+
+});
+
 describe('buildTableDdl / Oracle', () => {
   const amount = column({ name: 'AMOUNT', data_type: 'NUMBER(10,2)', default_value: '0 ' });
   const code = column({ name: 'CODE', data_type: 'VARCHAR2(32)', is_nullable: false });
@@ -627,6 +644,29 @@ describe('buildCreateTable', () => {
     ]);
   });
 
+  it('ClickHouse 不写 NULL / NOT NULL：可空是 Nullable(…) 类型，修饰词与它同用报 377', () => {
+    const plan = buildCreateTable({
+      schema: 'default',
+      table: 'log',
+      dialect: 'clickhouse',
+      columns: [
+        draft('id', 'UInt64', { primaryKey: true }),
+        draft('line', 'String'),
+        draft('tag', 'Nullable(String)', { nullable: false }),
+        draft('n', 'Int32', { nullable: false, defaultValue: '0' })
+      ]
+    });
+    expect(plan.statements).toEqual([
+      'CREATE TABLE `default`.`log` (\n'
+        + '  `id` UInt64,\n'
+        + '  `line` String,\n'
+        + '  `tag` Nullable(String),\n'
+        + '  `n` Int32 DEFAULT 0,\n'
+        + '  PRIMARY KEY (`id`)\n'
+        + ')'
+    ]);
+  });
+
   it('标记删除的列不进建表语句', () => {
     const plan = buildCreateTable({
       schema: null,
@@ -635,6 +675,15 @@ describe('buildCreateTable', () => {
       columns: [draft('line', 'text'), draft('gone', 'int', { dropped: true })]
     });
     expect(plan.statements).toEqual(['CREATE TABLE `log` (\n  `line` text\n)']);
+  });
+});
+
+describe('clickHouseNullable', () => {
+  it('和目录的 is_nullable 同一条规则：Nullable 在最外层，或包在 LowCardinality 里', () => {
+    expect(clickHouseNullable('Nullable(String)')).toBe(true);
+    expect(clickHouseNullable(' LowCardinality(Nullable(String))')).toBe(true);
+    expect(clickHouseNullable('String')).toBe(false);
+    expect(clickHouseNullable('Array(Nullable(Int64))')).toBe(false);
   });
 });
 

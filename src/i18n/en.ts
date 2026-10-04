@@ -234,6 +234,7 @@ export const en: Translations = {
   'ddl.newColumn': 'New',
   'ddl.dropColumn': 'Drop this column',
   'ddl.undoDrop': 'Undo drop',
+  'ddl.nullableInType': 'In ClickHouse, nullability is part of the type, e.g. Nullable(String)',
   'ddl.preview': 'Preview SQL',
   'ddl.noChanges': 'Nothing changed',
   'ddl.incomplete': 'These columns still need a name or a type: {columns}',

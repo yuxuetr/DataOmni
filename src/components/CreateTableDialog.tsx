@@ -208,6 +208,7 @@ export function CreateTableDialog({
         <div className="flex-1 overflow-y-auto">
           <ColumnDraftTable
             drafts={drafts}
+            dialect={dialect}
             editing
             primaryKeyEditable
             onChange={updateDraft}

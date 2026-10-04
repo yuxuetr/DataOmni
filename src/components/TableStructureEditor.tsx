@@ -270,6 +270,7 @@ export function TableStructureEditor({
           dropped: false,
           primaryKey: column.is_primary_key
         }))}
+        dialect={dialect}
         editing={editing}
         primaryKeyEditable={false}
         onChange={updateDraft}

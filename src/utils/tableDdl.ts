@@ -177,17 +177,28 @@ export function columnDefaultSql(
 }
 
 /**
+ * ClickHouse 的列可不可空：可空是 `Nullable(…)` 这个类型，不是列上的约束。规则与后端读目录时
+ * 算 is_nullable 的一致——`Array(Nullable(…))` 这类只是元素可空，列本身不可空
+ */
+export function clickHouseNullable(dataType: string): boolean {
+  return /^(?:LowCardinality\(\s*)?Nullable\(/i.test(dataType.trim());
+}
+
+/**
  * 一列的定义：名字、类型、可空、默认值。
  *
  * Oracle 要求 DEFAULT 写在约束前面（反过来是 ORA-03076）；另外几家两种次序都收，
  * 保持原来的写法——那几份在真库上跑过的语料照的就是它。
+ *
+ * ClickHouse 不写可空：`Nullable(String) NOT NULL` 报 377，而不写时 `String` 就是不可空的——
+ * 勾着「可空」建出来的列存不了 NULL，插进去的 NULL 悄悄变成空串（25.8 上试过）
  */
 function columnDefinition(
   column: ColumnDraft,
   notNull: boolean,
   dialect: SqlIdentifierDialect
 ): string {
-  const nullability = notNull ? ['NOT NULL'] : [];
+  const nullability = notNull && dialect !== 'clickhouse' ? ['NOT NULL'] : [];
   const defaultValue = column.defaultValue != null ? [`DEFAULT ${column.defaultValue}`] : [];
   return [
     quoteSqlIdentifier(column.name, dialect),
@@ -419,6 +430,11 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
           refusals.push({ column: column.name, action, reason: 'ddl.refuse.sqliteRebuild' });
         }
       }
+      continue;
+    }
+
+    if (dialect === 'clickhouse') {
+      // 可空跟着类型走（见 clickHouseNullable），这里没有单独的可空性可改
       continue;
     }
 
