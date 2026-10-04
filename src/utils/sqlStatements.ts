@@ -115,13 +115,17 @@ function scanStatements(
   let sawBatchSeparator = false;
   const hashComments = dialect === undefined || dialect === 'mysql' || dialect === 'clickhouse';
   const backslashEscapes = hashComments;
+  // 这一段里有没有注释以外的东西。只有注释的一段（脚本末尾的 `-- end`）不是语句：
+  // 发给 Oracle 是 ORA-00900
+  let hasCode = false;
 
   const flush = () => {
     const statement = buffer.trim();
-    if (statement) {
+    if (statement && hasCode) {
       statements.push(statement);
     }
     buffer = '';
+    hasCode = false;
     countsBody = false;
     bodyDepth = 0;
   };
@@ -176,6 +180,7 @@ function scanStatements(
           bodyDepth = Math.max(0, bodyDepth - 1);
         }
         buffer += word;
+        hasCode = true;
         index += word.length;
         continue;
       }
@@ -189,6 +194,7 @@ function scanStatements(
       const qQuote = dialect === 'oracle' ? matchOracleQQuote(sqlText, index) : null;
       if (qQuote) {
         buffer += qQuote.opening;
+        hasCode = true;
         state = { type: 'q-quote', terminator: qQuote.terminator };
         index += qQuote.opening.length;
         continue;
@@ -197,6 +203,7 @@ function scanStatements(
       const dollarQuoteTag = matchDollarQuoteTag(sqlText, index);
       if (dollarQuoteTag) {
         buffer += dollarQuoteTag;
+        hasCode = true;
         state = { type: 'dollar-quote', tag: dollarQuoteTag };
         index += dollarQuoteTag.length;
         continue;
@@ -211,6 +218,10 @@ function scanStatements(
       }
 
       if (sqlText.startsWith('/*', index)) {
+        // MySQL 的 `/*! … */` 是给服务端执行的（mysqldump 的 `/*!40101 SET … */`），不是注释
+        if (hashComments && sqlText[index + 2] === '!') {
+          hasCode = true;
+        }
         buffer += '/*';
         state = { type: 'block-comment', depth: 1 };
         index += 2;
@@ -219,6 +230,9 @@ function scanStatements(
 
       const character = sqlText[index];
       buffer += character;
+      if (!/\s/.test(character)) {
+        hasCode = true;
+      }
       if (character === "'") {
         state = {
           type: 'single-quote',

@@ -228,10 +228,25 @@ describe('按方言切语句', () => {
       .toEqual(['SELECT 1 -- note; still\nSELECT 2']);
     expect(splitSqlStatements('SELECT 1 --\tnote;\n; SELECT 2', 'mysql'))
       .toEqual(['SELECT 1 --\tnote;', 'SELECT 2']);
-    expect(splitSqlStatements('SELECT 1; --', 'mysql')).toEqual(['SELECT 1', '--']);
+    expect(splitSqlStatements('SELECT 1; --', 'mysql')).toEqual(['SELECT 1']);
     // 别家的 -- 照旧不论后面是什么
     expect(splitSqlStatements('SELECT 5--x;\nSELECT 2', 'postgresql'))
       .toEqual(['SELECT 5--x;\nSELECT 2']);
+  });
+
+  it('只有注释的一段不算一条语句', () => {
+    // 脚本末尾的注释（mysqldump 的 `-- Dump completed on …`）切出来是单独一段。发给 Oracle 是
+    // ORA-00900，「执行全部」最后一条报错；23ai 上实测 `-- x;` 与 `/* c */;` 都是这样
+    expect(splitSqlStatements('SELECT 1 FROM dual;\n-- end of script\n', 'oracle'))
+      .toEqual(['SELECT 1 FROM dual']);
+    expect(splitSqlStatements('SELECT 1;\n/* trailer */\n-- and more', 'postgresql')).toEqual(['SELECT 1']);
+    expect(splitSqlStatements('-- only a note', 'sqlite')).toEqual([]);
+    // 写在语句前面的注释仍跟着那条语句
+    expect(splitSqlStatements('-- header\nSELECT 1;', 'sqlite')).toEqual(['-- header\nSELECT 1']);
+    // MySQL 的 `/*! … */` 看着是注释，服务端照样执行；mysqldump 里满是这种
+    expect(splitSqlStatements('/*!40101 SET NAMES utf8mb4 */;\nSELECT 1;', 'mysql'))
+      .toEqual(['/*!40101 SET NAMES utf8mb4 */', 'SELECT 1']);
+    expect(splitSqlStatements('SELECT 1\nGO\n-- done\nGO', 'sqlserver')).toEqual(['SELECT 1']);
   });
 
   it('SQLite 也认方括号标识符：里面的引号不会吞掉后面的脚本', () => {
