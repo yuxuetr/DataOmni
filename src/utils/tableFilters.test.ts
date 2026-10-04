@@ -197,6 +197,25 @@ describe('buildFilterClause', () => {
       .toBe("WHERE [b] LIKE N'%2024-01%' ESCAPE N'!'");
   });
 
+  it('SQL Server 的 text / ntext 与 Oracle 的 LOB 上比较不报错', () => {
+    // 原样比较：SQL Server 402「incompatible in the equal to operator」，Oracle ORA-22848
+    const compare = (name: string, operator: ColumnFilter['operator'], value: string) =>
+      filter({ column: name, operator, value });
+    expect(buildFilterClause([compare('t', 'eq', 'abc')], [column('t', 'text')], 'sqlserver'))
+      .toBe("WHERE CAST([t] AS nvarchar(max)) = N'abc'");
+    expect(buildFilterClause([compare('n', 'gt', 'a')], [column('n', 'ntext')], 'sqlserver'))
+      .toBe("WHERE CAST([n] AS nvarchar(max)) > N'a'");
+    expect(buildFilterClause([compare('C', 'eq', 'abc')], [column('C', 'CLOB')], 'oracle'))
+      .toBe(`WHERE DBMS_LOB.COMPARE("C", 'abc') = 0`);
+    expect(buildFilterClause([compare('N', 'lt', 'b')], [column('N', 'NCLOB')], 'oracle'))
+      .toBe(`WHERE DBMS_LOB.COMPARE("N", 'b') < 0`);
+    expect(buildFilterClause([compare('B', 'ne', '0xDEAD')], [column('B', 'BLOB')], 'oracle'))
+      .toBe(`WHERE DBMS_LOB.COMPARE("B", HEXTORAW('dead')) <> 0`);
+    // 能比的照旧
+    expect(buildFilterClause([compare('v', 'eq', 'abc')], [column('v', 'VARCHAR2(10)')], 'oracle'))
+      .toBe(`WHERE "v" = 'abc'`);
+  });
+
   it('MySQL 的反斜杠在 LIKE 模式里也只转义一层', () => {
     // 转义符选 `!` 而不是 `\` 就是为了避开字面量层与 LIKE 层的双重转义
     expect(
