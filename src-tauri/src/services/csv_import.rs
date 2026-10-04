@@ -608,12 +608,34 @@ fn conversion_check(columns: &[ImportColumn], rows: usize) -> Result<Option<Stri
 /// 目录」不是可以省掉校验的理由：一个改过的请求就能从这里写进任意 SQL。
 /// 放行的是真实类型名里会出现的那些：`character varying(32)`、`numeric(10,2)`、
 /// `text[]`、`public.my_enum`。
+///
+/// 双引号括起来的标识符也放行（`"Role"`、`"Billing".tier`）：大小写混写或不在
+/// search_path 上的类型，PostgreSQL 的 `format_type` 就这么给。引号里什么字符都行
+/// （`""` 是转义的引号），引号必须成对——出了引号照旧只认上面那几个字符。
 fn valid_type_name(name: &str) -> bool {
-  !name.is_empty()
-    && name.len() <= 128
-    && name.chars().all(|c| {
-      c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '(' | ')' | ',' | '[' | ']' | '.')
-    })
+  if name.is_empty() || name.len() > 256 {
+    return false;
+  }
+  let mut quoted = false;
+  let mut chars = name.chars().peekable();
+  while let Some(c) = chars.next() {
+    if quoted {
+      if c == '"' {
+        if chars.peek() == Some(&'"') {
+          chars.next();
+        } else {
+          quoted = false;
+        }
+      }
+    } else if c == '"' {
+      quoted = true;
+    } else if !(c.is_ascii_alphanumeric()
+      || matches!(c, ' ' | '_' | '(' | ')' | ',' | '[' | ']' | '.'))
+    {
+      return false;
+    }
+  }
+  !quoted
 }
 
 /// 一条多行 INSERT。返回语句本身与它能放下的行数。
@@ -1383,6 +1405,19 @@ mod tests {
     assert!(!valid_type_name("integer; DROP TABLE t --"));
     assert!(!valid_type_name("text'"));
     assert!(!valid_type_name(""));
+  }
+
+  #[test]
+  fn quoted_type_names_from_format_type_are_accepted() {
+    // 大小写混写或不在 search_path 上的类型，format_type 带引号给出（Prisma 建的枚举就是这样）
+    assert!(valid_type_name("\"Role\""));
+    assert!(valid_type_name("\"Billing\".tier"));
+    assert!(valid_type_name("\"Role\"[]"));
+    assert!(valid_type_name("\"订单 状态\""));
+    assert!(valid_type_name("\"a\"\"b\""));
+    // 引号之内什么都行，出了引号照旧只认类型名里的字符
+    assert!(!valid_type_name("\"Role\"; DROP TABLE t --"));
+    assert!(!valid_type_name("\"Role"));
   }
 
   fn columns() -> Vec<ImportColumn> {
