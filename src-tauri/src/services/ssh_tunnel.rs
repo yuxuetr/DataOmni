@@ -157,7 +157,9 @@ fn verify_host_key(
   known_hosts: &Path,
 ) -> Result<(), TunnelError> {
   let fingerprint = key.fingerprint(HashAlg::Sha256).to_string();
-  let recorded = known_host_keys_path(host, port, known_hosts).map_err(|error| {
+  // OpenSSH 记录与比对都用小写的主机名（散列的记录散列的也是小写），russh 照原样比
+  let host = host.to_ascii_lowercase();
+  let recorded = known_host_keys_path(&host, port, known_hosts).map_err(|error| {
     TunnelError::Ssh { message: format!("{SSH_KNOWN_HOSTS_UNREADABLE}: {error}") }
   })?;
 
@@ -587,6 +589,18 @@ mod tests {
     let known_hosts = known_hosts_file(&[&format!("jump.example.com {KEY_A}")]);
 
     assert_eq!(verify_host_key("jump.example.com", 22, &public_key(KEY_A), &known_hosts), Ok(()));
+
+    let _ = std::fs::remove_file(&known_hosts);
+  }
+
+  /// OpenSSH 写 known_hosts 时主机名一律转小写（`ssh-keyscan GitHub.COM` 写出 `github.com`），
+  /// 比对时也先转小写。照原样比的话，主机一格填了大写字母就永远是「没见过」，
+  /// 而按提示用 ssh-keyscan 补记录，补进去的还是小写——走不出去。
+  #[test]
+  fn host_names_match_known_hosts_case_insensitively() {
+    let known_hosts = known_hosts_file(&[&format!("jump.example.com {KEY_A}")]);
+
+    assert_eq!(verify_host_key("Jump.Example.COM", 22, &public_key(KEY_A), &known_hosts), Ok(()));
 
     let _ = std::fs::remove_file(&known_hosts);
   }
