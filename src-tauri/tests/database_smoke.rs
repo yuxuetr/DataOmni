@@ -1701,6 +1701,27 @@ async fn sqlite_reports_indexes_and_foreign_keys() {
     ],
     "SQLite 外键无名，用 fk_<id> 合成；复合外键必须按键序配对"
   );
+
+  // 省略被引用列就是引用父表主键，按主键里的次序（不是建表的列序）一一对上
+  for statement in [
+    "CREATE TABLE fk_owner (k1 INT, k2 INT, PRIMARY KEY (k2, k1))",
+    "CREATE TABLE fk_pet (o1 INT, o2 INT, FOREIGN KEY (o1, o2) REFERENCES fk_owner)",
+  ] {
+    sqlx::query(statement).execute(&pool).await.expect("implicit parent key");
+  }
+  let implicit: Vec<(String, Option<String>)> = sqlx::query(queries.foreign_keys)
+    .bind("fk_pet")
+    .fetch_all(&pool)
+    .await
+    .expect("run SQLite foreign key query")
+    .iter()
+    .map(|row| (row.get("column_name"), row.get("referenced_column")))
+    .collect();
+  assert_eq!(
+    implicit,
+    vec![("o1".into(), Some("k2".into())), ("o2".into(), Some("k1".into()))],
+    "省略的被引用列要补成父表主键"
+  );
 }
 
 #[tokio::test]
@@ -3215,6 +3236,13 @@ async fn sqlite_er_diagram_reads_every_table_in_one_round_trip() {
     .execute(&pool)
     .await
     .expect("generated");
+  // 省略被引用列就是引用父表主键，按主键里的次序（不是建表的列序）一一对上
+  for statement in [
+    "CREATE TABLE fk_owner (k1 INT, k2 INT, PRIMARY KEY (k2, k1))",
+    "CREATE TABLE fk_pet (o1 INT, o2 INT, FOREIGN KEY (o1, o2) REFERENCES fk_owner)",
+  ] {
+    sqlx::query(statement).execute(&pool).await.expect("implicit parent key");
+  }
 
   let queries =
     dataomni_lib::services::er_diagram_queries(&dataomni_lib::models::DatabaseType::SQLite)
@@ -3247,21 +3275,23 @@ async fn sqlite_er_diagram_reads_every_table_in_one_round_trip() {
 
   let fk_rows =
     sqlx::query(queries.foreign_keys).fetch_all(&pool).await.expect("list foreign keys");
-  let links: Vec<(String, String, String)> = fk_rows
+  let links: Vec<(String, String, Option<String>)> = fk_rows
     .iter()
     .map(|row| {
       (
         row.get::<String, _>("column_name"),
         row.get::<String, _>("referenced_table"),
-        row.get::<String, _>("referenced_column"),
+        row.get::<Option<String>, _>("referenced_column"),
       )
     })
     .collect();
   assert_eq!(
     links,
     vec![
-      ("ref_a".into(), fixture.parent.clone(), "x".into()),
-      ("ref_b".into(), fixture.parent.clone(), "y".into()),
+      ("ref_a".into(), fixture.parent.clone(), Some("x".into())),
+      ("ref_b".into(), fixture.parent.clone(), Some("y".into())),
+      ("o1".into(), "fk_owner".into(), Some("k2".into())),
+      ("o2".into(), "fk_owner".into(), Some("k1".into())),
     ]
   );
 }

@@ -311,8 +311,9 @@ export function toErLinks(rows: readonly MetadataRow[]): ErLink[] {
     const fromColumn = text(row.column_name);
     const toColumn = text(row.referenced_column);
 
-    // SQLite 允许省略被引用列（默认父表主键）。没有列名就连不到具体的行，
-    // 这条边只好丢掉——画一条连到框中心的线会让人以为那是某个真实字段。
+    // SQLite 省略被引用列时后端已补成父表主键；仍没有列名的是父表没有主键，
+    // 那条外键本来不成立。连不到具体的行，这条边只好丢掉——画一条连到框中心的线
+    // 会让人以为那是某个真实字段。
     if (!fromTable || !toTable || !fromColumn || !toColumn) {
       return [];
     }

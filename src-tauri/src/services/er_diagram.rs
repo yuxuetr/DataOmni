@@ -194,7 +194,8 @@ WHERE m.type = 'table'
 ORDER BY m.name, p.cid
 "#;
 
-/// SQLite 的外键没有名字，用 `fk_<id>` 合成；`"to"` 为 NULL 表示引用父表主键。
+/// SQLite 的外键没有名字，用 `fk_<id>` 合成；`"to"` 为 NULL 表示引用父表主键，
+/// 补法同 `schema_metadata` 的 SQLITE_FOREIGN_KEYS——不补的话这条边连不到列，图上就没有它。
 const SQLITE_FOREIGN_KEYS: &str = r#"
 SELECT
   NULL AS table_schema,
@@ -202,7 +203,8 @@ SELECT
   f.[from] AS column_name,
   NULL AS referenced_schema,
   f.[table] AS referenced_table,
-  f.[to] AS referenced_column,
+  COALESCE(f.[to], (SELECT p.name FROM pragma_table_info(f.[table]) p WHERE p.pk = f.seq + 1))
+    AS referenced_column,
   'fk_' || f.id AS constraint_name,
   f.seq + 1 AS ordinal
 FROM sqlite_master m

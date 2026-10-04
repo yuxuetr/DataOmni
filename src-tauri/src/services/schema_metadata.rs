@@ -488,7 +488,9 @@ ORDER BY il.name, ii.seqno
 "#;
 
 /// SQLite 的外键没有名字，用 `fk_<id>` 合成一个稳定标识。
-/// `"to"` 为 NULL 表示引用的是父表主键（建表时省略了列名）。
+/// `"to"` 为 NULL 表示引用的是父表主键（建表时省略了列名，`REFERENCES users`）：
+/// 补成父表主键里同一位置的那一列（`pk` 是列在主键里的次序，不是建表的列序）。
+/// 父表没有主键时仍是 NULL——那样的外键本来就不成立，写入时 SQLite 报 foreign key mismatch。
 const SQLITE_FOREIGN_KEYS: &str = r#"
 SELECT
   'fk_' || fk.id AS constraint_name,
@@ -496,7 +498,10 @@ SELECT
   fk."from" AS column_name,
   NULL AS referenced_schema,
   fk."table" AS referenced_table,
-  fk."to" AS referenced_column,
+  COALESCE(
+    fk."to",
+    (SELECT p.name FROM pragma_table_info(fk."table") p WHERE p.pk = fk.seq + 1)
+  ) AS referenced_column,
   fk.on_update AS on_update,
   fk.on_delete AS on_delete
 FROM pragma_foreign_key_list(?1) fk
