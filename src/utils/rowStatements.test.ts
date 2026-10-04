@@ -409,3 +409,26 @@ describe('PostgreSQL 的参数按列的声明类型转换', () => {
     expect(statement.sql).toBe('UPDATE `reg`.`t` SET `doc` = ? WHERE `id` = 1');
   });
 });
+
+describe('MySQL 的 BIT 按数写回', () => {
+  // 网格里 BIT 显示成十进制数，原样绑回去是一串字符：bit(8) 上 5 改成 6 存进去的是 '6' 的字节 54，
+  // 不报错；bit(1) 上写 1 报 Data too long（MySQL 8.4 上验过）
+  const bitTarget: TableTarget = {
+    schema: null,
+    table: 'flags',
+    dialect: 'mysql',
+    columns: [column('id', 'int'), column('mask', 'bit(8)'), column('on', 'bit(1)')]
+  };
+
+  it('赋值与插入的占位符转成无符号整数', () => {
+    expect(buildUpdateStatement(bitTarget, { columns: ['id'], values: { id: 1 } }, { mask: value('6') }).sql)
+      .toBe('UPDATE `flags` SET `mask` = CAST(? AS UNSIGNED) WHERE `id` = 1');
+    expect(buildInsertStatement(bitTarget, { id: value('2'), mask: value('7'), on: { kind: 'null' } }).sql)
+      .toBe('INSERT INTO `flags` (`id`, `mask`, `on`) VALUES (?, CAST(? AS UNSIGNED), CAST(? AS UNSIGNED))');
+  });
+
+  it('BIT 当键时定位条件同样转', () => {
+    expect(buildDeleteStatement(bitTarget, { columns: ['mask'], values: { mask: '165' } }).sql)
+      .toBe('DELETE FROM `flags` WHERE `mask` = CAST(? AS UNSIGNED)');
+  });
+});

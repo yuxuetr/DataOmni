@@ -1,5 +1,5 @@
 import type { ColumnInfo } from '../contracts';
-import { isConcurrencyComparable, isNumericColumnType, NUMERIC_LITERAL } from './columnTypes';
+import { columnTypeToken, isConcurrencyComparable, isNumericColumnType, NUMERIC_LITERAL } from './columnTypes';
 import type { BoundValue, CellInput } from './cellInput';
 import { translateNow } from '../stores/languageStore';
 import {
@@ -70,25 +70,36 @@ function createPlaceholderAllocator(dialect: SqlIdentifierDialect): PlaceholderA
 }
 
 /**
- * PostgreSQL 上占位符后面带的类型转换。
+ * 占位符带上按列类型的转换。
  *
- * 字符串参数绑成 text，而 PostgreSQL 不会在赋值和比较里把 text 隐式转成
+ * PostgreSQL：字符串参数绑成 text，而 PostgreSQL 不会在赋值和比较里把 text 隐式转成
  * jsonb、timestamptz、uuid、数组、枚举……——表格里改一个 jsonb 格子会报
  * 「column "doc" is of type jsonb but expression is of type text」。
  * 按列的声明类型显式转过去；`data_type` 来自 `format_type()`，本身就是
  * 可以直接写在 `::` 后面的类型名（带长度、精度、数组、需要时带引号和 schema）。
- * 另外几家的参数不带这层类型，不需要。
+ *
+ * MySQL 的 BIT：网格里显示成十进制数，原样绑回去是一串字符——`bit(8)` 上写 6 存进去的是
+ * `'6'` 的字节 54、不报错，`bit(1)` 上写 1 报 Data too long。转成数才是那几位（导入同样，
+ * 见 `csv_import`）；非数字报 1292、超出位宽报 1406，不会悄悄变成 0。
+ * 另外几家的参数不需要这层转换。
  */
-function parameterCast(column: ColumnInfo | undefined, dialect: SqlIdentifierDialect): string {
+function typedParameter(
+  placeholder: string,
+  column: ColumnInfo | undefined,
+  dialect: SqlIdentifierDialect
+): string {
+  if (dialect === 'mysql' && column && columnTypeToken(column.data_type) === 'bit') {
+    return `CAST(${placeholder} AS UNSIGNED)`;
+  }
   if (dialect !== 'postgresql' || !column?.data_type || TEXT_FAMILY.test(column.data_type)) {
-    return '';
+    return placeholder;
   }
   // char(n) 读回来补满了空格，而 `bpchar = text` 是把列这边去掉尾随空格再按 text 比，
   // 'ab   ' 永远等不上。转成不带长度的 bpchar：比较按补空格的语义，赋值超长照样报错（带长度的显式转换会悄悄截断）
   if (CHAR_FAMILY.test(column.data_type)) {
-    return '::bpchar';
+    return `${placeholder}::bpchar`;
   }
-  return `::${column.data_type}`;
+  return `${placeholder}::${column.data_type}`;
 }
 
 /** 这几种收 text 参数不用转；带上 `::varchar(32)` 只会让预览里的语句更难读 */
@@ -156,7 +167,7 @@ function keyCondition(
         return `${quoted} = ${literal}`;
       }
       params.push(value);
-      return `${quoted} = ${placeholder(byName.get(name))}${parameterCast(byName.get(name), target.dialect)}`;
+      return `${quoted} = ${typedParameter(placeholder(byName.get(name)), byName.get(name), target.dialect)}`;
     })
     .join(' AND ');
 }
@@ -171,9 +182,9 @@ function keyCondition(
 function assignmentTerm(
   input: CellInput,
   dialect: SqlIdentifierDialect,
+  /** 占位符，已按列类型转好（`typedParameter`） */
   placeholder: () => string,
-  params: BoundValue[],
-  cast: string
+  params: BoundValue[]
 ): string {
   switch (input.kind) {
     case 'default':
@@ -196,10 +207,10 @@ function assignmentTerm(
         return 'NULL';
       }
       params.push(null);
-      return `${placeholder()}${cast}`;
+      return placeholder();
     case 'value':
       params.push(input.value);
-      return `${placeholder()}${cast}`;
+      return placeholder();
     default:
       // 调用方已经把 unset 滤掉了；走到这里说明过滤和这里的分支漂开了
       throw new Error(translateNow('write.noAssignments'));
@@ -257,7 +268,7 @@ function guardConditions(
       return [`${quoted} = ${literal}`];
     }
     params.push(value);
-    return [`${quoted} = ${placeholder(column)}${parameterCast(column, target.dialect)}`];
+    return [`${quoted} = ${typedParameter(placeholder(column), column, target.dialect)}`];
   });
 }
 
@@ -283,9 +294,8 @@ export function buildUpdateStatement(
       const right = assignmentTerm(
         assignments[name],
         target.dialect,
-        () => placeholder(byName.get(name)),
-        params,
-        parameterCast(byName.get(name), target.dialect)
+        () => typedParameter(placeholder(byName.get(name)), byName.get(name), target.dialect),
+        params
       );
       return `${quoteSqlIdentifier(name, target.dialect)} = ${right}`;
     })
@@ -329,9 +339,8 @@ export function buildInsertStatement(
     assignmentTerm(
       values[name],
       target.dialect,
-      () => placeholder(byName.get(name)),
-      params,
-      parameterCast(byName.get(name), target.dialect)
+      () => typedParameter(placeholder(byName.get(name)), byName.get(name), target.dialect),
+      params
     )
   );
 
