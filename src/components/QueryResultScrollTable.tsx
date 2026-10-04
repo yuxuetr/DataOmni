@@ -55,6 +55,7 @@ import { DENSITY_CELL_CLASS } from '../utils/gridColumns';
 import { useSettingsStore } from '../stores/settingsStore';
 import { SHORTCUTS, formatShortcut } from '../utils/shortcuts';
 import { alwaysIdentityColumnNames, computedColumnNames, sequenceColumnNames } from '../utils/exportResult';
+import { rowKeyFromColumns } from '../utils/rowIdentity';
 
 /**
  * 结果区底边要留出的余量。
@@ -244,18 +245,12 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
     if (!row) {
       return null;
     }
+    const wrapped = Object.fromEntries(result.columns.map((column, index) => [column, row[index]]));
     const original = Object.fromEntries(
       result.columns.map((column, index) => [column, unwrapResultValue(row[index])])
     );
-    return {
-      key: {
-        columns: editability.keyColumns,
-        values: Object.fromEntries(
-          editability.keyColumns.map((column) => [column, original[column] ?? null])
-        )
-      },
-      original
-    };
+    // 键值从带包装的原值取：二进制键要按字节写进 WHERE（`rowKeyFromColumns`）
+    return { key: rowKeyFromColumns(editability.keyColumns, wrapped), original };
   };
 
   /** 保存 = 排队，不发语句 */

@@ -165,12 +165,19 @@ export function rowKeyOf(identity: RowIdentity | null, values: Readonly<Record<s
     const value = values[name] as SerializedResultValue;
     return !(identity?.source === 'whole-row' && isTaggedResultValue(value) && value.type === 'binary');
   });
+  return rowKeyFromColumns(columns, values);
+}
+
+/**
+ * 按给定的键列取键值。SQL 标签里就地改查询结果也走这里：键列来自目录，值是结果里带包装的原值
+ */
+export function rowKeyFromColumns(columns: readonly string[], values: Readonly<Record<string, unknown>>): RowKey {
   const binary = columns.filter((name) => {
     const value = values[name] as SerializedResultValue;
     return isTaggedResultValue(value) && value.type === 'binary';
   });
   return {
-    columns,
+    columns: [...columns],
     values: Object.fromEntries(columns.map((name) => [name, unwrapResultValue(values[name] as SerializedResultValue)])),
     ...(binary.length > 0 && { binary })
   };

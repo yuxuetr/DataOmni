@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ColumnInfo } from '../contracts';
 import type { IndexInfo } from './schemaObjects';
-import { describeRowIdentity, primaryKeyColumns, rowKeyOf, wholeRowIdentity, type IndexMetadata } from './rowIdentity';
+import { describeRowIdentity, primaryKeyColumns, rowKeyFromColumns, rowKeyOf, wholeRowIdentity, type IndexMetadata } from './rowIdentity';
 
 function column(name: string, overrides: Partial<ColumnInfo> = {}): ColumnInfo {
   return {
@@ -180,5 +180,13 @@ describe('rowKeyOf', () => {
   // 服务端报「值太长」，那一行改不了。整行定位时它不进条件——少比一列只会让「恰好一行」更难成立
   it('整行定位时，这一行里显示成二进制的值不进条件', () => {
     expect(rowKeyOf(identity('whole-row'), values)).toEqual({ columns: ['id', 's'], values: { id: 1, s: 'a' } });
+  });
+});
+
+describe('rowKeyFromColumns', () => {
+  // SQL 标签里就地改查询结果：键列来自目录，值要从带包装的原值里取，二进制要记下来，否则 BINARY(16) 主键的行定位不到
+  it('拆掉包装，记下值是二进制的键列', () => {
+    const values = { id: { type: 'binary', value: '0aff' }, n: 2, s: 'x' } as const;
+    expect(rowKeyFromColumns(['id', 'n'], values)).toEqual({ columns: ['id', 'n'], values: { id: '0aff', n: 2 }, binary: ['id'] });
   });
 });
