@@ -239,6 +239,13 @@ function mysqlColumnDefinition(column: ColumnDraft): string {
 }
 
 /**
+ * `DEFAULT CURRENT_TIMESTAMP` 也带 `DEFAULT_GENERATED`，但它不是表达式：`NOW()`、`LOCALTIMESTAMP` 在目录里
+ * 都归一成 `CURRENT_TIMESTAMP[(n)]`，表达式 `(CURRENT_TIMESTAMP)` 存成 `now()`；MariaDB 存 `current_timestamp()`。
+ * 原样写回就是同一个默认值（MySQL 8.4、MariaDB 11.8 上核对过）
+ */
+const CURRENT_TIMESTAMP_DEFAULT = /^current_timestamp(?:\(\d*\))?$/i;
+
+/**
  * MySQL 能不能重述这一列。
  *
  * 表达式默认值在目录里是**归一化后**的形式——`DEFAULT (UPPER('x'))` 存成
@@ -255,7 +262,7 @@ function mysqlRestatementRefusal(column: ColumnDraft): TranslationKey | null {
   if (origin.is_generated && !(origin.column_extra ?? '').includes('auto_increment')) {
     return 'ddl.refuse.mysqlGeneratedColumn';
   }
-  if ((origin.column_extra ?? '').includes('DEFAULT_GENERATED')) {
+  if ((origin.column_extra ?? '').includes('DEFAULT_GENERATED') && !CURRENT_TIMESTAMP_DEFAULT.test(origin.default_value ?? '')) {
     return 'ddl.refuse.mysqlExpressionDefault';
   }
   if (MYSQL_SPATIAL_TYPES.has(origin.data_type.toLowerCase())) {

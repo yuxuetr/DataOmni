@@ -313,6 +313,39 @@ describe('buildTableDdl / MySQL', () => {
     ]);
   });
 
+  // 也带 DEFAULT_GENERATED，但不是表达式：NOW()、LOCALTIMESTAMP 都归一成 CURRENT_TIMESTAMP[(n)]，表达式
+  // (CURRENT_TIMESTAMP) 存成 now()；MariaDB 存 current_timestamp()。原样写回是同一个默认值（MySQL 8.4、MariaDB 11.8 上核对过）。
+  // 拒绝的话，最常见的 created_at 列改不了类型、改不了可空
+  it('CURRENT_TIMESTAMP 默认值照常重述', () => {
+    const created = column({
+      name: 'created', data_type: 'timestamp', is_nullable: false,
+      default_value: 'CURRENT_TIMESTAMP', column_extra: 'DEFAULT_GENERATED'
+    });
+    const touched = column({
+      name: 'touched', data_type: 'datetime(3)',
+      default_value: 'current_timestamp(3)', column_extra: 'DEFAULT_GENERATED on update current_timestamp(3)'
+    });
+    const plan = buildTableDdl(request('mysql', [
+      { ...draftOf(created, 'mysql'), dataType: 'datetime' },
+      { ...draftOf(touched, 'mysql'), nullable: false }
+    ]));
+    expect(plan.refusals).toEqual([]);
+    expect(plan.statements).toEqual([
+      'ALTER TABLE `orders` MODIFY COLUMN `created` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP, '
+        + 'MODIFY COLUMN `touched` datetime(3) NOT NULL DEFAULT current_timestamp(3) ON UPDATE current_timestamp(3)'
+    ]);
+  });
+
+  it('now() 是表达式默认值，照旧拒绝', () => {
+    const expression = column({
+      name: 'g', data_type: 'datetime', default_value: 'now()', column_extra: 'DEFAULT_GENERATED'
+    });
+    const plan = buildTableDdl(request('mysql', [{ ...draftOf(expression, 'mysql'), dataType: 'datetime(3)' }]));
+    expect(plan.refusals).toEqual([
+      { column: 'g', action: 'change-type', reason: 'ddl.refuse.mysqlExpressionDefault' }
+    ]);
+  });
+
   it('计算列拒绝改类型', () => {
     const generated = column({
       name: 'area', data_type: 'int', is_generated: true, column_extra: 'STORED GENERATED'
