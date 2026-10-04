@@ -74,7 +74,9 @@ jobs:
 
     services:
       postgres:
-        image: postgres:17
+        # 与 runner 自带的 pg_dump（16）同一个大版本：pg_dump 对更新的服务端直接拒绝，
+        # 而 runner 上没配 PostgreSQL 的 apt 源，装不上新的客户端
+        image: postgres:16
         env:
           POSTGRES_DB: dataomni_test
           POSTGRES_PASSWORD: dataomni
@@ -119,10 +121,7 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf \
-            postgresql-client-17
-          # runner 自带的 pg_dump 是 16，对 17 的服务端直接拒绝；pg_wrapper 取装着的最新版
-          pg_dump --version
+            patchelf
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
