@@ -2233,7 +2233,7 @@ async fn mysql_catalog_results_are_decodable_by_the_plugin() {
   requests.push(CatalogRequest::new(
     "routine_definition",
     objects.routine_definition,
-    vec![Some(function.clone()), Some(database.clone())],
+    vec![Some(format!("FUNCTION {function}")), Some(database.clone())],
   ));
   if !stored_programs {
     // 检查约束目录在 TiDB 上也恒为空，原因见 `mysql_reports_indexes_foreign_keys_and_checks`
@@ -2785,6 +2785,7 @@ async fn mysql_lists_tables_views_and_routines() {
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
   sqlx::raw_sql(&format!("DROP FUNCTION IF EXISTS {routine}")).execute(&pool).await.ok();
   sqlx::raw_sql(&format!("DROP PROCEDURE IF EXISTS {procedure}")).execute(&pool).await.ok();
+  sqlx::raw_sql(&format!("DROP PROCEDURE IF EXISTS {routine}")).execute(&pool).await.ok();
   for statement in fixture.ddl(mysql_flavor(&pool).await.fixture_dialect()) {
     sqlx::query(&statement).execute(&pool).await.expect("prepare MySQL fixture");
   }
@@ -2806,6 +2807,11 @@ async fn mysql_lists_tables_views_and_routines() {
       .execute(&pool)
       .await
       .expect("create procedure");
+    // 函数与过程各有各的名字空间，可以同名
+    sqlx::raw_sql(&format!("CREATE PROCEDURE {routine}() SELECT 'same name'"))
+      .execute(&pool)
+      .await
+      .expect("create procedure named like the function");
   }
 
   let database: String =
@@ -2820,31 +2826,49 @@ async fn mysql_lists_tables_views_and_routines() {
     .fetch_all(&pool)
     .await
     .expect("list objects");
-  let objects: Vec<(String, String)> = rows
+  let objects: Vec<(String, String, String)> = rows
     .iter()
-    .map(|row| (row.get::<String, _>("object_name"), row.get::<String, _>("object_kind")))
+    .map(|row| {
+      (
+        row.get::<String, _>("object_name"),
+        row.get::<String, _>("object_kind"),
+        row.get::<String, _>("object_id"),
+      )
+    })
     .collect();
 
-  let kind_of = |name: &str| objects.iter().find(|(n, _)| n == name).map(|(_, kind)| kind.clone());
+  let kind_of =
+    |name: &str| objects.iter().find(|(n, _, _)| n == name).map(|(_, kind, _)| kind.clone());
   assert_eq!(kind_of(&fixture.child).as_deref(), Some("table"));
   assert_eq!(kind_of(&view).as_deref(), Some("view"));
   if stored_programs {
-    assert_eq!(kind_of(&routine).as_deref(), Some("function"));
     assert_eq!(kind_of(&procedure).as_deref(), Some("procedure"));
 
-    let definition: String = sqlx::query(queries.routine_definition)
-      .bind(&routine)
-      .bind(Option::<String>::None)
-      .fetch_one(&pool)
-      .await
-      .expect("run routine definition query")
-      .get("definition");
-    assert!(definition.contains("a + 1"), "应给出语句体: {definition}");
+    // 与 ObjectDefinitionDialog 一样拿列表里的 object_id 去取：同名的函数与过程各取各的
+    for (kind, expected) in [("function", "a + 1"), ("procedure", "same name")] {
+      let id = objects
+        .iter()
+        .find(|(n, k, _)| n == &routine && k == kind)
+        .map(|(_, _, id)| id.clone())
+        .expect("同名的函数与过程都列出来");
+      let definitions: Vec<String> = sqlx::query(queries.routine_definition)
+        .bind(&id)
+        .bind(Option::<String>::None)
+        .fetch_all(&pool)
+        .await
+        .expect("run routine definition query")
+        .iter()
+        .map(|row| row.get("definition"))
+        .collect();
+      assert_eq!(definitions.len(), 1, "{kind} 应只取到自己的定义: {definitions:?}");
+      assert!(definitions[0].contains(expected), "{kind} 应给出自己的语句体: {definitions:?}");
+    }
   }
 
   sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
   sqlx::raw_sql(&format!("DROP FUNCTION IF EXISTS {routine}")).execute(&pool).await.ok();
   sqlx::raw_sql(&format!("DROP PROCEDURE IF EXISTS {procedure}")).execute(&pool).await.ok();
+  sqlx::raw_sql(&format!("DROP PROCEDURE IF EXISTS {routine}")).execute(&pool).await.ok();
   for table in [&fixture.child, &fixture.parent] {
     sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
   }

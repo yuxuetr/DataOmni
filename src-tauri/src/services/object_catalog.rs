@@ -149,6 +149,9 @@ WHERE c.oid = $1::oid
 /// 「unsupported datatype: VARBINARY」。
 ///
 /// 两个 `?` 都是库名：UNION 两边各要绑一次。
+///
+/// 例程的 `object_id` 带上类型（`FUNCTION f` / `PROCEDURE f`）：函数与存储过程各有各的
+/// 名字空间，同一个库里可以同名，只拿名字去取定义会取到两行。
 const MYSQL_OBJECTS: &str = r#"
 SELECT
   CAST(t.TABLE_SCHEMA AS CHAR) AS object_schema,
@@ -162,7 +165,7 @@ SELECT
   CAST(r.ROUTINE_SCHEMA AS CHAR),
   CAST(r.ROUTINE_NAME AS CHAR),
   CASE r.ROUTINE_TYPE WHEN 'PROCEDURE' THEN 'procedure' ELSE 'function' END,
-  CAST(r.ROUTINE_NAME AS CHAR)
+  CAST(CONCAT(r.ROUTINE_TYPE, ' ', r.ROUTINE_NAME) AS CHAR)
 FROM INFORMATION_SCHEMA.ROUTINES r
 WHERE r.ROUTINE_SCHEMA = ?
 ORDER BY 3, 2
@@ -174,7 +177,7 @@ ORDER BY 3, 2
 const MYSQL_ROUTINE_DEFINITION: &str = r#"
 SELECT CAST(r.ROUTINE_DEFINITION AS CHAR) AS definition
 FROM INFORMATION_SCHEMA.ROUTINES r
-WHERE r.ROUTINE_NAME = ?
+WHERE CONCAT(r.ROUTINE_TYPE, ' ', r.ROUTINE_NAME) = ?
   AND r.ROUTINE_SCHEMA = COALESCE(?, DATABASE())
 "#;
 
