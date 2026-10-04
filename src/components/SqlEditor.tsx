@@ -53,7 +53,8 @@ import {
   linkSqlFile,
   planSqlSave,
   sqlFileContents,
-  suggestSqlFileName
+  suggestSqlFileName,
+  type TextFile
 } from '../utils/sqlFile';
 import { useWorkspaceStore } from '../stores/workspaceStore';
 import { useConfirmPrompt } from './ConfirmPrompt';
@@ -296,7 +297,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
       let path = saveAs ? null : sqlFile?.path ?? null;
       if (path && sqlFile) {
         // 读不到（删了、被换成别的编码）也算被动过
-        const diskText = await invoke<string>('read_text_file', { path }).catch(() => null);
+        const diskText = await invoke<TextFile>('read_text_file', { path })
+          .then((file) => file.contents)
+          .catch(() => null);
         if (planSqlSave(sqlFile, diskText) === 'confirm-overwrite') {
           const overwrite = await ask({
             title: t('editor.fileChangedTitle'),
@@ -322,7 +325,9 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
       const sameFile = path === sqlFile?.path;
       await invoke<number>('write_text_file', {
         path,
-        contents: sqlFileContents(contents, sameFile ? sqlFile : undefined)
+        contents: sqlFileContents(contents, sameFile ? sqlFile : undefined),
+        // 原文件是 UTF-16 就照样写；另存为新文件用 UTF-8
+        encoding: sameFile ? sqlFile?.encoding : undefined
       });
       if (documentId) {
         linkSqlTabFile(documentId, linkSqlFile(path, contents, sameFile ? sqlFile : {}));

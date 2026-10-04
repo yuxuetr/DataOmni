@@ -49,12 +49,24 @@ export interface SqlFileLink {
   contentHash: string;
   /** 文件用 CRLF 换行（Windows 上的编辑器、SSMS 存的）。不写是 `\n` */
   crlf?: true;
-  /** 文件开头有 UTF-8 BOM（SSMS、Windows 记事本默认加）。读进来时去掉，存回去补上 */
+  /** 文件开头有 BOM（SSMS、Windows 记事本默认加）。读进来时去掉，存回去补上 */
   bom?: true;
+  /** 文件是 UTF-16（SSMS「生成脚本」默认的「Unicode 文本」）。不写是 UTF-8 */
+  encoding?: Utf16Encoding;
+}
+
+/** 后端 `read_text_file` 认得出的编码 */
+export type TextFileEncoding = 'utf-8' | Utf16Encoding;
+type Utf16Encoding = 'utf-16le' | 'utf-16be';
+
+/** 后端 `read_text_file` 的返回 */
+export interface TextFile {
+  contents: string;
+  encoding: TextFileEncoding;
 }
 
 /** 写文件时要照原文件保留的两样 */
-export type SqlFileFormat = Pick<SqlFileLink, 'crlf' | 'bom'>;
+export type SqlFileFormat = Pick<SqlFileLink, 'crlf' | 'bom' | 'encoding'>;
 
 /**
  * 换行统一成 `\n`。编辑器（CodeMirror）把 CRLF 与单独的 CR 都读成一个换行，
@@ -66,11 +78,16 @@ export function normalizeLineBreaks(text: string): string {
 }
 
 /** 读进来的文件 → 编辑器里的文本，和记下来的来源（换行照原文件记） */
-export function readSqlFileText(contents: string, path = ''): { text: string; link: SqlFileLink } {
+export function readSqlFileText(
+  contents: string,
+  path = '',
+  encoding: TextFileEncoding = 'utf-8'
+): { text: string; link: SqlFileLink } {
   const text = normalizeLineBreaks(stripBom(contents));
   const format: SqlFileFormat = {
     ...(contents.includes('\r\n') ? { crlf: true } : {}),
-    ...(contents.charCodeAt(0) === 0xfeff ? { bom: true } : {})
+    ...(contents.charCodeAt(0) === 0xfeff ? { bom: true } : {}),
+    ...(encoding === 'utf-8' ? {} : { encoding })
   };
   return { text, link: linkSqlFile(path, text, format) };
 }
@@ -104,7 +121,8 @@ export function linkSqlFile(path: string, text: string, format: SqlFileFormat = 
     path,
     contentHash,
     ...(format.crlf ? { crlf: true } : {}),
-    ...(format.bom ? { bom: true } : {})
+    ...(format.bom ? { bom: true } : {}),
+    ...(format.encoding ? { encoding: format.encoding } : {})
   };
 }
 

@@ -114,6 +114,15 @@ describe('Windows 换行（CRLF）的脚本', () => {
     expect(sqlFileContents('SELECT 1;\n', undefined)).toBe('SELECT 1;\n');
   });
 
+  it('UTF-16 的文件记下编码，存过之后还跟着', () => {
+    // SSMS「生成脚本」默认是带 BOM 的 UTF-16LE。存回去写成 UTF-8 等于悄悄换了文件的编码
+    const { link } = readSqlFileText('\ufeffSELECT 1;\r\n', '/work/ssms.sql', 'utf-16le');
+    expect(link.encoding).toBe('utf-16le');
+    expect(linkSqlFile(link.path, 'SELECT 2;\n', link).encoding).toBe('utf-16le');
+    // UTF-8 不记，和以前快照里的链接长得一样
+    expect('encoding' in readSqlFileText('SELECT 1;', '/work/a.sql', 'utf-8').link).toBe(false);
+  });
+
   it('刚打开就是已保存；磁盘上没动过就直接写', () => {
     const { text, link } = readSqlFileText(disk, '/work/cleanup.sql');
     expect(savedToFile(link, text)).toBe(true);

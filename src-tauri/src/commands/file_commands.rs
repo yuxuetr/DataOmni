@@ -18,8 +18,39 @@ pub const FILE_TOO_LARGE: &str = "DATAOMNI_FILE_TOO_LARGE";
 ///
 /// 没有引入 `tauri-plugin-fs`：保存对话框返回的是任意路径，用插件就得把
 /// 写权限的 scope 开到整个主目录，而这里真正需要的只有「写一个文件」。
+/// 文本文件的编码。只认得出 UTF-8 与带 BOM 的 UTF-16——后者是 SSMS「生成脚本」默认的
+/// 「Unicode 文本」与 Windows PowerShell `Out-File` 的输出；不带 BOM 的单字节编码猜不准，不猜
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TextEncoding {
+  #[serde(rename = "utf-8")]
+  Utf8,
+  #[serde(rename = "utf-16le")]
+  Utf16Le,
+  #[serde(rename = "utf-16be")]
+  Utf16Be,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct TextFile {
+  /// 解码后的文本。BOM 留在开头（U+FEFF），由前端记下、存回去时补上
+  pub contents: String,
+  pub encoding: TextEncoding,
+}
+
+fn encode_text(contents: &str, encoding: TextEncoding) -> Vec<u8> {
+  match encoding {
+    TextEncoding::Utf8 => contents.as_bytes().to_vec(),
+    TextEncoding::Utf16Le => contents.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+    TextEncoding::Utf16Be => contents.encode_utf16().flat_map(u16::to_be_bytes).collect(),
+  }
+}
+
 #[tauri::command]
-pub async fn write_text_file(path: String, contents: String) -> Result<u64, String> {
+pub async fn write_text_file(
+  path: String,
+  contents: String,
+  encoding: Option<TextEncoding>,
+) -> Result<u64, String> {
   let target = PathBuf::from(&path);
 
   // 目录不存在时 `fs::write` 报的是 "No such file or directory (os error 2)"，
@@ -30,7 +61,7 @@ pub async fn write_text_file(path: String, contents: String) -> Result<u64, Stri
     }
   }
 
-  std::fs::write(&target, contents.as_bytes())
+  std::fs::write(&target, encode_text(&contents, encoding.unwrap_or(TextEncoding::Utf8)))
     .map_err(|e| format!("{FILE_WRITE_FAILED}: {} · {e}", target.display()))?;
 
   file_size(&target)
@@ -76,7 +107,7 @@ const MAX_TEXT_FILE_BYTES: u64 = 8 * 1024 * 1024;
 /// 同样没有引入 `tauri-plugin-fs`：这里真正需要的只有「读一个用户刚刚亲自
 /// 选中的文件」，用插件就得把读权限的 scope 开到整个主目录。
 #[tauri::command]
-pub async fn read_text_file(path: String) -> Result<String, String> {
+pub async fn read_text_file(path: String) -> Result<TextFile, String> {
   let target = PathBuf::from(&path);
 
   let size = file_size(&target)?;
@@ -91,11 +122,29 @@ pub async fn read_text_file(path: String) -> Result<String, String> {
 
   // 不是 UTF-8 时点名说是编码问题。`read_to_string` 的原话是
   // "stream did not contain valid UTF-8"，看的人会以为文件坏了
-  std::fs::read(&target)
-    .map_err(|e| format!("{FILE_READ_FAILED}: {} · {e}", target.display()))
-    .and_then(|bytes| {
-      String::from_utf8(bytes).map_err(|_| format!("{FILE_NOT_UTF8}: {}", target.display()))
-    })
+  let bytes = std::fs::read(&target)
+    .map_err(|e| format!("{FILE_READ_FAILED}: {} · {e}", target.display()))?;
+  let not_text = || format!("{FILE_NOT_UTF8}: {}", target.display());
+  let encoding = match encoding_rs::Encoding::for_bom(&bytes) {
+    Some((found, _)) if found == encoding_rs::UTF_16LE => TextEncoding::Utf16Le,
+    Some((found, _)) if found == encoding_rs::UTF_16BE => TextEncoding::Utf16Be,
+    _ => {
+      let contents = String::from_utf8(bytes).map_err(|_| not_text())?;
+      return Ok(TextFile { contents, encoding: TextEncoding::Utf8 });
+    }
+  };
+  // 奇数个字节就不是 UTF-16。BOM 本身也解码出来（U+FEFF），和 UTF-8 的 BOM 一样交给前端
+  if bytes.len() % 2 != 0 {
+    return Err(not_text());
+  }
+  let (pairs, _) = bytes.as_chunks::<2>();
+  let units = pairs.iter().map(|&pair| match encoding {
+    TextEncoding::Utf16Be => u16::from_be_bytes(pair),
+    _ => u16::from_le_bytes(pair),
+  });
+  let contents =
+    char::decode_utf16(units).collect::<Result<String, _>>().map_err(|_| not_text())?;
+  Ok(TextFile { contents, encoding })
 }
 
 #[cfg(test)]
@@ -109,10 +158,13 @@ mod tests {
     let target = dir.join("export.csv");
 
     // BOM 由前端拼在字符串最前面，这里验证它确实落成 EF BB BF 三个字节
-    let written =
-      write_text_file(target.to_string_lossy().to_string(), "\u{feff}名,值\n中文,1".to_string())
-        .await
-        .expect("write");
+    let written = write_text_file(
+      target.to_string_lossy().to_string(),
+      "\u{feff}名,值\n中文,1".to_string(),
+      None,
+    )
+    .await
+    .expect("write");
 
     let bytes = std::fs::read(&target).expect("read back");
     assert_eq!(&bytes[..3], &[0xef, 0xbb, 0xbf]);
@@ -158,8 +210,35 @@ mod tests {
     let target = dir.join("script.sql");
     std::fs::write(&target, "SELECT '中文' FROM t;\n").expect("write");
 
-    let contents = read_text_file(target.to_string_lossy().to_string()).await.expect("read");
-    assert_eq!(contents, "SELECT '中文' FROM t;\n");
+    let file = read_text_file(target.to_string_lossy().to_string()).await.expect("read");
+    assert_eq!(file.contents, "SELECT '中文' FROM t;\n");
+    assert_eq!(file.encoding, TextEncoding::Utf8);
+
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  /// SSMS「生成脚本」默认存成「Unicode 文本」，即带 BOM 的 UTF-16LE。原先一律报「不是 UTF-8」，
+  /// SQL Server 用户手里最常见的那种脚本打不开
+  #[tokio::test]
+  async fn reads_utf16_with_a_bom_and_writes_it_back_the_same_way() {
+    let dir = std::env::temp_dir().join(format!("dataomni-utf16-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let text = "\u{feff}SELECT N'中文😀' FROM t;\r\nGO\r\n";
+
+    for (name, encoding) in [("le.sql", TextEncoding::Utf16Le), ("be.sql", TextEncoding::Utf16Be)] {
+      let target = dir.join(name);
+      std::fs::write(&target, encode_text(text, encoding)).expect("write");
+      let path = target.to_string_lossy().to_string();
+
+      let file = read_text_file(path.clone()).await.expect("read");
+      assert_eq!(file.contents, text);
+      assert_eq!(file.encoding, encoding);
+
+      write_text_file(path, file.contents, Some(file.encoding)).await.expect("write back");
+      assert_eq!(std::fs::read(&target).expect("read back"), encode_text(text, encoding));
+    }
+    // 小端的 BOM 是 FF FE
+    assert_eq!(&encode_text("\u{feff}", TextEncoding::Utf16Le), &[0xff, 0xfe]);
 
     std::fs::remove_dir_all(&dir).ok();
   }
@@ -201,7 +280,7 @@ mod tests {
     let target =
       std::env::temp_dir().join("dataomni-no-such-dir").join("nested").join("export.csv");
 
-    let error = write_text_file(target.to_string_lossy().to_string(), "x".to_string())
+    let error = write_text_file(target.to_string_lossy().to_string(), "x".to_string(), None)
       .await
       .expect_err("should fail");
 
