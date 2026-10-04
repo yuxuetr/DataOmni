@@ -179,6 +179,33 @@ describe('validateSchemaDraft', () => {
     expect(codes(draft, 'sqlserver')).toEqual([]);
   });
 
+  // 索引名由表名与列名拼成，拼出同一个名字时第二条 CREATE INDEX 失败，前面的表已经建好了
+  it('拼出来的索引名撞上是错误：同一个索引写两遍、(a_b) 与 (a, b)', () => {
+    const draft = {
+      tables: [table('t', [column('id', 'int'), column('a', 'int'), column('b', 'int'), column('a_b', 'int')], {
+        indexes: [{ columns: ['a'] }, { columns: ['A'] }, { columns: ['a_b'] }, { columns: ['a', 'b'] }]
+      })]
+    };
+    expect(codes(draft, 'mysql')).toEqual([
+      'error:duplicate-index:t:A',
+      'error:duplicate-index:t:a, b'
+    ]);
+  });
+
+  it('跨表撞名只在索引名归 schema 管的方言里算', () => {
+    const draft = {
+      tables: [
+        table('a_b', [column('id', 'int'), column('c', 'int')], { indexes: [{ columns: ['c'] }] }),
+        table('a', [column('id', 'int'), column('b_c', 'int')], { indexes: [{ columns: ['b_c'] }] })
+      ]
+    };
+    expect(codes(draft, 'postgresql')).toEqual(['error:duplicate-index:a:b_c']);
+    expect(codes(draft, 'sqlite')).toEqual(['error:duplicate-index:a:b_c']);
+    // MySQL、SQL Server 的索引名只在表内唯一
+    expect(codes(draft, 'mysql')).toEqual([]);
+    expect(codes(draft, 'sqlserver')).toEqual([]);
+  });
+
   it('没有主键只是警告', () => {
     expect(codes({ tables: [table('log', [column('at', 'timestamp')], { primaryKey: [] })] }))
       .toEqual(['warning:no-primary-key:log:']);

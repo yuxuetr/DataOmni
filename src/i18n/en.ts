@@ -337,6 +337,7 @@ export const en: Translations = {
   'aiDesign.issue.table-exists': "A table with this name already exists",
   'aiDesign.issue.no-columns': "No columns",
   'aiDesign.issue.duplicate-column': "Duplicate column name (case-insensitive)",
+  'aiDesign.issue.duplicate-index': "The generated index name {detail} is already used by another index",
   'aiDesign.issue.missing-type': "No type given",
   'aiDesign.issue.name-too-long': "The name is longer than the {detail}-byte limit",
   'aiDesign.issue.unknown-column': "No such column",

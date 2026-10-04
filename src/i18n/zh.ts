@@ -353,6 +353,7 @@ export const zh = {
   'aiDesign.issue.table-exists': "库里已经有这张表",
   'aiDesign.issue.no-columns': "没有列",
   'aiDesign.issue.duplicate-column': "列名重复（不分大小写）",
+  'aiDesign.issue.duplicate-index': "生成的索引名 {detail} 与另一个索引重复",
   'aiDesign.issue.missing-type': "没有写类型",
   'aiDesign.issue.name-too-long': "名字超过 {detail} 字节的上限",
   'aiDesign.issue.unknown-column': "没有这一列",

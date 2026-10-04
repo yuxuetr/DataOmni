@@ -41,6 +41,7 @@ const ISSUE_KEYS: Record<SchemaIssueCode, TranslationKey> = {
   'table-exists': 'aiDesign.issue.table-exists',
   'no-columns': 'aiDesign.issue.no-columns',
   'duplicate-column': 'aiDesign.issue.duplicate-column',
+  'duplicate-index': 'aiDesign.issue.duplicate-index',
   'missing-type': 'aiDesign.issue.missing-type',
   'name-too-long': 'aiDesign.issue.name-too-long',
   'unknown-column': 'aiDesign.issue.unknown-column',

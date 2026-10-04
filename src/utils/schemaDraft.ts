@@ -57,6 +57,7 @@ export type SchemaIssueCode =
   | 'table-exists'
   | 'no-columns'
   | 'duplicate-column'
+  | 'duplicate-index'
   | 'missing-type'
   | 'name-too-long'
   | 'unknown-column'
@@ -171,6 +172,11 @@ export function validateSchemaDraft(
     checkLength(table.name, '', table.name);
   }
 
+  // 索引名由表名与列名拼成（`indexName`），(a_b) 与 (a, b)、表 a_b 的 (c) 与表 a 的 (b_c) 拼出同一个名字；
+  // 撞上时第二条 CREATE INDEX 失败，前面的表已经建好了。MySQL、SQL Server 的索引名只在表内唯一
+  const indexNames = new Set<string>();
+  const indexScope = (table: string) => (dialect === 'mysql' || dialect === 'sqlserver' ? `${fold(table)}\0` : '');
+
   for (const table of tablesByName.values()) {
     const columns = new Map<string, ColumnSpec>();
     if (table.columns.length === 0) {
@@ -213,7 +219,13 @@ export function validateSchemaDraft(
     table.unique.forEach(checkColumns);
     for (const index of table.indexes) {
       checkColumns(index.columns);
-      checkLength(table.name, index.columns.join(', '), indexName(table.name, index.columns));
+      const name = indexName(table.name, index.columns);
+      checkLength(table.name, index.columns.join(', '), name);
+      const scoped = indexScope(table.name) + fold(name);
+      if (indexNames.has(scoped)) {
+        report('error', 'duplicate-index', table.name, index.columns.join(', '), name);
+      }
+      indexNames.add(scoped);
     }
 
     for (const key of table.foreignKeys) {
