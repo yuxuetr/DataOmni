@@ -177,3 +177,20 @@ export function databaseTextToPickerValue(text: string, kind: ColumnEditorKind):
   const match = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(:\d{2})?)/.exec(trimmed);
   return match ? `${match[1]}T${match[2]}` : '';
 }
+
+/**
+ * 「现在」按钮写进语句的表达式，按列取日期、时间或两者。
+ *
+ * 一律写 CURRENT_TIMESTAMP 不行：DuckDB 不能把它转成 TIME（「Unimplemented type for cast」），
+ * SQLite 会把整段日期时间存进 date / time 列。SQL Server 没有 CURRENT_DATE / CURRENT_TIME。
+ * ClickHouse 照旧：没在真库上核对过它认哪几个写法
+ */
+export function nowExpression(kind: ColumnEditorKind, dialect: SqlIdentifierDialect): string {
+  if ((kind !== 'date' && kind !== 'time') || dialect === 'clickhouse') {
+    return 'CURRENT_TIMESTAMP';
+  }
+  if (dialect === 'sqlserver') {
+    return `CAST(CURRENT_TIMESTAMP AS ${kind})`;
+  }
+  return kind === 'date' ? 'CURRENT_DATE' : 'CURRENT_TIME';
+}

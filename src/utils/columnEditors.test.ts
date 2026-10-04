@@ -5,6 +5,7 @@ import {
   databaseTextToPickerValue,
   isCompleteHex,
   normalizeHex,
+  nowExpression,
   prettyJson,
   pickerValueToDatabaseText
 } from './columnEditors';
@@ -150,5 +151,27 @@ describe('日期选择器与数据库文本互转', () => {
     // 文本框里的原值始终是权威，选择器只是输入辅助
     expect(databaseTextToPickerValue('2024-01-01 12:00:00.123456+08', 'datetime'))
       .toBe('2024-01-01T12:00:00');
+  });
+});
+
+describe('「现在」按钮写的表达式', () => {
+  it('日期时间列写 CURRENT_TIMESTAMP', () => {
+    expect(nowExpression('datetime', 'postgresql')).toBe('CURRENT_TIMESTAMP');
+    expect(nowExpression('datetime', 'sqlserver')).toBe('CURRENT_TIMESTAMP');
+  });
+
+  it('日期与时间列只取那一半', () => {
+    // DuckDB 把 CURRENT_TIMESTAMP 写进 TIME 报「Unimplemented type for cast」；
+    // SQLite 会把整段日期时间存进 date / time 列
+    expect(nowExpression('time', 'duckdb')).toBe('CURRENT_TIME');
+    expect(nowExpression('date', 'sqlite')).toBe('CURRENT_DATE');
+    expect(nowExpression('time', 'sqlite')).toBe('CURRENT_TIME');
+    expect(nowExpression('date', 'postgresql')).toBe('CURRENT_DATE');
+    expect(nowExpression('time', 'mysql')).toBe('CURRENT_TIME');
+  });
+
+  it('SQL Server 没有 CURRENT_DATE / CURRENT_TIME，转换取那一半', () => {
+    expect(nowExpression('date', 'sqlserver')).toBe('CAST(CURRENT_TIMESTAMP AS date)');
+    expect(nowExpression('time', 'sqlserver')).toBe('CAST(CURRENT_TIMESTAMP AS time)');
   });
 });

@@ -11,6 +11,7 @@ import {
   databaseTextToPickerValue,
   isCompleteHex,
   normalizeHex,
+  nowExpression,
   pickerValueToDatabaseText,
   prettyJson,
   type ColumnEditorKind
@@ -380,8 +381,8 @@ function ValueField({ value, onChange, editor, dialect, autoFocus, onKeyDown }: 
           />
           <button
             type="button"
-            onClick={() => onChange({ kind: 'expression', sql: 'CURRENT_TIMESTAMP' })}
-            title={t('cellInput.nowHint')}
+            onClick={() => onChange({ kind: 'expression', sql: nowExpression(editor, dialect) })}
+            title={t('cellInput.nowHint', { sql: nowExpression(editor, dialect) })}
             className="shrink-0 rounded-control border border-line-strong px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover"
           >
             {t('cellInput.now')}

@@ -621,7 +621,7 @@ export const zh = {
   'cellInput.asBinaryPending': '按二进制写入',
   'cellInput.pickDateTime': '从选择器挑一个，结果写进左边的文本框',
   'cellInput.now': '现在',
-  'cellInput.nowHint': '写入 CURRENT_TIMESTAMP，由数据库在执行时取值',
+  'cellInput.nowHint': '写入 {sql}，由数据库在执行时取值',
   'cellInput.pickKind': '选择写入方式',
   'cellInput.expressionHint': '原样写进语句，如 CURRENT_TIMESTAMP',
   'cellInput.nullHint': '写入 SQL 的 NULL，不是空字符串',

@@ -601,7 +601,7 @@ export const en: Translations = {
   'cellInput.asBinaryPending': 'Write as binary',
   'cellInput.pickDateTime': 'Pick one; the result goes into the text box on the left',
   'cellInput.now': 'Now',
-  'cellInput.nowHint': 'Writes CURRENT_TIMESTAMP, evaluated by the database at execution time',
+  'cellInput.nowHint': 'Writes {sql}, evaluated by the database at execution time',
   'cellInput.pickKind': 'Choose what to write',
   'cellInput.expressionHint': 'Written into the statement as-is, e.g. CURRENT_TIMESTAMP',
   'cellInput.nullHint': 'Writes SQL NULL, not an empty string',
