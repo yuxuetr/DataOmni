@@ -29,6 +29,8 @@ const EDITOR_BY_TOKEN: Record<string, ColumnEditorKind> = {
   varbinary: 'binary',
   // Oracle
   raw: 'binary',
+  // SQL Server 老式的大二进制
+  image: 'binary',
   date: 'date',
   time: 'time',
   timetz: 'time',

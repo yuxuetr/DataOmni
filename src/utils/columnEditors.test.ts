@@ -175,3 +175,9 @@ describe('「现在」按钮写的表达式', () => {
     expect(nowExpression('time', 'sqlserver')).toBe('CAST(CURRENT_TIMESTAMP AS time)');
   });
 });
+
+describe('SQL Server 的 image', () => {
+  it('是二进制：当文本写进去报 206「nvarchar is incompatible with image」', () => {
+    expect(columnEditorKind('image', 'sqlserver')).toBe('binary');
+  });
+});

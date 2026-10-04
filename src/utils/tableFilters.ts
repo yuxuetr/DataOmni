@@ -141,7 +141,7 @@ function likeOperand(quotedColumn: string, column: ColumnInfo, dialect: SqlIdent
 }
 
 /**
- * `=`、`<` 这类比较。SQL Server 的 text / ntext 原样比报 402，转成 max 类型就能比；
+ * `=`、`<` 这类比较。SQL Server 的 text / ntext / image 原样比报 402，转成 max 类型就能比；
  * Oracle 的 LOB 报 ORA-22848，`DBMS_LOB.COMPARE` 相等得 0、小于得 -1、大于得 1（23 Free 上试过），
  * 拿它和 0 比，算子照原样
  */
@@ -155,6 +155,9 @@ function comparisonTerm(
   const token = columnTypeToken(column.data_type);
   if (dialect === 'sqlserver' && (token === 'text' || token === 'ntext')) {
     return `CAST(${quotedColumn} AS nvarchar(max)) ${symbol} ${literal}`;
+  }
+  if (dialect === 'sqlserver' && token === 'image') {
+    return `CAST(${quotedColumn} AS varbinary(max)) ${symbol} ${literal}`;
   }
   if (dialect === 'oracle' && (token === 'clob' || token === 'nclob' || token === 'blob')) {
     return `DBMS_LOB.COMPARE(${quotedColumn}, ${literal}) ${symbol} 0`;

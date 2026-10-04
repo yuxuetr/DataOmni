@@ -197,7 +197,7 @@ describe('buildFilterClause', () => {
       .toBe("WHERE [b] LIKE N'%2024-01%' ESCAPE N'!'");
   });
 
-  it('SQL Server 的 text / ntext 与 Oracle 的 LOB 上比较不报错', () => {
+  it('SQL Server 的 text / ntext / image 与 Oracle 的 LOB 上比较不报错', () => {
     // 原样比较：SQL Server 402「incompatible in the equal to operator」，Oracle ORA-22848
     const compare = (name: string, operator: ColumnFilter['operator'], value: string) =>
       filter({ column: name, operator, value });
@@ -205,6 +205,8 @@ describe('buildFilterClause', () => {
       .toBe("WHERE CAST([t] AS nvarchar(max)) = N'abc'");
     expect(buildFilterClause([compare('n', 'gt', 'a')], [column('n', 'ntext')], 'sqlserver'))
       .toBe("WHERE CAST([n] AS nvarchar(max)) > N'a'");
+    expect(buildFilterClause([compare('i', 'eq', '0xDEAD')], [column('i', 'image')], 'sqlserver'))
+      .toBe('WHERE CAST([i] AS varbinary(max)) = 0xdead');
     expect(buildFilterClause([compare('C', 'eq', 'abc')], [column('C', 'CLOB')], 'oracle'))
       .toBe(`WHERE DBMS_LOB.COMPARE("C", 'abc') = 0`);
     expect(buildFilterClause([compare('N', 'lt', 'b')], [column('N', 'NCLOB')], 'oracle'))
