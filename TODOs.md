@@ -991,6 +991,15 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-04 结构页改列类型（rpm 0.4.142，本机 Docker 的 PG 16；CockroachDB 25.2 在 cu 上，DuckDB 1.5.5 CLI）：**修了一处**（`3f63650`）。
+    PostgreSQL 的 `ALTER COLUMN … TYPE` 不写 USING 时只走赋值转换，text → integer / date / jsonb / 枚举、int → boolean 都报
+    `cannot be cast automatically`——导入后全是 text 的表在结构页里改不成数值列。改成非字符类型时带 `USING "列"::新类型`；
+    改成字符类型与 bit 不带：varchar(10) → varchar(3) 赋值转换报 value too long，显式转换却悄悄截断（PG 16 上核对过仍报错）。
+    CockroachDB 同样要 USING、也收（int → bool、string → date 都成）。单测先红后绿（两条旧用例的预期跟着带上 USING），前端 1840 条全过。
+    打包版：text 列 `s`（值 `12`）改成 integer，预览 `… TYPE integer USING "s"::integer`，执行后服务端是 integer、值 12。
+    同一轮看过、没问题的：DuckDB 自己做转换（VARCHAR → INTEGER、INTEGER → BOOLEAN 不用 USING），一次改名、删列、改类型、
+    加 NOT NULL 列、改表名的整批语句在 1.5.5 的事务里照样跑通。没改：带默认值的列换类型时默认值转不过去（int 默认 0 → boolean
+    报 default … cannot be cast），USING 管不到默认值，服务端原话照给。
   - 2026-10-04 表格筛选里「包含」在日期与特殊类型列上（rpm 0.4.141，cu 的 SQL Server 2022）：**修了一处**（`908bb27`）。
     SQL Server 自己把 datetime、smalldatetime 隐式转成 `Jan  2 2024  3:04AM` 再 LIKE，照网格里的 `2024-01-02 03:04` 搜一行也中不了，
     语句不报错；xml 列直接报 8116。前两种按样式 121 转（就是网格的写法），xml 转成 `nvarchar(max)`；datetime2、date、time、
