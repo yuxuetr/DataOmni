@@ -341,7 +341,23 @@ export function buildInsertStatement(
   const columns = Object.keys(values)
     .filter((name) => values[name].kind !== 'unset' && values[name].kind !== 'default');
   if (columns.length === 0) {
-    throw new Error(translateNow('table.noInsertableColumns'));
+    const generated = new Set(target.columns.filter((column) => column.is_generated).map((column) => column.name));
+    const defaults = Object.keys(values).filter((name) => values[name].kind === 'default');
+    // Oracle 要点名一列：虚拟列不收 DEFAULT，能避开就避开
+    const defaulted = defaults.find((name) => !generated.has(name)) ?? defaults[0];
+    // 每列都交给默认值（只有自增主键和 created_at 的表），仍是合法的一行；
+    // 省掉全部列之后的写法各家不同。ClickHouse 没有对应写法
+    if (defaulted === undefined || target.dialect === 'clickhouse') {
+      throw new Error(translateNow('table.noInsertableColumns'));
+    }
+    const table = tableReference(target);
+    if (target.dialect === 'mysql') {
+      return { sql: `INSERT INTO ${table} () VALUES ()`, params: [] };
+    }
+    if (target.dialect === 'oracle') {
+      return { sql: `INSERT INTO ${table} (${quoteSqlIdentifier(defaulted, target.dialect)}) VALUES (DEFAULT)`, params: [] };
+    }
+    return { sql: `INSERT INTO ${table} DEFAULT VALUES`, params: [] };
   }
 
   const placeholder = createPlaceholderAllocator(target.dialect);

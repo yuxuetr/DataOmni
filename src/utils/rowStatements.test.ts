@@ -186,6 +186,31 @@ describe('buildInsertStatement', () => {
   it('一列都没有可写时报错', () => {
     expect(() => buildInsertStatement(target('mysql'), { note: { kind: 'unset' } })).toThrow();
   });
+
+  it('每列都取默认值时照样插一行', () => {
+    // 只有自增主键和 created_at 的表，新增行表单打开时就是这个样子
+    const allDefault = { tenant: { kind: 'default' }, note: { kind: 'default' } } as const;
+    expect(buildInsertStatement(target('postgresql'), allDefault)).toEqual({
+      sql: 'INSERT INTO "orders" DEFAULT VALUES',
+      params: []
+    });
+    expect(buildInsertStatement(target('sqlite'), allDefault).sql).toBe('INSERT INTO "orders" DEFAULT VALUES');
+    expect(buildInsertStatement(target('duckdb'), allDefault).sql).toBe('INSERT INTO "orders" DEFAULT VALUES');
+    expect(buildInsertStatement(target('sqlserver'), allDefault).sql).toBe('INSERT INTO [orders] DEFAULT VALUES');
+    // MySQL 不认 DEFAULT VALUES
+    expect(buildInsertStatement(target('mysql'), allDefault).sql).toBe('INSERT INTO `orders` () VALUES ()');
+    // Oracle 两种都不认，只能点一列写 DEFAULT
+    expect(buildInsertStatement(target('oracle'), allDefault).sql)
+      .toBe('INSERT INTO "orders" ("tenant") VALUES (DEFAULT)');
+    // 虚拟列不收 DEFAULT，点名时绕开它
+    const virtualFirst: TableTarget = {
+      ...target('oracle'),
+      columns: [{ ...column('tenant'), is_generated: true }, column('note')]
+    };
+    expect(buildInsertStatement(virtualFirst, allDefault).sql)
+      .toBe('INSERT INTO "orders" ("note") VALUES (DEFAULT)');
+    expect(() => buildInsertStatement(target('clickhouse'), allDefault)).toThrow();
+  });
 });
 
 describe('更新时的几种写入方式', () => {
