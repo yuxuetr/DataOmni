@@ -991,6 +991,18 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-04 数值列上的筛选（`tableFilters.ts`；rpm 0.4.146，本机 Docker 的 PG 16、cu 上的 MySQL 8.4，DuckDB 1.5 CLI）：**修了两处**。
+    ① `f21a0f4`：MySQL 的 BIT 网格里显示成十进制数，「包含」却拿 LIKE 比那几位的字节，bit(8) 里的 54 搜 5 一行也中不了；
+    转成 UNSIGNED 再 LIKE。比较不受影响（MySQL 拿字符串比 BIT 时按数比，`= '6'` 筛得中）。
+    ② `374b9d6`：单精度浮点与 money 上的比较。PostgreSQL 的 `real = 1.1` 把列提升成 double，一行也中不了；`money = 12.5`
+    报 `operator does not exist: money = numeric`——两者改成字符串字面量由它按列类型转。MySQL 的 FLOAT 不论 `1.1` 还是 `'1.1'`
+    都按 double 比：「等于」中不了，「大于 1.1」反而把存的 1.1 筛进来；写成 `CAST(1.1 AS FLOAT)`，等于、大于、小于都对。
+    DuckDB 的 REAL 本来就对，SQL Server、Oracle 按类型优先级把字面量转成列的类型，没动。
+    单测都是先红后绿，前端 1846 条全过。打包版：PG money「等于 12.5」、real「等于 1.1」各中 1 行；MySQL BIT「包含 5」中 54，
+    FLOAT「大于 1.1」只出 2.5、「等于 1.1」中 1.1。
+    同一轮看过、没改：MySQL 其余类型（DOUBLE、JSON、DATETIME(3)、YEAR）上「包含」与网格显示一致；二进制列（varbinary、bytea、BLOB）
+    上「包含」比的是原始字节而网格显示 `0x…`，各家显示规则不同，要单独评估。上一轮记的 `"this connection"` 横幅查清了：应用里删连接
+    走的是「已删除」那句；只在连接配置文件被整份换掉、恢复出来的标签找不到连接时出现，是测试脚本造成的，正常使用碰不到，不改。
   - 2026-10-04 大对象列上的筛选（`tableFilters.ts`、`columnEditors.ts`；rpm 0.4.144，cu 上的 SQL Server 2022 与 Oracle 23 Free）：**修了两处**。
     筛选对所有列都给出全部算子，而有几类列原样比较必报错：SQL Server 的 text / ntext / image 报 402
     （`incompatible in the equal to operator`），Oracle 的 CLOB / NCLOB / BLOB 报 ORA-22848。
