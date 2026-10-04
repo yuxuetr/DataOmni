@@ -522,6 +522,14 @@ bun install
 
 ### 未发布
 
+（暂无）
+
+### v0.5.0（2026-10-04）
+
+安装包与 v0.4.0 相同：macOS（Apple Silicon）与 Linux（x86_64），均未签名；仍不提供 Windows 安装包。
+
+- 🐛 约 200 处缺陷修正：macOS 与 Linux（GNOME Wayland）打包版逐库回归，类型边界值、导出往返、
+  事务与表格写入、各工作区的写法与 mongosh / redis-cli / Kibana / Cypher 对齐，记录见 TODOs「P0-P3 无阻塞级缺陷」
 - 🦆 DuckDB：打开文件、查询、对象树与结构页、表格编辑与事务、执行计划、改结构与建表、CSV 导入、整表导出
 - 📈 ClickHouse：查询、对象与结构浏览、表数据（一次改一行，前后各核对一次）、执行计划、导出；取消即在服务端停下
 - 🔎 Elasticsearch：连接、对象树（索引、别名、数据流）、Dev Tools 写法的控制台（JSON 与表格两种看法，
