@@ -991,6 +991,13 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-04 执行之后对象树刷不刷新（`schemaChanges.ts`；rpm 0.4.143，本机 Docker 的 PG 16）：**修了一处**（`13335d4`）。
+    只认 CREATE / ALTER / DROP / RENAME / TRUNCATE / COMMENT 开头的语句，几种常见的改结构写法执行成功后对象树与关系图停在旧样子：
+    PostgreSQL 与 SQL Server 的 `SELECT … INTO 新表`、SQL Server 改名的 `EXEC sp_rename`、ClickHouse 的 EXCHANGE / UNDROP /
+    ATTACH / DETACH、Oracle 的 `FLASHBACK TABLE … TO BEFORE DROP` 与 PURGE。顶层有 INTO 的 SELECT 一律算（MySQL 的
+    `INTO @变量` / `OUTFILE` 也会算进来，多刷新一次而已）。单测先红后绿，前端 1841 条全过。打包版：`SELECT * INTO om_bak FROM om_t`
+    执行后 om_bak 立刻出现在树里（Tables 1 → 2）。没改：调存储过程间接建表（`CALL` / `EXEC 过程`）看不出来，仍要手动刷新。
+    顺带看到：连接被删掉后，留下的查询标签横幅写 `The connection "this connection" is not active`——取不到名字时的兜底词也加了引号，只是措辞，没改。
   - 2026-10-04 结构页改列类型（rpm 0.4.142，本机 Docker 的 PG 16；CockroachDB 25.2 在 cu 上，DuckDB 1.5.5 CLI）：**修了一处**（`3f63650`）。
     PostgreSQL 的 `ALTER COLUMN … TYPE` 不写 USING 时只走赋值转换，text → integer / date / jsonb / 枚举、int → boolean 都报
     `cannot be cast automatically`——导入后全是 text 的表在结构页里改不成数值列。改成非字符类型时带 `USING "列"::新类型`；
