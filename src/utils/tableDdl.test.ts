@@ -468,6 +468,31 @@ describe('buildTableDdl / ClickHouse', () => {
     expect(plan.statements).toEqual(['ALTER TABLE `orders` ADD COLUMN `qty` Int32']);
   });
 
+  it('改类型与默认值用 MODIFY COLUMN：ALTER COLUMN … SET DEFAULT、TYPE … USING 都是语法错', () => {
+    const code = column({ name: 'code', data_type: 'String', is_nullable: false, default_value: "'k'" });
+    const qty = column({ name: 'qty', data_type: 'Int32', is_nullable: false, default_value: '0' });
+    const tag = column({ name: 'tag', data_type: 'String', is_nullable: false });
+    const plan = buildTableDdl(request('clickhouse', [
+      { ...draftOf(code, 'clickhouse'), dataType: 'Nullable(String)', defaultValue: null },
+      { ...draftOf(qty, 'clickhouse'), dataType: 'Int64', defaultValue: '1' },
+      { ...draftOf(tag, 'clickhouse'), defaultValue: "'x'" },
+      { ...draftOf(note, 'clickhouse'), name: 'memo' }
+    ], { schema: 'default' }));
+    expect(plan.statements).toEqual([
+      'ALTER TABLE `default`.`orders` RENAME COLUMN `note` TO `memo`',
+      'ALTER TABLE `default`.`orders` MODIFY COLUMN `code` Nullable(String), MODIFY COLUMN `code` REMOVE DEFAULT, '
+        + 'MODIFY COLUMN `qty` Int64 DEFAULT 1, MODIFY COLUMN `tag` DEFAULT \'x\''
+    ]);
+    expect(plan.refusals).toEqual([]);
+  });
+
+  it('改表名用 RENAME TABLE：ClickHouse 的 ALTER TABLE 没有 RENAME TO', () => {
+    const plan = buildTableDdl(request('clickhouse', [draftOf(note, 'clickhouse')], {
+      schema: 'default',
+      newTableName: 'orders_v2'
+    }));
+    expect(plan.statements).toEqual(['RENAME TABLE `default`.`orders` TO `default`.`orders_v2`']);
+  });
 });
 
 describe('buildTableDdl / Oracle', () => {

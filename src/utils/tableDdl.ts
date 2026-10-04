@@ -434,7 +434,17 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
     }
 
     if (dialect === 'clickhouse') {
-      // 可空跟着类型走（见 clickHouseNullable），这里没有单独的可空性可改
+      // 可空跟着类型走（见 clickHouseNullable），这里没有单独的可空性可改。改类型与默认值都是
+      // MODIFY COLUMN：只写类型时原来的默认值留着；去掉默认值的 REMOVE 不能跟在类型后面，
+      // 同一列另起一个 MODIFY（25.8 上试过）。改名已经单独成句——同一条里改名又 MODIFY 报 48
+      const typePart = change.typeChanged ? ` ${column.dataType.trim()}` : '';
+      const defaultPart = change.defaultChanged && column.defaultValue != null ? ` DEFAULT ${column.defaultValue}` : '';
+      if (typePart || defaultPart) {
+        alters.push(`MODIFY COLUMN ${quoted}${typePart}${defaultPart}`);
+      }
+      if (change.defaultChanged && column.defaultValue == null) {
+        alters.push(`MODIFY COLUMN ${quoted} REMOVE DEFAULT`);
+      }
       continue;
     }
 
@@ -470,7 +480,10 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
   const ordered = [...drops, ...alters, ...adds, ...afterAdds];
   if (request.newTableName !== request.table) {
     const renameTo = `RENAME TO ${quoteSqlIdentifier(request.newTableName, dialect)}`;
-    if (combines && !request.renameApart) {
+    if (dialect === 'clickhouse') {
+      // ClickHouse 的 ALTER TABLE 没有 RENAME TO，改表名是另一条 RENAME TABLE
+      renameTable = `RENAME TABLE ${current} TO ${tableReference(request, request.newTableName)}`;
+    } else if (combines && !request.renameApart) {
       ordered.push(renameTo);
     } else {
       renameTable = `ALTER TABLE ${current} ${renameTo}`;
