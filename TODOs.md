@@ -991,6 +991,14 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-04 表格筛选里「包含」在日期与特殊类型列上（rpm 0.4.141，cu 的 SQL Server 2022）：**修了一处**（`908bb27`）。
+    SQL Server 自己把 datetime、smalldatetime 隐式转成 `Jan  2 2024  3:04AM` 再 LIKE，照网格里的 `2024-01-02 03:04` 搜一行也中不了，
+    语句不报错；xml 列直接报 8116。前两种按样式 121 转（就是网格的写法），xml 转成 `nvarchar(max)`；datetime2、date、time、
+    datetimeoffset 隐式转换本来就是 ISO 写法，不动。单测先红后绿，前端 1839 条全过。打包版：datetime 列「包含 2024-01-02 03:04」
+    筛出 1 行、「2025-01」0 行，xml 列「包含 `<a`」筛出 1 行。
+    同一轮看过、没问题的：Oracle 会话设了 ISO 的 `NLS_DATE_FORMAT`，DATE 隐式转文本与网格一致；MySQL、SQLite 本来就是 ISO 文本。
+    没改的：float 隐式转成 `1.23457e+006`，「包含 1234567」中不了，但在浮点列上搜子串本身少见；登录默认语言非英语
+    （`DATEFORMAT dmy`）时 datetime 的「等于 '2024-01-02'」会按年日月读，没试。
   - 2026-10-04 确认框的「执行完还能不能反悔」（`statementReversibility.ts`，各方言 19 种写法逐个过；rpm 0.4.140，本机 Docker 的 PG 16，
     连接设为生产）：**修了一处**（`b241f35`）。PostgreSQL 的 `CREATE UNIQUE INDEX CONCURRENTLY` 与 `REINDEX (CONCURRENTLY) TABLE`（14 起
     选项写在括号里）按前缀认不出，被当成「改成在事务里跑就能回滚」并给出「在事务里执行」——PG 16 上两条都报
