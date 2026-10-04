@@ -991,6 +991,13 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-04 各处读列的来源是否一致（rpm 0.4.128，SQLite 文件）：**修了一处**（`ef731e8`）。SQLite 的补全与关系图用
+    `pragma_table_info` 读列，它看不见 GENERATED 列（VIRTUAL 与 STORED 都看不见）——结构页（早已改用 `table_xinfo`）和 `SELECT *`
+    有的列，关系图上没画、`表名.` 后面不补。两处改成 `table_xinfo` 并排掉虚表的隐藏列（`hidden = 1`）。两条 SQLite 冒烟用例各加一张
+    带生成列的表，先红后绿；打包版上 `gen_note` 的 `total`（STORED）、`twice`（VIRTUAL）在 `gen_note.` 的补全与关系图里都出现。
+    同一轮看过、没问题的：DuckDB 的 `duckdb_columns()` 列出生成列；Oracle 的补全与关系图用 `all_tab_columns`，不列 INVISIBLE 列，
+    与 `SELECT *` 一致（结构页列出并标注，是有意的）；CSV 导入与导出 INSERT 都排掉了生成列；Oracle 筛选只写日期（`'2024-01-01'`）
+    按会话设的 `NLS_DATE_FORMAT` 转得过去；各组件里按回车提交的地方都判了输入法组字；`EXPLAIN ANALYZE` 会真跑，界面上已经提示。
   - 2026-10-04 格式化之后名字的大小写，接 10-03 那轮（那轮只拿 60 个常见词试，结论「MySQL 被大写的都是保留字」不全）：**修了一处**（`748f65c`）。
     拿 sql-formatter 15.8 在表名位置会改的全部词（MySQL 207 个、T-SQL 216 个）逐个不加引号建表：MySQL 8.4 上 22 个、MariaDB 11.8 上 38 个
     （`commit`、`handler`、`offset`、`end`，MariaDB 另有 `function`、`row`、`system`、`window`、`option`）、SQL Server 2022 的
