@@ -991,6 +991,14 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-04 新增行时每列都取默认值（rpm 0.4.137，本机 Docker 的 MySQL 8.4）：**修了一处**（`655a3d5`）。只有自增主键和
+    `created_at` 这类每列都有默认值的表，新增行表单打开时全是 DEFAULT，INSERT 省掉全部列后报「没有有效的列可以插入」，界面上
+    一行也加不进去。按方言写：PG / SQLite / DuckDB / SQL Server 用 `DEFAULT VALUES`，MySQL 用 `() VALUES ()`（它不认前者），
+    Oracle 两种都不认，点名一列写 `VALUES (DEFAULT)`，绕开虚拟列；ClickHouse 没有对应写法，照旧报错。PG 16、MySQL 8.4、SQLite、
+    DuckDB 上逐条执行过；SQL Server、Oracle 的写法没上真库。单测先红后绿，绕开虚拟列那条反向验过；前端 1834 条全过。
+    打包版：`om_d(id auto_increment, created_at default current_timestamp)` 点「新增」直接保存，预览是
+    ``INSERT INTO `dataomni_test`.`om_d` () VALUES ()``，提交后表里多一行 `2 | 2026-10-04 11:07:29`。
+    同一轮看过、没问题的：网格复制选区（多格按 TSV 转义、NULL 写成 `NULL`、单格原样）；网格没有粘贴入口。
   - 2026-10-04 改表结构时 MySQL 的时间默认值（rpm 0.4.136，本机 Docker 的 MySQL 8.4 与 MariaDB 11.8）：**修了一处**（`f196418`）。
     `DEFAULT CURRENT_TIMESTAMP` 在 `EXTRA` 里也带 `DEFAULT_GENERATED`，改类型、改可空时被当成表达式默认值拒绝——最常见的
     `created_at` 列 `timestamp` 改不成 `datetime`、改不了 NOT NULL。它不是表达式：两家的目录里逐类看过，`NOW(3)`、`LOCALTIMESTAMP`
