@@ -991,6 +991,15 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-04 表格里日期、时间格的「现在」按钮（rpm 0.4.139，SQLite 文件；各家写法在 DuckDB 1.5.5、SQLite、本机 Docker 的
+    PG 16 / MySQL 8.4 上逐条试过）：**修了一处**（`3f3fc93`）。三种列一律写 `CURRENT_TIMESTAMP`：DuckDB 写进 TIME 列报
+    `Unimplemented type for cast (TIMESTAMP WITH TIME ZONE -> TIME)`，SQLite 把 `2026-10-04 11:41:55` 整段存进 date / time 列
+    （之后选择器认不出）。PG、MySQL 两种写法都收（MySQL 给 1292 的 Note）。日期列写 `CURRENT_DATE`、时间列写 `CURRENT_TIME`；
+    SQL Server 没有这两个，写 `CAST(CURRENT_TIMESTAMP AS date|time)`（没上真库）；ClickHouse 照旧（没核对它认哪些写法）。
+    悬停提示改为写出实际表达式。单测先红后绿，前端 1837 条全过。打包版：SQLite 表 `om_now(id, d date, tm time)` 新增一行，
+    两格各点「现在」，预览 `VALUES (NULL, CURRENT_DATE, CURRENT_TIME)`，提交后文件里是 `2026-10-04 | 11:56:45`。
+    同一轮看过、没问题的：上一轮的带引号类型名在别处只有表格写回一处用到（`$1::"Role"`，不过校验）；DuckDB 表上有索引时
+    改列、删列被它自己拒绝（Dependency Error，原话照给）；设置项都有消费者。
   - 2026-10-04 CSV 导入到带自定义类型的 PostgreSQL 表（rpm 0.4.137 / 0.4.138，本机 Docker 的 PG 16）：**修了一处**（`76dba6f`）。
     大小写混写或不在 search_path 上的类型（Prisma 建的枚举就是 `"Role"`），`format_type` 带双引号给出：`"Role"`、`"Billing".tier`、
     `"Role"[]`。导入把类型拼进 `$n::text::<类型>` 之前要过一道防注入的字符校验，它不认双引号，整次导入报「目标列类型不是合法的类型名」，
