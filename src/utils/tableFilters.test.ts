@@ -183,6 +183,20 @@ describe('buildFilterClause', () => {
     expect(buildFilterClause([contains('id')], COLUMNS, 'mysql')).toBe("WHERE `id` LIKE '%5%' ESCAPE '!'");
   });
 
+  it('SQL Server 的 datetime 与 xml 上「包含」按网格的写法转成文本', () => {
+    // 隐式转换把 datetime 写成 `Jan  2 2024  3:04AM`，搜 2024-01 一行也中不了；xml 直接报 8116
+    const contains = (name: string) => filter({ column: name, operator: 'contains', value: '2024-01' });
+    expect(buildFilterClause([contains('a')], [column('a', 'datetime')], 'sqlserver'))
+      .toBe("WHERE CONVERT(nvarchar(30), [a], 121) LIKE N'%2024-01%' ESCAPE N'!'");
+    expect(buildFilterClause([contains('f')], [column('f', 'smalldatetime')], 'sqlserver'))
+      .toBe("WHERE CONVERT(nvarchar(30), [f], 121) LIKE N'%2024-01%' ESCAPE N'!'");
+    expect(buildFilterClause([contains('j')], [column('j', 'xml')], 'sqlserver'))
+      .toBe("WHERE CAST([j] AS nvarchar(max)) LIKE N'%2024-01%' ESCAPE N'!'");
+    // datetime2、date 隐式转换本来就是 ISO 写法，原样
+    expect(buildFilterClause([contains('b')], [column('b', 'datetime2')], 'sqlserver'))
+      .toBe("WHERE [b] LIKE N'%2024-01%' ESCAPE N'!'");
+  });
+
   it('MySQL 的反斜杠在 LIKE 模式里也只转义一层', () => {
     // 转义符选 `!` 而不是 `\` 就是为了避开字面量层与 LIKE 层的双重转义
     expect(

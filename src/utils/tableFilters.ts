@@ -109,7 +109,10 @@ const LIKE_STRING_TYPE_TOKENS = new Set([
  * LIKE 左边的那一侧。
  *
  * PostgreSQL、DuckDB、ClickHouse 的 LIKE 只收字符串，在整数、uuid、日期列上选「包含」直接报错
- * （MySQL、SQLite、SQL Server、Oracle 自己会转）。只转非字符串列：citext 转成 text 就区分大小写了
+ * （MySQL、SQLite、SQL Server、Oracle 自己会转）。只转非字符串列：citext 转成 text 就区分大小写了。
+ *
+ * SQL Server 自己转的有两处不对：datetime、smalldatetime 隐式转成 `Jan  2 2024  3:04AM`，照网格里的
+ * `2024-01-02` 搜一行也中不了（样式 121 就是网格的写法）；xml 根本不收，报 8116
  */
 function likeOperand(quotedColumn: string, column: ColumnInfo, dialect: SqlIdentifierDialect): string {
   if (LIKE_STRING_TYPE_TOKENS.has(columnTypeToken(column.data_type))) {
@@ -122,6 +125,16 @@ function likeOperand(quotedColumn: string, column: ColumnInfo, dialect: SqlIdent
       return `CAST(${quotedColumn} AS VARCHAR)`;
     case 'clickhouse':
       return `toString(${quotedColumn})`;
+    case 'sqlserver':
+      switch (columnTypeToken(column.data_type)) {
+        case 'datetime':
+        case 'smalldatetime':
+          return `CONVERT(nvarchar(30), ${quotedColumn}, 121)`;
+        case 'xml':
+          return `CAST(${quotedColumn} AS nvarchar(max))`;
+        default:
+          return quotedColumn;
+      }
     default:
       return quotedColumn;
   }
