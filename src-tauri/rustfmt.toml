@@ -1,0 +1,5 @@
+# 项目的格式约定放在仓库里：CI 与别人的机器上没有作者 home 下那份 ~/.rustfmt.toml
+max_width = 100
+tab_spaces = 2
+newline_style = "Unix"
+use_small_heuristics = "Max"
