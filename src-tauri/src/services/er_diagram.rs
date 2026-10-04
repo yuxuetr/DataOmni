@@ -175,7 +175,8 @@ ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION
 "#;
 
 /// pragma 表值函数可以拿 sqlite_master 的列当参数，于是整库的列能一次查完，
-/// 不用对每张表各跑一次 PRAGMA。
+/// 不用对每张表各跑一次 PRAGMA。`table_xinfo` 而不是 `table_info`：后者看不见生成列，
+/// `hidden = 1` 是虚表的隐藏列（见 `schema_metadata` 的 SQLITE_COLUMNS）。
 const SQLITE_COLUMNS: &str = r#"
 SELECT
   NULL AS table_schema,
@@ -186,8 +187,9 @@ SELECT
   (p.pk > 0) AS is_primary_key,
   (p.[notnull] = 0) AS is_nullable
 FROM sqlite_master m
-JOIN pragma_table_info(m.name) p
+JOIN pragma_table_xinfo(m.name) p
 WHERE m.type = 'table'
+  AND p.hidden <> 1
   AND m.name NOT LIKE 'sqlite\_%' ESCAPE '\'
 ORDER BY m.name, p.cid
 "#;

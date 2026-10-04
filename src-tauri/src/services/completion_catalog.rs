@@ -93,6 +93,7 @@ ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION
 
 /// `pragma_table_info` 对视图同样给列，所以表和视图能用同一条查询取完。
 /// `m.type` 本身就是 'table' / 'view'，不需要再 CASE 一次。
+/// `table_xinfo` 而不是 `table_info`：后者看不见生成列（见 `schema_metadata` 的 SQLITE_COLUMNS）。
 const SQLITE_RELATIONS: &str = r#"
 SELECT
   NULL AS relation_schema,
@@ -101,8 +102,9 @@ SELECT
   p.name AS column_name,
   p.type AS data_type
 FROM sqlite_master m
-JOIN pragma_table_info(m.name) p
+JOIN pragma_table_xinfo(m.name) p
 WHERE m.type IN ('table', 'view')
+  AND p.hidden <> 1
   AND m.name NOT LIKE 'sqlite\_%' ESCAPE '\'
 ORDER BY m.name, p.cid
 "#;

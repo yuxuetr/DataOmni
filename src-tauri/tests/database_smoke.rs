@@ -3186,6 +3186,11 @@ async fn sqlite_er_diagram_reads_every_table_in_one_round_trip() {
     sqlx::query(&statement).execute(&pool).await.expect("prepare SQLite fixture");
   }
   sqlx::query("CREATE TABLE lonely_note (note TEXT)").execute(&pool).await.expect("lonely");
+  // 生成列 `pragma_table_info` 看不见，图上会少一列
+  sqlx::query("CREATE TABLE gen_note (a INT, b INT GENERATED ALWAYS AS (a * 2) VIRTUAL)")
+    .execute(&pool)
+    .await
+    .expect("generated");
 
   let queries =
     dataomni_lib::services::er_diagram_queries(&dataomni_lib::models::DatabaseType::SQLite)
@@ -3207,6 +3212,10 @@ async fn sqlite_er_diagram_reads_every_table_in_one_round_trip() {
   assert!(columns.iter().any(|(table, ..)| table == &fixture.parent));
   assert!(columns.iter().any(|(table, ..)| table == &fixture.child));
   assert!(columns.iter().any(|(table, column, _)| table == "lonely_note" && column == "note"));
+  assert!(
+    columns.iter().any(|(table, column, _)| table == "gen_note" && column == "b"),
+    "生成列要画出来: {columns:?}"
+  );
   assert!(
     columns.iter().any(|(table, column, pk)| table == &fixture.child && column == "id" && *pk == 1),
     "主键要标出来: {columns:?}"
@@ -3381,6 +3390,10 @@ async fn sqlite_completion_catalog_lists_views_next_to_tables() {
     .execute(&pool)
     .await
     .expect("create view");
+  sqlx::query("CREATE TABLE gen_note (a INT, b INT GENERATED ALWAYS AS (a * 2) STORED)")
+    .execute(&pool)
+    .await
+    .expect("generated");
 
   let query =
     dataomni_lib::services::completion_catalog_query(&dataomni_lib::models::DatabaseType::SQLite)
@@ -3409,6 +3422,11 @@ async fn sqlite_completion_catalog_lists_views_next_to_tables() {
       .iter()
       .any(|(relation, kind, column)| relation == &view && kind == "view" && column == "label"),
     "pragma_table_info 对视图同样给列: {catalog:?}"
+  );
+  // 生成列在 `SELECT *` 里查得出来，补全也该给
+  assert!(
+    catalog.iter().any(|(relation, _, column)| relation == "gen_note" && column == "b"),
+    "生成列要进补全: {catalog:?}"
   );
   // sqlite_master 里的内部表不该混进补全
   assert!(
