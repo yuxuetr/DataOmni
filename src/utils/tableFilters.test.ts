@@ -203,6 +203,18 @@ describe('buildFilterClause', () => {
     expect(buildFilterClause([contains('id')], COLUMNS, 'mysql')).toBe("WHERE `id` LIKE '%5%' ESCAPE '!'");
   });
 
+  it('ClickHouse 的 Decimal 上「包含」补齐小数位，和网格一样', () => {
+    // toString 去掉末尾的 0：网格里的 12.50 是 '12.5'、3.00 是 '3'，搜 12.50 一行也中不了（25.8 上试过）
+    const contains = filter({ column: 'd', operator: 'contains', value: '12.50' });
+    expect(buildFilterClause([contains], [column('d', 'Decimal(10, 2)')], 'clickhouse'))
+      .toBe("WHERE toDecimalString(`d`, 2) LIKE '%12.50%'");
+    expect(buildFilterClause([contains], [column('d', 'Nullable(Decimal(38, 9))')], 'clickhouse'))
+      .toBe("WHERE toDecimalString(`d`, 9) LIKE '%12.50%'");
+    // 没有小数位的照旧
+    expect(buildFilterClause([contains], [column('d', 'Decimal(18, 0)')], 'clickhouse'))
+      .toBe("WHERE toString(`d`) LIKE '%12.50%'");
+  });
+
   it('SQL Server 的 datetime 与 xml 上「包含」按网格的写法转成文本', () => {
     // 隐式转换把 datetime 写成 `Jan  2 2024  3:04AM`，搜 2024-01 一行也中不了；xml 直接报 8116
     const contains = (name: string) => filter({ column: name, operator: 'contains', value: '2024-01' });

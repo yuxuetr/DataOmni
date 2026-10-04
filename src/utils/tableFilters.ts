@@ -127,7 +127,9 @@ const LIKE_STRING_TYPE_TOKENS = new Set([
  *
  * SQL Server 自己转的有两处不对：datetime、smalldatetime 隐式转成 `Jan  2 2024  3:04AM`，照网格里的
  * `2024-01-02` 搜一行也中不了（样式 121 就是网格的写法）；xml 根本不收，报 8116。
- * MySQL 的 BIT 网格里显示成十进制数，LIKE 却比那几位的字节，转成数才对得上
+ * MySQL 的 BIT 网格里显示成十进制数，LIKE 却比那几位的字节，转成数才对得上。
+ *
+ * ClickHouse 的 toString 去掉 Decimal 末尾的 0（12.50 写成 `12.5`），网格补齐了小数位，按网格搜要用 toDecimalString
  */
 function likeOperand(quotedColumn: string, column: ColumnInfo, dialect: SqlIdentifierDialect): string {
   if (LIKE_STRING_TYPE_TOKENS.has(columnTypeToken(column.data_type))) {
@@ -138,8 +140,13 @@ function likeOperand(quotedColumn: string, column: ColumnInfo, dialect: SqlIdent
       return `CAST(${quotedColumn} AS text)`;
     case 'duckdb':
       return `CAST(${quotedColumn} AS VARCHAR)`;
-    case 'clickhouse':
-      return `toString(${quotedColumn})`;
+    case 'clickhouse': {
+      // 目录里一律是 `Decimal(P, S)`（Decimal32(4) 记成 Decimal(9, 4)），S 取最后一个数，与后端补零同一条规则
+      const scale = columnTypeToken(column.data_type) === 'decimal'
+        ? Number(/(\d+)\s*\)+\s*$/.exec(column.data_type)?.[1] ?? 0)
+        : 0;
+      return scale > 0 ? `toDecimalString(${quotedColumn}, ${scale})` : `toString(${quotedColumn})`;
+    }
     case 'mysql':
       return columnTypeToken(column.data_type) === 'bit' ? `CAST(${quotedColumn} AS UNSIGNED)` : quotedColumn;
     case 'sqlserver':
