@@ -220,6 +220,12 @@ describe('按方言切语句', () => {
       .toEqual(["SELECT [it's; odd]]name] FROM t", 'SELECT 2']);
   });
 
+  it('SQLite 也认方括号标识符：里面的引号不会吞掉后面的脚本', () => {
+    // sqlite3 3.x 上 `CREATE TABLE t([it's;x] int)` 建得出、查得到
+    expect(splitSqlStatements("SELECT [it's;x] FROM t; SELECT 2;", 'sqlite'))
+      .toEqual(["SELECT [it's;x] FROM t", 'SELECT 2']);
+  });
+
   it('有 GO 行时只按 GO 切，过程体里的分号不切', () => {
     const script = [
       'CREATE PROCEDURE dbo.p AS',

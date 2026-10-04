@@ -27,7 +27,7 @@ export interface SqlStatementRange {
  *
  * - `#` 只有 MySQL 与 ClickHouse 是注释。PostgreSQL 里它是按位异或，SQL Server 里 `#t` 是
  *   临时表——当成注释的话 `SELECT 1 INTO #t;` 那一行的分号就被吞了。
- * - SQL Server 的 `[...]` 是标识符，里面的 `'` 与 `;` 不算数。
+ * - SQL Server 与 SQLite 的 `[...]` 是标识符，里面的 `'` 与 `;` 不算数。
  * - 反斜杠只在 MySQL / ClickHouse 的引号里、PostgreSQL 的 `E'…'` 里是转义。别处 `'C:\'`
  *   就是一个完整的字面量，当成转义的话后面整段脚本都被吞进字符串，切成一条发出去。
  * - SQL Server 的脚本常用单独一行的 `GO` 分批（SSMS 的约定，不是 T-SQL 语法）。
@@ -217,7 +217,8 @@ function scanStatements(
         state = { type: 'double-quote', backslashEscapes };
       } else if (character === '`') {
         state = { type: 'backtick', backslashEscapes };
-      } else if (character === '[' && dialect === 'sqlserver') {
+      } else if (character === '[' && (dialect === 'sqlserver' || dialect === 'sqlite')) {
+        // SQLite 为兼容 Access / SQL Server 也认 `[名字]`；它没有数组，`[` 只会是这个
         state = { type: 'bracket' };
       }
       index += 1;
