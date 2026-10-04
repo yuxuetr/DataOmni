@@ -991,6 +991,16 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-04 大对象列上的筛选（`tableFilters.ts`、`columnEditors.ts`；rpm 0.4.144，cu 上的 SQL Server 2022 与 Oracle 23 Free）：**修了两处**。
+    筛选对所有列都给出全部算子，而有几类列原样比较必报错：SQL Server 的 text / ntext / image 报 402
+    （`incompatible in the equal to operator`），Oracle 的 CLOB / NCLOB / BLOB 报 ORA-22848。
+    ① `4b5c713`：SQL Server 的 text / ntext 转成 `nvarchar(max)` 再比；Oracle 写成 `DBMS_LOB.COMPARE(列, 值) 算子 0`
+    （23 Free 上试过相等得 0、小于得 -1、大于得 1，NCLOB 配普通字面量也成，NULL 行照旧不中）。
+    ② `3b3e4f5`：image 不在二进制编辑器的类型表里——改单元格时按文本绑定，报 206 `nvarchar is incompatible with image`
+    （sqlcmd 上用同样的参数化语句核过），筛选里的 `0x…` 也被拼成字符串。归入二进制，比较时先转 `varbinary(max)`。
+    单测都是先红后绿，前端 1843 条全过。打包版：text 列筛「等于 abc」得 1 行，image 列筛「等于 0xbeef」得 1 行，
+    image 单元格出现十六进制编辑器，改成 cafe 提交后库里是 `0xCAFE`。Oracle 那条只在 sqlplus 上跑过生成的写法，没进界面。
+    没做：大对象列上的「大于 / 小于」本身没多大意义，算子列表仍不按列类型收窄。
   - 2026-10-04 执行之后对象树刷不刷新（`schemaChanges.ts`；rpm 0.4.143，本机 Docker 的 PG 16）：**修了一处**（`13335d4`）。
     只认 CREATE / ALTER / DROP / RENAME / TRUNCATE / COMMENT 开头的语句，几种常见的改结构写法执行成功后对象树与关系图停在旧样子：
     PostgreSQL 与 SQL Server 的 `SELECT … INTO 新表`、SQL Server 改名的 `EXEC sp_rename`、ClickHouse 的 EXCHANGE / UNDROP /
