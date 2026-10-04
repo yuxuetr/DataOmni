@@ -426,10 +426,17 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
       const dataType = column.dataType.trim();
       // 排序规则跟着类型走：不写就换成新类型的默认值，语句照样成功。目录给的是服务端
       // 引好的名字；改成数字之类不收排序规则的类型时不写，写了是错误
-      const collation = origin.collation && POSTGRES_COLLATABLE_TYPES.has(columnTypeToken(dataType).replace(/\[.*$/, ''))
+      const typeToken = columnTypeToken(dataType).replace(/\[.*$/, '');
+      const collation = origin.collation && POSTGRES_COLLATABLE_TYPES.has(typeToken)
         ? ` COLLATE ${origin.collation}`
         : '';
-      const retype = `ALTER COLUMN ${quoted} TYPE ${dataType}${collation}`;
+      // 改成非字符类型带 USING：text → integer、int → boolean 这类没有赋值转换，不写就报
+      // cannot be cast automatically。字符类型不带：varchar 缩短时赋值转换报 value too long，
+      // 显式转换却悄悄截断；bit 同理（整数显式转成 bit(1) 只取最低位）
+      const using = POSTGRES_COLLATABLE_TYPES.has(typeToken) || typeToken === 'bit' || typeToken === 'varbit'
+        ? ''
+        : ` USING ${quoted}::${dataType}`;
+      const retype = `ALTER COLUMN ${quoted} TYPE ${dataType}${collation}${using}`;
       if (request.typeChangesApart) {
         retypes.push(`ALTER TABLE ${current} ${retype}`);
       } else {

@@ -133,7 +133,7 @@ describe('buildTableDdl / PostgreSQL', () => {
     ], { typeChangesApart: true }));
     expect(plan.statements).toEqual([
       'ALTER TABLE "orders" ALTER COLUMN "code" TYPE text',
-      'ALTER TABLE "orders" ALTER COLUMN "n" TYPE bigint',
+      'ALTER TABLE "orders" ALTER COLUMN "n" TYPE bigint USING "n"::bigint',
       'ALTER TABLE "orders" ALTER COLUMN "code" SET NOT NULL, ALTER COLUMN "code" SET DEFAULT \'x\''
     ]);
   });
@@ -151,7 +151,28 @@ describe('buildTableDdl / PostgreSQL', () => {
     expect(plan.statements).toEqual([
       'ALTER TABLE "orders" ALTER COLUMN "name" TYPE varchar(50) COLLATE "C",'
         + ' ALTER COLUMN "tags" TYPE varchar(40)[] COLLATE public.nocase,'
-        + ' ALTER COLUMN "flag" TYPE boolean'
+        + ' ALTER COLUMN "flag" TYPE boolean USING "flag"::boolean'
+    ]);
+  });
+
+  it('改成非字符类型带 USING：text → integer、int → boolean 没有隐式转换', () => {
+    // PG 16 报 column "s" cannot be cast automatically to type integer；CockroachDB 25.2 同样，也收 USING。
+    // 改成字符类型不带：varchar 缩短时赋值转换报 value too long，显式转换却悄悄截断
+    const s = column({ name: 's', data_type: 'text' });
+    const b = column({ name: 'b', data_type: 'integer' });
+    const r = column({ name: 'r', data_type: 'text' });
+    const v = column({ name: 'v', data_type: 'character varying(10)' });
+    const plan = buildTableDdl(request('postgresql', [
+      { ...draftOf(s, 'postgresql'), dataType: 'integer' },
+      { ...draftOf(b, 'postgresql'), dataType: 'boolean' },
+      { ...draftOf(r, 'postgresql'), dataType: '"Role"' },
+      { ...draftOf(v, 'postgresql'), dataType: 'varchar(5)' }
+    ]));
+    expect(plan.statements).toEqual([
+      'ALTER TABLE "orders" ALTER COLUMN "s" TYPE integer USING "s"::integer,'
+        + ' ALTER COLUMN "b" TYPE boolean USING "b"::boolean,'
+        + ' ALTER COLUMN "r" TYPE "Role" USING "r"::"Role",'
+        + ' ALTER COLUMN "v" TYPE varchar(5)'
     ]);
   });
 
