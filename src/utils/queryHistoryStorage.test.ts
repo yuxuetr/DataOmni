@@ -2,11 +2,12 @@
  * @vitest-environment happy-dom
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { QueryHistoryEntry } from '../contracts/queryHistory';
+import { MAX_HISTORY_SQL_CHARS, type QueryHistoryEntry } from '../contracts/queryHistory';
 import {
   DEFAULT_HISTORY_RETENTION,
   loadHistoryRetention,
   loadQueryHistory,
+  MAX_HISTORY_STORAGE_CHARS,
   pruneHistory,
   RETENTION_DAY_CHOICES,
   RETENTION_ENTRY_CHOICES,
@@ -192,6 +193,23 @@ describe('loadQueryHistory / saveQueryHistory', () => {
 
     // 8 → 4 → 2：两次被拒之后写进去的是最新的两条
     expect(loadQueryHistory().map((e) => e.id)).toEqual(['e0', 'e1']);
+  });
+
+  it('写进去的历史不超过自己的份额，给工作区快照留出配额', () => {
+    // 每条约 2 万字符，400 条约 800 万——远超 5MB 配额，但本身每次都写得进去的
+    // 测试环境里，原先会整份照写，把同一个源的配额吃满
+    const long = 'x'.repeat(MAX_HISTORY_SQL_CHARS);
+    const entries = Array.from({ length: 400 }, (_, index) =>
+      entry({ id: `e${index}`, startedAt: daysAgo(index / 100), sql: long, favorite: index === 399 ? true : undefined })
+    );
+
+    saveQueryHistory(entries);
+
+    const stored = localStorage.getItem('dataomni.query-history') ?? '';
+    expect(stored.length).toBeLessThanOrEqual(MAX_HISTORY_STORAGE_CHARS);
+    const ids = loadQueryHistory().map((e) => e.id);
+    expect(ids[0]).toBe('e0');
+    expect(ids).toContain('e399');
   });
 
   it('配额写不下时先砍没标注过的，收藏的旧记录留着', () => {

@@ -54,6 +54,17 @@ export const RETENTION_DAY_CHOICES: readonly number[] = [7, 30, 90, 365, 0];
  */
 export const RETENTION_ENTRY_CHOICES: readonly number[] = [100, 500, 1000, 2000];
 
+/**
+ * 历史在 localStorage 里最多占多少字符（序列化后的整份 JSON）。
+ *
+ * 只靠「写不下再砍」不够：历史自己总能写进去，撑到配额边上之后，挤不进去的是
+ * 随后的**工作区快照**——标签和没存盘的草稿就此停在旧的那一份，重启才发现。
+ * 打包版（WebKitGTK）上实测过：240 条各 2 万字符的历史约 486 万字符，再贴一份
+ * 49 万字符的草稿，快照就再也写不进去。配额是 5MB，WebKit 按字节算，非 ASCII
+ * 一个字符占两字节；150 万字符最坏 3MB，给快照和设置留 2MB。
+ */
+export const MAX_HISTORY_STORAGE_CHARS = 1_500_000;
+
 /** 慢查询阈值可选的几档，毫秒。`0` 是「不标记慢查询」 */
 export const SLOW_QUERY_MS_CHOICES: readonly number[] = [0, 200, 500, 1000, 3000, 10_000];
 
@@ -183,7 +194,7 @@ export function loadQueryHistory(): QueryHistoryEntry[] {
 }
 
 /**
- * 写回，写不下就砍一半再试（先砍没标注过的）。
+ * 写回，超出份额或写不下就砍一半再试（先砍没标注过的）。
  *
  * localStorage 满了抛的是 `QuotaExceededError`，而配额是**整个源**共享的：
  * 撑爆它的不一定是历史自己。这里只对自己负责——把自己缩小到能写进去为止，
@@ -193,20 +204,21 @@ export function loadQueryHistory(): QueryHistoryEntry[] {
 export function saveQueryHistory(entries: readonly QueryHistoryEntry[]): void {
   let candidate = [...entries];
   while (candidate.length > 0) {
-    try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({ version: SNAPSHOT_VERSION, entries: candidate })
-      );
-      return;
-    } catch {
-      // 砍一半，按淘汰同样的优先级：先丢没标注过的最旧那些，收藏不跟着一起丢
-      candidate = pruneHistory(candidate, {
-        maxAgeDays: 0,
-        maxEntries: Math.floor(candidate.length / 2),
-        slowQueryMs: 0
-      });
+    const text = JSON.stringify({ version: SNAPSHOT_VERSION, entries: candidate });
+    if (text.length <= MAX_HISTORY_STORAGE_CHARS) {
+      try {
+        localStorage.setItem(STORAGE_KEY, text);
+        return;
+      } catch {
+        // 配额被别的键占了，同样往下缩
+      }
     }
+    // 砍一半，按淘汰同样的优先级：先丢没标注过的最旧那些，收藏不跟着一起丢
+    candidate = pruneHistory(candidate, {
+      maxAgeDays: 0,
+      maxEntries: Math.floor(candidate.length / 2),
+      slowQueryMs: 0
+    });
   }
 
   try {
