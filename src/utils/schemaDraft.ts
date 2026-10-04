@@ -351,7 +351,7 @@ export function buildCreateSchema(
   dialect: CreatableDialect,
   schema: string | null = null
 ): string[] {
-  const order = orderForCreation(draft);
+  const order = orderForCreation(declaredSpelling(draft));
   const { tables } = order;
   // SQLite 不能事后加外键，但它建表时不检查被引用的表在不在（到写数据时才查），环照样内联
   const deferred = dialect === 'sqlite' ? [] : order.deferred;
@@ -429,10 +429,48 @@ function columnDraft(column: ColumnSpec, inPrimaryKey: boolean) {
 }
 
 /**
+ * 引用处的名字换成声明处的写法。
+ *
+ * 校验按 `fold` 认名字（`Users` 就是 `users`），而建表语句给名字加引号：PostgreSQL、Oracle 上
+ * `"Users"` 与 `"users"` 是两个名字，照模型的原样拼，校验过了的设计建表时报关系或列不存在；
+ * 图按名字找表和列，同样连不上。设计本身不改（人看的、校验的仍是模型给的那一份），只在生成时换。
+ * 指向库里已有表的引用照原样——那边的写法这里不知道
+ */
+function declaredSpelling(draft: SchemaDraft): SchemaDraft {
+  const tablesByName = new Map(draft.tables.map((table) => [fold(table.name), table]));
+  const spelling = (columns: readonly ColumnSpec[]) => {
+    const declared = new Map(columns.map((column) => [fold(column.name), column.name]));
+    return (names: readonly string[]) => names.map((name) => declared.get(fold(name)) ?? name);
+  };
+  return {
+    ...draft,
+    tables: draft.tables.map((table) => {
+      const own = spelling(table.columns);
+      return {
+        ...table,
+        primaryKey: own(table.primaryKey),
+        unique: table.unique.map(own),
+        indexes: table.indexes.map((index) => ({ ...index, columns: own(index.columns) })),
+        foreignKeys: table.foreignKeys.map((key) => {
+          const target = tablesByName.get(fold(key.referencedTable));
+          return {
+            ...key,
+            columns: own(key.columns),
+            referencedTable: target?.name ?? key.referencedTable,
+            referencedColumns: target ? spelling(target.columns)(key.referencedColumns) : key.referencedColumns
+          };
+        })
+      };
+    })
+  };
+}
+
+/**
  * 画成 ER 图要的形状，喂给现成的 `ErDiagramCanvas`。表不带 schema（建在连接的默认 schema 里）；
  * 复合外键拆成逐列的线，和从目录读出来的一样
  */
-export function draftToEr(draft: SchemaDraft): { tables: ErTable[]; links: ErLink[] } {
+export function draftToEr(design: SchemaDraft): { tables: ErTable[]; links: ErLink[] } {
+  const draft = declaredSpelling(design);
   const tables = draft.tables.map((table) => {
     const primaryKey = new Set(table.primaryKey.map(fold));
     return {

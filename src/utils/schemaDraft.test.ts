@@ -247,7 +247,39 @@ describe('orderForCreation', () => {
   });
 });
 
+/** 名字按 fold 认：引用处与声明处只差大小写，校验照过 */
+const mixedCase: SchemaDraft = {
+  tables: [
+    table('users', [column('id', 'bigint'), column('email', 'varchar(255)')], { primaryKey: ['ID'], unique: [['Email']] }),
+    table('posts', [column('id', 'bigint'), column('author_id', 'bigint')], {
+      foreignKeys: [{ columns: ['Author_Id'], referencedTable: 'Users', referencedColumns: ['ID'], onDelete: null }],
+      indexes: [{ columns: ['AUTHOR_ID'] }]
+    })
+  ]
+};
+
 describe('buildCreateSchema', () => {
+  // 建表语句给名字加引号，PostgreSQL、Oracle 上 "Users" 与 "users" 是两个名字：
+  // 照原样拼，校验过了的设计建表时报 relation "Users" does not exist
+  it('引用处只差大小写的名字写成声明处的样子', () => {
+    expect(codes(mixedCase).filter((code) => code.startsWith('error'))).toEqual([]);
+    expect(buildCreateSchema(mixedCase, 'postgresql')).toEqual([
+      'CREATE TABLE "users" (\n  "id" bigint NOT NULL,\n  "email" varchar(255) NOT NULL,\n  PRIMARY KEY ("id"),\n  UNIQUE ("email")\n)',
+      'CREATE TABLE "posts" (\n  "id" bigint NOT NULL,\n  "author_id" bigint NOT NULL,\n  PRIMARY KEY ("id"),\n'
+        + '  FOREIGN KEY ("author_id") REFERENCES "users" ("id")\n)',
+      'CREATE INDEX "ix_posts_author_id" ON "posts" ("author_id")'
+    ]);
+  });
+
+  it('指向库里已有的表照原样：那边的写法这里不知道', () => {
+    const draft = {
+      tables: [table('posts', [column('id', 'bigint'), column('author_id', 'bigint')], {
+        foreignKeys: [{ columns: ['author_id'], referencedTable: 'Accounts', referencedColumns: ['ID'], onDelete: null }]
+      })]
+    };
+    expect(buildCreateSchema(draft, 'postgresql')[0]).toContain('REFERENCES "Accounts" ("ID")');
+  });
+
   it('PostgreSQL：按依赖排好，约束内联，索引最后', () => {
     expect(buildCreateSchema(blog, 'postgresql', 'app')).toEqual([
       'CREATE TABLE "app"."users" (\n  "id" bigint NOT NULL,\n  "email" varchar(255) NOT NULL,\n  PRIMARY KEY ("id"),\n  UNIQUE ("email")\n)',
@@ -277,6 +309,12 @@ describe('buildCreateSchema', () => {
 });
 
 describe('draftToEr', () => {
+  it('引用处只差大小写时连线照样连到声明的表和列', () => {
+    expect(draftToEr(mixedCase).links).toEqual([
+      { constraintName: 'posts#0', from: { table: 'posts', column: 'author_id' }, to: { table: 'users', column: 'id' } }
+    ]);
+  });
+
   it('主键列标出来，复合外键拆成逐列的线', () => {
     const draft = {
       tables: [
