@@ -158,15 +158,20 @@ export function wholeRowIdentity(columns: readonly ColumnInfo[]): RowIdentityRes
  *
  * 整行定位（ClickHouse）时，这一行里显示成二进制的值（非 UTF-8 的 String / FixedString）不进条件：
  * 拆出来的是十六进制文本，拿它当参数去比，服务端按原字节读，比不中还报「值太长」。
- * 少比一列只会让「恰好一行」更难成立，不会改错行
+ * 少比一列只会让「恰好一行」更难成立，不会改错行。别的键里的二进制值记在 `binary` 里，由语句写成字面量
  */
 export function rowKeyOf(identity: RowIdentity | null, values: Readonly<Record<string, unknown>>): RowKey {
   const columns = (identity?.columns ?? []).filter((name) => {
     const value = values[name] as SerializedResultValue;
     return !(identity?.source === 'whole-row' && isTaggedResultValue(value) && value.type === 'binary');
   });
+  const binary = columns.filter((name) => {
+    const value = values[name] as SerializedResultValue;
+    return isTaggedResultValue(value) && value.type === 'binary';
+  });
   return {
     columns,
-    values: Object.fromEntries(columns.map((name) => [name, unwrapResultValue(values[name] as SerializedResultValue)]))
+    values: Object.fromEntries(columns.map((name) => [name, unwrapResultValue(values[name] as SerializedResultValue)])),
+    ...(binary.length > 0 && { binary })
   };
 }

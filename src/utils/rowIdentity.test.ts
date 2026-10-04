@@ -173,7 +173,7 @@ describe('rowKeyOf', () => {
   const values = { id: 1, fs: { type: 'binary', value: 'ff000102' }, s: 'a', other: 'x' } as const;
 
   it('按键列取值，拆掉展示用的包装', () => {
-    expect(rowKeyOf(identity('primary-key'), values)).toEqual({ columns: ['id', 'fs', 's'], values: { id: 1, fs: 'ff000102', s: 'a' } });
+    expect(rowKeyOf(identity('primary-key'), values)).toEqual({ columns: ['id', 'fs', 's'], values: { id: 1, fs: 'ff000102', s: 'a' }, binary: ['fs'] });
   });
 
   // 打包版上撞到的：FixedString 里是非 UTF-8 的字节，显示成十六进制；拿这串十六进制当参数去比，

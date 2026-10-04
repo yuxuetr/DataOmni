@@ -1,6 +1,7 @@
 import type { ColumnInfo } from '../contracts';
 import { columnTypeToken, isConcurrencyComparable, isNumericColumnType, NUMERIC_LITERAL } from './columnTypes';
 import type { BoundValue, CellInput } from './cellInput';
+import { binaryLiteral, isCompleteHex } from './columnEditors';
 import { translateNow } from '../stores/languageStore';
 import {
   quoteQualifiedSqlIdentifier,
@@ -39,6 +40,13 @@ export interface RowKey {
   /** 键列，按键内次序 */
   columns: readonly string[];
   values: Readonly<Record<string, BoundValue>>;
+  /**
+   * 值是二进制的那几列（读回来带着 `binary` 包装，拆出来是十六进制文本）。
+   *
+   * 这串文本绑回去比的是那些字符的字节，永远不等：`BINARY(16)` 存 UUID 的表一行也改不了、删不了。
+   * 按值认而不按列类型认：MySQL 的二进制列内容可打印时按原文送来，那时绑原文正好比得上
+   */
+  binary?: readonly string[];
 }
 
 /**
@@ -161,6 +169,10 @@ function keyCondition(
           return `${quoted} IS NULL`;
         }
         throw new Error(translateNow('write.nullKeyValue', { column: name }));
+      }
+      // 写成二进制字面量；只含十六进制数字，内联不会带进别的东西
+      if (key.binary?.includes(name) && typeof value === 'string' && isCompleteHex(value)) {
+        return `${quoted} = ${binaryLiteral(value, target.dialect)}`;
       }
       const literal = inlineComparisonLiteral(byName.get(name), value, target.dialect);
       if (literal !== null) {

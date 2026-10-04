@@ -432,3 +432,58 @@ describe('MySQL 的 BIT 按数写回', () => {
       .toBe('DELETE FROM `flags` WHERE `mask` = CAST(? AS UNSIGNED)');
   });
 });
+
+describe('二进制键列', () => {
+  // 键值拆出来是十六进制文本，绑成参数去比，比的是那串字符的字节：BINARY(16) 存 UUID 的表一行也改不了、删不了
+  const keyed = (dialect: TableTarget['dialect'], type: string): TableTarget => ({
+    schema: null,
+    table: 'docs',
+    dialect,
+    columns: [column('id', type), column('tenant', 'varchar(32)'), column('note')]
+  });
+  const key: RowKey = { columns: ['id'], values: { id: '0aff' }, binary: ['id'] };
+
+  it('按方言写成二进制字面量', () => {
+    const cases: [TableTarget['dialect'], string, string][] = [
+      ['mysql', 'binary(16)', "`id` = X'0aff'"],
+      ['sqlite', 'BLOB', `"id" = X'0aff'`],
+      ['postgresql', 'bytea', `"id" = '\\x0aff'::bytea`],
+      ['sqlserver', 'varbinary(16)', '[id] = 0x0aff'],
+      ['duckdb', 'BLOB', `"id" = from_hex('0aff')`],
+      ['oracle', 'RAW(16)', `"id" = HEXTORAW('0aff')`]
+    ];
+    for (const [dialect, type, condition] of cases) {
+      const statement = buildDeleteStatement(keyed(dialect, type), key);
+      expect(statement.sql).toContain(`WHERE ${condition}`);
+      expect(statement.params).toEqual([]);
+    }
+  });
+
+  it('复合键里 PostgreSQL 的 $n 跳过内联的那一列', () => {
+    const statement = buildUpdateStatement(
+      keyed('postgresql', 'bytea'),
+      { columns: ['tenant', 'id'], values: { tenant: 'acme', id: 'AB01' }, binary: ['id'] },
+      { note: value('x') }
+    );
+    expect(statement.sql).toBe(
+      `UPDATE "docs" SET "note" = $1 WHERE "tenant" = $2 AND "id" = '\\xab01'::bytea`
+    );
+    expect(statement.params).toEqual(['x', 'acme']);
+  });
+
+  // MySQL 的二进制列内容可打印时按原文送来（不带包装），绑原文正好比得上；原文恰好像十六进制也不能当字节读
+  it('按原文送来的值照旧绑定', () => {
+    const statement = buildDeleteStatement(keyed('mysql', 'varbinary(8)'), { columns: ['id'], values: { id: 'cafe' } });
+    expect(statement.sql).toBe('DELETE FROM `docs` WHERE `id` = ?');
+    expect(statement.params).toEqual(['cafe']);
+  });
+
+  it('不是十六进制的值不硬塞进语句', () => {
+    const statement = buildDeleteStatement(
+      keyed('mysql', 'varbinary(8)'),
+      { columns: ['id'], values: { id: "x' OR 1=1" }, binary: ['id'] }
+    );
+    expect(statement.sql).toBe('DELETE FROM `docs` WHERE `id` = ?');
+    expect(statement.params).toEqual(["x' OR 1=1"]);
+  });
+});
