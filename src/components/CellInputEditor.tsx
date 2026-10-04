@@ -16,7 +16,7 @@ import {
   type ColumnEditorKind
 } from '../utils/columnEditors';
 import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
-import { isImeKeyEvent } from '../utils/shortcuts';
+import { hasCommandModifier, isImeKeyEvent } from '../utils/shortcuts';
 
 const KIND_LABEL: Record<CellInputKind, TranslationKey> = {
   value: 'cellInput.kind.value',
@@ -142,6 +142,20 @@ export function CellInputEditor({
           // 也能点：NULL / DEFAULT 那一格长得像个输入框，用户的第一反应是点它
           // 然后开始打字，而不是先去找旁边那个箭头
           onClick={toggleMenu}
+          // 点完接着打字：第一个字就是值的开头。不接的话字落在按钮上什么也不发生，
+          // 新增一行时人以为填了，发出去的还是 NULL。布尔列是两个按钮，没有可打字的框。
+          // Option / AltGr 打出来的字照样是字，只让开命令键
+          onKeyDown={(event) => {
+            if (
+              editor !== 'boolean' && event.key.length === 1
+              && !hasCommandModifier(event.nativeEvent) && !isImeKeyEvent(event.nativeEvent)
+            ) {
+              event.preventDefault();
+              setMenuAt(null);
+              setFocusAfterPick(true);
+              onChange({ kind: 'value', value: event.key });
+            }
+          }}
           className="flex min-w-0 flex-1 items-center rounded-control border border-dashed border-line-strong bg-surface-sunken px-2 py-1 text-left font-mono text-xs italic text-fg-subtle hover:bg-surface-hover"
           title={t(value.kind === 'null' ? 'cellInput.nullHint' : 'cellInput.defaultHint')}
         >

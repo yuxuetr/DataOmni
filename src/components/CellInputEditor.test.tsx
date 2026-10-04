@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CellInputEditor } from './CellInputEditor';
 import { useLanguageStore } from '../stores/languageStore';
 import type { CellInput } from '../utils/cellInput';
+import { SHORTCUTS, shortcutKeyEvent } from '../utils/shortcuts';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -48,6 +49,31 @@ afterEach(() => {
 });
 
 describe('CellInputEditor', () => {
+  // 打包版上看到的：点一下 NULL 那格接着敲 3，什么也没写进去，新增一行照样发 NULL
+  it('NULL / DEFAULT 那一格上直接敲字就成了值，光标留在编辑框里', () => {
+    act(() => root.render(<Harness initial={{ kind: 'null' }} />));
+    const chip = button('NULL');
+    act(() => chip.focus());
+    act(() => {
+      chip.dispatchEvent(new KeyboardEvent('keydown', { key: '3', bubbles: true, cancelable: true }));
+    });
+    const input = container.querySelector('input');
+    expect(input?.value).toBe('3');
+    expect(document.activeElement).toBe(input);
+  });
+
+  it('命令键组合、不是字符的键不改档', () => {
+    act(() => root.render(<Harness initial={{ kind: 'default' }} />));
+    const chip = button('DEFAULT');
+    for (const init of [shortcutKeyEvent(SHORTCUTS.copySelection), shortcutKeyEvent(SHORTCUTS.selectAll), { key: 'Tab' }, { key: 'ArrowDown' }]) {
+      act(() => {
+        chip.dispatchEvent(new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true }));
+      });
+    }
+    expect(container.querySelector('input')).toBeNull();
+    expect(button('DEFAULT')).toBeTruthy();
+  });
+
   it('从菜单换成「值」之后光标在编辑框里', () => {
     act(() => root.render(<Harness initial={{ kind: 'null' }} />));
     act(() => button('Choose what to write').click());
