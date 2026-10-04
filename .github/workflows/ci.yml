@@ -105,7 +105,8 @@ jobs:
     env:
       DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
       DATAOMNI_POSTGRES_TEST_URL: postgres://dataomni:dataomni@localhost:5432/dataomni_test
-      DATAOMNI_MYSQL_TEST_URL: mysql://dataomni:dataomni@localhost:3306/dataomni_test?ssl-mode=DISABLED
+      # root：用例要建函数、触发器（开着 binlog 时普通用户要 SUPER）和恢复备份用的新库
+      DATAOMNI_MYSQL_TEST_URL: mysql://root:root@localhost:3306/dataomni_test?ssl-mode=DISABLED
 
     steps:
       - name: Checkout
@@ -118,7 +119,10 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            postgresql-client-17
+          # runner 自带的 pg_dump 是 16，对 17 的服务端直接拒绝；pg_wrapper 取装着的最新版
+          pg_dump --version
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable

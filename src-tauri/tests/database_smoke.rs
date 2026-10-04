@@ -5884,11 +5884,17 @@ async fn mysql_backup_with_mysqldump_restores_into_a_new_database() {
   let pool =
     MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
   let flavor = mysql_flavor(&pool).await;
+  // 备份的是一个只放这张表的库：整库导出测试库时，并行的用例正好删掉一张表，
+  // mysqldump 就报 `show create table … doesn't exist`（CI 上撞见过）
+  let source = "dataomni_backup_source";
   let table = "dataomni_backup_probe";
   for statement in [
-    format!("DROP TABLE IF EXISTS {table}"),
-    format!("CREATE TABLE {table} (id int PRIMARY KEY, label varchar(20), data varbinary(4))"),
-    format!("INSERT INTO {table} VALUES (1, 'O''Brien', 0x00ff), (2, '中文', NULL)"),
+    format!("DROP DATABASE IF EXISTS {source}"),
+    format!("CREATE DATABASE {source}"),
+    format!(
+      "CREATE TABLE {source}.{table} (id int PRIMARY KEY, label varchar(20), data varbinary(4))"
+    ),
+    format!("INSERT INTO {source}.{table} VALUES (1, 'O''Brien', 0x00ff), (2, '中文', NULL)"),
   ] {
     sqlx::query(&statement).execute(&pool).await.expect("prepare backup fixture");
   }
@@ -5897,14 +5903,13 @@ async fn mysql_backup_with_mysqldump_restores_into_a_new_database() {
   let rest = url.split_once("://").map(|(_, rest)| rest).expect("scheme");
   let (credentials, address) = rest.rsplit_once('@').expect("credentials");
   let (username, password) = credentials.split_once(':').unwrap_or((credentials, ""));
-  let (host_port, database) = address.split_once('/').expect("database");
-  let database = database.split('?').next().unwrap_or_default().to_string();
+  let (host_port, _) = address.split_once('/').expect("database");
   let (host, port) = host_port.rsplit_once(':').expect("port");
   let profile = dataomni_lib::models::ConnectionProfile {
     db_type: dataomni_lib::models::DatabaseType::MySQL,
     host: host.to_string(),
     port: port.parse().expect("port number"),
-    database: Some(database.clone()),
+    database: Some(source.to_string()),
     username: urlencoding::decode(username).expect("user").into_owned(),
     password: urlencoding::decode(password).expect("password").into_owned(),
     tls_mode: Some(dataomni_lib::models::TlsMode::Preferred),
@@ -5925,7 +5930,7 @@ async fn mysql_backup_with_mysqldump_restores_into_a_new_database() {
     let error = result.expect_err("TiDB 上 mysqldump 能跑通了，回来重估 BACKUP_TIDB");
     assert!(error.message.contains("SAVEPOINT"), "{}", error.message);
     assert!(!target.exists() && !dir.join("backup.sql.part").exists(), "失败时不留半份备份");
-    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+    sqlx::query(&format!("DROP DATABASE IF EXISTS {source}")).execute(&pool).await.ok();
     return;
   }
   assert_eq!(result.expect("backup"), backup::BackupKind::MysqlDump);
@@ -5943,7 +5948,7 @@ async fn mysql_backup_with_mysqldump_restores_into_a_new_database() {
     let Some(client) = backup::find_tool("mariadb") else {
       eprintln!("OceanBase 要用 mariadb 客户端恢复，本机没有，恢复这一步跳过");
       sqlx::query(&format!("DROP DATABASE IF EXISTS {restored}")).execute(&pool).await.ok();
-      sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+      sqlx::query(&format!("DROP DATABASE IF EXISTS {source}")).execute(&pool).await.ok();
       std::fs::remove_dir_all(&dir).ok();
       return;
     };
@@ -5975,7 +5980,7 @@ async fn mysql_backup_with_mysqldump_restores_into_a_new_database() {
     vec![(1, Some("O'Brien".into()), Some("00FF".into())), (2, Some("中文".into()), None)]
   );
   sqlx::query(&format!("DROP DATABASE IF EXISTS {restored}")).execute(&pool).await.ok();
-  sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+  sqlx::query(&format!("DROP DATABASE IF EXISTS {source}")).execute(&pool).await.ok();
   std::fs::remove_dir_all(&dir).ok();
 }
 
