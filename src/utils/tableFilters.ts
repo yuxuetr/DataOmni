@@ -6,7 +6,11 @@ import {
   LIKE_ESCAPE_CHAR,
   quoteSqlStringLiteral
 } from './sqlLiterals';
+import { binaryLiteral, columnEditorKind } from './columnEditors';
 import { columnTypeToken, isNumericColumnType, NUMERIC_LITERAL } from './columnTypes';
+
+/** `0x` 加偶数位十六进制：网格里二进制值的写法 */
+const HEX_BYTES = /^0x(?:[0-9a-f]{2})*$/i;
 
 export type FilterOperator =
   | 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte'
@@ -63,6 +67,9 @@ export function isCompleteFilter(filter: ColumnFilter): boolean {
  *
  * ClickHouse 反过来：它把带小数点的字面量和超过 64 位的整数读成 Float64，Decimal、Int128 比不准；
  * 字符串字面量它按列类型转，反而是准的。
+ *
+ * 二进制列上 `0x` 加偶数位十六进制按字节比：网格里就是这么显示的，照抄进来拼成字符串，比的是那串字符的
+ * 字节，一行也筛不中。别的文本照旧（MySQL 的二进制列内容可打印时显示原文），与导入的约定相同。
  */
 function comparisonLiteral(
   filter: ColumnFilter,
@@ -71,6 +78,9 @@ function comparisonLiteral(
 ): string {
   if (column && dialect !== 'clickhouse' && isNumericColumnType(column.data_type) && NUMERIC_LITERAL.test(filter.value.trim())) {
     return filter.value.trim();
+  }
+  if (column && columnEditorKind(column.data_type, dialect) === 'binary' && HEX_BYTES.test(filter.value.trim())) {
+    return binaryLiteral(filter.value.trim(), dialect);
   }
   return quoteSqlStringLiteral(filter.value, dialect);
 }

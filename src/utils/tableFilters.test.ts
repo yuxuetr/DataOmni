@@ -194,3 +194,28 @@ describe('buildFilterClause', () => {
     ).toBe("WHERE `note` LIKE '%C:\\\\temp%' ESCAPE '!'");
   });
 });
+
+describe('二进制列上的比较', () => {
+  // 网格里二进制值显示成 0x…，照抄进「等于」拼成字符串比较，比的是那串字符的字节，一行也筛不中
+  const bin = [column('id', 'binary(16)'), column('blob', 'bytea')];
+
+  it('0x 加偶数位十六进制按字节比', () => {
+    expect(buildFilterClause([filter({ column: 'id', value: '0x0AFF' })], bin, 'mysql'))
+      .toBe("WHERE `id` = X'0aff'");
+    expect(buildFilterClause([filter({ column: 'blob', operator: 'ne', value: '0x0aff' })], bin, 'postgresql'))
+      .toBe(`WHERE "blob" <> '\\x0aff'::bytea`);
+  });
+
+  // MySQL 的二进制列内容可打印时网格里显示原文，筛原文要比得上
+  it('别的文本照旧按原文比', () => {
+    expect(buildFilterClause([filter({ column: 'id', value: 'cafecafe' })], bin, 'mysql'))
+      .toBe("WHERE `id` = 'cafecafe'");
+    expect(buildFilterClause([filter({ column: 'id', value: '0xabc' })], bin, 'mysql'))
+      .toBe("WHERE `id` = '0xabc'");
+  });
+
+  it('文本列上的 0x 仍是文本', () => {
+    expect(buildFilterClause([filter({ column: 'name', value: '0x0aff' })], COLUMNS, 'mysql'))
+      .toBe("WHERE `name` = '0x0aff'");
+  });
+});
