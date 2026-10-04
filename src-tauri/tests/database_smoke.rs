@@ -3240,6 +3240,8 @@ async fn sqlite_er_diagram_reads_every_table_in_one_round_trip() {
   for statement in [
     "CREATE TABLE fk_owner (k1 INT, k2 INT, PRIMARY KEY (k2, k1))",
     "CREATE TABLE fk_pet (o1 INT, o2 INT, FOREIGN KEY (o1, o2) REFERENCES fk_owner)",
+    // 名字不分大小写，外键子句里怎么写 pragma 就原样给出；图上按名字找表和列
+    "CREATE TABLE fk_vet (v1 INT, v2 INT, FOREIGN KEY (V1, V2) REFERENCES FK_OWNER (K2, K1))",
   ] {
     sqlx::query(statement).execute(&pool).await.expect("implicit parent key");
   }
@@ -3292,6 +3294,8 @@ async fn sqlite_er_diagram_reads_every_table_in_one_round_trip() {
       ("ref_b".into(), fixture.parent.clone(), Some("y".into())),
       ("o1".into(), "fk_owner".into(), Some("k2".into())),
       ("o2".into(), "fk_owner".into(), Some("k1".into())),
+      ("v1".into(), "fk_owner".into(), Some("k2".into())),
+      ("v2".into(), "fk_owner".into(), Some("k1".into())),
     ]
   );
 }

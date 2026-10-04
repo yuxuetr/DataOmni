@@ -196,15 +196,25 @@ ORDER BY m.name, p.cid
 
 /// SQLite 的外键没有名字，用 `fk_<id>` 合成；`"to"` 为 NULL 表示引用父表主键，
 /// 补法同 `schema_metadata` 的 SQLITE_FOREIGN_KEYS——不补的话这条边连不到列，图上就没有它。
+///
+/// 父表与父表列换成库里的写法：名字不分大小写，`REFERENCES USERS (ID)` 的 pragma 原样给
+/// `USERS` / `ID`，而图按名字找表和列，对不上就当悬空引用丢掉。`NOCASE` 只折 ASCII，
+/// 和 SQLite 认名字的规则一样；找不到（父表不存在）时照原样给
 const SQLITE_FOREIGN_KEYS: &str = r#"
 SELECT
   NULL AS table_schema,
   m.name AS table_name,
   f.[from] AS column_name,
   NULL AS referenced_schema,
-  f.[table] AS referenced_table,
-  COALESCE(f.[to], (SELECT p.name FROM pragma_table_info(f.[table]) p WHERE p.pk = f.seq + 1))
-    AS referenced_column,
+  COALESCE(
+    (SELECT t.name FROM sqlite_master t WHERE t.type = 'table' AND t.name = f.[table] COLLATE NOCASE),
+    f.[table]
+  ) AS referenced_table,
+  COALESCE(
+    (SELECT p.name FROM pragma_table_xinfo(f.[table]) p WHERE p.name = f.[to] COLLATE NOCASE),
+    (SELECT p.name FROM pragma_table_info(f.[table]) p WHERE f.[to] IS NULL AND p.pk = f.seq + 1),
+    f.[to]
+  ) AS referenced_column,
   'fk_' || f.id AS constraint_name,
   f.seq + 1 AS ordinal
 FROM sqlite_master m
