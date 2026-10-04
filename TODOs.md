@@ -991,6 +991,13 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-04 确认框的「执行完还能不能反悔」（`statementReversibility.ts`，各方言 19 种写法逐个过；rpm 0.4.140，本机 Docker 的 PG 16，
+    连接设为生产）：**修了一处**（`b241f35`）。PostgreSQL 的 `CREATE UNIQUE INDEX CONCURRENTLY` 与 `REINDEX (CONCURRENTLY) TABLE`（14 起
+    选项写在括号里）按前缀认不出，被当成「改成在事务里跑就能回滚」并给出「在事务里执行」——PG 16 上两条都报
+    `cannot run inside a transaction block`，会话还留在废止的事务里。补了 UNIQUE 那条前缀，REINDEX 的选项括号里出现
+    CONCURRENTLY 也认。单测先红后绿，前端 1838 条全过。打包版：两条各弹确认，都写「事务包不住」、没有事务按钮，「仍然执行」后索引建成。
+    同一轮看过、没问题的：DuckDB 的 `ATTACH` 在回滚后确实撤掉（1.5.5 上试过），不用进清单；`REINDEX (CONCURRENTLY false)`
+    会被误判成包不住，往保守方向错，不改。没上真库、没改的：SQL Server 的全文索引增删据文档也不许进用户事务，cu 的镜像没装全文检索。
   - 2026-10-04 表格里日期、时间格的「现在」按钮（rpm 0.4.139，SQLite 文件；各家写法在 DuckDB 1.5.5、SQLite、本机 Docker 的
     PG 16 / MySQL 8.4 上逐条试过）：**修了一处**（`3f3fc93`）。三种列一律写 `CURRENT_TIMESTAMP`：DuckDB 写进 TIME 列报
     `Unimplemented type for cast (TIMESTAMP WITH TIME ZONE -> TIME)`，SQLite 把 `2026-10-04 11:41:55` 整段存进 date / time 列
