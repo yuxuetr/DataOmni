@@ -8,6 +8,7 @@ import {
 } from './sqlLiterals';
 import { binaryLiteral, columnEditorKind } from './columnEditors';
 import { columnTypeToken, isNumericColumnType, NUMERIC_LITERAL } from './columnTypes';
+import { ORACLE_ZONED_TIMESTAMP, oracleTimestampText } from './tablePagination';
 
 /** `0x` 加偶数位十六进制：网格里二进制值的写法 */
 const HEX_BYTES = /^0x(?:[0-9a-f]{2})*$/i;
@@ -129,7 +130,9 @@ const LIKE_STRING_TYPE_TOKENS = new Set([
  * `2024-01-02` 搜一行也中不了（样式 121 就是网格的写法）；xml 根本不收，报 8116。
  * MySQL 的 BIT 网格里显示成十进制数，LIKE 却比那几位的字节，转成数才对得上。
  *
- * ClickHouse 的 toString 去掉 Decimal 末尾的 0（12.50 写成 `12.5`），网格补齐了小数位，按网格搜要用 toDecimalString
+ * ClickHouse 的 toString 去掉 Decimal 末尾的 0（12.50 写成 `12.5`），网格补齐了小数位，按网格搜要用 toDecimalString。
+ * Oracle 同病，还更多：隐式转换写成 `12.5`、`.5`、`03:04:05.000000`，网格是 `12.50`、`0.5`、`03:04:05`。
+ * BINARY_DOUBLE 不在里面：服务端最少给 17 位（`.10000000000000001`），网格是最短写法 `0.1`，SQL 里拼不出来
  */
 function likeOperand(quotedColumn: string, column: ColumnInfo, dialect: SqlIdentifierDialect): string {
   if (LIKE_STRING_TYPE_TOKENS.has(columnTypeToken(column.data_type))) {
@@ -147,6 +150,8 @@ function likeOperand(quotedColumn: string, column: ColumnInfo, dialect: SqlIdent
         : 0;
       return scale > 0 ? `toDecimalString(${quotedColumn}, ${scale})` : `toString(${quotedColumn})`;
     }
+    case 'oracle':
+      return oracleLikeOperand(quotedColumn, column.data_type);
     case 'mysql':
       return columnTypeToken(column.data_type) === 'bit' ? `CAST(${quotedColumn} AS UNSIGNED)` : quotedColumn;
     case 'sqlserver':
@@ -159,6 +164,25 @@ function likeOperand(quotedColumn: string, column: ColumnInfo, dialect: SqlIdent
         default:
           return quotedColumn;
       }
+    default:
+      return quotedColumn;
+  }
+}
+
+/** 网格里的写法见 `oracle.rs` 的 `decode`：NUMBER(p,s) 补齐 s 位，其余的数补上小数点前的 0 */
+function oracleLikeOperand(quotedColumn: string, dataType: string): string {
+  const scaled = /^NUMBER\((\d+),(\d+)\)$/i.exec(dataType.trim());
+  if (scaled) {
+    const scale = Number(scaled[2]);
+    const integerDigits = Math.max(Number(scaled[1]) - scale, 1);
+    return `TO_CHAR(${quotedColumn}, 'FM${'9'.repeat(integerDigits - 1)}0.${'0'.repeat(scale)}')`;
+  }
+  switch (columnTypeToken(dataType)) {
+    case 'number':
+    case 'float':
+      return `REGEXP_REPLACE(TO_CHAR(${quotedColumn}), '^(-?)\\.', '\\10.')`;
+    case 'timestamp':
+      return oracleTimestampText(quotedColumn, ORACLE_ZONED_TIMESTAMP.test(dataType.trim()));
     default:
       return quotedColumn;
   }

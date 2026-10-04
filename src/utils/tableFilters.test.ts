@@ -215,6 +215,31 @@ describe('buildFilterClause', () => {
       .toBe("WHERE toString(`d`) LIKE '%12.50%'");
   });
 
+  it('Oracle 的 NUMBER 与 TIMESTAMP 上「包含」按网格的写法转成文本', () => {
+    // 隐式转换写成 `12.5`、`.5`、`03:04:05.000000`：网格里的 12.50、0.5、`03:04:05` 一行也中不了（23 Free 上试过）
+    const contains = (name: string) => filter({ column: name, operator: 'contains', value: '0.5' });
+    expect(buildFilterClause([contains('d')], [column('d', 'NUMBER(10,2)')], 'oracle'))
+      .toBe("WHERE TO_CHAR(\"d\", 'FM99999990.00') LIKE '%0.5%' ESCAPE '!'");
+    // 标度比精度大（NUMBER(2,5) 存 0.00012）时整数部分仍留一个 0
+    expect(buildFilterClause([contains('s')], [column('s', 'NUMBER(2,5)')], 'oracle'))
+      .toBe("WHERE TO_CHAR(\"s\", 'FM0.00000') LIKE '%0.5%' ESCAPE '!'");
+    expect(buildFilterClause([contains('n')], [column('n', 'NUMBER')], 'oracle'))
+      .toBe("WHERE REGEXP_REPLACE(TO_CHAR(\"n\"), '^(-?)\\.', '\\10.') LIKE '%0.5%' ESCAPE '!'");
+    expect(buildFilterClause([contains('f')], [column('f', 'FLOAT(126)')], 'oracle'))
+      .toBe("WHERE REGEXP_REPLACE(TO_CHAR(\"f\"), '^(-?)\\.', '\\10.') LIKE '%0.5%' ESCAPE '!'");
+    expect(buildFilterClause([contains('t')], [column('t', 'TIMESTAMP(6)')], 'oracle'))
+      .toBe("WHERE REGEXP_REPLACE(TO_CHAR(\"t\", 'YYYY-MM-DD HH24:MI:SS.FF'), '\\.?0*$') LIKE '%0.5%' ESCAPE '!'");
+    expect(buildFilterClause([contains('l')], [column('l', 'TIMESTAMP(6) WITH LOCAL TIME ZONE')], 'oracle'))
+      .toBe("WHERE REGEXP_REPLACE(TO_CHAR(\"l\", 'YYYY-MM-DD HH24:MI:SS.FF'), '\\.?0*$') LIKE '%0.5%' ESCAPE '!'");
+    expect(buildFilterClause([contains('z')], [column('z', 'TIMESTAMP(6) WITH TIME ZONE')], 'oracle'))
+      .toBe("WHERE REGEXP_REPLACE(TO_CHAR(\"z\", 'YYYY-MM-DD HH24:MI:SS.FF'), '\\.?0*$') || TO_CHAR(\"z\", ' TZH:TZM') LIKE '%0.5%' ESCAPE '!'");
+    // 整数与 DATE 的隐式转换本来就是网格的写法（DATE 靠会话的 NLS_DATE_FORMAT），原样
+    expect(buildFilterClause([contains('i')], [column('i', 'INTEGER')], 'oracle'))
+      .toBe("WHERE \"i\" LIKE '%0.5%' ESCAPE '!'");
+    expect(buildFilterClause([contains('e')], [column('e', 'DATE')], 'oracle'))
+      .toBe("WHERE \"e\" LIKE '%0.5%' ESCAPE '!'");
+  });
+
   it('SQL Server 的 datetime 与 xml 上「包含」按网格的写法转成文本', () => {
     // 隐式转换把 datetime 写成 `Jan  2 2024  3:04AM`，搜 2024-01 一行也中不了；xml 直接报 8116
     const contains = (name: string) => filter({ column: name, operator: 'contains', value: '2024-01' });

@@ -244,7 +244,7 @@ function postgresTypeName(dataType: string): string {
  * 客户端要用自己的时区文件换算；Instant Client 带的版本与服务器不同就是 ORA-01805，整条查询失败
  * （23.26 带 45 版，23ai Free 是 43 版，实测）。`LOCAL TIME ZONE` 存的是换算好的时刻，没有这回事
  */
-const ORACLE_ZONED_TIMESTAMP = /^TIMESTAMP(\(\d+\))? WITH TIME ZONE$/i;
+export const ORACLE_ZONED_TIMESTAMP = /^TIMESTAMP(\(\d+\))? WITH TIME ZONE$/i;
 
 /**
  * 驱动读不了、要由服务端序列化成文本的 Oracle 类型 → 序列化函数。rust-oracle 0.6 对 21c 起的原生 `JSON`
@@ -301,12 +301,20 @@ export function projectedColumn(column: ColumnInfo, dialect: SqlIdentifierDialec
     return `${serializer}(${name} RETURNING CLOB) AS ${name}`;
   }
   if (dialect === 'oracle') {
-    // 照驱动的写法：小数秒去掉末尾的 0（`.000` 连点一起去掉），时区写成偏移——会话的
-    // `NLS_TIMESTAMP_TZ_FORMAT` 按偏移解析，改了写回去转得回来。地区名不写：换成 `TZR` 解析时
-    // `-03:30` 会读成 `+03:30`（试过）。并发守卫拿这段文本比，按时刻比，与存的地区名相等
-    return `REGEXP_REPLACE(TO_CHAR(${name}, 'YYYY-MM-DD HH24:MI:SS.FF'), '\\.?0*$') || TO_CHAR(${name}, ' TZH:TZM') AS ${name}`;
+    return `${oracleTimestampText(name, true)} AS ${name}`;
   }
   return `${name}::text AS ${name}`;
+}
+
+/**
+ * Oracle 的时间戳写成驱动给网格的那种文本：小数秒去掉末尾的 0（`.000` 连点一起去掉），
+ * 带时区的写成偏移——会话的 `NLS_TIMESTAMP_TZ_FORMAT` 按偏移解析，改了写回去转得回来。
+ * 地区名不写：换成 `TZR` 解析时 `-03:30` 会读成 `+03:30`（试过）。并发守卫拿这段文本比，
+ * 按时刻比，与存的地区名相等
+ */
+export function oracleTimestampText(quotedColumn: string, zoned: boolean): string {
+  const local = `REGEXP_REPLACE(TO_CHAR(${quotedColumn}, 'YYYY-MM-DD HH24:MI:SS.FF'), '\\.?0*$')`;
+  return zoned ? `${local} || TO_CHAR(${quotedColumn}, ' TZH:TZM')` : local;
 }
 
 /**
