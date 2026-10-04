@@ -991,6 +991,19 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 ClickHouse 上的筛选与建表、改结构（`tableFilters.ts`；rpm 0.4.148，cu 上的 ClickHouse 25.8）：**修了一处**（`1eeb2e4`）。
+    Decimal 列上「包含」：toString 去掉末尾的 0，网格里的 12.50、3.00 转成文本是 12.5、3，搜 12.50 或 .00 一行也中不了；
+    有小数位时改用 `toDecimalString(列, S)`，S 取类型里最后一个数（目录一律记成 `Decimal(P, S)`），与后端补零同一条规则。
+    单测先红后绿，前端 1847 条全过；生成的语句在 25.8 上「包含」「开头是」「结尾是」都与网格一致。打包版：dec 列「包含 .00」只出 3.00、「包含 12.50」只出 12.50。
+    同一轮看过、没问题：19 种类型上的「等于」「大于」（Float32、DateTime 带时区、DateTime64、Bool、Enum、Array、Map、Tuple、IPv4、
+    UUID、FixedString、超过 2^53 的 Nullable(Int64)、Date32 的 1900 年）照字符串字面量交给 ClickHouse 按列类型转，全对。
+    **撤回了两处**（`c22a5a3`、`c3bcb3b`，由 `ac3b12d` 撤回）：先查出建表与改结构生成的语句在 ClickHouse 上不对——「可空」勾着却建出
+    不可空的列、NULL 悄悄存成空串；改可空、改默认值、改类型、改表名四种全是语法错——修完上打包版才看到这两个入口在 ClickHouse 上
+    本来就不开（`PENDING_FEATURES` 有意不做 `structureEditing`），用户走不到。核过的写法留在这里，等要开放时照着做：可空是类型
+    （`Nullable(T)`；`Array`、`LowCardinality` 不能包，要写 `LowCardinality(Nullable(String))`），`Nullable(…)` 再带 `NULL` / `NOT NULL`
+    报 377；改类型、默认值用 `MODIFY COLUMN 列 类型 DEFAULT 表达式`（只写类型时原默认值保留），去掉默认值是另一个
+    `MODIFY COLUMN 列 REMOVE DEFAULT`，同一条里不能和改名并用（48）；改表名是 `RENAME TABLE`；不写 `ORDER BY` / 主键建不了 MergeTree 表。
+    教训：动手前先确认入口能不能走到。
   - 2026-10-04 数值列上的筛选（`tableFilters.ts`；rpm 0.4.146，本机 Docker 的 PG 16、cu 上的 MySQL 8.4，DuckDB 1.5 CLI）：**修了两处**。
     ① `f21a0f4`：MySQL 的 BIT 网格里显示成十进制数，「包含」却拿 LIKE 比那几位的字节，bit(8) 里的 54 搜 5 一行也中不了；
     转成 UNSIGNED 再 LIKE。比较不受影响（MySQL 拿字符串比 BIT 时按数比，`= '6'` 筛得中）。
@@ -1002,7 +1015,7 @@
     FLOAT「大于 1.1」只出 2.5、「等于 1.1」中 1.1。
     同一轮看过、没改：MySQL 其余类型（DOUBLE、JSON、DATETIME(3)、YEAR）上「包含」与网格显示一致；二进制列（varbinary、bytea、BLOB）
     上「包含」比的是原始字节而网格显示 `0x…`，各家显示规则不同，要单独评估。上一轮记的 `"this connection"` 横幅查清了：应用里删连接
-    走的是「已删除」那句；只在连接配置文件被整份换掉、恢复出来的标签找不到连接时出现，是测试脚本造成的，正常使用碰不到，不改。
+    走的是「已删除」那句；只在连接配置文件被整份换掉、恢复出来的标签找不到连接时出现，是测试脚本造成的；应用里的操作不会走到这条，不改。
   - 2026-10-04 大对象列上的筛选（`tableFilters.ts`、`columnEditors.ts`；rpm 0.4.144，cu 上的 SQL Server 2022 与 Oracle 23 Free）：**修了两处**。
     筛选对所有列都给出全部算子，而有几类列原样比较必报错：SQL Server 的 text / ntext / image 报 402
     （`incompatible in the equal to operator`），Oracle 的 CLOB / NCLOB / BLOB 报 ORA-22848。
