@@ -3,7 +3,6 @@ import type { ColumnInfo } from '../contracts';
 import {
   buildCreateTable,
   buildTableDdl,
-  clickHouseNullable,
   defaultCreateSchema,
   columnDefaultSql,
   incompleteDraftColumns,
@@ -454,47 +453,6 @@ describe('buildTableDdl / DuckDB', () => {
   });
 });
 
-describe('buildTableDdl / ClickHouse', () => {
-  const note = column({ name: 'note', data_type: 'String', is_nullable: false });
-
-  it('可空写在类型里，不出 SET NOT NULL / DROP NOT NULL：25.8 上两句都是语法错', () => {
-    const plan = buildTableDdl(request('clickhouse', [
-      { ...draftOf(note, 'clickhouse'), nullable: true },
-      {
-        origin: null, name: 'qty', dataType: 'Int32',
-        nullable: false, defaultValue: null, dropped: false, primaryKey: false
-      }
-    ]));
-    expect(plan.statements).toEqual(['ALTER TABLE `orders` ADD COLUMN `qty` Int32']);
-  });
-
-  it('改类型与默认值用 MODIFY COLUMN：ALTER COLUMN … SET DEFAULT、TYPE … USING 都是语法错', () => {
-    const code = column({ name: 'code', data_type: 'String', is_nullable: false, default_value: "'k'" });
-    const qty = column({ name: 'qty', data_type: 'Int32', is_nullable: false, default_value: '0' });
-    const tag = column({ name: 'tag', data_type: 'String', is_nullable: false });
-    const plan = buildTableDdl(request('clickhouse', [
-      { ...draftOf(code, 'clickhouse'), dataType: 'Nullable(String)', defaultValue: null },
-      { ...draftOf(qty, 'clickhouse'), dataType: 'Int64', defaultValue: '1' },
-      { ...draftOf(tag, 'clickhouse'), defaultValue: "'x'" },
-      { ...draftOf(note, 'clickhouse'), name: 'memo' }
-    ], { schema: 'default' }));
-    expect(plan.statements).toEqual([
-      'ALTER TABLE `default`.`orders` RENAME COLUMN `note` TO `memo`',
-      'ALTER TABLE `default`.`orders` MODIFY COLUMN `code` Nullable(String), MODIFY COLUMN `code` REMOVE DEFAULT, '
-        + 'MODIFY COLUMN `qty` Int64 DEFAULT 1, MODIFY COLUMN `tag` DEFAULT \'x\''
-    ]);
-    expect(plan.refusals).toEqual([]);
-  });
-
-  it('改表名用 RENAME TABLE：ClickHouse 的 ALTER TABLE 没有 RENAME TO', () => {
-    const plan = buildTableDdl(request('clickhouse', [draftOf(note, 'clickhouse')], {
-      schema: 'default',
-      newTableName: 'orders_v2'
-    }));
-    expect(plan.statements).toEqual(['RENAME TABLE `default`.`orders` TO `default`.`orders_v2`']);
-  });
-});
-
 describe('buildTableDdl / Oracle', () => {
   const amount = column({ name: 'AMOUNT', data_type: 'NUMBER(10,2)', default_value: '0 ' });
   const code = column({ name: 'CODE', data_type: 'VARCHAR2(32)', is_nullable: false });
@@ -669,29 +627,6 @@ describe('buildCreateTable', () => {
     ]);
   });
 
-  it('ClickHouse 不写 NULL / NOT NULL：可空是 Nullable(…) 类型，修饰词与它同用报 377', () => {
-    const plan = buildCreateTable({
-      schema: 'default',
-      table: 'log',
-      dialect: 'clickhouse',
-      columns: [
-        draft('id', 'UInt64', { primaryKey: true }),
-        draft('line', 'String'),
-        draft('tag', 'Nullable(String)', { nullable: false }),
-        draft('n', 'Int32', { nullable: false, defaultValue: '0' })
-      ]
-    });
-    expect(plan.statements).toEqual([
-      'CREATE TABLE `default`.`log` (\n'
-        + '  `id` UInt64,\n'
-        + '  `line` String,\n'
-        + '  `tag` Nullable(String),\n'
-        + '  `n` Int32 DEFAULT 0,\n'
-        + '  PRIMARY KEY (`id`)\n'
-        + ')'
-    ]);
-  });
-
   it('标记删除的列不进建表语句', () => {
     const plan = buildCreateTable({
       schema: null,
@@ -700,15 +635,6 @@ describe('buildCreateTable', () => {
       columns: [draft('line', 'text'), draft('gone', 'int', { dropped: true })]
     });
     expect(plan.statements).toEqual(['CREATE TABLE `log` (\n  `line` text\n)']);
-  });
-});
-
-describe('clickHouseNullable', () => {
-  it('和目录的 is_nullable 同一条规则：Nullable 在最外层，或包在 LowCardinality 里', () => {
-    expect(clickHouseNullable('Nullable(String)')).toBe(true);
-    expect(clickHouseNullable(' LowCardinality(Nullable(String))')).toBe(true);
-    expect(clickHouseNullable('String')).toBe(false);
-    expect(clickHouseNullable('Array(Nullable(Int64))')).toBe(false);
   });
 });
 

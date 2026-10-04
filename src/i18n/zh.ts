@@ -250,7 +250,6 @@ export const zh = {
   'ddl.newColumn': '新增',
   'ddl.dropColumn': '删除这一列',
   'ddl.undoDrop': '撤销删除',
-  'ddl.nullableInType': 'ClickHouse 的可空写在类型里，例如 Nullable(String)',
   'ddl.preview': '预览 SQL',
   'ddl.noChanges': '没有改动',
   'ddl.incomplete': '这些列还缺名字或类型：{columns}',
