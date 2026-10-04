@@ -991,6 +991,16 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-04 格式化之后名字的大小写，接 10-03 那轮（那轮只拿 60 个常见词试，结论「MySQL 被大写的都是保留字」不全）：**修了一处**（`748f65c`）。
+    拿 sql-formatter 15.8 在表名位置会改的全部词（MySQL 207 个、T-SQL 216 个）逐个不加引号建表：MySQL 8.4 上 22 个、MariaDB 11.8 上 38 个
+    （`commit`、`handler`、`offset`、`end`，MariaDB 另有 `function`、`row`、`system`、`window`、`option`）、SQL Server 2022 的
+    `Latin1_General_CS_AS` 库里 56 个（`type`、`role`、`language`、`login`、`service`、`sequence`、`signature`）都建得成，格式化却改成大写——
+    Linux 上 MySQL 表名区分大小写，`FROM COMMIT` 报 1146；区分大小写的 SQL Server 库（SAP 一类用 `_BIN2`）表名列名都区分，`FROM TYPE` 报 208。
+    现在这些词保留原写法，其余关键字照旧大写（同一段排两遍——大写与保留原样——逐字对齐取回）。用例先红后绿；格式化后的语句在三台库上
+    逐表执行：新代码全过，旧代码第一条就报对象不存在。rpm 0.4.127 连 MySQL 8.4，`select … from commit` 点格式化再执行，查出 2 行。
+    没改：这些词被当成子句关键字排，不缩进，难看但能跑。升级 sql-formatter 后名单要按同样办法重算（`formatSql.ts` 注释里写了做法）。
+    同一轮看过、没问题的：MySQL 9.4 的 mysqldump 仍认备份用的 `MYSQL_PWD`；各方言 30 种刁钻写法（`5--1`、`$$…$$`、`q'[…]'`、`E'\''`、
+    `->>`、`<=>`、ClickHouse 的 `{p:UInt32}`）格式化前后语义不变。
   - 2026-10-04 SSH 隧道的 known_hosts、`.sql` 文件的编码、批量关标签与切语句（rpm 0.4.125 / 0.4.126，SQLite 文件；Oracle 23ai 在 cu 上）：**修了四处**：
     - 只有注释的一段切成一条语句（`bd59bae`）：脚本末尾的注释（mysqldump 的 `-- Dump completed on …`）单独成一条，编辑器补上分号发出去；
       Oracle 23ai 上 `-- x;` 与 `/* c */;` 都是 ORA-00900，「执行全部」最后一条报错（SQLite、MySQL 8.4 不报）。现在只有注释的一段不算语句，
