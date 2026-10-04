@@ -59,7 +59,7 @@ import {
   tableKeyOfTab,
   useTableEditStore
 } from './stores/tableEditStore';
-import { useWorkspaceStore } from './stores/workspaceStore';
+import { CLOSED_TAB_LIMIT, useWorkspaceStore } from './stores/workspaceStore';
 import {
   createAiDesignWorkspaceTab,
   createErDiagramWorkspaceTab,
@@ -465,7 +465,8 @@ function App() {
       (tab) => {
         const tableKey = tableKeyOfTab(tab);
         return tableKey !== null && pendingChangeCount(tableKey) > 0;
-      }
+      },
+      CLOSED_TAB_LIMIT
     );
     for (const { id, retainDraft } of plan.close) {
       finishCloseTab(id, retainDraft);

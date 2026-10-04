@@ -7,7 +7,7 @@ import {
 import { tabTitleFromSqlPath, type SqlFileLink } from '../utils/sqlFile';
 
 /** 保留多少个最近关闭的标签。超出的最旧的一个被挤掉 */
-const CLOSED_TAB_LIMIT = 10;
+export const CLOSED_TAB_LIMIT = 10;
 
 interface WorkspaceState {
   sidebarProfileId: string | null;
