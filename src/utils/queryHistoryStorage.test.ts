@@ -194,6 +194,27 @@ describe('loadQueryHistory / saveQueryHistory', () => {
     expect(loadQueryHistory().map((e) => e.id)).toEqual(['e0', 'e1']);
   });
 
+  it('配额写不下时先砍没标注过的，收藏的旧记录留着', () => {
+    const entries = Array.from({ length: 8 }, (_, index) =>
+      entry({ id: `e${index}`, startedAt: daysAgo(index), favorite: index === 7 ? true : undefined })
+    );
+    const real = localStorage.setItem.bind(localStorage);
+    let rejections = 2;
+    const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation((key, value) => {
+      if (rejections > 0) {
+        rejections -= 1;
+        throw new DOMException('quota', 'QuotaExceededError');
+      }
+      real(key, value);
+    });
+
+    saveQueryHistory(entries);
+    setItem.mockRestore();
+
+    // 仍是最新在前：收藏的那条最旧，排在最后
+    expect(loadQueryHistory().map((e) => e.id)).toEqual(['e0', 'e7']);
+  });
+
   it('localStorage 完全不可用时不抛', () => {
     const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
       throw new DOMException('quota', 'QuotaExceededError');

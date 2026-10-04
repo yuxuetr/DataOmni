@@ -183,7 +183,7 @@ export function loadQueryHistory(): QueryHistoryEntry[] {
 }
 
 /**
- * 写回，写不下就砍一半再试。
+ * 写回，写不下就砍一半再试（先砍没标注过的）。
  *
  * localStorage 满了抛的是 `QuotaExceededError`，而配额是**整个源**共享的：
  * 撑爆它的不一定是历史自己。这里只对自己负责——把自己缩小到能写进去为止，
@@ -200,8 +200,12 @@ export function saveQueryHistory(entries: readonly QueryHistoryEntry[]): void {
       );
       return;
     } catch {
-      // 最新的在前，所以从尾部砍——先丢掉的是最旧的那些
-      candidate = candidate.slice(0, Math.floor(candidate.length / 2));
+      // 砍一半，按淘汰同样的优先级：先丢没标注过的最旧那些，收藏不跟着一起丢
+      candidate = pruneHistory(candidate, {
+        maxAgeDays: 0,
+        maxEntries: Math.floor(candidate.length / 2),
+        slowQueryMs: 0
+      });
     }
   }
 
