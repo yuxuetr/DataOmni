@@ -112,7 +112,8 @@ const LIKE_STRING_TYPE_TOKENS = new Set([
  * （MySQL、SQLite、SQL Server、Oracle 自己会转）。只转非字符串列：citext 转成 text 就区分大小写了。
  *
  * SQL Server 自己转的有两处不对：datetime、smalldatetime 隐式转成 `Jan  2 2024  3:04AM`，照网格里的
- * `2024-01-02` 搜一行也中不了（样式 121 就是网格的写法）；xml 根本不收，报 8116
+ * `2024-01-02` 搜一行也中不了（样式 121 就是网格的写法）；xml 根本不收，报 8116。
+ * MySQL 的 BIT 网格里显示成十进制数，LIKE 却比那几位的字节，转成数才对得上
  */
 function likeOperand(quotedColumn: string, column: ColumnInfo, dialect: SqlIdentifierDialect): string {
   if (LIKE_STRING_TYPE_TOKENS.has(columnTypeToken(column.data_type))) {
@@ -125,6 +126,8 @@ function likeOperand(quotedColumn: string, column: ColumnInfo, dialect: SqlIdent
       return `CAST(${quotedColumn} AS VARCHAR)`;
     case 'clickhouse':
       return `toString(${quotedColumn})`;
+    case 'mysql':
+      return columnTypeToken(column.data_type) === 'bit' ? `CAST(${quotedColumn} AS UNSIGNED)` : quotedColumn;
     case 'sqlserver':
       switch (columnTypeToken(column.data_type)) {
         case 'datetime':

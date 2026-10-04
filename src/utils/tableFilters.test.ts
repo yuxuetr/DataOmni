@@ -197,6 +197,15 @@ describe('buildFilterClause', () => {
       .toBe("WHERE [b] LIKE N'%2024-01%' ESCAPE N'!'");
   });
 
+  it('MySQL 的 BIT 上「包含」按网格显示的十进制数搜', () => {
+    // 原样 LIKE 比的是那几位的字节：bit(8) 里的 54 搜 5 一行也中不了
+    expect(buildFilterClause([filter({ column: 'b', operator: 'contains', value: '5' })], [column('b', 'bit(8)')], 'mysql'))
+      .toBe("WHERE CAST(`b` AS UNSIGNED) LIKE '%5%' ESCAPE '!'");
+    // 比较不用转：MySQL 拿字符串和 BIT 比时按数比，'6' 筛得中 6
+    expect(buildFilterClause([filter({ column: 'b', operator: 'eq', value: '6' })], [column('b', 'bit(8)')], 'mysql'))
+      .toBe("WHERE `b` = '6'");
+  });
+
   it('SQL Server 的 text / ntext / image 与 Oracle 的 LOB 上比较不报错', () => {
     // 原样比较：SQL Server 402「incompatible in the equal to operator」，Oracle ORA-22848
     const compare = (name: string, operator: ColumnFilter['operator'], value: string) =>
