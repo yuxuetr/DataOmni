@@ -57,15 +57,13 @@ export function isEmptyFilter(filter: HistoryFilter): boolean {
  * 「9 月 21 日」会连 9 月 20 日早上八点之后的记录一起捞进来。日期框里写的
  * 是用户当地的日期，就得按当地算。
  */
-function localDayStart(day: string): number | null {
+function localDayStart(day: string, offsetDays = 0): number | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
   if (!match) {
     return null;
   }
-  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])).getTime();
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + offsetDays).getTime();
 }
-
-const ONE_DAY = 24 * 60 * 60 * 1000;
 
 export function filterHistory(
   entries: readonly QueryHistoryEntry[],
@@ -73,10 +71,10 @@ export function filterHistory(
 ): QueryHistoryEntry[] {
   const needle = filter.text.trim().toLowerCase();
   const fromTime = filter.from ? localDayStart(filter.from) : null;
-  const toStart = filter.to ? localDayStart(filter.to) : null;
   // `to` 那一天本身也要算在内：选「到 9 月 21 日」却看不到当天跑过的查询，
-  // 是这个筛选最容易出、也最难被发现的一种错
-  const toTime = toStart === null ? null : toStart + ONE_DAY;
+  // 是这个筛选最容易出、也最难被发现的一种错。终点取「次日零点」而不是加 24 小时——
+  // 夏令时切换那天有 23 或 25 小时
+  const toTime = filter.to ? localDayStart(filter.to, 1) : null;
 
   return entries.filter((entry) => {
     if (filter.profileId !== null && entry.profileId !== filter.profileId) {

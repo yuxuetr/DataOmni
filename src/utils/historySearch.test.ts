@@ -106,6 +106,24 @@ describe('filterHistory', () => {
     );
   });
 
+  it('夏令时切换那天不是 24 小时，结束日照样整天算进来', () => {
+    const previousTz = process.env.TZ;
+    process.env.TZ = 'America/New_York';
+    try {
+      // 2026-11-01 纽约回拨一小时，这一天有 25 小时；23:30 在第 25 个小时里
+      const lateFallBack = [entry({ id: 'late', startedAt: localIso(2026, 11, 1, 23) })];
+      expect(
+        filterHistory(lateFallBack, { ...EMPTY_HISTORY_FILTER, to: '2026-11-01' }).map((e) => e.id)
+      ).toEqual(['late']);
+
+      // 2026-03-08 拨快一小时，这一天只有 23 小时；第二天 00:30 不属于它
+      const nextDay = [entry({ id: 'next', startedAt: localIso(2026, 3, 9, 0) })];
+      expect(filterHistory(nextDay, { ...EMPTY_HISTORY_FILTER, to: '2026-03-08' })).toHaveLength(0);
+    } finally {
+      process.env.TZ = previousTz;
+    }
+  });
+
   it('只看收藏', () => {
     const entries = [entry({ id: 'fav', favorite: true }), entry({ id: 'plain' })];
     expect(
