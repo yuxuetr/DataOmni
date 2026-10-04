@@ -86,6 +86,26 @@ describe('buildFilterClause', () => {
     ).toBe('WHERE `id` > 9223372036854775806');
   });
 
+  it('PostgreSQL 的 money 与 real 上数字照样加引号，交给它按列类型转', () => {
+    const eq = (name: string, value: string) => filter({ column: name, operator: 'eq', value });
+    // money = 12.5 报 operator does not exist: money = numeric
+    expect(buildFilterClause([eq('m', '12.5')], [column('m', 'money')], 'postgresql'))
+      .toBe(`WHERE "m" = '12.5'`);
+    // real = 1.1 把列提升成 double 去比 1.1，1.1::real 是 1.10000002…，一行也中不了
+    expect(buildFilterClause([eq('r', '1.1')], [column('r', 'real')], 'postgresql'))
+      .toBe(`WHERE "r" = '1.1'`);
+    expect(buildFilterClause([eq('d', '1.1')], [column('d', 'double precision')], 'postgresql'))
+      .toBe('WHERE "d" = 1.1');
+  });
+
+  it('MySQL 的 FLOAT 拿同样是单精度的值去比', () => {
+    // fl = 1.1 与 fl = '1.1' 都中不了，fl > 1.1 反而把存的 1.1 筛进来
+    expect(buildFilterClause([filter({ column: 'f', operator: 'gt', value: '1.1' })], [column('f', 'float')], 'mysql'))
+      .toBe('WHERE `f` > CAST(1.1 AS FLOAT)');
+    expect(buildFilterClause([filter({ column: 'f', operator: 'eq', value: 'x' })], [column('f', 'float')], 'mysql'))
+      .toBe("WHERE `f` = 'x'");
+  });
+
   it('ClickHouse 的数值列反而要加引号', () => {
     // 它把带小数点的字面量和超过 64 位的整数读成 Float64：Int128 上 …727 会把 …728 也筛出来，
     // Decimal 上 -999999999999.0000000000 一行也筛不中。字符串字面量按列类型转，25.8 上逐个核过

@@ -58,6 +58,8 @@ export function isCompleteFilter(filter: ColumnFilter): boolean {
   return !operatorNeedsValue(filter.operator) || filter.value !== '';
 }
 
+const POSTGRES_QUOTED_NUMERIC = new Set(['real', 'float4', 'money']);
+
 /**
  * 比较用的字面量。
  *
@@ -68,6 +70,11 @@ export function isCompleteFilter(filter: ColumnFilter): boolean {
  * ClickHouse 反过来：它把带小数点的字面量和超过 64 位的整数读成 Float64，Decimal、Int128 比不准；
  * 字符串字面量它按列类型转，反而是准的。
  *
+ * 单精度浮点不能拿数字字面量比：PostgreSQL 的 `real = 1.1` 把列提升成 double，1.1::real 是 1.10000002…，
+ * 一行也中不了；MySQL 的 FLOAT 不论 `1.1` 还是 `'1.1'` 都按 double 比，`> 1.1` 反而把存的 1.1 筛进来。
+ * PostgreSQL 的 money 与数字之间根本没有比较运算符。PostgreSQL 写成字符串字面量由它按列类型转，
+ * MySQL 写成 `CAST(… AS FLOAT)`（PG 16、MySQL 8.4 上都核过）。
+ *
  * 二进制列上 `0x` 加偶数位十六进制按字节比：网格里就是这么显示的，照抄进来拼成字符串，比的是那串字符的
  * 字节，一行也筛不中。别的文本照旧（MySQL 的二进制列内容可打印时显示原文），与导入的约定相同。
  */
@@ -77,6 +84,13 @@ function comparisonLiteral(
   dialect: SqlIdentifierDialect
 ): string {
   if (column && dialect !== 'clickhouse' && isNumericColumnType(column.data_type) && NUMERIC_LITERAL.test(filter.value.trim())) {
+    const token = columnTypeToken(column.data_type);
+    if (dialect === 'postgresql' && POSTGRES_QUOTED_NUMERIC.has(token)) {
+      return quoteSqlStringLiteral(filter.value.trim(), dialect);
+    }
+    if (dialect === 'mysql' && token === 'float') {
+      return `CAST(${filter.value.trim()} AS FLOAT)`;
+    }
     return filter.value.trim();
   }
   if (column && columnEditorKind(column.data_type, dialect) === 'binary' && HEX_BYTES.test(filter.value.trim())) {
