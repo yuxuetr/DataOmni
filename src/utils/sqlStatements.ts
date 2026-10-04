@@ -54,6 +54,17 @@ export const splitSqlStatements = (
     : byLine.statements;
 };
 
+/**
+ * `--` 是不是行注释。MySQL 要求后面跟空白或控制字符（或已到末尾）：`5--x` 是 5 减负 x，
+ * 当成注释会吞掉同一行后面的分号。别家的 `--` 后面是什么都算
+ */
+function startsDashComment(sqlText: string, index: number, dialect?: SqlDialect): boolean {
+  if (!sqlText.startsWith('--', index)) return false;
+  if (dialect !== 'mysql') return true;
+  const next = sqlText.charCodeAt(index + 2);
+  return Number.isNaN(next) || next <= 0x20;
+}
+
 /** 单独一行的 `/`：SQL*Plus 里执行缓冲区、结束 PL/SQL 块的那一行 */
 function matchSlashLine(sqlText: string, index: number): number | null {
   if (index > 0 && sqlText[index - 1] !== '\n' && sqlText[index - 1] !== '\r') {
@@ -191,7 +202,7 @@ function scanStatements(
         continue;
       }
 
-      if (sqlText.startsWith('--', index) || (hashComments && sqlText[index] === '#')) {
+      if (startsDashComment(sqlText, index, dialect) || (hashComments && sqlText[index] === '#')) {
         const markerLength = sqlText[index] === '#' ? 1 : 2;
         buffer += sqlText.slice(index, index + markerLength);
         state = { type: 'line-comment' };

@@ -220,6 +220,20 @@ describe('按方言切语句', () => {
       .toEqual(["SELECT [it's; odd]]name] FROM t", 'SELECT 2']);
   });
 
+  it('MySQL 的 -- 后面要跟空白才是注释，5--x 是减负数', () => {
+    // MySQL 8.4 上 `SELECT 1--1` 得 2；`--x` 当注释的话后面的分号被吞，两条拼成一条发出去
+    expect(splitSqlStatements('SELECT 5--x FROM d; SELECT 2', 'mysql'))
+      .toEqual(['SELECT 5--x FROM d', 'SELECT 2']);
+    expect(splitSqlStatements('SELECT 1 -- note; still\nSELECT 2;', 'mysql'))
+      .toEqual(['SELECT 1 -- note; still\nSELECT 2']);
+    expect(splitSqlStatements('SELECT 1 --\tnote;\n; SELECT 2', 'mysql'))
+      .toEqual(['SELECT 1 --\tnote;', 'SELECT 2']);
+    expect(splitSqlStatements('SELECT 1; --', 'mysql')).toEqual(['SELECT 1', '--']);
+    // 别家的 -- 照旧不论后面是什么
+    expect(splitSqlStatements('SELECT 5--x;\nSELECT 2', 'postgresql'))
+      .toEqual(['SELECT 5--x;\nSELECT 2']);
+  });
+
   it('SQLite 也认方括号标识符：里面的引号不会吞掉后面的脚本', () => {
     // sqlite3 3.x 上 `CREATE TABLE t([it's;x] int)` 建得出、查得到
     expect(splitSqlStatements("SELECT [it's;x] FROM t; SELECT 2;", 'sqlite'))
