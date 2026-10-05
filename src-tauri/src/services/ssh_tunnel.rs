@@ -212,8 +212,8 @@ fn expand_home(path: &str) -> String {
   let Some(rest) = path.strip_prefix('~') else {
     return path.to_string();
   };
-  // `~` 单独一个，或者 `~/…`；`~name` 的下一个字符不是分隔符，不动它
-  if !rest.is_empty() && !rest.starts_with('/') {
+  // `~` 单独一个，或者 `~/…` 或 `~\…`；`~name` 的下一个字符不是分隔符，不动它
+  if !rest.is_empty() && !rest.starts_with('/') && !rest.starts_with('\\') {
     return path.to_string();
   }
   let Some(home) = std::env::home_dir() else {
