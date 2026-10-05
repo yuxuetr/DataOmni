@@ -1,4 +1,12 @@
-import { format, type SqlLanguage } from 'sql-formatter';
+import {
+  duckdb,
+  format,
+  formatDialect,
+  postgresql,
+  type DialectOptions,
+  type KeywordCase,
+  type SqlLanguage
+} from 'sql-formatter';
 import { DatabaseType } from '../contracts/connection';
 import { describeError } from './describeError';
 import { findSqlStatementAtOffset, getSqlStatementRanges } from './sqlStatements';
@@ -72,6 +80,32 @@ const NAMEABLE_KEYWORDS: Partial<Record<SqlLanguage, ReadonlySet<string>>> = {
 };
 
 /**
+ * PostgreSQL 与 DuckDB 认 `N'…'`（从 SQL Server 搬来的脚本满是这种写法），sql-formatter 不认
+ * 这个前缀，排成 `N 'a'`——在这两家里那是「类型 N 的字面量」，报类型不存在（PostgreSQL 16、
+ * DuckDB 1.5 上试过）。给普通单引号字符串补上 N 前缀；前缀不分大小写，`n'…'` 也认
+ */
+const withNationalStrings = (dialect: DialectOptions): DialectOptions => ({
+  ...dialect,
+  tokenizerOptions: {
+    ...dialect.tokenizerOptions,
+    stringTypes: dialect.tokenizerOptions.stringTypes.map((type) => {
+      if (type === "''-qq") {
+        return { quote: type, prefixes: ['N'] };
+      }
+      if (typeof type === 'object' && 'quote' in type && type.quote === "''-qq") {
+        return { ...type, prefixes: [...type.prefixes, 'N'] };
+      }
+      return type;
+    })
+  }
+});
+
+const PATCHED_DIALECTS: Partial<Record<SqlLanguage, DialectOptions>> = {
+  postgresql: withNationalStrings(postgresql),
+  duckdb: withNationalStrings(duckdb)
+};
+
+/**
  * 排版一段 SQL。
  *
  * 关键字统一大写：补全插入的关键字本来就是大写的（`upperCaseKeywords`），
@@ -86,26 +120,31 @@ export function formatSql(sql: string, language: SqlLanguage): FormatSqlResult {
     return { ok: true, sql };
   }
 
-  try {
-    const layout = {
-      language,
+  const formatAs = (keywordCase: KeywordCase): string => {
+    const options = {
       // 和编辑器与整个项目的缩进一致
       tabWidth: 2,
       // 语句之间空一行
-      linesBetweenQueries: 1
+      linesBetweenQueries: 1,
+      keywordCase
     };
+    const dialect = PATCHED_DIALECTS[language];
+    return dialect ? formatDialect(sql, { ...options, dialect }) : format(sql, { ...options, language });
+  };
+
+  try {
     // ClickHouse 例外：它的名字区分大小写，而 sql-formatter 把 type、name、key、
     // events 这些词当关键字，列名表名跟着被改成大写，语句就找不到对象了
     if (language === 'clickhouse') {
-      return { ok: true, sql: format(sql, { ...layout, keywordCase: 'preserve' }) };
+      return { ok: true, sql: formatAs('preserve') };
     }
-    const upper = format(sql, { ...layout, keywordCase: 'upper' });
+    const upper = formatAs('upper');
     const nameable = NAMEABLE_KEYWORDS[language];
     if (!nameable) {
       return { ok: true, sql: upper };
     }
     // 大小写不影响排版，两份逐字对齐；对不齐（不该发生）就整份保留原样，宁可不大写
-    const preserved = format(sql, { ...layout, keywordCase: 'preserve' });
+    const preserved = formatAs('preserve');
     return {
       ok: true,
       sql: preserved.length === upper.length

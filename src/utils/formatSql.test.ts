@@ -139,6 +139,18 @@ describe('排版不改内容', () => {
     }
   });
 
+  it('PostgreSQL 与 DuckDB 的 N 前缀字面量不拆开', () => {
+    // `N 'a'` 被读成「类型 N 的字面量」：PostgreSQL 16 报 type "n" does not exist，
+    // DuckDB 1.5 报 Type with name N does not exist。从 SQL Server 搬过来的脚本满是 `N'…'`
+    for (const language of ['postgresql', 'duckdb'] as const) {
+      const result = formatSql("select N'a', n'b' from t", language);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.sql.replace(/\s+/g, ' ')).toBe("SELECT N'a', n'b' FROM t");
+      }
+    }
+  });
+
   it('再排一次不会继续变（幂等）', () => {
     const once = formatSql('select id,name from users where id=1', 'postgresql');
     expect(once.ok).toBe(true);
