@@ -23,6 +23,7 @@ import {
   CONNECTION_LOST_CODE,
   QUERY_CANCELLED_CODE,
   QUERY_TIMEOUT_CODE,
+  reportedByDatabase,
   toQueryExecutionError
 } from '../utils/queryError';
 import { DatabaseSession, type TransactionContext } from '../contracts/session';
@@ -922,8 +923,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         transactionLost = get().session?.transaction.status === 'idle';
       }
       const rolledBack = transactionLost ? translateNow('error.abandonedTransactionRolledBack') : null;
-      // 超时、取消、断线都是我们自己判出来的，数据库没说过话，不该带上任何结构
-      const errorDetails = timedOut || cancelled || connectionLost ? undefined : queryError;
+      // 超时、取消、断线、读不懂回包都是我们自己判出来的，数据库没说过话，不该带上任何结构
+      const errorDetails = reportedByDatabase(queryError) ? queryError : undefined;
       
       const pending = get().executions.find((candidate) => candidate.id === execution.id) ?? execution;
       const finished = cancelled

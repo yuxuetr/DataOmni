@@ -2,8 +2,20 @@ import { describe, expect, it } from 'vitest';
 import {
   formatQueryErrorReport,
   locateQueryError,
+  reportedByDatabase,
   toQueryExecutionError
 } from './queryError';
+
+describe('reportedByDatabase', () => {
+  it('数据库给的错误码算，我们自己判出来的不算', () => {
+    expect(reportedByDatabase({ message: 'x', code: '42P01' })).toBe(true);
+    expect(reportedByDatabase({ message: 'x' })).toBe(true);
+    // 驱动读不懂回包：面板不该印一个「错误码 PROTOCOL_ERROR」，像是服务端报的
+    for (const code of ['QUERY_TIMEOUT', 'QUERY_CANCELLED', 'CONNECTION_LOST', 'PROTOCOL_ERROR']) {
+      expect(reportedByDatabase({ message: 'x', code })).toBe(false);
+    }
+  });
+});
 
 describe('toQueryExecutionError', () => {
   it('后端交来的对象原样落地', () => {

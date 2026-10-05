@@ -23,6 +23,21 @@ export const ROW_COUNT_MISMATCH_CODE = 'ROW_COUNT_MISMATCH';
 export const CONNECTION_LOST_CODE = 'CONNECTION_LOST';
 
 /**
+ * 驱动读不懂服务端的回包（MySQL 9 的 VECTOR 列类型就是一例）。会话下一条之前自己换连接，
+ * 不用重连；但数据库也没说过话
+ */
+export const PROTOCOL_ERROR_CODE = 'PROTOCOL_ERROR';
+
+/**
+ * 这个错是数据库说的，还是我们自己判出来的（超时、取消、断线、读不懂回包）。
+ * 后者不该带上错误码、位置这些结构：面板会把我们的码印成「错误码」，像是服务端报的
+ */
+export function reportedByDatabase(error: QueryExecutionError): boolean {
+  return ![QUERY_TIMEOUT_CODE, QUERY_CANCELLED_CODE, CONNECTION_LOST_CODE, PROTOCOL_ERROR_CODE]
+    .includes(error.code ?? '');
+}
+
+/**
  * 把 `invoke` reject 出来的东西变成结构化错误。
  *
  * 后端的 `execute_query` 现在 reject 一个对象；其余命令仍然 reject 一个字符串，
