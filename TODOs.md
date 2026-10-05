@@ -998,8 +998,8 @@
     （可带 `DEFINER=`、`SQL SECURITY`、MariaDB 的 `OR REPLACE` / `AGGREGATE`）也数 BEGIN / CASE 与 END；`END IF / LOOP / WHILE /
     REPEAT` 开头没有 BEGIN，不算，`END CASE` 后面的 CASE 不再开块。写了 DELIMITER 的照旧按它切、不数。用例先红后绿，
     `bun run check` 通过。打包版 A/B：0.4.170 九段、第一段 42000；0.4.171 三段，过程建好、`CALL` 写进三行，服务端一致。
-    没做：过程体里拿 `begin` / `end` / `case` 当不加引号的列名（`SET NEW.end = 1`）会数错——MySQL 里它们是保留字（`end` 不是，
-    但罕见），重估条件：有人报。
+    没做：过程体里拿 `begin` / `end` / `case` 当不加引号的列名（`SET NEW.end = 1`）会数错——`case` 是保留字用不了，
+    `begin` / `end` 不是，能直接当列名，但罕见。重估条件：有人报。
   - 2026-10-05 驱动读不懂回包之后会话坏到断开重连（`query_error.rs`、`query_session.rs`、`utils/queryError.ts`；rpm 0.4.170，
     本机 Docker 的 mysql:9.4）：**修了一处**（`d12cf17`、`015de08`）。编辑器里 `SELECT * FROM 有 VECTOR 的表` 报 0xf2 之后，连接上剩着
     没读完的包，同一个标签页的下一条报 `COM_STMT_PREPARE_OK` 协议错；事务里时状态栏还写「事务中」，其实那条连接已经不能用。
