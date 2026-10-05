@@ -287,6 +287,11 @@ ORDER BY c.ORDINAL_POSITION
 /// 只排掉 1，它在 `SELECT *` 里同样取不到。
 ///
 /// `pk` 本身就是键内次序（0 表示不是主键），不需要再算一次。
+///
+/// rowid 别名（单列的 `INTEGER PRIMARY KEY`）不给值时由 SQLite 分配，写了 `NOT NULL` 也一样，
+/// 算 `BY DEFAULT` 的自增；不算的话这类表（Django、Android Room 建的都是）新增行要手填 id。
+/// 认法是「单列主键而没有 `origin = 'pk'` 的索引」：不是别名的主键（`INT`、列上写 `DESC`、
+/// `WITHOUT ROWID`）都有这样一个索引，照类型名去认反而认不出 `DESC` 那个怪例。
 const SQLITE_COLUMNS: &str = r#"
 SELECT
   p.name AS column_name,
@@ -295,12 +300,16 @@ SELECT
   p.dflt_value AS column_default,
   (p.pk > 0) AS is_primary_key,
   NULLIF(p.pk, 0) AS primary_key_ordinal,
-  (p.hidden IN (2, 3)) AS is_generated,
-  NULL AS identity_generation,
+  (p.hidden IN (2, 3) OR (t.alias_table AND p.pk = 1)) AS is_generated,
+  CASE WHEN t.alias_table AND p.pk = 1 THEN 'BY DEFAULT' END AS identity_generation,
   NULL AS collation,
   NULL AS comment,
   NULL AS column_extra
 FROM pragma_table_xinfo(?1) p
+CROSS JOIN (
+  SELECT (SELECT count(*) FROM pragma_table_xinfo(?1) WHERE pk > 0) = 1
+    AND NOT EXISTS (SELECT 1 FROM pragma_index_list(?1) WHERE origin = 'pk') AS alias_table
+) t
 WHERE p.hidden <> 1
 ORDER BY p.cid
 "#;

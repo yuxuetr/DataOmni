@@ -493,7 +493,7 @@
           "nullable": true,
           "primaryKeyOrdinal": 1,
           "defaultValue": null,
-          "generated": false
+          "generated": true
         },
         {
           "name": "code",
@@ -555,7 +555,7 @@
           "nullable": true,
           "primaryKeyOrdinal": 1,
           "defaultValue": null,
-          "generated": false
+          "generated": true
         },
         {
           "name": "sku",
@@ -777,7 +777,7 @@
           "nullable": false,
           "primaryKeyOrdinal": 1,
           "defaultValue": null,
-          "generated": false
+          "generated": true
         },
         {
           "name": "code",

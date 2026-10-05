@@ -4552,6 +4552,50 @@ async fn sqlite_reports_generated_columns_that_table_info_hides() {
   assert_eq!(by_name("code").2, 0, "NOT NULL 列不可空: {columns:?}");
 }
 
+/// rowid 别名写了 NOT NULL（Django、Android Room 建的表都这样）照样由 SQLite 分配，
+/// 不算成「由数据库产生」就会在新增行和导入时被当成必填列点名。
+/// 同样写法而不是别名的几种（WITHOUT ROWID、`INT`、列上写 `DESC`、复合键）真的要给值。
+#[tokio::test]
+async fn sqlite_reports_rowid_aliases_as_generated() {
+  let pool = SqlitePoolOptions::new()
+    .max_connections(1)
+    .connect("sqlite::memory:")
+    .await
+    .expect("connect to in-memory SQLite");
+
+  let tables = [
+    ("alias_not_null", "(id INTEGER PRIMARY KEY NOT NULL, v TEXT)", Some("BY DEFAULT")),
+    ("alias_table_key", "(id INTEGER NOT NULL, v TEXT, PRIMARY KEY (id DESC))", Some("BY DEFAULT")),
+    (
+      "alias_autoincrement",
+      "(id Integer Primary Key AutoIncrement NOT NULL, v TEXT)",
+      Some("BY DEFAULT"),
+    ),
+    ("without_rowid", "(id INTEGER PRIMARY KEY NOT NULL, v TEXT) WITHOUT ROWID", None),
+    ("int_key", "(id INT PRIMARY KEY NOT NULL, v TEXT)", None),
+    ("desc_column_key", "(id INTEGER PRIMARY KEY DESC NOT NULL, v TEXT)", None),
+    ("composite_key", "(id INTEGER NOT NULL, v INTEGER, PRIMARY KEY (id, v))", None),
+  ];
+  for (table, definition, expected) in tables {
+    sqlx::raw_sql(&format!("CREATE TABLE {table} {definition}"))
+      .execute(&pool)
+      .await
+      .expect("prepare SQLite table");
+    let row = sqlx::query(column_queries(dataomni_lib::models::DatabaseType::SQLite))
+      .bind(table)
+      .fetch_one(&pool)
+      .await
+      .expect("run SQLite column query");
+    let reported =
+      (row.get::<i64, _>("is_generated"), row.get::<Option<String>, _>("identity_generation"));
+    assert_eq!(
+      reported,
+      (i64::from(expected.is_some()), expected.map(str::to_owned)),
+      "{table} 的 id"
+    );
+  }
+}
+
 /// 改结构的共用语料：`fixtures/ddl-conformance.json`。
 ///
 /// 前端的 `tableDdl.conformance.test.ts` 照它核对**生成的语句**；这里照它

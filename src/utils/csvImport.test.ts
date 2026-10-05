@@ -183,12 +183,13 @@ describe('validateImport', () => {
     );
   });
 
-  it('自增列收得下值：MySQL 不提，计数器不跟着走的 PostgreSQL 与 Oracle 只是 warning', () => {
+  it('自增列收得下值：MySQL 与 SQLite 不提，计数器不跟着走的 PostgreSQL 与 Oracle 只是 warning', () => {
     const columns = [column({ name: 'id', is_generated: true, identity_generation: 'BY DEFAULT' })];
     const mapped: ColumnMapping[] = [{ target: 'id', source: 0 }];
-    const keysFor = (dialect: 'mysql' | 'postgresql' | 'oracle') =>
+    const keysFor = (dialect: 'mysql' | 'sqlite' | 'postgresql' | 'oracle') =>
       validateImport(mapped, columns, preview(), '', dialect).map((issue) => [issue.key, issue.level]);
     expect(keysFor('mysql')).toEqual([]);
+    expect(keysFor('sqlite')).toEqual([]);
     expect(keysFor('postgresql')).toEqual([['import.issue.identityNotAdvanced', 'warning']]);
     expect(keysFor('oracle')).toEqual([['import.issue.identityNotAdvanced', 'warning']]);
     const always = [column({ name: 'id', is_generated: true, identity_generation: 'ALWAYS' })];
