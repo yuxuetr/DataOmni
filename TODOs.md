@@ -991,6 +991,17 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 DuckDB 宏的「查看定义」（`object_catalog.rs`；rpm 0.4.154，容器里的 DuckDB 文件；DuckDB 1.5.6 CLI）：**修了一处**（`1d8072d`）。
+    宏没有存原文，定义是拿参数名与宏体拼回来的：参数类型丢了（`typed(a DOUBLE)` 拼成 `typed(a)`，照它重建后实参不再先转类型，
+    `typed(7, 'x')` 从 `7.0x` 变成 `7x`），名字也不加引号（`sales."My Macro"` 拼成 `sales.My Macro`，语法错误）。
+    现在类型取自 `parameter_types`，名字不是普通标识符或是保留字时加引号。单测在内存库里照拼出的定义删掉重建、调用结果不变，
+    换回旧语句三条都红。打包版里建 `"My Macro"("the x")`，查看定义是 `CREATE MACRO main."My Macro"("the x") AS ("the x" * 2)`。
+    - 没修的：参数默认值（`b := 5`）目录里没有，只有 `EXPORT DATABASE` 写得出来，拼回来的定义里没有默认值。
+      重估条件：`duckdb_functions()` 多出带原文或默认值的列（`SELECT * FROM duckdb_functions()` 看列名）。
+      带类型的宏只有 v1.4.0 起的存储格式收，应用按默认格式开的文件里建不出来，打包版上只看了引号那一半。
+    - 同一轮看过、没问题的：会话目标的「只读」在各方言都解码成布尔或数（Oracle 的 `NUMBER(1)` 是数）；
+      SQLite 的对象 schema 恒为空，建索引不会把 schema 写到 `ON` 后面；MongoDB 文档网格里缺 `constructor` 这类字段时
+      取到原型上的函数，只是少了「缺字段」的提示，不改。
   - 2026-10-05 Neo4j 语句的风险判定与 IPv6 主机的写法（`cypherRisk.ts`、`mongoConnection.ts`；rpm 0.4.153，cu 上的 Neo4j 2026.09，
     容器里只在 `[::1]` 上听的转发）：**修了两处**：
     - GQL 的 `INSERT` 不算写（`bf7ffa9`）：Neo4j 5.18 起与 `CREATE` 同义，2026.09 上不加 `CYPHER 25` 也建节点，`EXPLAIN` 报 `WRITE_ONLY`。
