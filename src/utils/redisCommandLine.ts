@@ -168,11 +168,11 @@ function numbered(children: string[][], marker: string): string[] {
 }
 
 /**
- * 跑之前要先问一句的命令：清掉整个库或整台服务端的数据、把服务端卡住的（`KEYS` 在大库上
- * 是全表扫描，期间别的请求都等着）、改服务端本身的。其余照常直接跑——Redis 的写命令
- * 太多，都问一遍等于都不问
+ * 跑之前要先问一句的命令：清掉整个库或整台服务端的数据、把服务端卡住的、改服务端本身的。
+ * 卡住分两种，提示不同：`KEYS` 是全表扫描（找键有别的路），`SAVE`、`CLIENT PAUSE`、
+ * `DEBUG` 是让服务端停下来不理别人。其余照常直接跑——Redis 的写命令太多，都问一遍等于都不问
  */
-export type CommandRisk = 'wipes' | 'blocksServer' | 'changesServer';
+export type CommandRisk = 'wipes' | 'blocksServer' | 'stallsServer' | 'changesServer';
 
 export function commandRisk(args: readonly Uint8Array[]): CommandRisk | null {
   const word = (index: number) => new TextDecoder().decode(args[index] ?? new Uint8Array()).toUpperCase();
@@ -180,7 +180,9 @@ export function commandRisk(args: readonly Uint8Array[]): CommandRisk | null {
   const sub = word(1);
   if (name === 'FLUSHALL' || name === 'FLUSHDB' || name === 'SWAPDB') return 'wipes';
   if ((name === 'SCRIPT' || name === 'FUNCTION') && sub === 'FLUSH') return 'wipes';
-  if (name === 'KEYS' || name === 'DEBUG') return 'blocksServer';
+  if (name === 'KEYS') return 'blocksServer';
+  if (name === 'SAVE' || name === 'DEBUG' || (name === 'CLIENT' && sub === 'PAUSE')) return 'stallsServer';
+  if (name === 'CLIENT' && sub === 'KILL') return 'changesServer';
   if (['SHUTDOWN', 'REPLICAOF', 'SLAVEOF', 'CLUSTER', 'MIGRATE', 'FAILOVER'].includes(name)) return 'changesServer';
   if (name === 'CONFIG' && ['SET', 'REWRITE', 'RESETSTAT'].includes(sub)) return 'changesServer';
   if (name === 'ACL' && ['SETUSER', 'DELUSER', 'LOAD'].includes(sub)) return 'changesServer';

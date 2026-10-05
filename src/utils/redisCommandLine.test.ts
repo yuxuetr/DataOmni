@@ -79,6 +79,17 @@ describe('commandRisk', () => {
     expect(commandRisk(args('SCRIPT FLUSH'))).toBe('wipes');
   });
 
+  it('让服务端停下来不理别人的另起一档：提示不能说成「从头扫一遍」', () => {
+    expect(commandRisk(args('SAVE'))).toBe('stallsServer');
+    expect(commandRisk(args('client pause 600000'))).toBe('stallsServer');
+    expect(commandRisk(args('DEBUG SLEEP 30'))).toBe('stallsServer');
+    // 踢掉别人的连接是改服务端；解除暂停、后台存盘不问
+    expect(commandRisk(args('CLIENT KILL ID 42'))).toBe('changesServer');
+    expect(commandRisk(args('CLIENT UNPAUSE'))).toBeNull();
+    expect(commandRisk(args('BGSAVE'))).toBeNull();
+    expect(commandRisk(args('CLIENT LIST'))).toBeNull();
+  });
+
   it('普通读写与只读的子命令不问', () => {
     expect(commandRisk(args('SET k v'))).toBeNull();
     expect(commandRisk(args('DEL k'))).toBeNull();
