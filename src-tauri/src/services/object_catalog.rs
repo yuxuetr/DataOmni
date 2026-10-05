@@ -318,16 +318,32 @@ ORDER BY 1, 3, 2
 "#;
 
 /// 宏没有存原文，由参数与定义拼回 `CREATE MACRO`——这两样都是 DuckDB 自己给的，
-/// 不是猜的；重载的几个用空行隔开
+/// 不是猜的；重载的几个用空行隔开。参数带上类型（`a INTEGER` 会先把实参转成整数，
+/// 丢了就换了语义）；名字不是普通标识符或是保留字时加引号，不然拼出来的跑不了。
+///
+/// 参数的默认值（`b := 5`）目录里没有，只有 `EXPORT DATABASE` 写得出来，这里拼不回
 const DUCKDB_ROUTINE_DEFINITION: &str = r#"
+WITH reserved AS (
+  SELECT list(keyword_name) AS words FROM duckdb_keywords() WHERE keyword_category = 'reserved'
+)
 SELECT string_agg(
-  'CREATE MACRO ' || f.schema_name || '.' || f.function_name
-    || '(' || array_to_string(f.parameters, ', ') || ') AS '
+  'CREATE MACRO '
+    || CASE WHEN regexp_full_match(f.schema_name, '[A-Za-z_][A-Za-z0-9_]*')
+        AND NOT list_contains(r.words, lower(f.schema_name))
+      THEN f.schema_name ELSE '"' || replace(f.schema_name, '"', '""') || '"' END
+    || '.'
+    || CASE WHEN regexp_full_match(f.function_name, '[A-Za-z_][A-Za-z0-9_]*')
+        AND NOT list_contains(r.words, lower(f.function_name))
+      THEN f.function_name ELSE '"' || replace(f.function_name, '"', '""') || '"' END
+    || '(' || array_to_string(list_transform(list_zip(f.parameters, f.parameter_types), lambda p:
+      CASE WHEN regexp_full_match(p[1], '[A-Za-z_][A-Za-z0-9_]*') AND NOT list_contains(r.words, lower(p[1]))
+        THEN p[1] ELSE '"' || replace(p[1], '"', '""') || '"' END
+      || coalesce(' ' || p[2], '')), ', ') || ') AS '
     || CASE f.function_type WHEN 'table_macro' THEN 'TABLE ' ELSE '' END
     || f.macro_definition,
   ';' || chr(10) || chr(10)
 ) AS definition
-FROM duckdb_functions() f
+FROM duckdb_functions() f, reserved r
 WHERE f.schema_name || '.' || f.function_name = $1
   AND f.database_name = current_database()
   AND f.function_type IN ('macro', 'table_macro')
@@ -453,6 +469,39 @@ mod tests {
       queries.objects.contains("pg_get_function_identity_arguments"),
       "显示名要带参数签名，否则重载的几个在树里长得一模一样"
     );
+  }
+
+  /// DuckDB 的宏没有存原文，定义是拼回来的。参数类型与要加引号的名字丢了，拼出来的
+  /// 要么跑不了、要么换了语义：照着定义删掉重建一遍，调用结果不变才算拼对
+  #[test]
+  fn duckdb_macro_definitions_rebuild_the_same_macro() {
+    let connection = duckdb::Connection::open_in_memory().expect("in-memory DuckDB");
+    connection
+      .execute_batch(
+        "CREATE SCHEMA sales;
+         CREATE MACRO typed(a DOUBLE, b VARCHAR) AS a || b;
+         CREATE MACRO sales.\"My Macro\"(\"the x\") AS \"the x\" * 2;
+         CREATE MACRO \"select\"(n) AS TABLE SELECT n AS r;",
+      )
+      .expect("fixture");
+    for (id, drop, call, expected) in [
+      ("main.typed", "DROP MACRO typed", "SELECT typed(7, 'x')", "7.0x"),
+      (
+        "sales.My Macro",
+        "DROP MACRO sales.\"My Macro\"",
+        "SELECT sales.\"My Macro\"(21)::VARCHAR",
+        "42",
+      ),
+      ("main.select", "DROP MACRO TABLE \"select\"", "SELECT r::VARCHAR FROM \"select\"(5)", "5"),
+    ] {
+      let definition: String = connection
+        .query_row(DUCKDB_ROUTINE_DEFINITION, [id], |row| row.get(0))
+        .expect("definition");
+      connection.execute_batch(drop).expect("drop");
+      connection.execute_batch(&definition).unwrap_or_else(|error| panic!("{definition}: {error}"));
+      let result: String = connection.query_row(call, [], |row| row.get(0)).expect("call");
+      assert_eq!(result, expected, "{definition}");
+    }
   }
 
   #[test]
