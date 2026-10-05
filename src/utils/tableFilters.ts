@@ -115,9 +115,12 @@ function likeTerm(
   return `${quotedColumn} LIKE ${literal} ESCAPE ${quoteSqlStringLiteral(LIKE_ESCAPE_CHAR, dialect)}`;
 }
 
-/** 这几家的 LIKE 收得下的类型；`text[]` 的词是 `text[]`，不在里面，照样转 */
+/**
+ * 这几家的 LIKE 收得下的类型；`text[]` 的词是 `text[]`，不在里面，照样转。ClickHouse 的 FixedString 也收，
+ * 但比的是补齐长度的 `\0`：存 'ab' 的 FixedString(4) 网格里是 ab，原列「结尾是 ab」中不了，交给 toString 去掉
+ */
 const LIKE_STRING_TYPE_TOKENS = new Set([
-  'text', 'character', 'varchar', 'char', 'bpchar', 'citext', 'name', 'string', 'fixedstring'
+  'text', 'character', 'varchar', 'char', 'bpchar', 'citext', 'name', 'string'
 ]);
 
 /**

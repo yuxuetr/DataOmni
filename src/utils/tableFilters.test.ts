@@ -215,6 +215,12 @@ describe('buildFilterClause', () => {
       .toBe("WHERE toString(`d`) LIKE '%12.50%'");
   });
 
+  it('ClickHouse 的 FixedString 上「结尾是」不算末尾补的 \\0', () => {
+    // FixedString(4) 存 'ab' 是 ab\0\0，网格里看着是 ab；原列 LIKE '%ab' 一行也中不了，toString 去掉末尾的 \0（25.8 上试过）
+    expect(buildFilterClause([filter({ column: 'fs', operator: 'ends-with', value: 'ab' })], [column('fs', 'FixedString(4)')], 'clickhouse'))
+      .toBe("WHERE toString(`fs`) LIKE '%ab'");
+  });
+
   it('Oracle 的 NUMBER 与 TIMESTAMP 上「包含」按网格的写法转成文本', () => {
     // 隐式转换写成 `12.5`、`.5`、`03:04:05.000000`：网格里的 12.50、0.5、`03:04:05` 一行也中不了（23 Free 上试过）
     const contains = (name: string) => filter({ column: name, operator: 'contains', value: '0.5' });
