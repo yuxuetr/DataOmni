@@ -204,6 +204,9 @@ export function sampleMismatches(
   return issues;
 }
 
+/** `nextval('t_id_seq'::regclass)`、`"OM"."S"."NEXTVAL"`、`(NEXT VALUE FOR [dbo].[s])` */
+const SEQUENCE_DEFAULT = /\bnextval\b|\bnext\s+value\s+for\b/i;
+
 /**
  * 导入之前能看出来的问题。
  *
@@ -249,11 +252,14 @@ export function validateImport(
   const generated = generatedTargets
     .filter((column) => column.identity_generation !== 'BY DEFAULT')
     .map((column) => column.name);
-  const identityNotAdvanced = dialect === 'mysql' || dialect === 'sqlite'
-    ? []
-    : generatedTargets
-      .filter((column) => column.identity_generation === 'BY DEFAULT')
-      .map((column) => column.name);
+  // 默认值取序列的列（PostgreSQL 的 serial、DuckDB 的 nextval、Oracle 的 seq.NEXTVAL、SQL Server 与 MariaDB 的
+  // NEXT VALUE FOR）是同一回事，而且比 identity 常见
+  const identityNotAdvanced = mapped
+    .map((mapping) => byName.get(mapping.target))
+    .filter((column): column is ColumnInfo => column !== undefined && (column.is_generated
+      ? column.identity_generation === 'BY DEFAULT' && dialect !== 'mysql' && dialect !== 'sqlite'
+      : SEQUENCE_DEFAULT.test(column.default_value ?? '')))
+    .map((column) => column.name);
   if (identityNotAdvanced.length > 0) {
     issues.push({
       level: 'warning',

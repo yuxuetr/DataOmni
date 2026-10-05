@@ -197,6 +197,20 @@ describe('validateImport', () => {
       .toEqual(['import.issue.generatedTarget']);
   });
 
+  it('默认值取序列的列（serial 一类）同样提醒序列不跟着走', () => {
+    const mapped: ColumnMapping[] = [{ target: 'id', source: 0 }];
+    const keysFor = (defaultValue: string, dialect: 'mysql' | 'postgresql' | 'oracle' | 'sqlserver' | 'duckdb') =>
+      validateImport(mapped, [column({ name: 'id', is_nullable: false, default_value: defaultValue })], preview(), '', dialect)
+        .map((issue) => issue.key);
+    expect(keysFor("nextval('t_id_seq'::regclass)", 'postgresql')).toEqual(['import.issue.identityNotAdvanced']);
+    expect(keysFor("nextval('s')", 'duckdb')).toEqual(['import.issue.identityNotAdvanced']);
+    expect(keysFor('"OM"."S"."NEXTVAL"', 'oracle')).toEqual(['import.issue.identityNotAdvanced']);
+    expect(keysFor('(NEXT VALUE FOR [dbo].[s])', 'sqlserver')).toEqual(['import.issue.identityNotAdvanced']);
+    // MariaDB 的序列也不跟着走；MySQL 不提的只是 AUTO_INCREMENT
+    expect(keysFor('nextval(`om`.`s`)', 'mysql')).toEqual(['import.issue.identityNotAdvanced']);
+    expect(keysFor('now()', 'postgresql')).toEqual([]);
+  });
+
   it('一列都没映射是 error', () => {
     const issues = validateImport([{ target: 'a', source: null }], [column({ name: 'a' })], preview(), '');
     expect(issues.find((issue) => issue.key === 'import.issue.noColumns')?.level).toBe('error');
