@@ -494,6 +494,7 @@ export const zh = {
   'import.issue.noColumns': '还没有把任何一列映射到目标表。',
   'import.issue.requiredMissing': '{columns} 不能为空又没有默认值，没有映射的话一行都插不进去。',
   'import.issue.generatedTarget': '{columns} 的值由数据库产生，往里写值会被拒绝。',
+  'import.issue.identityNotAdvanced': '{columns} 是自增列，值写得进去，但序列不会跟着往前走：导完之后新增的行会拿到已经用过的值、撞主键。导完把序列调到最大值之后。',
   'import.issue.ragged': '有 {count} 行的字段数与表头对不上（从第 {line} 行起）——多半是分隔符选错了。',
   'import.issue.ragged.one': '有 {count} 行的字段数与表头对不上（第 {line} 行）——多半是分隔符选错了。',
   'import.issue.notUtf8': '文件不是 UTF-8，按 GB18030（GBK）读取——中文 Windows 上 Excel 另存的 CSV 就是这样。样例里若是乱码，先把文件另存为「CSV UTF-8」。',

@@ -240,10 +240,28 @@ export function validateImport(
     });
   }
 
-  const generated = mapped
+  const generatedTargets = mapped
     .map((mapping) => byName.get(mapping.target))
-    .filter((column): column is ColumnInfo => Boolean(column?.is_generated))
+    .filter((column): column is ColumnInfo => Boolean(column?.is_generated));
+  // 计算列与 ALWAYS 的 identity 才不收值；BY DEFAULT 的（MySQL 的 AUTO_INCREMENT 也算这种）照收，
+  // 搬表时带着原来的 id 导是常事。MySQL 的计数器跟着写进去的最大值走，PostgreSQL 与 Oracle 的序列不动，
+  // 之后新增的行会拿到已经用过的值、撞主键
+  const generated = generatedTargets
+    .filter((column) => column.identity_generation !== 'BY DEFAULT')
     .map((column) => column.name);
+  const identityNotAdvanced = dialect === 'mysql'
+    ? []
+    : generatedTargets
+      .filter((column) => column.identity_generation === 'BY DEFAULT')
+      .map((column) => column.name);
+  if (identityNotAdvanced.length > 0) {
+    issues.push({
+      level: 'warning',
+      key: 'import.issue.identityNotAdvanced',
+      params: { count: identityNotAdvanced.length },
+      columns: identityNotAdvanced
+    });
+  }
   if (generated.length > 0) {
     issues.push({
       level: 'error',
