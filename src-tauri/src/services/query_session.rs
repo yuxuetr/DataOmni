@@ -1,4 +1,4 @@
-use crate::services::query_error::CONNECTION_LOST_CODE;
+use crate::services::query_error::{CONNECTION_LOST_CODE, PROTOCOL_ERROR_CODE};
 use crate::services::query_executor::PoolRef;
 use crate::services::query_executor::QUERY_TIMEOUT;
 use crate::services::{
@@ -196,9 +196,10 @@ fn statement_fingerprint(sql: &str) -> String {
   sql.trim().chars().take(48).collect()
 }
 
-/// 这个错误说明会话连接已经断了：传输层断开，或者服务端说完这句就断开（见 `QueryError::from`）
+/// 这个错误说明会话连接不能再用了：传输层断开，服务端说完这句就断开，
+/// 或者驱动读不懂回包、连接上剩着残包（见 `QueryError::from`）
 fn connection_is_gone(error: &QueryError) -> bool {
-  error.code.as_deref() == Some(CONNECTION_LOST_CODE)
+  matches!(error.code.as_deref(), Some(CONNECTION_LOST_CODE | PROTOCOL_ERROR_CODE))
 }
 
 /// 执行被放弃之后还能不能接着用这条连接。sqlx 的两家网络库不能，见 [`Terminator`]；

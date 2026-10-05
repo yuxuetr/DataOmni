@@ -16,6 +16,10 @@ pub const QUERY_TIMEOUT_CODE: &str = "QUERY_TIMEOUT";
 pub const CONNECTION_LOST_CODE: &str = "CONNECTION_LOST";
 /// 消息侧的码，冒号后面是驱动的原话（"error communicating with database: …"）
 pub const CONNECTION_LOST: &str = "DATAOMNI_CONNECTION_LOST";
+/// 驱动读不懂服务端的回包（sqlx 的 `Protocol`，例如 MySQL 9 的 VECTOR 列类型 0xf2）。
+/// 连接上还剩着没读完的包，下一条会读到残包，所以这条连接不能再用；但数据库和网络都没毛病，
+/// 不算断线——前端照普通错误显示驱动的原话，会话自己换一条连接
+pub const PROTOCOL_ERROR_CODE: &str = "PROTOCOL_ERROR";
 /// 在 acquire 超时内没拿到连接。只换措辞、不带 `code`：理由见下面 `PoolTimedOut` 那段
 pub const POOL_TIMED_OUT: &str = "DATAOMNI_POOL_TIMED_OUT";
 
@@ -121,6 +125,9 @@ impl From<sqlx::Error> for QueryError {
       if matches!(error, sqlx::Error::PoolTimedOut) {
         return Self::message(format!("{POOL_TIMED_OUT}: {error}"));
       }
+      if matches!(error, sqlx::Error::Protocol(_)) {
+        return Self::with_code(PROTOCOL_ERROR_CODE, error.to_string());
+      }
       // 剩下的没有数据库侧结构可取，只有一句话
       return Self::message(error.to_string());
     };
@@ -220,6 +227,14 @@ mod tests {
     for error in [sqlx::Error::PoolClosed, sqlx::Error::WorkerCrashed] {
       assert_eq!(QueryError::from(error).code.as_deref(), Some(CONNECTION_LOST_CODE));
     }
+  }
+
+  /// 读不懂回包要换连接，但不是断线：说「请重连」会让人去查网络
+  #[test]
+  fn an_undecodable_reply_breaks_the_connection_without_calling_it_lost() {
+    let error = QueryError::from(sqlx::Error::Protocol("unknown column type 0xf2".to_string()));
+    assert_eq!(error.code.as_deref(), Some(PROTOCOL_ERROR_CODE));
+    assert!(error.message.contains("0xf2"), "{}", error.message);
   }
 
   /// 反向的那一侧：池里连接都在忙，和连接断了是两回事。

@@ -4957,6 +4957,58 @@ async fn mysql_keeps_the_transaction_usable_after_a_failed_statement() {
   sessions.release("tx-my").await;
 }
 
+/// 驱动解码不了回包（MySQL 9 的 VECTOR 列，sqlx 不认 0xf2）时，连接上还剩着没读完的包：
+/// 同一个会话的下一条读到残包，报 `COM_STMT_PREPARE_OK` 协议错，直到断开重连。
+/// 下一条之前该换一条连接；那条连接上的事务随它一起没了，状态得说实话。
+/// MariaDB 把向量按二进制发，不出错，这条跳过
+#[tokio::test]
+async fn mysql_session_recovers_after_the_driver_cannot_decode_a_reply() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(2).connect(&url).await.expect("connect to MySQL");
+  sqlx::query("DROP TABLE IF EXISTS session_smoke_vector").execute(&pool).await.expect("drop");
+  if sqlx::query("CREATE TABLE session_smoke_vector (v vector(3))").execute(&pool).await.is_err() {
+    return;
+  }
+  let sessions = QuerySessionState::default();
+  let db_pool = DbPool::MySql(pool.clone());
+  let options = |sql: &'static str| StreamingQueryOptions {
+    session_id: "desync-my",
+    pool_key: &url,
+    pool: (&db_pool).into(),
+    sql,
+    autocommit: true,
+    explain_plan: false,
+    row_limit: 100,
+    byte_limit: 1 << 20,
+    batch_size: 10,
+    timeout_duration: Duration::from_secs(10),
+  };
+
+  sessions.execute_streaming(options("BEGIN"), &mut |_| Ok(())).await.expect("begin");
+  let decoded = sessions
+    .execute_streaming(options("SELECT * FROM session_smoke_vector"), &mut |_| Ok(()))
+    .await;
+  if decoded.is_ok() {
+    sessions.execute_streaming(options("ROLLBACK"), &mut |_| Ok(())).await.expect("rollback");
+  } else {
+    assert_eq!(
+      sessions.transaction("desync-my").await.status,
+      dataomni_lib::services::TransactionStatus::Idle,
+      "连接要被换掉，事务随它没了"
+    );
+    sessions
+      .execute_streaming(options("SELECT 1"), &mut |_| Ok(()))
+      .await
+      .expect("下一条换了连接，照常能跑");
+  }
+
+  sessions.release("desync-my").await;
+  sqlx::query("DROP TABLE session_smoke_vector").execute(&pool).await.expect("drop");
+}
+
 /// 编辑器里写 `SET autocommit = 0`：之后每条语句都在事务里，提交要等 COMMIT。
 /// 状态栏仍说「无事务」的话，这些写入看着已经生效，断开连接就没了。
 /// `SET autocommit = 1` 则提交开着的事务——只在它原来是 0 时（cu 的 8.4 上试过：
