@@ -1126,7 +1126,7 @@ export const zh = {
   'error.driver.saslUnsupported': '服务端要求的认证方式标准 PostgreSQL 驱动不支持——多半是 openGauss / GaussDB 默认的 sha256 认证。请管理员把 password_encryption_type 设为 1（同时存 md5），再给这个用户重设一次密码；或在 pg_hba.conf 里对这个来源用 md5。原始信息：{detail}',
   'backup.hintPostgres': "用本机的 pg_dump 导出（custom 格式，pg_restore 恢复）；要先装好 PostgreSQL 客户端。",
   'backup.restorePostgres': "恢复：pg_restore -d <目标库> <这个文件>（目标库先建好）。",
-  'error.backend.backupToolMissing': "没找到 {detail}。装上对应的客户端再试（macOS：pg_dump 在 brew install libpq，mysqldump 在 brew install mysql-client，mongodump 在 MongoDB Database Tools；Debian/Ubuntu：postgresql-client / mysql-client；Fedora/RHEL：postgresql / mysql；Linux 上的 mongodump 在 MongoDB 官方的 mongodb-database-tools 包里）。",
+  'error.backend.backupToolMissing': "没找到 {detail}。装上对应的客户端再试（macOS：pg_dump 在 brew install libpq，mysqldump 在 brew install mysql-client，mongodump 在 MongoDB Database Tools；Debian/Ubuntu：postgresql-client / mysql-client；Fedora/RHEL：postgresql / mysql；Linux 上的 mongodump 在 MongoDB 官方的 mongodb-database-tools 包里；Windows：PostgreSQL、MySQL 官方安装包装在默认位置就找得到，装在别处要把它的 bin 目录加进 PATH）。",
   'error.backend.backupToolFailed': "备份工具没跑成，它说：{detail}",
   'backup.hintMysql': "用本机的 mysqldump 导出这个库（SQL 文本，一致性快照，不锁表）；要先装好 MySQL 客户端。",
   'backup.restoreMysql': "恢复：mysql <目标库> < 这个文件（目标库先建好）。",

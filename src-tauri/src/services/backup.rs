@@ -145,6 +145,7 @@ pub async fn backup_with_tool(
   remove_path(&part);
   command.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
   command.stdout(Stdio::piped()).stderr(Stdio::piped());
+  hide_console(&mut command);
   // 工具是个阻塞的子进程，放到阻塞线程池里等，不占着异步运行时
   let output = tokio::task::spawn_blocking(move || {
     let mut child = command.spawn()?;
@@ -254,6 +255,7 @@ pub(crate) fn dump_flavor_of(version: &str) -> DumpFlavor {
 async fn mysqldump_flavor(program: &Path) -> Result<DumpFlavor, QueryError> {
   let mut command = Command::new(program);
   command.arg("--version");
+  hide_console(&mut command);
   let output = tokio::task::spawn_blocking(move || command.output())
     .await
     .map_err(|error| QueryError::message(format!("{BACKUP_FAILED}: {error}")))?
@@ -432,7 +434,17 @@ pub fn find_tool(name: &str) -> Option<PathBuf> {
   ]
   .into_iter()
   .map(PathBuf::from);
-  from_path.into_iter().chain(known).map(|dir| dir.join(name)).find(|candidate| candidate.is_file())
+  let installed = std::env::var_os("ProgramFiles")
+    .map(|root| versioned_tool_dirs(Path::new(&root)))
+    .unwrap_or_default();
+  // Windows 上文件名带 `.exe`，`is_file` 不会替你补
+  let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+  from_path
+    .into_iter()
+    .chain(known)
+    .chain(installed)
+    .map(|dir| dir.join(&file))
+    .find(|candidate| candidate.is_file())
 }
 
 /// 在一个空的内存库里重放 EXPORT 写出的 `schema.sql`。DuckDB 1.5 的 EXPORT 把 ENUM 取值里的
@@ -445,6 +457,39 @@ fn replay_duckdb_schema(directory: &Path) -> Result<(), QueryError> {
   duckdb::Connection::open_in_memory()
     .and_then(|connection| connection.execute_batch(&schema))
     .map_err(|error| QueryError::message(format!("{BACKUP_NOT_RESTORABLE}: {error}")))
+}
+
+/// Windows 上 PostgreSQL、MySQL 的官方安装包与 MongoDB Database Tools 装在 Program Files 下
+/// 带版本号的目录里，**不改 PATH**。几个版本并存时新的在前：版本号按数比，`9.6` 排在 `17` 后面
+fn versioned_tool_dirs(program_files: &Path) -> Vec<PathBuf> {
+  let version = |dir: &Path| -> Vec<u64> {
+    let name = dir.parent().and_then(Path::file_name).unwrap_or_default().to_string_lossy();
+    name.split(|char: char| !char.is_ascii_digit()).filter_map(|part| part.parse().ok()).collect()
+  };
+  let mut dirs = Vec::new();
+  for parent in [&["PostgreSQL"][..], &["MySQL"], &["MongoDB", "Tools"]] {
+    let root = parent.iter().fold(program_files.to_path_buf(), |path, part| path.join(part));
+    let Ok(entries) = std::fs::read_dir(root) else {
+      continue;
+    };
+    let mut found: Vec<PathBuf> =
+      entries.flatten().map(|entry| entry.path().join("bin")).filter(|bin| bin.is_dir()).collect();
+    found.sort_by_key(|bin| std::cmp::Reverse(version(bin)));
+    dirs.extend(found);
+  }
+  dirs
+}
+
+/// 应用在 Windows 上是 GUI 子系统，拉起控制台程序（pg_dump 之类）时系统会给它新开一个黑窗口
+fn hide_console(command: &mut Command) {
+  #[cfg(windows)]
+  {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+  }
+  #[cfg(not(windows))]
+  let _ = command;
 }
 
 fn part_path(target: &Path) -> PathBuf {
@@ -756,6 +801,41 @@ mod tests {
     let error =
       backup_with_tool(&profile, None, Path::new("/tmp/never"), None).await.expect_err("refuse");
     assert_eq!(error.message, BACKUP_COCKROACH);
+  }
+
+  /// Windows 的安装包不改 PATH：pg_dump 在 `PostgreSQL\17\bin`。几个版本并存时新的在前，
+  /// 版本号按数比（`9.6` 在 `17` 后面），没有 `bin` 的目录（`data`）不算
+  #[test]
+  fn tools_under_program_files_are_found_newest_first() {
+    let root = temp_dir("program-files");
+    for dir in [
+      "PostgreSQL/9.6/bin",
+      "PostgreSQL/17/bin",
+      "PostgreSQL/16/bin",
+      "PostgreSQL/data",
+      "MySQL/MySQL Server 8.0/bin",
+      "MySQL/MySQL Server 8.4/bin",
+      "MongoDB/Tools/100/bin",
+    ] {
+      std::fs::create_dir_all(root.join(dir)).expect("dir");
+    }
+    let found: Vec<String> = versioned_tool_dirs(&root)
+      .iter()
+      .map(|dir| dir.strip_prefix(&root).expect("under root").to_string_lossy().replace('\\', "/"))
+      .collect();
+    assert_eq!(
+      found,
+      [
+        "PostgreSQL/17/bin",
+        "PostgreSQL/16/bin",
+        "PostgreSQL/9.6/bin",
+        "MySQL/MySQL Server 8.4/bin",
+        "MySQL/MySQL Server 8.0/bin",
+        "MongoDB/Tools/100/bin",
+      ]
+    );
+    assert!(versioned_tool_dirs(&root.join("missing")).is_empty());
+    std::fs::remove_dir_all(&root).ok();
   }
 
   fn temp_dir(tag: &str) -> PathBuf {
