@@ -147,7 +147,7 @@ function blockingKeyword(
   dialect: SqlDialect
 ): string | null {
   for (const sql of statements) {
-    const keywords = topLevelKeywords(sql);
+    const keywords = topLevelKeywords(sql, dialect);
     for (const prefix of NON_TRANSACTIONAL[dialect]) {
       if (prefix.every((word, position) => keywords[position] === word)) {
         return prefix.join(' ');

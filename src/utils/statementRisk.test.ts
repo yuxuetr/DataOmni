@@ -71,6 +71,14 @@ describe('语句风险判定', () => {
     expect(classifyStatementRisk('DELETE FROM users -- WHERE id = 1')).toBe('bulk-write');
   });
 
+  it('块注释不嵌套的库里，第一个 */ 后面的语句照样定级', () => {
+    // MySQL 执行的是这条 DELETE；按嵌套读成注释的话定级为只读，生产库上不弹确认
+    expect(classifyBatchRisk('/* old /* note */ DELETE FROM orders', 'mysql')).toBe('bulk-write');
+    expect(classifyStatementRisk('/* old /* note */ DELETE FROM orders', 'sqlite')).toBe('bulk-write');
+    // PostgreSQL 嵌套，这一句整个是注释
+    expect(classifyBatchRisk('/* a /* b */ DELETE FROM orders */ SELECT 1', 'postgresql')).toBe('read');
+  });
+
   it('只有子查询里带 WHERE 时仍算整表操作', () => {
     // 子查询的 WHERE 限制不了外层影响的行数
     expect(classifyStatementRisk('DELETE FROM users_backup'))

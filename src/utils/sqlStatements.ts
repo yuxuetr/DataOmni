@@ -13,6 +13,13 @@ type LexerState =
 
 const NORMAL_STATE: LexerState = { type: 'normal' };
 
+// 块注释能不能嵌套。PostgreSQL、SQL Server、DuckDB、ClickHouse 能；MySQL、SQLite、Oracle
+// 到第一个 `*/` 就结束，`/* 旧的 /* 说明 */ DELETE …` 里的 DELETE 是真的语句。
+// 当成嵌套的话整段都在注释里：切不出语句、执行时什么也不发，风险判定也看不见它。
+// 不给方言时照旧按嵌套读
+const nestsBlockComments = (dialect?: SqlDialect): boolean =>
+  dialect !== 'mysql' && dialect !== 'sqlite' && dialect !== 'oracle';
+
 export interface SqlStatementRange {
   index: number;
   sql: string;
@@ -115,6 +122,7 @@ function scanStatements(
   let sawBatchSeparator = false;
   const hashComments = dialect === undefined || dialect === 'mysql' || dialect === 'clickhouse';
   const backslashEscapes = hashComments;
+  const nestedComments = nestsBlockComments(dialect);
   // 这一段里有没有注释以外的东西。只有注释的一段（脚本末尾的 `-- end`）不是语句：
   // 发给 Oracle 是 ORA-00900
   let hasCode = false;
@@ -290,7 +298,7 @@ function scanStatements(
     }
 
     if (state.type === 'block-comment') {
-      if (sqlText.startsWith('/*', index)) {
+      if (nestedComments && sqlText.startsWith('/*', index)) {
         buffer += '/*';
         state = { type: 'block-comment', depth: state.depth + 1 };
         index += 2;
@@ -477,8 +485,8 @@ function firstTopLevelKeyword(sql: string): string | undefined {
  * 导出给风险判定用：识别「DELETE 有没有带 WHERE」需要的正是这种既跳过字符串
  * 和注释、又不把子查询里的词算进来的扫描。再写一个更弱的分词器是重复。
  */
-export function topLevelKeywords(sql: string): string[] {
-  return sqlWords(sql).filter((word) => word.group === 0).map((word) => word.word);
+export function topLevelKeywords(sql: string, dialect?: SqlDialect): string[] {
+  return sqlWords(sql, dialect).filter((word) => word.group === 0).map((word) => word.word);
 }
 
 /** 一个标识符（大写），和它所在的那对括号：`group` 0 是顶层，每对括号各一个编号 */
@@ -493,8 +501,9 @@ export interface SqlWord {
  * 风险判定要看括号里的语句：PostgreSQL 的 `WITH gone AS (DELETE …) SELECT …`
  * 在顶层只看得到 SELECT，而那条 DELETE 的 WHERE 只在同一对括号里才限制它
  */
-export function sqlWords(sql: string): SqlWord[] {
+export function sqlWords(sql: string, dialect?: SqlDialect): SqlWord[] {
   const keywords: SqlWord[] = [];
+  const nestedComments = nestsBlockComments(dialect);
   let state: LexerState = NORMAL_STATE;
   const groups: number[] = [0];
   let opened = 0;
@@ -599,7 +608,7 @@ export function sqlWords(sql: string): SqlWord[] {
     }
 
     if (state.type === 'block-comment') {
-      if (sql.startsWith('/*', index)) {
+      if (nestedComments && sql.startsWith('/*', index)) {
         state = { type: 'block-comment', depth: state.depth + 1 };
         index += 2;
       } else if (sql.startsWith('*/', index)) {

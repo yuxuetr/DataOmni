@@ -29,6 +29,20 @@ describe('splitSqlStatements', () => {
     ]);
   });
 
+  it('ends a block comment at the first */ where the dialect does not nest them', () => {
+    // MySQL、SQLite、Oracle 的块注释不嵌套：`/* a /* b */` 到第一个 `*/` 就完了，
+    // 后面是真的语句。按嵌套读的话整段脚本都在注释里，切出 0 条，执行时什么也不发
+    const script = '/* old /* note */ DELETE FROM orders; SELECT 2;';
+    for (const dialect of ['mysql', 'sqlite', 'oracle'] as const) {
+      expect(splitSqlStatements(script, dialect)).toEqual(['/* old /* note */ DELETE FROM orders', 'SELECT 2']);
+    }
+    // PostgreSQL、SQL Server、DuckDB、ClickHouse 嵌套（四家都在真库上试过）
+    for (const dialect of ['postgresql', 'sqlserver', 'duckdb', 'clickhouse'] as const) {
+      expect(splitSqlStatements('/* a /* b */ ; */ SELECT 1; SELECT 2', dialect))
+        .toEqual(['/* a /* b */ ; */ SELECT 1', 'SELECT 2']);
+    }
+  });
+
   it('does not split semicolons inside line or nested block comments', () => {
     expect(splitSqlStatements(`
       SELECT 1 -- ignored ; delimiter
