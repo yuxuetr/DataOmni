@@ -991,6 +991,20 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 接着查 ClickHouse 复合类型与 PostgreSQL 时间戳上的「包含」（`tableFilters.ts`；rpm 0.4.150 / 0.4.151，cu 上的
+    ClickHouse 25.8、PG 16 与 CockroachDB 25.2）：**修了两处**：
+    - ClickHouse 的 FixedString（`a615872`）：FixedString(4) 存 `ab` 是 `ab\0\0`，网格里看着是 `ab`，原列「结尾是 ab」0 行。
+      不再当字符串原样比，交给 `toString`（它去掉末尾的 `\0`）。打包版：「结尾是 ab」出那一行。
+    - PostgreSQL 的 timestamptz（`792a394`）：`::text` 是 `2024-01-01 19:04:05.5+00`，网格是 `to_rfc3339` 的
+      `2024-01-01T19:04:05.500+00:00`，照网格搜 `T19:04`、`+00:00`、`.500` 一行也中不了。改用 `to_char` 拼成同一种写法，小数秒
+      照 chrono 取 0 / 3 / 6 位；会话被 sqlx 定成 UTC，所以不写 `AT TIME ZONE`——CockroachDB 的上限时刻经它越界；判 infinity
+      用 `IN ('infinity', '-infinity')`，CockroachDB 没有 `isfinite`。PG 16 与 CockroachDB 25.2 上逐行与网格一致。
+      打包版：「包含 `T19:04:05+00:00`」「包含 `05.500+`」各出对的那一行。
+    两条单测都先红后绿，前端 1850 条全过。
+    同一轮看过、没问题：ClickHouse 的 Array / Map / Tuple 网格显示的就是 `toString` 的写法（带 `\'`、`\\`、`\t` 的也一样），
+    界面上「包含 `it\'s`」出对的那行；PG 的 money、timetz 数据页本来就按 `::text` 投影，两边一致。
+    没改：PG float8 的指数写法（`::text` 是 `1e+20`，网格是 `100000000000000000000`），在浮点列上搜子串少见；
+    timestamptz 的公元前日期（网格 `-0043-…`，`to_char` 写 `0044-…`）；CockroachDB 存成 infinity 的行连原样 `SELECT` 都报 22009，与筛选无关。
   - 2026-10-05 Oracle 上筛选「包含」与网格的写法（`tableFilters.ts`；rpm 0.4.149，cu 上的 Oracle 23 Free）：**修了一处**（`856795c`）。
     和上一条 ClickHouse 同一类，Oracle 更多：LIKE 左边隐式 `TO_CHAR`，NUMBER(10,2) 的 12.50 写成 `12.5`、0.5 写成 `.5`，
     TIMESTAMP 带六位 0 的小数秒（`03:04:05.000000`），而网格是 `12.50`、`0.5`、`03:04:05`——照网格搜 12.50、0.5、以 `05` 结尾一行也中不了。
