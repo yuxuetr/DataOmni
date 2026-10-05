@@ -504,6 +504,10 @@ export interface SqlWord {
 export function sqlWords(sql: string, dialect?: SqlDialect): SqlWord[] {
   const keywords: SqlWord[] = [];
   const nestedComments = nestsBlockComments(dialect);
+  // 规则与切分时相同。不知道方言时 `#` 算注释、反斜杠算转义：认错了只会把后面的 WHERE
+  // 藏起来，判定往更危险那边偏；知道方言就按那一家读，SQL Server 的 `DELETE FROM #tmp WHERE …`
+  // 不该被当成整表删除
+  const mysqlLike = dialect === undefined || dialect === 'mysql' || dialect === 'clickhouse';
   let state: LexerState = NORMAL_STATE;
   const groups: number[] = [0];
   let opened = 0;
@@ -518,7 +522,7 @@ export function sqlWords(sql: string, dialect?: SqlDialect): SqlWord[] {
         continue;
       }
 
-      if (sql.startsWith('--', index) || sql[index] === '#') {
+      if (startsDashComment(sql, index, dialect) || (mysqlLike && sql[index] === '#')) {
         state = { type: 'line-comment' };
         index += sql[index] === '#' ? 1 : 2;
         continue;
@@ -539,12 +543,13 @@ export function sqlWords(sql: string, dialect?: SqlDialect): SqlWord[] {
         continue;
       }
       if (character === "'" || character === '"' || character === '`') {
-        // 不知道方言，反斜杠一律当转义：认错了只会把后面的 WHERE 藏起来，判定往更危险那边偏
+        const backslashEscapes = mysqlLike
+          || (character === "'" && dialect === 'postgresql' && isEscapeStringPrefix(sql, index));
         state = character === "'"
-          ? { type: 'single-quote', backslashEscapes: true }
+          ? { type: 'single-quote', backslashEscapes }
           : character === '"'
-            ? { type: 'double-quote', backslashEscapes: true }
-            : { type: 'backtick', backslashEscapes: true };
+            ? { type: 'double-quote', backslashEscapes }
+            : { type: 'backtick', backslashEscapes };
         index += 1;
         continue;
       }
@@ -630,7 +635,7 @@ export function sqlWords(sql: string, dialect?: SqlDialect): SqlWord[] {
     const character = sql[index];
     index += 1;
 
-    if (character === '\\') {
+    if (character === '\\' && 'backslashEscapes' in state && state.backslashEscapes) {
       index += 1;
     } else if (character === quote) {
       if (sql[index] === quote) {

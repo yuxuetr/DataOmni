@@ -79,6 +79,21 @@ describe('语句风险判定', () => {
     expect(classifyBatchRisk('/* a /* b */ DELETE FROM orders */ SELECT 1', 'postgresql')).toBe('read');
   });
 
+  it('`#` 与反斜杠按方言读：SQL Server 的临时表、PostgreSQL 的异或不吞掉后面的 WHERE', () => {
+    // SQL Server 的 `#tmp` 是临时表，PostgreSQL 的 `#` 是按位异或；当成注释的话 WHERE 被吞，
+    // 判成「没有 WHERE、影响整张表」，而这一档在哪个环境都弹确认
+    expect(classifyBatchRisk('DELETE FROM #tmp WHERE id = 1', 'sqlserver')).toBe('scoped-write');
+    expect(classifyBatchRisk('UPDATE #tmp SET x = 1 WHERE id = 1', 'sqlserver')).toBe('scoped-write');
+    expect(classifyBatchRisk('UPDATE t SET flags = flags # 4 WHERE id = 1', 'postgresql')).toBe('scoped-write');
+    // 反斜杠只在 MySQL 的引号与 PostgreSQL 的 E'…' 里转义；别处 'C:\' 是完整的字面量
+    expect(classifyBatchRisk("UPDATE t SET p = 'C:\\' WHERE id = 1", 'postgresql')).toBe('scoped-write');
+    expect(classifyBatchRisk("UPDATE t SET p = E'C:\\' WHERE id = 1", 'postgresql')).toBe('bulk-write');
+    // MySQL 的 `#` 确实是注释，被注释掉的 WHERE 不算数
+    expect(classifyBatchRisk('DELETE FROM t # WHERE id = 1', 'mysql')).toBe('bulk-write');
+    // 不知道方言时照旧往危险那边读
+    expect(classifyStatementRisk('DELETE FROM #tmp WHERE id = 1')).toBe('bulk-write');
+  });
+
   it('只有子查询里带 WHERE 时仍算整表操作', () => {
     // 子查询的 WHERE 限制不了外层影响的行数
     expect(classifyStatementRisk('DELETE FROM users_backup'))
