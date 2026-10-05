@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   indentOnTab,
   mongoColumnAlignment,
+  mongoCell,
   mongoColumns,
   mongoPageRange,
   type MongoCell,
@@ -12,7 +13,7 @@ const cell = (kind: MongoCell['kind'], text: string): MongoCell => ({ kind, text
 
 const row = (fields: Record<string, MongoCell>): MongoDocumentRow => ({
   id: fields._id?.text ?? null,
-  fields
+  fields: Object.entries(fields)
 });
 
 describe('MongoDB 文档排成网格', () => {
@@ -24,6 +25,17 @@ describe('MongoDB 文档排成网格', () => {
     ];
     // 反向：只取第一个文档的字段就看不见 age 与 nick
     expect(mongoColumns(documents)).toEqual(['_id', 'name', 'age', 'nick']);
+  });
+
+  it('像整数的字段名也按文档里的顺序，不被提到最前', () => {
+    // 后端交来的原样：JS 对象会把 "2024" 这种键排到所有键前面，所以字段是一串有序的对
+    const wire = '{"id":"1","fields":[["_id",{"kind":"int","text":"1","truncated":false}],'
+      + '["name",{"kind":"string","text":"\'a\'","truncated":false}],'
+      + '["2024",{"kind":"int","text":"7","truncated":false}]]}';
+    const document = JSON.parse(wire) as MongoDocumentRow;
+    expect(mongoColumns([document])).toEqual(['_id', 'name', '2024']);
+    expect(mongoCell(document, '2024')?.text).toBe('7');
+    expect(mongoCell(document, 'missing')).toBeUndefined();
   });
 
   it('没有 _id 的结果（视图）照常出列', () => {

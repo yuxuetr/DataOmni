@@ -312,8 +312,17 @@ pub struct MongoCell {
 pub struct MongoDocumentRow {
   /// `_id` 的写法，定位这一个文档用。视图的结果可以没有 `_id`
   pub id: Option<String>,
-  /// 顶层字段，按文档里的顺序
+  /// 顶层字段，按文档里的顺序。发出去是一串 `[名字, 格]`：写成 JSON 对象的话，
+  /// 前端 JS 对象会把 `"2024"` 这种像整数的键排到所有键前面
+  #[serde(serialize_with = "as_pairs")]
   pub fields: IndexMap<String, MongoCell>,
+}
+
+fn as_pairs<S: serde::Serializer>(
+  fields: &IndexMap<String, MongoCell>,
+  serializer: S,
+) -> Result<S::Ok, S::Error> {
+  serializer.collect_seq(fields.iter())
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -1348,6 +1357,15 @@ mod tests {
     );
     let id_text = row.id.unwrap_or_default();
     assert_eq!(mongo_shell::parse_value(&id_text), Ok(Bson::ObjectId(id)));
+  }
+
+  #[test]
+  fn fields_go_out_as_ordered_pairs_so_numeric_names_keep_their_place() {
+    let row = document_row(&doc! { "name": "a", "2024": 7_i32 });
+    let wire = serde_json::to_value(&row).unwrap_or_default();
+    assert_eq!(wire["fields"][0][0], "name");
+    assert_eq!(wire["fields"][1][0], "2024");
+    assert_eq!(wire["fields"][1][1]["text"], "7");
   }
 
   #[test]

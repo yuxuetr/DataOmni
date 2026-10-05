@@ -19,6 +19,7 @@ import { describeError } from '../utils/describeError';
 import { measureColumnWidths } from '../utils/columnWidths';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import {
+  mongoCell,
   mongoColumnAlignment,
   mongoColumns,
   indentOnTab,
@@ -430,7 +431,7 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
   const widths = useMemo(
     () => measureColumnWidths(
       columns,
-      documents.map((document) => columns.map((column) => document.fields[column]?.text ?? ''))
+      documents.map((document) => columns.map((column) => mongoCell(document, column)?.text ?? ''))
     ),
     [columns, documents]
   );
@@ -732,7 +733,7 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
                         )}
                       >
                         {columns.map((column, columnIndex) => {
-                          const cell = document.fields[column];
+                          const cell = mongoCell(document, column);
                           return (
                             <td
                               key={column}

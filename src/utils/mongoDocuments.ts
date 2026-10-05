@@ -31,7 +31,13 @@ export interface MongoCell {
 export interface MongoDocumentRow {
   /** `_id` 的 mongosh 写法；视图的结果可以没有 */
   id: string | null;
-  fields: Record<string, MongoCell>;
+  /** 按文档里的顺序。不用对象：JS 对象会把 `"2024"` 这种像整数的键排到最前 */
+  fields: [string, MongoCell][];
+}
+
+/** 这个文档里这一列的格；没有这个字段是 `undefined` */
+export function mongoCell(document: MongoDocumentRow, column: string): MongoCell | undefined {
+  return document.fields.find(([name]) => name === column)?.[1];
 }
 
 export interface MongoFindPage {
@@ -50,7 +56,7 @@ export function mongoColumns(documents: readonly MongoDocumentRow[]): string[] {
   const seen = new Set<string>();
   const columns: string[] = [];
   for (const document of documents) {
-    for (const key of Object.keys(document.fields)) {
+    for (const [key] of document.fields) {
       if (!seen.has(key)) {
         seen.add(key);
         columns.push(key);
@@ -81,7 +87,7 @@ export function mongoColumnAlignment(
 ): 'left' | 'right' {
   let sawNumber = false;
   for (const document of documents) {
-    const cell = document.fields[column];
+    const cell = mongoCell(document, column);
     if (!cell || cell.kind === 'null') {
       continue;
     }
