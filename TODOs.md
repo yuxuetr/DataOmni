@@ -992,6 +992,14 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 上一轮记下没修的三处（`redisCommandLine.ts`、`historyRedaction.ts`、`esAggregations.ts`；rpm 0.4.159，本机 Docker 的 Redis 7 与 Elasticsearch 8.19.4）：**修了三处**。
+    - Redis `SAVE`、`CLIENT PAUSE`、`DEBUG` 执行前先问（`4b7fc98`）：另起「停下来不理别人」一档，提示指向 `BGSAVE`；`DEBUG` 原先套用
+      `KEYS` 的「从头扫一遍」。`CLIENT KILL` 归入「改服务端」，`CLIENT UNPAUSE`、`BGSAVE` 不问。打包版发 `CLIENT PAUSE 600000` 弹出新文案，取消。
+    - 历史脱敏的 Redis 切词与 redis-cli 一致（`97132b2`）：`ACL SETUSER u >"my pass"` 原先只打掉 `>"my`，`pass"` 留在历史里。
+      打包版执行后历史里是 `ACL SETUSER probe >*** on`；服务端 `ACL LIST` 里 probe 只有一个口令哈希，证实那是一个参数。
+    - ES 桶里面的单桶聚合摊成带前缀的列（`88d6920`）：`terms` → `filter` → `avg` 现在是 `recent.doc_count`、`recent.avg_price`、
+      `recent.inner.doc_count` 几列；单桶下面再有桶的那一格仍是 JSON。打包版「聚合」页与单测（真服务端原话）一致。
+    - 三条单测都先红。
   - 2026-10-05 备份在 Windows 上找工具（`backup.rs`；本机单测，Windows 分支用 `rustc --target x86_64-pc-windows-msvc` 做类型检查）：**修了一处**（`eccf578`）。
     找 `pg_dump` / `mysqldump` / `mongodump` 时拼的是不带 `.exe` 的文件名，Windows 上 `is_file` 永远为假，装了也报「没找到」；
     PostgreSQL、MySQL 官方安装包与 MongoDB Database Tools 又都不改 PATH。现在补 `EXE_SUFFIX`，再按 `%ProgramFiles%` 下带版本号的
@@ -1012,7 +1020,7 @@
     下面 `terms` 的桶整个写成指标表里的一格 JSON。查 nested 字段几乎必经 `nested` 再套 `terms`，这张表就等于没有。
     现在照顶层摊开，表名带上外层（`c.by_author`），外层的 `doc_count` 与它下面的指标进指标表（`cheap.avg_price`）。
     单测用真服务端的原话先红；打包版发同一条请求，「Aggregations」里是 `c.by_author`、`cheap.by_city` 两张表与一张指标表。
-    - 没改的：桶里面再套单桶聚合（`terms` → `filter` → `avg`）仍写成一格 JSON，那一格是整行的附属，展开要另定列名规则。
+    - 没改的：桶里面再套单桶聚合（`terms` → `filter` → `avg`）仍写成一格 JSON。已在后一轮修掉（`88d6920`）。
     - 同一轮看过、没问题的：SVG 导出对 `fill="none"` 的线条保留原属性，不会被填黑；控制台日志的脱敏只到开发者工具，
       不落盘，`ssh_password` 这类键名漏打不算外泄面。
   - 2026-10-05 Redis 命令行的回答与 Elasticsearch 控制台的风险判定（`redis.rs`、`esConsole.ts`；rpm 0.4.155 / 0.4.156，
@@ -1024,10 +1032,8 @@
       `_all/_count` 与 `*/_count` 同为 179）。开发环境默认只拦批量写以上，这条不弹框；OpenSearch 3.8 的 `destructive_requires_name`
       默认是 `false`，会照删（Elasticsearch 8 起默认拒）。现在按删数据判。单测先红；打包版发 `DELETE _all` 弹出「丢弃数据」确认，
       取消后 `om_keep` 还在。真删没有在 OpenSearch 上跑——那台上还有别的索引。
-    - 同一轮看过、没改的：Redis 的「卡住服务端」那一档只有 `KEYS` 与 `DEBUG`，`SAVE`、`CLIENT PAUSE` 也会让别的请求等着，
-      但那一档的提示写的是「从头扫一遍」，加进去要另起一档文案；手敲 `SAVE` 的人多半知道它做什么，当前版本不加。
-      重估条件：有人在生产库上因此卡住的反馈。历史脱敏里 `ACL SETUSER u >"my pass"`（引号从参数中间开始）只打掉前半截，
-      引号包整个参数的写法（`">my pass"`）是全打的；这种写法罕见，不改。
+    - 同一轮看过、没改的：Redis 的 `SAVE`、`CLIENT PAUSE` 不问；历史脱敏里 `ACL SETUSER u >"my pass"` 只打掉前半截。
+      两处都已在 2026-10-05 后一轮修掉（`4b7fc98`、`97132b2`）。
   - 2026-10-05 DuckDB 宏的「查看定义」（`object_catalog.rs`；rpm 0.4.154，容器里的 DuckDB 文件；DuckDB 1.5.6 CLI）：**修了一处**（`1d8072d`）。
     宏没有存原文，定义是拿参数名与宏体拼回来的：参数类型丢了（`typed(a DOUBLE)` 拼成 `typed(a)`，照它重建后实参不再先转类型，
     `typed(7, 'x')` 从 `7.0x` 变成 `7x`），名字也不加引号（`sales."My Macro"` 拼成 `sales.My Macro`，语法错误）。
