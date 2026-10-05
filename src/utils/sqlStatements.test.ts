@@ -229,6 +229,47 @@ describe('按方言切语句', () => {
       .toEqual(['BEGIN', 'SELECT CASE WHEN true THEN 1 END', 'COMMIT']);
   });
 
+  it('MySQL 不写 DELIMITER 时，存储过程、触发器与事件的 BEGIN … END 体整块发出去', () => {
+    const procedure = [
+      'CREATE DEFINER=`root`@`%` PROCEDURE p(IN n INT)',
+      'BEGIN',
+      '  DECLARE i INT DEFAULT 0;',
+      '  loop1: WHILE i < n DO',
+      "    IF i = 2 THEN SELECT 'two;'; ELSE SELECT i; END IF;",
+      '    SET i = i + 1;',
+      '  END WHILE loop1;',
+      '  CASE n WHEN 1 THEN SELECT 1; ELSE BEGIN END; END CASE;',
+      '  REPEAT SET i = i - 1; UNTIL i <= 0 END REPEAT;',
+      '  l2: LOOP LEAVE l2; END LOOP;',
+      '  SELECT CASE WHEN n > 0 THEN 1 END;',
+      'END;',
+      'CALL p(3);'
+    ].join('\n');
+    expect(splitSqlStatements(procedure, 'mysql')).toEqual([
+      procedure.slice(0, procedure.lastIndexOf('END;') + 3),
+      'CALL p(3)'
+    ]);
+    expect(splitSqlStatements(
+      'CREATE TRIGGER tr BEFORE INSERT ON t FOR EACH ROW BEGIN SET NEW.a = 1; SET NEW.b = 2; END; SELECT 1;',
+      'mysql'
+    )).toEqual([
+      'CREATE TRIGGER tr BEFORE INSERT ON t FOR EACH ROW BEGIN SET NEW.a = 1; SET NEW.b = 2; END',
+      'SELECT 1'
+    ]);
+    expect(splitSqlStatements(
+      'CREATE EVENT e ON SCHEDULE EVERY 1 DAY DO BEGIN DELETE FROM t; DELETE FROM u; END; SELECT 1;',
+      'mysql'
+    )).toEqual([
+      'CREATE EVENT e ON SCHEDULE EVERY 1 DAY DO BEGIN DELETE FROM t; DELETE FROM u; END',
+      'SELECT 1'
+    ]);
+    // 没有块的函数体照旧到分号为止；开事务的 BEGIN 不是块
+    expect(splitSqlStatements('CREATE FUNCTION f() RETURNS INT DETERMINISTIC RETURN 1; SELECT f();', 'mysql'))
+      .toEqual(['CREATE FUNCTION f() RETURNS INT DETERMINISTIC RETURN 1', 'SELECT f()']);
+    expect(splitSqlStatements('BEGIN; DELETE FROM t; COMMIT;', 'mysql'))
+      .toEqual(['BEGIN', 'DELETE FROM t', 'COMMIT']);
+  });
+
   it('SQL Server 的方括号标识符里的引号与分号不算数', () => {
     expect(splitSqlStatements("SELECT [it's; odd]]name] FROM t; SELECT 2;", 'sqlserver'))
       .toEqual(["SELECT [it's; odd]]name] FROM t", 'SELECT 2']);

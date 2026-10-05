@@ -83,12 +83,22 @@ function matchSlashLine(sqlText: string, index: number): number | null {
 
 /**
  * 语句体里带分号、靠 `BEGIN … END` 收尾的：SQLite 的触发器、PostgreSQL 14 起的 `BEGIN ATOMIC`
- * 函数与过程体。只在这两种语句里数 BEGIN / CASE 与 END——单独的 `BEGIN;` 是开事务，照旧切
+ * 函数与过程体，MySQL 的存储过程、函数、触发器与事件。只在这几种语句里数 BEGIN / CASE 与 END——
+ * 单独的 `BEGIN;` 是开事务，照旧切。
+ *
+ * MySQL 写了 `DELIMITER` 就按它切、不数：那是用户自己划的界，原来就对
  */
 const BODY_STATEMENT_START: Partial<Record<SqlDialect, RegExp>> = {
   sqlite: /^\s*CREATE\s+(?:(?:TEMP|TEMPORARY)\s+)?TRIGGER\b/i,
-  postgresql: /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b/i
+  postgresql: /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\b/i,
+  mysql: /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:DEFINER\s*=\s*\S+\s+)?(?:SQL\s+SECURITY\s+\w+\s+)?(?:AGGREGATE\s+)?(?:PROCEDURE|FUNCTION|TRIGGER|EVENT)\b/i
 };
+
+/**
+ * MySQL 过程体里的 `END IF` / `END LOOP` / `END WHILE` / `END REPEAT` 收的块开头没有 BEGIN，不算；
+ * `END CASE` 收的是开头那个 CASE，后面这个 CASE 不能再算一次开块
+ */
+const COMPOUND_END = /^END\s+(IF|LOOP|WHILE|REPEAT|CASE)\b/i;
 
 /** T-SQL 里这几种定义的体到批的末尾为止（批里只能有它一条），没有 GO 就到脚本末尾 */
 const SQL_SERVER_ROUTINE_START = /^\s*(?:CREATE\s+(?:OR\s+ALTER\s+)?|ALTER\s+)(?:PROC|PROCEDURE|FUNCTION|TRIGGER)\b/i;
@@ -176,15 +186,17 @@ function scanStatements(
         inBlock = true;
       }
 
-      if (bodyStart && !countsBody && buffer.trim() === '' && bodyStart.test(sqlText.slice(index, index + 60))) {
+      if (bodyStart && !countsBody && buffer.trim() === '' && delimiter === ';'
+        && bodyStart.test(sqlText.slice(index, index + 160))) {
         countsBody = true;
       }
       if (countsBody && /[A-Za-z_]/.test(sqlText[index]) && !/[\w$]/.test(sqlText[index - 1] ?? '')) {
-        const word = sqlText.slice(index).match(/^[A-Za-z_][\w$]*/)?.[0] ?? sqlText[index];
+        const compoundEnd = sqlText.slice(index, index + 40).match(COMPOUND_END);
+        const word = compoundEnd?.[0] ?? sqlText.slice(index).match(/^[A-Za-z_][\w$]*/)?.[0] ?? sqlText[index];
         const upper = word.toUpperCase();
         if (upper === 'BEGIN' || upper === 'CASE') {
           bodyDepth += 1;
-        } else if (upper === 'END') {
+        } else if (upper === 'END' || compoundEnd?.[1].toUpperCase() === 'CASE') {
           bodyDepth = Math.max(0, bodyDepth - 1);
         }
         buffer += word;
