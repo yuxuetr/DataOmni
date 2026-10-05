@@ -992,6 +992,20 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 查询历史的口令打码，各家建用户、改口令、连外部库的写法（`historyRedaction.ts`；rpm 0.4.162，本机 Docker 的 ClickHouse 26.9）：
+    **修了四处**。拿 32 种写法逐个方言过一遍，按各家真实语法筛出四类漏打：
+    - 带前缀的字面量（`871799b`）：SQL Server 的 `ALTER LOGIN … WITH PASSWORD = N'新' OLD_PASSWORD = N'旧'`（SSMS 生成的脚本都写 `N'`）、
+      PostgreSQL 的 `PASSWORD E'…'`、MySQL 的 `_utf8mb4'…'`。前缀让字面量前面那段以 `N` 结尾，锚在 `$` 的关键字正则对不上。
+    - MySQL 的 `SET PASSWORD FOR 'u'@'%' = '…'` 与 `SET PASSWORD = '新' REPLACE '旧'`（`cb07cd1`）。
+    - 字面量里键值对写法的连接串（`26318b6`）：DuckDB 的 `ATTACH 'host=… password=…' (TYPE postgres)`、PostgreSQL 的 dblink、
+      SQL Server 的 `OPENROWSET('…;Pwd=…;')`。原先只认 `postgres://u:pw@h` 这种 URL。只在字面量里面认，外面的 `pwd = col` 不动。
+    - ClickHouse 按位置给的口令（`47a9bf7`）：`mysql()` / `postgresql()` / `mongodb()` 表函数与同名表引擎第五个参数、
+      `CREATE DATABASE … ENGINE = MySQL(…)` 第四个。四种在本机 ClickHouse 上执行后看 `system.query_log`，它自己打成 `[HIDDEN]` 的位置与我们一致。
+    每处单测先红后绿，前端 1864 条全过、1MB 一条的线性时间用例照过。打包版：ClickHouse 上执行 `SELECT 'Server=s;Pwd=hunter2;'` 与
+    `mysql(…, 'u', 'hunter3')`（连不上、失败），历史里两条都是 `***` 并标「口令已被替换」；localStorage 里历史那份是打过码的，
+    明文只在编辑器草稿里（草稿就是编辑器的原文，要原样恢复）。
+    没改：ClickHouse 的 `s3(url, key, secret)` 三个参数时与 `s3(url, format, structure)` 分不开；`remote()` 的库表可以合写成一项，位置不定；
+    SQL Server 的 `sp_addlinkedsrvlogin` 位置参数；PostgreSQL 的 `PASSWORD $$…$$`。这几种少见，有人报再加。
   - 2026-10-05 风险判定里的 `#` 与反斜杠（`sqlStatements.ts` 的 `sqlWords`；rpm 0.4.160 / 0.4.161，本机 Docker 的 PG 16）：**修了一处**（`a7fbf86`）。
     切分早已按方言读，定级用的词级扫描却不分方言：`#` 一律当行注释、反斜杠一律当转义。SQL Server 的 `DELETE FROM #tmp WHERE id = 1`、
     PostgreSQL 的 `UPDATE t SET flags = flags # 4 WHERE id = 1`、`'C:\' WHERE …` 里 WHERE 被吞掉，判成「没有 WHERE、影响整张表」——
