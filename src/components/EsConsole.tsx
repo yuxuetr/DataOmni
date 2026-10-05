@@ -49,6 +49,7 @@ import {
 import type { StatementRisk } from '../utils/statementRisk';
 import type { TranslationKey } from '../i18n/translate';
 import { toAggTables, type AggTable } from '../utils/esAggregations';
+import { serverAddress } from '../utils/mongoConnection';
 import { HighlightedCode } from './HighlightedCode';
 
 /** 与后端 `EsResponse` 一致 */
@@ -253,7 +254,7 @@ export function EsConsole({ connection }: EsConsoleProps) {
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-fg">{connection.name}</p>
-          <p className="truncate text-xs text-fg-muted">{`Elasticsearch · ${scheme}://${connection.host}:${connection.port}`}</p>
+          <p className="truncate text-xs text-fg-muted">{`Elasticsearch · ${scheme}://${serverAddress(connection)}`}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2 text-sm text-fg-muted">

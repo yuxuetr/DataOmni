@@ -88,6 +88,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { describeError } from './utils/describeError';
+import { serverAddress } from './utils/mongoConnection';
 import { useProfileConnector } from './hooks/useProfileConnector';
 import { useThemeStore } from './stores/themeStore';
 import { environmentBadge } from './contracts/environment';
@@ -679,7 +680,7 @@ function App() {
           })(),
           connection.db_type === 'sqlite' || connection.db_type === 'duckdb'
             ? connection.database ?? ''
-            : `${connection.host}:${connection.port}`
+            : serverAddress(connection)
         ].filter(Boolean).join(' · '),
         run: () => {
           if (!isActive) {

@@ -47,6 +47,7 @@ import {
 } from '../utils/cypherEdit';
 import { requiresConfirmation, type StatementRisk } from '../utils/statementRisk';
 import { MAX_UNVIRTUALIZED_ROWS } from '../utils/gridPagination';
+import { serverAddress } from '../utils/mongoConnection';
 import type { TranslationKey } from '../i18n/translate';
 import { HighlightedCode } from './HighlightedCode';
 
@@ -446,7 +447,7 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
         <div className="min-w-0">
           <p className="truncate text-sm font-medium text-fg">{connection.name}</p>
           <p className="truncate text-xs text-fg-muted">
-            {`Neo4j · ${connection.host}:${connection.port}`}
+            {`Neo4j · ${serverAddress(connection)}`}
             {connection.database?.trim() ? ` / ${connection.database.trim()}` : ` · ${t('cypher.homeDatabase')}`}
           </p>
         </div>

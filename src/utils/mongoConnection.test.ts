@@ -46,6 +46,14 @@ describe('mongoConnection', () => {
     expect(serverAddress({ ...base, options: {} })).toBe('cluster0.example.net:27017');
   });
 
+  it('IPv6 地址加方括号，不然 `::1:5432` 分不出哪段是端口', () => {
+    const postgres = { db_type: DatabaseType.PostgreSQL, options: {}, port: 5432 };
+    expect(serverAddress({ ...postgres, host: '::1' })).toBe('[::1]:5432');
+    expect(serverAddress({ ...postgres, host: 'fd00::5' })).toBe('[fd00::5]:5432');
+    expect(serverAddress({ ...postgres, host: '[::1]' })).toBe('[::1]:5432');
+    expect(serverAddress({ ...postgres, host: '127.0.0.1' })).toBe('127.0.0.1:5432');
+  });
+
   it('换成证书登录时加上认证方式、不加密升到完整校验；换回口令只摘掉这个键', () => {
     const on = withMongoX509({ options: { keep: '1' }, ssl: false }, true);
     expect(on).toEqual({

@@ -26,6 +26,7 @@ import {
 } from '../utils/connectionHealth';
 import { serverLabel } from '../utils/serverPresets';
 import { isFileDatabase } from '../utils/databaseFiles';
+import { serverAddress } from '../utils/mongoConnection';
 
 interface SqlWorkbenchProps {
   connection: ConnectionConfig;
@@ -192,7 +193,7 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
             {/* SQLite 与 DuckDB 没有主机和端口，照印会是「sqlite · :0 / 路径」 */}
             {isFileDatabase(connection.db_type)
               ? `${serverLabel(connection)} · ${targetDatabase || connection.database}`
-              : `${serverLabel(connection)} · ${connection.host}:${connection.port}`
+              : `${serverLabel(connection)} · ${serverAddress(connection)}`
                 // 库名优先用服务端报的，问不出来才退回配置里那个
                 + (targetDatabase ? ` / ${targetDatabase}` : t('workbench.noDatabase'))}
             {/* Schema 只有 PostgreSQL 有。它回答的是「不带前缀的 CREATE TABLE

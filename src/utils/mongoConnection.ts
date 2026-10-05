@@ -63,9 +63,14 @@ export function withMongoX509(config: SrvToggled, enabled: boolean): SrvToggled 
   return { ...config, options: { ...rest, [MONGO_AUTH_MECHANISM_OPTION]: MONGO_X509 }, ...atLeastEncrypted(config) };
 }
 
-/** 界面上写「连到哪」：SRV 只有一个 DNS 名字，端口不用，印出来反而误导 */
+/**
+ * 界面上写「连到哪」：SRV 只有一个 DNS 名字，端口不用，印出来反而误导。
+ * IPv6 加方括号：存下的主机是去掉方括号的 `::1`，照拼成 `::1:5432` 分不出哪段是端口
+ */
 export function serverAddress(profile: SrvFields & Pick<ConnectionConfig, 'host' | 'port'>): string {
-  return isMongoSrv(profile) ? profile.host : `${profile.host}:${profile.port}`;
+  if (isMongoSrv(profile)) return profile.host;
+  const host = profile.host.includes(':') && !profile.host.startsWith('[') ? `[${profile.host}]` : profile.host;
+  return `${host}:${profile.port}`;
 }
 
 /**
