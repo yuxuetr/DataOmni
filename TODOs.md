@@ -992,6 +992,14 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 块注释嵌不嵌套（`sqlStatements.ts`；rpm 0.4.160，SQLite 文件；本机 Docker 的 MySQL 8.4、ClickHouse 26.9，本机 sqlite3 与 DuckDB CLI）：
+    **修了一处**（`4ca2c55`）。切分与风险判定的词法器一律把 `/*` 当成可嵌套，而 MySQL、SQLite、Oracle 到第一个 `*/` 就结束：
+    `/* old /* note */ DELETE FROM t` 原先整段读成注释，切出 0 条，按「执行全部」什么也不发、也没有提示；风险判定定级为只读，生产库上不弹确认。
+    实测：MySQL（`--comments` 原样发给服务端）与 SQLite 执行了注释后的语句；PostgreSQL、SQL Server（文档）、DuckDB、ClickHouse 嵌套
+    （DuckDB 报 `unterminated /* comment`，ClickHouse 整句当注释）；Oracle 按文档不嵌套，没上真库。改成按方言定，风险判定把方言传下去。
+    两条单测先红后绿，切分与词级扫描各撤一处判断都精确变红，前端 1629 条全过。打包版：SQLite 上这句加一条 `SELECT count(*)` 显示「2 条语句」、
+    弹整表删除的确认，执行后影响 3 行、计数 0。
+    没改：编辑器与结果卡片的上色仍按嵌套画（lang-sql 的词法器），注释后面的 DELETE 显示成斜体注释色，只是颜色。
   - 2026-10-05 上一轮记下没修的三处（`redisCommandLine.ts`、`historyRedaction.ts`、`esAggregations.ts`；rpm 0.4.159，本机 Docker 的 Redis 7 与 Elasticsearch 8.19.4）：**修了三处**。
     - Redis `SAVE`、`CLIENT PAUSE`、`DEBUG` 执行前先问（`4b7fc98`）：另起「停下来不理别人」一档，提示指向 `BGSAVE`；`DEBUG` 原先套用
       `KEYS` 的「从头扫一遍」。`CLIENT KILL` 归入「改服务端」，`CLIENT UNPAUSE`、`BGSAVE` 不问。打包版发 `CLIENT PAUSE 600000` 弹出新文案，取消。
