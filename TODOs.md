@@ -992,6 +992,13 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 ClickHouse 上 FROM 写在前面的查询导不出（`clickhouse.rs` 的 `is_query`；本机 Docker 的 clickhouse-server 26.9）：
+    **修了一处**（`git log --grep "FROM 写在前面"`）。ClickHouse 收 `FROM t SELECT …`，编辑器里照常出结果；导出前判断「是不是查询」
+    的关键字表没有 FROM，于是当成写语句拒掉，报 `DATAOMNI_NON_QUERY`。关键字表加上 FROM。单元用例与冒烟用例
+    `clickhouse_exports_stream_to_a_file_and_refuse_non_queries` 都先红后绿：改前真库上报 NON_QUERY，改后导出 3 行、表头 `number`；
+    ClickHouse 冒烟 15 条、`bun run check` 通过。只动后端判断，没打包看界面。
+    同一轮看过、没问题的：CSV 导入的分隔符嗅探、编码识别、PostgreSQL 占位符的类型转换（类型名来自 `format_type`）、SQL Server 的
+    `TRY_CONVERT` 预检与保存点重放。前端 `returnsResultSet` 有同样缺词，但除了测试没有调用方，不影响界面。
   - 2026-10-05 MongoDB 网格的列序被像整数的字段名打乱（`mongodb.rs` 的 `MongoDocumentRow`、`mongoDocuments.ts`；rpm 0.4.166 / 0.4.167，本机 Docker 的 mongo:8.2）：
     **修了一处**（`8016ee2`）。后端用 IndexMap 按文档里的顺序给字段，可写成 JSON 对象交给前端后，JS 对象把 `"2024"` 这种像整数的键
     排到所有键前面：BSON 里是 `_id, name, 2024, age` 的文档（用 `$objectToArray` 核过；mongosh 自己也是 JS，`printjson` 一样会排错），
