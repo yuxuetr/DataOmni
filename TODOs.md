@@ -992,6 +992,18 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 驱动读不懂回包之后会话坏到断开重连（`query_error.rs`、`query_session.rs`、`utils/queryError.ts`；rpm 0.4.170，
+    本机 Docker 的 mysql:9.4）：**修了一处**（`d12cf17`、`015de08`）。编辑器里 `SELECT * FROM 有 VECTOR 的表` 报 0xf2 之后，连接上剩着
+    没读完的包，同一个标签页的下一条报 `COM_STMT_PREPARE_OK` 协议错；事务里时状态栏还写「事务中」，其实那条连接已经不能用。
+    sqlx 的 `Protocol` 错误带上 `PROTOCOL_ERROR` 码，会话照断线处理：下一条之前换连接，事务状态报 idle。消息仍是驱动原话，
+    不说成断线（不让人去重连）；这个码是我们自己的，前端不印成「错误码」——「是不是数据库说的」挪成纯函数 `reportedByDatabase`。
+    冒烟用例 `mysql_session_recovers_after_the_driver_cannot_decode_a_reply` 旧代码红（事务仍是 Active），单元用例去掉映射后红，
+    `bun run check` 通过。打包版：开事务、插一行、`SELECT *` 报错，下面写「整个事务也回滚了」、状态栏「No transaction」、没有错误码；
+    同一标签页接着 `SELECT COUNT(*)` 返回 1，服务端也是 1。
+    看过、没修的：**池**里那条连接出这个错后一直占着一个位置不还（max 3 的池：size 2、idle 1；max 1 时下一条等到 PoolTimedOut），
+    其余连接照常可用。表数据页已投影成 `CAST(… AS BINARY)` 不再触发；还会走池、能写 `SELECT *` 的是导出自定义查询。
+    默认上限 10，要连着出十次才堵死。重估条件：有人报导出或表格「等连接超时」。
+    同一轮 MySQL 9.4 上 `mysql_runs_the_object_ddl_corpus` 等三条红，改动前同样红：用例写死了库名，本机的库叫 `om`。
   - 2026-10-05 MySQL 9 带 VECTOR 列的表打不开、改不了、导不进（`tablePagination.ts`、`columnEditors.ts`、`csv_import.rs`；
     rpm 0.4.167 / 0.4.168 / 0.4.169，本机 Docker 的 mysql:9.4 与 mariadb:11.8）：**修了三处**。sqlx 0.8 不认 MySQL 的列类型 0xf2：
     - 表数据页 `SELECT *` 整条失败，一列都看不到（`446363c`）。VECTOR 列点名投影成 `CAST(v AS BINARY)`，两家都收，显示成十六进制。
