@@ -13,9 +13,9 @@ import type { TranslationKey } from '../i18n/translate';
  * 字符串里出现 `DELETE` 并不删东西，只有服务端说得准。服务端说是读，就是读。
  */
 
-/** 出现任何一个都「可能写」。`CALL` 在里面：过程可以写 */
+/** 出现任何一个都「可能写」。`CALL` 在里面：过程可以写；`INSERT` 是 GQL 的 `CREATE`（Neo4j 5.18 起） */
 const WRITE_WORDS: ReadonlySet<string> = new Set([
-  'CREATE', 'MERGE', 'SET', 'DELETE', 'DETACH', 'REMOVE', 'DROP', 'ALTER', 'RENAME',
+  'CREATE', 'INSERT', 'MERGE', 'SET', 'DELETE', 'DETACH', 'REMOVE', 'DROP', 'ALTER', 'RENAME',
   'GRANT', 'DENY', 'REVOKE', 'CALL', 'FOREACH', 'LOAD', 'START', 'STOP', 'TERMINATE',
   'ENABLE', 'DEALLOCATE', 'REALLOCATE'
 ]);
@@ -50,7 +50,7 @@ export function classifyCypherRisk(text: string, queryType: CypherQueryType): St
     return 'scoped-write';
   }
   // 只建不改：建节点、建关系、建索引
-  if ((words.has('CREATE') || words.has('MERGE')) && !words.has('CALL') && !words.has('FOREACH')) {
+  if ((words.has('CREATE') || words.has('INSERT') || words.has('MERGE')) && !words.has('CALL') && !words.has('FOREACH')) {
     return 'append';
   }
   return 'scoped-write';

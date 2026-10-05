@@ -10,6 +10,12 @@ describe('cypherMayWrite', () => {
     expect(cypherMayWrite('match (n) detach delete n')).toBe(true);
   });
 
+  it('GQL 的 INSERT 和 CREATE 一样建东西（Neo4j 5.18 起，2026.09 上验过不加 CYPHER 25 也写）', () => {
+    expect(cypherMayWrite('INSERT (n:Person {name: $name})')).toBe(true);
+    expect(classifyCypherRisk('INSERT (n:Person {name: $name})', 'w')).toBe('append');
+    expect(classifyCypherRisk('MATCH (a {id: 1}) INSERT (a)-[:KNOWS]->(:Person)', 'w')).toBe('append');
+  });
+
   it('EXPLAIN 什么也不执行，写什么都不算写；PROFILE 是真的跑', () => {
     expect(cypherMayWrite('EXPLAIN MATCH (n) DETACH DELETE n')).toBe(false);
     expect(classifyCypherRisk('EXPLAIN MATCH (n) DETACH DELETE n', 'w')).toBe('read');
