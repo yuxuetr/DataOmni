@@ -992,6 +992,16 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 格式化改坏带前缀的字面量（`formatSql.ts`；rpm 0.4.163 / 0.4.164，本机 Docker 的 PG 16、ClickHouse 26.9，本机 DuckDB 1.5 CLI）：
+    **修了两处**。拿各家特有的写法（PostgreSQL 37 条、ClickHouse 26 条）各执行一遍原文、一遍格式化后的，比较结果：
+    - PostgreSQL 与 DuckDB 的 `N'…'` / `n'…'`（`b6ee667`）：sql-formatter 不认这个前缀，排成 `N 'a'`，两家都读成「类型 N 的字面量」，
+      报类型不存在。从 SQL Server 搬过来的脚本满是这种写法。
+    - ClickHouse 的 `x'4142'`、`b'01000001'`（`8a81d70`）：拆开后是语法错误。
+    改法是用 `formatDialect` 给这三种方言的单引号字符串补上前缀，不另写词法。两条单测先红后绿，各撤一处补丁都在对应断言上变红，
+    前端 1866 条全过。打包版：PG 上 `select N'national' as a, n'lower' as b` 点格式化后照样执行、返回 1 行；ClickHouse 上
+    `x'4142'`、`b'01000001'` 排完执行得 `AB`、`A`。
+    同一轮看过、没问题的：PG 的 `E'…'`、`U&'…'`、`$$…$$`、`#` 异或、`::` 与数组切片，ClickHouse 的 `tuple .1`、`m ['k']`
+    （空格不影响，26.9 上试过）、lambda、`{p:UInt8}`、`FORMAT`；MySQL、SQL Server、Oracle、SQLite 各自认的前缀都没被拆。
   - 2026-10-05 查询历史的口令打码，各家建用户、改口令、连外部库的写法（`historyRedaction.ts`；rpm 0.4.162，本机 Docker 的 ClickHouse 26.9）：
     **修了四处**。拿 32 种写法逐个方言过一遍，按各家真实语法筛出四类漏打：
     - 带前缀的字面量（`871799b`）：SQL Server 的 `ALTER LOGIN … WITH PASSWORD = N'新' OLD_PASSWORD = N'旧'`（SSMS 生成的脚本都写 `N'`）、
