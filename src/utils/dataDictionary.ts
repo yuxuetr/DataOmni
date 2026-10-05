@@ -81,13 +81,16 @@ function dictionaryBody(source: DictionarySource, t: Translate): string {
     out.push('', `## ${key}`, '');
     out.push(`| ${t('dictionary.column')} | ${t('dictionary.type')} | ${t('dictionary.nullable')} | ${t('dictionary.primaryKey')} | ${t('dictionary.references')} |`);
     out.push('| --- | --- | --- | --- | --- |');
+    // SQLite 的 rowid 别名：唯一的主键列、类型恰好写作 INTEGER。目录对它报 notnull = 0，而它存不进 NULL
+    // （插 NULL 得到的是新的 rowid）。别的主键照目录写——SQLite 非 INTEGER 的主键、复合主键真存得进 NULL，
+    // 其余各家的目录本来就把主键报成不可空
+    const keyColumns = table.columns.filter((column) => column.isPrimaryKey);
+    const rowidAlias = keyColumns.length === 1 && keyColumns[0].dataType.trim().toUpperCase() === 'INTEGER' ? keyColumns[0] : null;
     for (const column of table.columns) {
       const targets = source.links
         .filter((link) => link.from.table === key && link.from.column === column.name)
         .map((link) => `\`${cell(link.to.table)}.${cell(link.to.column)}\``);
-      // 主键列一律写不可空：SQLite 的目录对 INTEGER PRIMARY KEY 报 notnull = 0，而它存不进 NULL。
-      // 照抄目录会在字典里写出「主键可空」，读的人（和 Agent）会当真
-      const nullable = column.isNullable && !column.isPrimaryKey;
+      const nullable = column.isNullable && column !== rowidAlias;
       out.push(
         `| \`${cell(column.name)}\` | ${cell(column.dataType)} | ${nullable ? t('dictionary.yes') : t('dictionary.no')}`
         + ` | ${column.isPrimaryKey ? '✓' : ''} | ${targets.join(', ')} |`

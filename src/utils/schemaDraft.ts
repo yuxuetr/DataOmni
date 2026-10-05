@@ -492,7 +492,8 @@ export function draftToEr(design: SchemaDraft): { tables: ErTable[]; links: ErLi
         name: column.name,
         dataType: column.dataType,
         isPrimaryKey: primaryKey.has(fold(column.name)),
-        isNullable: column.nullable
+        // 与建表语句一致：主键列建出来是 NOT NULL（`columnDraft`）
+        isNullable: column.nullable && !primaryKey.has(fold(column.name))
       }))
     };
   });

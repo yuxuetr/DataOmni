@@ -46,6 +46,22 @@ describe('buildDataDictionary', () => {
     expect(buildDataDictionary(sqliteLike, t)).toContain('| `id` | INTEGER | dictionary.no | ✓ |');
   });
 
+  it('其余的主键照目录写：SQLite 里不是 INTEGER 的主键、复合主键都存得进 NULL（sqlite3 3.x 上插过）', () => {
+    const columns = (list: Array<[string, string]>) => list.map(([name, dataType]) => ({ name, dataType, isPrimaryKey: true, isNullable: true }));
+    const text = buildDataDictionary({
+      ...source,
+      tables: [
+        { schema: null, name: 'a', columns: columns([['code', 'TEXT']]) },
+        { schema: null, name: 'b', columns: columns([['n', 'INT']]) },
+        { schema: null, name: 'c', columns: columns([['x', 'INTEGER'], ['y', 'INTEGER']]) }
+      ],
+      links: []
+    }, t);
+    expect(text).toContain('| `code` | TEXT | dictionary.yes | ✓ |');
+    expect(text).toContain('| `n` | INT | dictionary.yes | ✓ |');
+    expect(text).toContain('| `x` | INTEGER | dictionary.yes | ✓ |');
+  });
+
   it('设计页上还没建的设计，开头那句说的是设计', () => {
     expect(buildDataDictionary({ ...source, origin: 'design' }, t)).toContain('dictionary.coverageDesign');
   });

@@ -342,6 +342,11 @@ describe('draftToEr', () => {
     ]);
   });
 
+  it('主键列写不可空，与建出来的表一致（建表时主键列加 NOT NULL）', () => {
+    const draft = { tables: [table('t', [column('id', 'text', true), column('note', 'text', true)])] };
+    expect(draftToEr(draft).tables[0].columns.map((c) => c.isNullable)).toEqual([false, true]);
+  });
+
   it('主键列标出来，复合外键拆成逐列的线', () => {
     const draft = {
       tables: [
