@@ -991,6 +991,19 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 Redis 命令行的回答与 Elasticsearch 控制台的风险判定（`redis.rs`、`esConsole.ts`；rpm 0.4.155 / 0.4.156，
+    本机 Docker 的 Redis 7.4 与 Elasticsearch 8.19，cu 上的 Redis 7.4 与 OpenSearch 3.8）：**修了两处**：
+    - Redis 的整数回答按 JSON 的数传到前端（`f8efef4`），到了 JS 是双精度：`INCR` 到 2^53 以上差一（`9007199254740993` 显示成 `…992`），
+      雪花 ID 这类计数器正是这个量级。现在后端传十进制文字。单测先红；Redis 冒烟 12 条全过（新加一条 `INCR` 越过 2^53）；
+      打包版命令行里 `INCR big` 显示 `(integer) 9007199254740993`，与 `redis-cli GET` 一致。旧版的界面没有另装一遍看。
+    - `DELETE _all` 判成有界的写（`0612f62`）：`_all` 被当成了端点，而它在索引的位置上就是「所有索引」（cu 的 OpenSearch 上
+      `_all/_count` 与 `*/_count` 同为 179）。开发环境默认只拦批量写以上，这条不弹框；OpenSearch 3.8 的 `destructive_requires_name`
+      默认是 `false`，会照删（Elasticsearch 8 起默认拒）。现在按删数据判。单测先红；打包版发 `DELETE _all` 弹出「丢弃数据」确认，
+      取消后 `om_keep` 还在。真删没有在 OpenSearch 上跑——那台上还有别的索引。
+    - 同一轮看过、没改的：Redis 的「卡住服务端」那一档只有 `KEYS` 与 `DEBUG`，`SAVE`、`CLIENT PAUSE` 也会让别的请求等着，
+      但那一档的提示写的是「从头扫一遍」，加进去要另起一档文案；手敲 `SAVE` 的人多半知道它做什么，当前版本不加。
+      重估条件：有人在生产库上因此卡住的反馈。历史脱敏里 `ACL SETUSER u >"my pass"`（引号从参数中间开始）只打掉前半截，
+      引号包整个参数的写法（`">my pass"`）是全打的；这种写法罕见，不改。
   - 2026-10-05 DuckDB 宏的「查看定义」（`object_catalog.rs`；rpm 0.4.154，容器里的 DuckDB 文件；DuckDB 1.5.6 CLI）：**修了一处**（`1d8072d`）。
     宏没有存原文，定义是拿参数名与宏体拼回来的：参数类型丢了（`typed(a DOUBLE)` 拼成 `typed(a)`，照它重建后实参不再先转类型，
     `typed(7, 'x')` 从 `7.0x` 变成 `7x`），名字也不加引号（`sales."My Macro"` 拼成 `sales.My Macro`，语法错误）。
