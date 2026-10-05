@@ -992,6 +992,14 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 DuckDB 上大小写不同的唯一索引（`schema_metadata.rs` 的 `DUCKDB_INDEXES`；rpm 0.4.164 / 0.4.165，容器里的 DuckDB 文件，本机 DuckDB 1.5.6 CLI）：
+    **修了一处**（`36aceeb`）。`duckdb_indexes()` 的 `expressions` 照建索引时的写法给：`CREATE UNIQUE INDEX u ON t (EMAIL)` 得到 `[EMAIL]`，
+    而列叫 `email`。前端按列名对索引，对不上就当表达式索引排除，唯一键只有这个索引的表在网格里成了「没有主键也没有可用的唯一索引」、只读。
+    现在按 `duckdb_columns()` 不分大小写换回表里的写法（DuckDB 的名字不分大小写，也不许两列只差大小写），表达式索引对不上照旧原样。
+    夹具里普通索引改写成 `(NOTE, "Pa")`，断言不变，先红（交回 `NOTE`、`Pa`）后绿，DuckDB 用例 18 条全过。打包版：0.4.164 上这张表标只读；
+    0.4.165 上可编辑，把 `b@x` 的 `n` 改成 20 提交，「已提交 1 项」，用 CLI 看文件里只有那一行变了。
+    同一轮看过、没问题的：SQLite 的 `pragma_index_info` 交回表里的写法；MySQL、PostgreSQL、SQL Server、Oracle 的索引列取自列目录本身（按查询推断，没上真库验）。
+    sqlx 连 MySQL 默认开 `FOUND_ROWS`，「改成同样的值」按匹配行数计，不会被当成并发冲突。
   - 2026-10-05 格式化改坏带前缀的字面量（`formatSql.ts`；rpm 0.4.163 / 0.4.164，本机 Docker 的 PG 16、ClickHouse 26.9，本机 DuckDB 1.5 CLI）：
     **修了两处**。拿各家特有的写法（PostgreSQL 37 条、ClickHouse 26 条）各执行一遍原文、一遍格式化后的，比较结果：
     - PostgreSQL 与 DuckDB 的 `N'…'` / `n'…'`（`b6ee667`）：sql-formatter 不认这个前缀，排成 `N 'a'`，两家都读成「类型 N 的字面量」，
