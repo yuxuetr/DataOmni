@@ -47,6 +47,17 @@ describe('redactSqlForHistory', () => {
     );
   });
 
+  it("字面量带前缀时照样打：SQL Server 的 N'…'、PostgreSQL 的 E'…'、MySQL 的字符集引导", () => {
+    // SSMS 生成的脚本里字符串都写成 N'…'
+    expect(redact("ALTER LOGIN app WITH PASSWORD = N'new1' OLD_PASSWORD = N'old1'", 'sqlserver').sql).toBe(
+      "ALTER LOGIN app WITH PASSWORD = N'***' OLD_PASSWORD = N'***'"
+    );
+    expect(redact("ALTER ROLE app PASSWORD E'it\\'s'", 'postgresql').sql).toBe("ALTER ROLE app PASSWORD E'***'");
+    expect(redact("SET PASSWORD = _utf8mb4'hunter2'").sql).toBe("SET PASSWORD = _utf8mb4'***'");
+    // 词尾恰好是 N / E 的关键字不是前缀
+    expect(redact("SELECT CASE WHEN 'a' = 'b' THEN 1 END").redacted).toBe(false);
+  });
+
   it('打掉带前缀的口令选项与列名：复制源的 SOURCE_PASSWORD、user_password', () => {
     expect(redact("CHANGE REPLICATION SOURCE TO SOURCE_USER='r', SOURCE_PASSWORD='s3cret'").sql).toBe(
       "CHANGE REPLICATION SOURCE TO SOURCE_USER='r', SOURCE_PASSWORD='***'"

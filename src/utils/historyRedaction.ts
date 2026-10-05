@@ -54,6 +54,13 @@ const SECRET_OPTION =
  */
 const URL_CREDENTIAL = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/[^:/\s?#]+:)([^@\s/?#]*)(@)/gi;
 
+/**
+ * 紧贴在开引号前面、属于字面量本身的前缀：SQL Server 的 `N'…'`、PostgreSQL 的 `E'…'`、
+ * MySQL 的字符集引导 `_utf8mb4'…'`。不去掉的话 `PASSWORD = N'…'` 前面那段以 `N` 结尾，
+ * 锚在 `$` 的关键字正则对不上，口令原样进历史。前面要是词的边界：`WHEN'x'` 的 N 不是前缀
+ */
+const LITERAL_PREFIX = /(?<![\w$])(?:[NnEe]|_[A-Za-z0-9]+)$/;
+
 interface Span {
   from: number;
   to: number;
@@ -287,7 +294,9 @@ export function redactSqlForHistory(sql: string, dialect: SqlDialect): RedactedS
     // 两个正则都锚在 `$`，中间只允许空白，`ORDER BY 'x'` 不会被误伤。
     // 只看前面 200 个字符：两个正则都锚在 `$` 且能匹配的前缀远短于此，
     // 每个字面量都从头切一次会把长脚本变成平方级
-    const preceding = sql.slice(Math.max(0, literal.from - 200), literal.from);
+    const preceding = sql
+      .slice(Math.max(0, literal.from - 200), literal.from)
+      .replace(LITERAL_PREFIX, '');
     if (CREDENTIAL_KEYWORD.test(preceding) || SECRET_COLUMN.test(preceding) || SECRET_OPTION.test(preceding)) {
       targets.add(index);
     }
