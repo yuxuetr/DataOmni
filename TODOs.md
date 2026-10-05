@@ -992,6 +992,13 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 CSV 导入往 serial 一类的列写 id 不提醒（`utils/csvImport.ts`；rpm 0.4.174 / 0.4.175，本机 Docker 的 postgres:16-alpine）：
+    **修了一处**（`f45f52f`）。`32711d0` 只对 `BY DEFAULT` 的 identity 提醒「序列不跟着走」，而更常见的 PostgreSQL `serial`（默认值
+    `nextval(…)`）是同一回事、却一声不吭：带着 1、5 导进去之后再插一行，报 `Key (id)=(1) already exists`（打包版里真导过）。现在默认值
+    取序列的列同样提醒：PostgreSQL / DuckDB 的 `nextval`（DuckDB 本机试过，同样撞 `id: 1`）、Oracle 的 `seq.NEXTVAL`、SQL Server 与
+    MariaDB 的 `NEXT VALUE FOR`（这两种照文档的目录写法，没在真库上看过默认值的原文）。MySQL 只对 AUTO_INCREMENT 不提，MariaDB 的序列照提。
+    英文文案改成「从序列取值」，不再说是 identity 列。用例先红后绿，`bun run check` 通过。打包版 A/B：0.4.174 映射 id 没有任何提示；
+    0.4.175 黄字提醒、「下一步」照常可按。
   - 2026-10-05 SQLite 的 rowid 别名写了 NOT NULL 被当成必填（`services/schema_metadata.rs` 的 `SQLITE_COLUMNS`、`utils/csvImport.ts`；rpm 0.4.173 / 0.4.174，
     容器里的 SQLite 文件）：**修了一处**（`70ad306`）。Django 的 `"id" integer NOT NULL PRIMARY KEY AUTOINCREMENT`、Android Room，以及
     本应用新建表生成的 `"id" INTEGER NOT NULL` + `PRIMARY KEY ("id")`（DDL 语料里那条就是），新增行时 id 被标成必填、
