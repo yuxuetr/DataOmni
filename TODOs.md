@@ -992,6 +992,16 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 SQLite 的 rowid 别名写了 NOT NULL 被当成必填（`services/schema_metadata.rs` 的 `SQLITE_COLUMNS`、`utils/csvImport.ts`；rpm 0.4.173 / 0.4.174，
+    容器里的 SQLite 文件）：**修了一处**（`70ad306`）。Django 的 `"id" integer NOT NULL PRIMARY KEY AUTOINCREMENT`、Android Room，以及
+    本应用新建表生成的 `"id" INTEGER NOT NULL` + `PRIMARY KEY ("id")`（DDL 语料里那条就是），新增行时 id 被标成必填、
+    CSV 不映射 id 被「必填列没有映射」拦住；而 SQLite 自己会分配。列目录现在把「单列主键、没有 `origin = 'pk'` 的索引」的那一列报成
+    由数据库产生（`BY DEFAULT`）：不是别名的 `WITHOUT ROWID`、`INT`、列上写 `DESC`（这个怪例按类型名认会认错）和复合键都有那个索引，
+    七种建表在用例里逐个核对过。CSV 给定 id 时 SQLite 像 MySQL 一样不提序列：rowid 跟着最大值走（本机 sqlite3 试过，带与不带
+    AUTOINCREMENT 都是 1、5 之后拿到 6）。牵着的几处逐个看过：网格里它本是键列、原来就只读；新增行时交给 DEFAULT；SQLite 的改结构
+    不看这一位（语料里 SQLite 的语句不变，只是 origin / after 的 `generated` 改成 true）；导出的序列只对 PostgreSQL。Rust 用例与
+    CSV 用例先红后绿，`bun run check` 通过。打包版 A/B：0.4.173 新增行 `id (PK) *` 「未填写」、导入红字；0.4.174 新增行是
+    `(generated)` DEFAULT，只填 name 存进去拿到 1，导只有 name 的 CSV 拿到 2、3。网格表头 id 上的红星是「NOT NULL」标记，照实，不改。
   - 2026-10-05 CSV 导入往自增列写给定的 id（`utils/csvImport.ts`；rpm 0.4.172 / 0.4.173，本机 Docker 的 mysql:9.4）：**修了一处**（`32711d0`）。
     把 CSV 的 id 映射到 MySQL 的 `AUTO_INCREMENT`（或 PostgreSQL / Oracle `BY DEFAULT` 的 identity），导入前检查报 error「值由数据库产生，
     往里写值会被拒绝」、「开始导入」按不下去；而这几种列照收给定的值，搬表时带着原 id 导是常事。现在只有计算列与 `ALWAYS` 的 identity
@@ -1002,7 +1012,7 @@
       `"id" integer NOT NULL PRIMARY KEY AUTOINCREMENT`、Android Room 的建表都这么写），目录报 `notnull = 1`（`STRICT` 表不写就是 0，本机 sqlite3 3.54 试过），
       于是新增行时它被当成必填项、CSV 不映射 id 就报「必填列没有映射」拦住导入——而 SQLite 自己会给 rowid（本机 sqlite3 试过）。
       要在目录里把它报成「由数据库产生」，但那一位还牵着网格只读、INSERT 略去、结构页的标记，`WITHOUT ROWID` 表又不是别名，
-      留到下一轮单独修。
+      留到下一轮单独修。——已修，见上一条（`70ad306`）。
   - 2026-10-05 整张换掉表不要求确认（`utils/statementRisk.ts`；rpm 0.4.171 / 0.4.172，DuckDB 文件库）：**修了一处**（`5d5637d`）。
     DuckDB / MariaDB / ClickHouse 的 `CREATE OR REPLACE [TEMP] TABLE` 与 ClickHouse 的 `REPLACE TABLE` 把原表连同数据换掉，等于
     DROP 再 CREATE，却判成有界写入（`REPLACE TABLE` 还当成了 `REPLACE INTO` 那样的追加），开发环境默认门槛下一声不吭就执行；
