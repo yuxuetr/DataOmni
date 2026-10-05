@@ -5760,6 +5760,48 @@ async fn mysql_import_reads_exported_geometry() {
   sqlx::query("DROP TABLE IF EXISTS import_smoke_geometry").execute(&pool).await.expect("cleanup");
 }
 
+/// MySQL 9 与 MariaDB 11.7 起的 VECTOR：网格与导出给的是 `0x` 加它存的 float32 字节。
+/// 绑成文本的 `?` 在 MySQL 上准备语句就失败（sqlx 不认服务端报的参数类型 0xf2），
+/// 要和二进制列一样经 `UNHEX(?)` 写回去
+#[tokio::test]
+async fn mysql_import_reads_exported_hex_into_vector() {
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(2).connect(&url).await.expect("connect to MySQL");
+  let db_pool = DbPool::MySql(pool.clone());
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_vector").execute(&pool).await.expect("drop");
+  // MySQL 8、TiDB 与旧的 MariaDB 没有这个类型
+  if sqlx::query("CREATE TABLE import_smoke_vector (n int, v vector(3))")
+    .execute(&pool)
+    .await
+    .is_err()
+  {
+    return;
+  }
+  let path = write_import_csv("mysql-vector", "n,v\n1,0x0000803f00002040000040c0\n");
+  let summary = run_import(
+    &db_pool,
+    &import_request(
+      &path,
+      "import_smoke_vector",
+      vec![import_column(0, "n", "int"), import_column(1, "v", "vector(3)")],
+    ),
+  )
+  .await;
+  assert_eq!(summary.rows_failed, 0, "{:?}", summary.errors);
+
+  let stored: (String,) = sqlx::query_as("SELECT LOWER(HEX(v)) FROM import_smoke_vector")
+    .fetch_one(&pool)
+    .await
+    .expect("read back");
+  assert_eq!(stored.0, "0000803f00002040000040c0");
+
+  sqlx::query("DROP TABLE IF EXISTS import_smoke_vector").execute(&pool).await.expect("cleanup");
+}
+
 /// MySQL 的 BIT 读出来、导出去都是十进制数。原样绑回去是一串字符：`0` 存成
 /// `'0'` 的字节 48，`165` 报 Data too long
 #[tokio::test]

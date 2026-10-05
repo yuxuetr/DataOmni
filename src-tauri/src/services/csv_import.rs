@@ -705,6 +705,9 @@ fn is_binary_type(dialect: Dialect, target_type: &str) -> bool {
     | "image" | "raw" => true,
     "geometry" | "point" | "linestring" | "polygon" | "multipoint" | "multilinestring"
     | "multipolygon" | "geometrycollection" | "geomcollection" => dialect == Dialect::MySql,
+    // MySQL 9 与 MariaDB 的 VECTOR：网格和导出给的同样是 `0x` 加存的字节。绑成文本的 `?` 在 MySQL 上
+    // 准备语句就失败——sqlx 不认服务端报的参数类型（0xf2），连接也跟着卡住
+    "vector" => dialect == Dialect::MySql,
     _ => false,
   }
 }
