@@ -24,7 +24,7 @@
 | P4 | 扩展数据库与外围能力 | [x] |
 | P5 | 完成统一桌面 UI 与交互设计 | [ ] |
 | P6 | AI 设计、导出与备份（下一步规划 A） | [x] A0–A6c、A9 完成（A2b / A7 / A8 当前版本不做） |
-| P7 | 更多数据库：国产库与云库（下一步规划 B） | [-] B1（OceanBase）、B2 / B2b（openGauss）完成；KingbaseES 缺安装包；B3 / B4 按触发条件 |
+| P7 | 更多数据库：国产库与云库（下一步规划 B） | [-] B1（OceanBase）、B2 / B2b（openGauss）完成；KingbaseES 缺安装包；B3 不做；B4 按触发条件 |
 
 ---
 
@@ -189,7 +189,7 @@
     其余三条是用例按 PG 写死了 `date`：A 模式的 DATE 是 `timestamp(0)`，应用照真实类型显示 `… 00:00:00`，按类型分开预期（`7a26bf0`）。
     同一轮：PG 模式库上分区表那条也钉住（openGauss 的分区要写全 `VALUES LESS THAN`，没有 `PARTITION OF`，`f793f20`），
     并查过它分区表的 `tableoid` 每个分区各不相同，按 `tableoid, ctid` 翻页能唯一定位。四处（PG 16、CockroachDB、openGauss 两种模式）各 36/36。
-- [ ] B3 云库认证（AWS RDS IAM、Azure Entra、GCP Cloud SQL 代理）：按有人要的顺序
+- [ ] ~~B3 云库认证（AWS RDS IAM、Azure Entra、GCP Cloud SQL 代理）~~ **不做**（2026-10-05 定：云厂商各自有客户端与代理，先把已有功能做好）
 - [ ] B4 驱动按 Cargo feature 分
   - 重估条件：第一个客户端库不许随包分发或只在部分平台有的库（多半是达梦）、或包的大小成问题（现在 171 MB）
   - 做法：`DatabaseType` 不加 `cfg`；后端报告驱动清单；门按 feature 成立；CI 构建两套组合
@@ -281,6 +281,7 @@
 
 - [-] Windows、macOS、Linux 完成安装、升级和卸载验证
   - 未做：Windows 三件事，必须真机 / 虚拟机（MSI/NSIS 注册表、开始菜单、SmartScreen）。
+    逐项清单在 `docs/windows-checklist.md`（2026-10-05），在 Windows 真机上照着核对。
   - macOS 缺口：ad-hoc 签名被 Gatekeeper 拒（需 Developer ID + 公证）、只有 arm64、无 updater。
   - Linux（2026-09-28，本机 Docker 以 amd64 模拟构建与运行，包与发版的同一份配置，带 Instant Client）：
     - rpm（Fedora 42）：`dnf` 自动装上 `libaio`、webkit2gtk4.1；0.4.0 装好能起窗口，升到 0.4.1（Instant Client 9 个文件都在）
@@ -991,6 +992,12 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 备份在 Windows 上找工具（`backup.rs`；本机单测，Windows 分支用 `rustc --target x86_64-pc-windows-msvc` 做类型检查）：**修了一处**（`eccf578`）。
+    找 `pg_dump` / `mysqldump` / `mongodump` 时拼的是不带 `.exe` 的文件名，Windows 上 `is_file` 永远为假，装了也报「没找到」；
+    PostgreSQL、MySQL 官方安装包与 MongoDB Database Tools 又都不改 PATH。现在补 `EXE_SUFFIX`，再按 `%ProgramFiles%` 下带版本号的
+    目录找（新版本在前，版本号按数比，`9.6` 排在 `17` 后面）；拉起工具时设 `CREATE_NO_WINDOW`，否则 GUI 子系统的应用每次备份闪一个黑窗口。
+    单测先红（版本排序与没有 `bin` 的目录）；类型检查反向验过（常量改成 `u64` 时 Windows 目标报错）。**没在 Windows 上跑过**，列进
+    `docs/windows-checklist.md` 第 6 节。
   - 2026-10-05 数据字典的「可空」一列（`dataDictionary.ts`、`schemaDraft.ts`；rpm 0.4.158，容器里的 SQLite 文件；sqlite3 本机）：**修了一处**（`c77a7d6`）。
     字典把主键列一律写「不可空」，本意是盖住 SQLite 对 `INTEGER PRIMARY KEY` 报的 `notnull = 0`；但 SQLite 里非 INTEGER 的主键
     （`TEXT`、连 `INT` 也算）和复合主键真存得进 NULL（本机 sqlite3 逐个插过），字典照样写「不可空」，读的人和 Agent 会当真。
