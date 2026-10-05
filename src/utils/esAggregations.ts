@@ -9,6 +9,7 @@ import { MISSING, jsonField, type JsonValue } from './esJson';
  *   两个都展开就是笛卡尔积，行数与意义都不对。
  * - 指标聚合（`sum`、`avg`、`stats`……）并进一张「名字 | 值」的表；多值的写成 `stats.min` 这样。
  * - 单桶聚合（`nested`、`filter`……）本身不成表，下面的子聚合照上面两条摊开，名字带上它。
+ *   在桶里面的单桶聚合摊成几列（`recent.doc_count`、`recent.avg_price`）；它下面再有桶的，那一格仍是 JSON。
  *
  * 键优先用 `key_as_string`（日期直方图的 `key` 是毫秒数）。认不出的形状不进表，JSON 里照样有。
  */
@@ -62,9 +63,13 @@ function flatten(aggregation: JsonValue, dimensions: string[], metricNames: stri
     const metrics = new Map<string, Cell>();
     for (const [name, child] of children) {
       if (child === nested?.[1]) continue;
-      const value = metricValue(child);
-      metrics.set(name, value ?? child);
-      if (!metricNames.includes(name)) metricNames.push(name);
+      const cells = new Map<string, Cell>();
+      if (isSingleBucket(child)) singleBucketCells(name, child, cells);
+      else cells.set(name, metricValue(child) ?? child);
+      for (const [column, value] of cells) {
+        metrics.set(column, value);
+        if (!metricNames.includes(column)) metricNames.push(column);
+      }
     }
     const keys = [...prefix, key];
     if (nested && bucketsOf(nested[1])!.length > 0) {
@@ -97,6 +102,16 @@ export function toAggTables(response: JsonValue | null): AggTable[] {
  */
 function isSingleBucket(aggregation: JsonValue): boolean {
   return aggregation.kind === 'object' && jsonField(aggregation, 'doc_count')?.kind === 'number' && !jsonField(aggregation, 'buckets');
+}
+
+/** 桶里的单桶子聚合（`terms` → `filter` → `avg`）摊成几列：`recent.doc_count`、`recent.avg_price` */
+function singleBucketCells(name: string, aggregation: JsonValue, out: Map<string, Cell>): void {
+  if (aggregation.kind !== 'object') return;
+  for (const [field, child] of aggregation.entries) {
+    const column = `${name}.${field}`;
+    if (isSingleBucket(child)) singleBucketCells(column, child, out);
+    else out.set(column, metricValue(child) ?? child);
+  }
 }
 
 function collect(entries: ReadonlyArray<[string, JsonValue]>, prefix: string, tables: AggTable[], metricRows: Cell[][]): void {

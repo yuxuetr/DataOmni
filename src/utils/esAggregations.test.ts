@@ -61,6 +61,13 @@ describe('toAggTables', () => {
     expect(cells(tables[2].rows)).toEqual([['c.doc_count', '3'], ['cheap.doc_count', '2'], ['cheap.avg_price', '15.0']]);
   });
 
+  it('spreads a single-bucket aggregation inside a bucket into prefixed columns', () => {
+    // 本机 8.19.4 的原话：terms 下套 filter，filter 下有 avg 和又一层 filter
+    const tables = toAggTables(parseJson(`{"aggregations":{"by_author":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"a","doc_count":2,"recent":{"doc_count":1,"avg_price":{"value":10.0},"inner":{"doc_count":1}}},{"key":"b","doc_count":1,"recent":{"doc_count":0,"avg_price":{"value":null},"inner":{"doc_count":0}}}]}}}`));
+    expect(tables[0].columns).toEqual(['by_author', 'doc_count', 'recent.doc_count', 'recent.avg_price', 'recent.inner.doc_count']);
+    expect(cells(tables[0].rows)).toEqual([['a', '2', '1', '10.0', '1'], ['b', '1', '0', 'null', '0']]);
+  });
+
   it('has nothing to show without aggregations', () => {
     expect(toAggTables(parseJson('{"hits":{"hits":[]}}'))).toEqual([]);
     expect(toAggTables(null)).toEqual([]);
