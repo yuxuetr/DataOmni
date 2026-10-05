@@ -225,6 +225,33 @@ function insertSecretLiterals(sql: string, literals: Span[], dialect: SqlDialect
 }
 
 /**
+ * ClickHouse 连外部库的表函数与引擎，口令是按位置给的：表函数 `mysql()` / `postgresql()` / `mongodb()`
+ * 与同名表引擎是第五个参数（地址、库、表、用户、口令），库引擎 `CREATE DATABASE … ENGINE = MySQL(…)`
+ * 没有表名，是第四个。与 ClickHouse 自己写 query_log 时打码的位置相同。
+ * 那一项整个是字面量才打：`{pw:String}` 参数、命名集合不是口令本身
+ */
+function clickhouseSecretArguments(sql: string, literals: Span[]): Set<number> {
+  const targets = new Set<number>();
+  const call = /\b(mysql|postgresql|mongodb|materializedmysql|materializedpostgresql)\s*\(/gi;
+
+  for (let match = call.exec(sql); match; match = call.exec(sql)) {
+    const before = sql.slice(Math.max(0, match.index - 300), match.index);
+    const databaseEngine = /^materialized/i.test(match[1]) || /\bCREATE\s+DATABASE\b[^;]*\bENGINE\s*=\s*$/i.test(before);
+    const [items = []] = valueTuples(sql, match.index + match[0].length - 1, 'clickhouse');
+    const password = items[databaseEngine ? 3 : 4];
+    if (!password) {
+      continue;
+    }
+    const literalIndex = literals.findIndex((literal) => literal.from === password.from && literal.to === password.to);
+    if (literalIndex >= 0) {
+      targets.add(literalIndex);
+    }
+  }
+
+  return targets;
+}
+
+/**
  * 从 `VALUES` 之后逐组读 `( … )`，每组按顶层逗号切成一项一项，遇到别的东西就停。
  *
  * 返回的是**每一项的位置**而不是项数：只数个数会在 `md5('x')` 这种地方栽——
@@ -301,6 +328,9 @@ function trimmedSpan(sql: string, from: number, to: number): Span {
 export function redactSqlForHistory(sql: string, dialect: SqlDialect): RedactedSql {
   const literals = scanStringLiterals(sql, dialect);
   const targets = insertSecretLiterals(sql, literals, dialect);
+  if (dialect === 'clickhouse') {
+    clickhouseSecretArguments(sql, literals).forEach((index) => targets.add(index));
+  }
 
   literals.forEach((literal, index) => {
     // 关键字与列名都在字面量**之前**，所以看它前面那一段就够了。

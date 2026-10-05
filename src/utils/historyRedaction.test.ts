@@ -164,6 +164,25 @@ describe('redactSqlForHistory', () => {
     expect(redact("SELECT 'password reset requested'").redacted).toBe(false);
   });
 
+  it('按位置打掉 ClickHouse 表函数、表引擎与库引擎的口令', () => {
+    expect(redact("SELECT * FROM mysql('db:3306', 'app', 'users', 'u', 'hunter2')", 'clickhouse').sql).toBe(
+      "SELECT * FROM mysql('db:3306', 'app', 'users', 'u', '***')"
+    );
+    expect(
+      redact("INSERT INTO FUNCTION postgresql('db:5432', 'app', 't', 'u', 'hunter2', 'public') SELECT 1", 'clickhouse').sql
+    ).toBe("INSERT INTO FUNCTION postgresql('db:5432', 'app', 't', 'u', '***', 'public') SELECT 1");
+    expect(
+      redact("CREATE TABLE t (a Int32) ENGINE = MongoDB('db:27017', 'app', 'c', 'u', 'hunter2')", 'clickhouse').sql
+    ).toBe("CREATE TABLE t (a Int32) ENGINE = MongoDB('db:27017', 'app', 'c', 'u', '***')");
+    // 库引擎没有表名这一项，口令是第四个
+    expect(redact("CREATE DATABASE m ENGINE = MySQL('db:3306', app, 'u', 'hunter2')", 'clickhouse').sql).toBe(
+      "CREATE DATABASE m ENGINE = MySQL('db:3306', app, 'u', '***')"
+    );
+    // 那一项不是字面量（参数、命名集合）时不动；别的方言里同名函数不是这个意思
+    expect(redact("SELECT * FROM mysql('db:3306', 'app', 'users', 'u', {pw:String})", 'clickhouse').redacted).toBe(false);
+    expect(redact("SELECT * FROM mysql('db:3306', 'app', 'users', 'u', 'x')", 'mysql').redacted).toBe(false);
+  });
+
   it('普通语句一个字都不改', () => {
     for (const sql of [
       'SELECT * FROM users ORDER BY name',
