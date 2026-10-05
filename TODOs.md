@@ -992,6 +992,15 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 只读查询在生产连接上弹「会改数据」（`statementRisk.ts`；rpm 0.4.165 / 0.4.166，容器里标成生产的 DuckDB 连接）：
+    **修了一处**（`3abc16b`）。拿 57 条各家写法过一遍风险定级，不以 SELECT 开头的查询都落到兜底的「有界写入」：DuckDB 的
+    `FROM t`、`SUMMARIZE`、`PIVOT` / `UNPIVOT`，PostgreSQL 与 MySQL 8 的 `TABLE t`，ClickHouse 的 `EXISTS TABLE t`，
+    以及括号开头的 `(SELECT 1) UNION (SELECT 2)`（顶层第一个词是 UNION）。生产连接的默认门槛正是有界写入，于是这些读都弹确认框
+    （界面是英文，原文 “Confirm before running: modifies data … cannot be undone”）——这道闸的前提是读永远不拦，不然真危险的那次也会被顺手点掉。
+    只读开头补上这几个词，括号开头时动词取括号里的第一个词。新测试先红后绿，两半各自回退都会红；前端 1867 条全过。
+    打包版：0.4.165 上 `FROM t` 弹确认；0.4.166 直接出 2 行，同一连接上 `DELETE FROM t` 照旧弹「没有 WHERE、影响整表」的确认。
+    同一轮看过、定级没问题的：注释、字符串、带引号标识符里的 WHERE 不算数；`WITH … DELETE`、写型 CTE、`EXPLAIN ANALYZE`、
+    `SELECT … INTO`、`ON CONFLICT DO UPDATE`、ClickHouse 的 `ALTER TABLE … DELETE WHERE`。
   - 2026-10-05 DuckDB 上大小写不同的唯一索引（`schema_metadata.rs` 的 `DUCKDB_INDEXES`；rpm 0.4.164 / 0.4.165，容器里的 DuckDB 文件，本机 DuckDB 1.5.6 CLI）：
     **修了一处**（`36aceeb`）。`duckdb_indexes()` 的 `expressions` 照建索引时的写法给：`CREATE UNIQUE INDEX u ON t (EMAIL)` 得到 `[EMAIL]`，
     而列叫 `email`。前端按列名对索引，对不上就当表达式索引排除，唯一键只有这个索引的表在网格里成了「没有主键也没有可用的唯一索引」、只读。
