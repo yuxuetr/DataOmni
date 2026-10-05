@@ -992,6 +992,12 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 MongoDB 网格的列序被像整数的字段名打乱（`mongodb.rs` 的 `MongoDocumentRow`、`mongoDocuments.ts`；rpm 0.4.166 / 0.4.167，本机 Docker 的 mongo:8.2）：
+    **修了一处**（`8016ee2`）。后端用 IndexMap 按文档里的顺序给字段，可写成 JSON 对象交给前端后，JS 对象把 `"2024"` 这种像整数的键
+    排到所有键前面：BSON 里是 `_id, name, 2024, age` 的文档（用 `$objectToArray` 核过；mongosh 自己也是 JS，`printjson` 一样会排错），
+    网格列是 `_id, 2024, name, age`。字段改成一串有序的 `[名字, 格]` 发出去，前端按名字查格走 `mongoCell`。
+    前端按后端原样的 JSON 写的新用例与 Rust 序列化用例都先红后绿；`bun run check` 通过。打包版：0.4.166 列序错；0.4.167 是
+    `_id, name, 2024, age`，值对得上；聚合页 `$arrayToObject` 造的 `b, 9` 也照原序。
   - 2026-10-05 只读查询在生产连接上弹「会改数据」（`statementRisk.ts`；rpm 0.4.165 / 0.4.166，容器里标成生产的 DuckDB 连接）：
     **修了一处**（`3abc16b`）。拿 57 条各家写法过一遍风险定级，不以 SELECT 开头的查询都落到兜底的「有界写入」：DuckDB 的
     `FROM t`、`SUMMARIZE`、`PIVOT` / `UNPIVOT`，PostgreSQL 与 MySQL 8 的 `TABLE t`，ClickHouse 的 `EXISTS TABLE t`，
