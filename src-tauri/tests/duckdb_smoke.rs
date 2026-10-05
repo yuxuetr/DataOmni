@@ -445,7 +445,8 @@ const FIXTURE: &[&str] = &[
     twice INTEGER GENERATED ALWAYS AS (pa * 2) VIRTUAL, note VARCHAR, \
     FOREIGN KEY (pa, pb) REFERENCES sales.parent (a, b))",
   "COMMENT ON COLUMN sales.child.note IS '备注'",
-  "CREATE INDEX child_note ON sales.child (note, pa)",
+  // 索引里的列名与表里大小写不同：目录要交回表里的写法
+  "CREATE INDEX child_note ON sales.child (NOTE, \"Pa\")",
   "CREATE UNIQUE INDEX child_expr ON sales.child ((lower(email)))",
   "CREATE TABLE sales.\"odd name\" (\"my col\" INTEGER, \"x y\" INTEGER GENERATED ALWAYS AS (\"my col\" + 1), \"select\" VARCHAR)",
   "CREATE INDEX odd_idx ON sales.\"odd name\" (\"my col\", \"select\")",

@@ -947,8 +947,13 @@ ORDER BY c.column_index
 /// `CREATE INDEX` 建的。它的 `expressions` 是一段文本（`[note, pa]`，带引号的名字写成
 /// `'"my col"'`），不是列表：按 `, ` 拆开、去掉两层引号。带括号的是表达式索引，里面
 /// 可能本来就有逗号，整段作一项。DuckDB 没有部分索引，也没有建到一半的索引。
+///
+/// `expressions` 照建索引时的写法给：`ON t (EMAIL)` 得到 `[EMAIL]`，而列叫 `email`。DuckDB 的名字
+/// 不分大小写（也不许两列只差大小写），这里换回表里的写法——前端按列名对索引，对不上就当成
+/// 表达式索引，唯一键只有这个索引的表在网格里就成了「没有唯一键、不能编辑」
 const DUCKDB_INDEXES: &str = r#"
-SELECT index_name, column_name, ordinal, is_unique, is_primary, is_partial, is_valid, method
+SELECT x.index_name, COALESCE(c.column_name, x.column_name) AS column_name, x.ordinal, x.is_unique,
+  x.is_primary, x.is_partial, x.is_valid, x.method
 FROM (
   SELECT
     k.constraint_name AS index_name,
@@ -989,8 +994,13 @@ FROM (
   WHERE lower(i.table_name) = lower($1)
     AND lower(i.schema_name) = lower(COALESCE($2, current_schema()))
     AND i.database_name = current_database()
-)
-ORDER BY index_name, ordinal
+) x
+LEFT JOIN duckdb_columns() c
+  ON lower(c.table_name) = lower($1)
+  AND lower(c.schema_name) = lower(COALESCE($2, current_schema()))
+  AND c.database_name = current_database()
+  AND lower(c.column_name) = lower(x.column_name)
+ORDER BY x.index_name, x.ordinal
 "#;
 
 const DUCKDB_FOREIGN_KEYS: &str = r#"
