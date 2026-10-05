@@ -51,6 +51,16 @@ describe('toAggTables', () => {
     ]);
   });
 
+  it('looks inside single-bucket aggregations (nested, filter) for the buckets and metrics under them', () => {
+    // 本机 8.19.4 的原话：nested 下套 terms，filter 下套 terms 与 avg
+    const tables = toAggTables(parseJson(`{"aggregations":{"c":{"doc_count":3,"by_author":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"a","doc_count":2},{"key":"b","doc_count":1}]}},"cheap":{"doc_count":2,"avg_price":{"value":15.0},"by_city":{"doc_count_error_upper_bound":0,"sum_other_doc_count":0,"buckets":[{"key":"paris","doc_count":1},{"key":"rome","doc_count":1}]}}}}`));
+    expect(tables.map((table) => table.name)).toEqual(['c.by_author', 'cheap.by_city', null]);
+    expect(tables[0].columns).toEqual(['c.by_author', 'doc_count']);
+    expect(cells(tables[0].rows)).toEqual([['a', '2'], ['b', '1']]);
+    expect(cells(tables[1].rows)).toEqual([['paris', '1'], ['rome', '1']]);
+    expect(cells(tables[2].rows)).toEqual([['c.doc_count', '3'], ['cheap.doc_count', '2'], ['cheap.avg_price', '15.0']]);
+  });
+
   it('has nothing to show without aggregations', () => {
     expect(toAggTables(parseJson('{"hits":{"hits":[]}}'))).toEqual([]);
     expect(toAggTables(null)).toEqual([]);

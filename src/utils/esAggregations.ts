@@ -8,6 +8,7 @@ import { MISSING, jsonField, type JsonValue } from './esJson';
  *   就是「城市 × 日期」一行一格，和透视表一样。同一层有两个桶子聚合时只展开第一个，其余的写成一行 JSON：
  *   两个都展开就是笛卡尔积，行数与意义都不对。
  * - 指标聚合（`sum`、`avg`、`stats`……）并进一张「名字 | 值」的表；多值的写成 `stats.min` 这样。
+ * - 单桶聚合（`nested`、`filter`……）本身不成表，下面的子聚合照上面两条摊开，名字带上它。
  *
  * 键优先用 `key_as_string`（日期直方图的 `key` 是毫秒数）。认不出的形状不进表，JSON 里照样有。
  */
@@ -85,7 +86,30 @@ export function toAggTables(response: JsonValue | null): AggTable[] {
   if (aggregations?.kind !== 'object') return [];
   const tables: AggTable[] = [];
   const metricRows: Cell[][] = [];
-  for (const [name, aggregation] of aggregations.entries) {
+  collect(aggregations.entries, '', tables, metricRows);
+  if (metricRows.length > 0) tables.push({ name: null, columns: ['aggregation', 'value'], rows: metricRows });
+  return tables;
+}
+
+/**
+ * 单桶聚合（`nested`、`filter`、`global`、`missing`……）只有一个 `doc_count`，下面挂着子聚合：
+ * 照顶层的一样摊开，名字前面带上它（`comments.by_author`），`doc_count` 进指标表
+ */
+function isSingleBucket(aggregation: JsonValue): boolean {
+  return aggregation.kind === 'object' && jsonField(aggregation, 'doc_count')?.kind === 'number' && !jsonField(aggregation, 'buckets');
+}
+
+function collect(entries: ReadonlyArray<[string, JsonValue]>, prefix: string, tables: AggTable[], metricRows: Cell[][]): void {
+  for (const [ownName, aggregation] of entries) {
+    const name = `${prefix}${ownName}`;
+    if (aggregation.kind === 'object' && isSingleBucket(aggregation)) {
+      collect(aggregation.entries, `${name}.`, tables, metricRows);
+      continue;
+    }
+    if (prefix && aggregation.kind !== 'object') {
+      metricRows.push([{ kind: 'string', value: name }, aggregation]);
+      continue;
+    }
     if (bucketsOf(aggregation) !== null) {
       const dimensions = [name];
       const metricNames: string[] = [];
@@ -116,6 +140,4 @@ export function toAggTables(response: JsonValue | null): AggTable[] {
       }
     }
   }
-  if (metricRows.length > 0) tables.push({ name: null, columns: ['aggregation', 'value'], rows: metricRows });
-  return tables;
 }
