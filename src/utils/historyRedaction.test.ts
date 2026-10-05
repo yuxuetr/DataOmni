@@ -47,6 +47,17 @@ describe('redactSqlForHistory', () => {
     );
   });
 
+  it('MySQL 的 SET PASSWORD 带 FOR 用户、带 REPLACE 旧口令时也打', () => {
+    expect(redact("SET PASSWORD FOR 'app'@'%' = 'hunter2'").sql).toBe("SET PASSWORD FOR 'app'@'%' = '***'");
+    expect(redact('SET PASSWORD FOR app = \'hunter2\'').sql).toBe("SET PASSWORD FOR app = '***'");
+    expect(redact("SET PASSWORD = 'new' REPLACE 'old'").sql).toBe("SET PASSWORD = '***' REPLACE '***'");
+    expect(redact("SET PASSWORD FOR 'app'@'%' = 'new' REPLACE 'old' RETAIN CURRENT PASSWORD").sql).toBe(
+      "SET PASSWORD FOR 'app'@'%' = '***' REPLACE '***' RETAIN CURRENT PASSWORD"
+    );
+    // 用户名与主机名不是口令
+    expect(redact("SET PASSWORD FOR 'app'@'%' = 'x'").sql).toContain("'app'@'%'");
+  });
+
   it("字面量带前缀时照样打：SQL Server 的 N'…'、PostgreSQL 的 E'…'、MySQL 的字符集引导", () => {
     // SSMS 生成的脚本里字符串都写成 N'…'
     expect(redact("ALTER LOGIN app WITH PASSWORD = N'new1' OLD_PASSWORD = N'old1'", 'sqlserver').sql).toBe(

@@ -29,10 +29,16 @@ export interface RedactedSql {
  * `IDENTIFIED WITH caching_sha2_password BY '…'`（MySQL 8）里插件名在中间，
  * 所以 `WITH` 后面允许跟一个标识符。`PASSWORD` 前面可以带前缀：SQL Server 改口令时的
  * `OLD_PASSWORD`、MySQL 复制源的 `SOURCE_PASSWORD` / `MASTER_PASSWORD`。
- * MySQL 改口令时 `REPLACE '…'` 给的是旧口令
+ * MySQL 改口令时 `REPLACE '…'` 给的是旧口令。`SET PASSWORD FOR 'u'@'h' = '…'` 里用户名隔在
+ * `PASSWORD` 与等号之间，单列一支
  */
-const CREDENTIAL_KEYWORD =
-  /\b(?:IDENTIFIED\s+(?:WITH\s+[\w$.]+\s+)?(?:BY|AS)|(?:UNENCRYPTED\s+|ENCRYPTED\s+)?(?:\w+_)?PASSWORD|IDENTIFIED\s+BY\s+'(?:[^'\\]|\\.|'')*'\s+REPLACE)\s*=?\s*$/i;
+const MYSQL_SET_PASSWORD = String.raw`SET\s+PASSWORD(?:\s+FOR\s+[^=;]+?)?\s*=`;
+const CREDENTIAL_KEYWORD = new RegExp(
+  String.raw`\b(?:IDENTIFIED\s+(?:WITH\s+[\w$.]+\s+)?(?:BY|AS)|(?:UNENCRYPTED\s+|ENCRYPTED\s+)?(?:\w+_)?PASSWORD`
+    + String.raw`|${MYSQL_SET_PASSWORD}`
+    + String.raw`|(?:IDENTIFIED\s+(?:WITH\s+[\w$.]+\s+)?BY|${MYSQL_SET_PASSWORD})\s*'(?:[^'\\]|\\.|'')*'\s+REPLACE)\s*=?\s*$`,
+  'i'
+);
 
 /** `password = '…'`、`` `api_key` := '…' ``、`user_password = '…'`：按列名判断，列名可能被引号包着 */
 const SECRET_COLUMN =
