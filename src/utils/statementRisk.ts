@@ -21,7 +21,12 @@ export type StatementRisk =
   | 'bulk-write'
   | 'destructive';
 
-const READ_KEYWORDS = ['SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN', 'PRAGMA', 'VALUES'];
+// TABLE 是 PostgreSQL 与 MySQL 8 的 `TABLE t`；FROM、SUMMARIZE、PIVOT、UNPIVOT 是 DuckDB 的查询；
+// EXISTS 是 ClickHouse 的 `EXISTS TABLE t`。别家不认这几个开头，当成读也误伤不到
+const READ_KEYWORDS = [
+  'SELECT', 'SHOW', 'DESCRIBE', 'DESC', 'EXPLAIN', 'PRAGMA', 'VALUES',
+  'TABLE', 'FROM', 'SUMMARIZE', 'PIVOT', 'UNPIVOT', 'EXISTS'
+];
 
 export function classifyStatementRisk(sql: string, dialect?: SqlDialect): StatementRisk {
   return riskOfWords(sqlWords(sql, dialect));
@@ -35,7 +40,9 @@ const EXPLAINED_VERBS = new Set([
 
 function riskOfWords(words: readonly SqlWord[]): StatementRisk {
   const keywords = words.filter((word) => word.group === 0).map((word) => word.word);
-  const first = keywords[0];
+  // 括号开头的只能是查询，`(SELECT 1) UNION (SELECT 2)` 的顶层第一个词是 UNION，
+  // 动词在括号里
+  const first = words[0] && words[0].group !== 0 ? words[0].word : keywords[0];
 
   if (!first) {
     return 'read';

@@ -13,6 +13,21 @@ describe('语句风险判定', () => {
     expect(classifyStatementRisk('EXPLAIN SELECT 1')).toBe('read');
   });
 
+  it('不以 SELECT 开头的查询也是只读', () => {
+    // PostgreSQL 与 MySQL 8 的 TABLE、DuckDB 先写 FROM 的查询和它的 SUMMARIZE / PIVOT、
+    // ClickHouse 的 EXISTS
+    expect(classifyStatementRisk('TABLE t', 'postgresql')).toBe('read');
+    expect(classifyStatementRisk('FROM t SELECT a', 'duckdb')).toBe('read');
+    expect(classifyStatementRisk('FROM t', 'duckdb')).toBe('read');
+    expect(classifyStatementRisk('SUMMARIZE t', 'duckdb')).toBe('read');
+    expect(classifyStatementRisk('PIVOT t ON a USING sum(b)', 'duckdb')).toBe('read');
+    expect(classifyStatementRisk('UNPIVOT t ON a, b INTO NAME k VALUE v', 'duckdb')).toBe('read');
+    expect(classifyStatementRisk('EXISTS TABLE t', 'clickhouse')).toBe('read');
+    // 括号开头的只能是查询：顶层第一个词是 UNION，不是动词
+    expect(classifyStatementRisk('(SELECT 1) UNION (SELECT 2)', 'postgresql')).toBe('read');
+    expect(classifyStatementRisk('(TABLE a) EXCEPT (TABLE b)', 'postgresql')).toBe('read');
+  });
+
   it('空语句按只读处理', () => {
     expect(classifyStatementRisk('')).toBe('read');
     expect(classifyStatementRisk('   -- 只有注释\n')).toBe('read');
