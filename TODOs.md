@@ -999,7 +999,7 @@
     写进 1、5 之后不带 id 插一行，报 `id=1` 重复），改成 warning 说清楚；Oracle 照文档同样处理，没在真库上试。用例先红后绿，
     `bun run check` 通过。打包版 A/B：0.4.172 映射 id 后红字、按钮灰；0.4.173 没有提示，导入后表里是 1、5，再插一行拿到 6。
     - 同一轮看到、没修：SQLite 的 rowid 别名（唯一主键列、类型恰好是 `INTEGER`）写了 `NOT NULL`（Django 的
-      `"id" integer NOT NULL PRIMARY KEY AUTOINCREMENT`、Android Room 的建表都这么写），或是 `STRICT` 表，目录报 `notnull = 1`，
+      `"id" integer NOT NULL PRIMARY KEY AUTOINCREMENT`、Android Room 的建表都这么写），目录报 `notnull = 1`（`STRICT` 表不写就是 0，本机 sqlite3 3.54 试过），
       于是新增行时它被当成必填项、CSV 不映射 id 就报「必填列没有映射」拦住导入——而 SQLite 自己会给 rowid（本机 sqlite3 试过）。
       要在目录里把它报成「由数据库产生」，但那一位还牵着网格只读、INSERT 略去、结构页的标记，`WITHOUT ROWID` 表又不是别名，
       留到下一轮单独修。
