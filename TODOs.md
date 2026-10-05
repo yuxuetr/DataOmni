@@ -992,6 +992,17 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 MySQL 9 带 VECTOR 列的表打不开、改不了、导不进（`tablePagination.ts`、`columnEditors.ts`、`csv_import.rs`；
+    rpm 0.4.167 / 0.4.168 / 0.4.169，本机 Docker 的 mysql:9.4 与 mariadb:11.8）：**修了三处**。sqlx 0.8 不认 MySQL 的列类型 0xf2：
+    - 表数据页 `SELECT *` 整条失败，一列都看不到（`446363c`）。VECTOR 列点名投影成 `CAST(v AS BINARY)`，两家都收，显示成十六进制。
+      转文本的函数两家不同（`VECTOR_TO_STRING` / `VEC_ToText`），而文本 MySQL 不收回去，所以不转文本。
+    - 网格里改 VECTOR 绑成 `?`：准备语句时服务端把参数报成 VECTOR，提交报 0xf2（`aba8968`）。MySQL 方言下给二进制编辑器，写 `X'…'`。
+    - CSV 导入同理，MySQL 上卡住不动，MariaDB 报 Incorrect vector value（`2fcee56`）。和二进制列一样经 `UNHEX(?)`。
+    前端用例与冒烟用例 `mysql_import_reads_exported_hex_into_vector` 都先红后绿（两家），`bun run check` 通过。打包版两家各改一行成
+    `[1,1,1]`，服务端读回一致。
+    **还没修、下一条**：编辑器里手写 `SELECT * FROM 有 VECTOR 的表` 仍报 0xf2（驱动限制，绕不开），而这之后**同一个会话**的下一条
+    `select 1` 报 `expected 0x00 (COM_STMT_PREPARE_OK) but found 0x03`——连接里还剩着没读完的包，会话坏了，断开重连才好。
+    协议层解码错误之后该把这条连接扔掉重连，不该再用。
   - 2026-10-05 ClickHouse 上 FROM 写在前面的查询导不出（`clickhouse.rs` 的 `is_query`；本机 Docker 的 clickhouse-server 26.9）：
     **修了一处**（`git log --grep "FROM 写在前面"`）。ClickHouse 收 `FROM t SELECT …`，编辑器里照常出结果；导出前判断「是不是查询」
     的关键字表没有 FROM，于是当成写语句拒掉，报 `DATAOMNI_NON_QUERY`。关键字表加上 FROM。单元用例与冒烟用例
