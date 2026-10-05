@@ -221,7 +221,8 @@ const DOCUMENT_ENDPOINTS: ReadonlySet<string> = new Set(['_doc', '_create', '_up
  */
 export function classifyEsRisk(method: EsMethod, path: string): StatementRisk {
   const segments = pathSegments(path);
-  const endpoints = segments.filter((segment) => segment.startsWith('_'));
+  // `_all` 写在索引的位置上，是「所有索引」，不是端点
+  const endpoints = segments.filter((segment) => segment.startsWith('_') && segment !== '_all');
   if (method === 'GET' || method === 'HEAD') return 'read';
   if (endpoints.some((segment) => READ_ENDPOINTS.has(segment))) {
     // 关掉一个游标、一个异步搜索：不动数据

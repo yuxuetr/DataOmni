@@ -145,6 +145,9 @@ describe('classifyEsRisk', () => {
     expect(classifyEsRisk('PUT', '/_cluster/settings')).toBe('bulk-write');
     expect(classifyEsRisk('DELETE', '/books')).toBe('destructive');
     expect(classifyEsRisk('DELETE', '/books,logs-*')).toBe('destructive');
+    // `_all` 在索引的位置上就是 `*`：OpenSearch 默认（`destructive_requires_name` 为 false）照删
+    expect(classifyEsRisk('DELETE', '/_all')).toBe('destructive');
+    expect(classifyEsRisk('DELETE', '/_all/_alias/library')).toBe('scoped-write');
     expect(classifyEsRisk('DELETE', '/_data_stream/logs-app')).toBe('destructive');
     expect(classifyEsRisk('DELETE', '/books/_alias/library')).toBe('scoped-write');
     expect(classifyEsRisk('DELETE', '/_index_template/logs')).toBe('scoped-write');
