@@ -181,3 +181,11 @@ describe('SQL Server 的 image', () => {
     expect(columnEditorKind('image', 'sqlserver')).toBe('binary');
   });
 });
+
+describe('MySQL 的 VECTOR', () => {
+  it('按二进制改：网格里是十六进制，而绑定的参数 sqlx 准备语句时就认不出类型（0xf2）', () => {
+    expect(columnEditorKind('vector(3)', 'mysql')).toBe('binary');
+    // Oracle 的 VECTOR 读成文本，文本 Oracle 自己会转回去
+    expect(columnEditorKind('VECTOR', 'oracle')).toBe('text');
+  });
+});

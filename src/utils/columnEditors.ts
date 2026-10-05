@@ -46,6 +46,11 @@ export function columnEditorKind(dataType: string, dialect?: SqlIdentifierDialec
   if (dialect === 'oracle' && token === 'date') {
     return 'datetime';
   }
+  // MySQL 9 的 VECTOR 按二进制读（`tablePagination` 的投影），也只能按二进制字面量写：
+  // 准备语句时服务端把 `SET v = ?` 的参数报成 VECTOR，sqlx 不认这个类型，一绑参数就失败
+  if (dialect === 'mysql' && token === 'vector') {
+    return 'binary';
+  }
   return EDITOR_BY_TOKEN[token] ?? 'text';
 }
 
