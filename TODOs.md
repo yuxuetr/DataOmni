@@ -991,6 +991,15 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 数据字典的「可空」一列（`dataDictionary.ts`、`schemaDraft.ts`；rpm 0.4.158，容器里的 SQLite 文件；sqlite3 本机）：**修了一处**（`c77a7d6`）。
+    字典把主键列一律写「不可空」，本意是盖住 SQLite 对 `INTEGER PRIMARY KEY` 报的 `notnull = 0`；但 SQLite 里非 INTEGER 的主键
+    （`TEXT`、连 `INT` 也算）和复合主键真存得进 NULL（本机 sqlite3 逐个插过），字典照样写「不可空」，读的人和 Agent 会当真。
+    `WITHOUT ROWID` 与 `STRICT` 表的目录本来就报 `notnull = 1`，DuckDB 等其余各家的目录也把主键报成不可空，所以只剩 rowid 别名
+    （唯一的主键列、类型恰好是 `INTEGER`）不照目录。设计页的草稿原先靠这条一律改写，现在在 `draftToEr` 里就把主键列标不可空，
+    与建表语句（`columnDraft`）一致。两条单测先红；打包版导出的字典里 `codes.code`（TEXT 主键，库里真有一行 NULL）与
+    `pairs.x` / `pairs.y` 是 yes，`items.id` 是 no。
+    - 同一轮看过、没问题的：多格复制的 TSV 对含制表符、换行、引号的格子加引号，单格原样；结果画图对数字字符串、空串、
+      布尔的取舍与刻度取整都对。
   - 2026-10-05 Elasticsearch 聚合表里的单桶聚合（`esAggregations.ts`；rpm 0.4.157，本机 Docker 的 Elasticsearch 8.19）：**修了一处**（`632bee1`）。
     `nested`、`filter`（以及 `global`、`missing`、`sampler` 这类）只有 `doc_count` 与子聚合，原先被当成多值指标：
     下面 `terms` 的桶整个写成指标表里的一格 JSON。查 nested 字段几乎必经 `nested` 再套 `terms`，这张表就等于没有。
