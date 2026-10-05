@@ -3,7 +3,7 @@ import type { RedisBytes } from './redisKeys';
 /** 与后端 `RedisReply` 一致 */
 export type RedisReply =
   | { kind: 'nil' }
-  | { kind: 'integer'; value: number }
+  | { kind: 'integer'; value: string }
   | { kind: 'bulk'; value: RedisBytes }
   | { kind: 'status'; value: string }
   | { kind: 'error'; message: string }

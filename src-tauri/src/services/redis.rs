@@ -1066,8 +1066,9 @@ fn refusal(name: &str, arguments: &[Vec<u8>]) -> Option<&'static str> {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum RedisReply {
   Nil,
+  /// 十进制文字：JSON 的数到了 JS 是双精度，超过 2^53 的会变
   Integer {
-    value: i64,
+    value: String,
   },
   Bulk {
     value: RedisBytes,
@@ -1100,7 +1101,7 @@ impl RedisReply {
   fn from_value(value: Value) -> Self {
     match value {
       Value::Nil => Self::Nil,
-      Value::Int(value) => Self::Integer { value },
+      Value::Int(value) => Self::Integer { value: value.to_string() },
       Value::BulkString(bytes) => Self::Bulk { value: RedisBytes::new(bytes) },
       Value::SimpleString(value) => Self::Status { value },
       Value::Okay => Self::Status { value: "OK".to_string() },
@@ -1259,5 +1260,19 @@ mod tests {
     assert_eq!(database_index(Some("3")), Ok(3));
     assert!(database_index(Some("-1")).is_err());
     assert!(database_index(Some("abc")).is_err());
+  }
+
+  #[test]
+  fn integers_reach_the_page_as_exact_digits() {
+    // JSON 的数到了 JS 是双精度：超过 2^53 的 `INCR` 结果会差一（…993 变成 …992）
+    let json = |value: i64| serde_json::to_value(RedisReply::from_value(Value::Int(value))).ok();
+    assert_eq!(
+      json(9_007_199_254_740_993),
+      Some(serde_json::json!({ "kind": "integer", "value": "9007199254740993" }))
+    );
+    assert_eq!(
+      json(i64::MIN),
+      Some(serde_json::json!({ "kind": "integer", "value": "-9223372036854775808" }))
+    );
   }
 }

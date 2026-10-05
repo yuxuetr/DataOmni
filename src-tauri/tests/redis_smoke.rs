@@ -494,8 +494,14 @@ async fn the_command_line_runs_in_its_database_and_keeps_errors_as_replies() {
   );
   assert_eq!(
     run(vec![b"EXISTS", b"l"]).await,
-    Ok(RedisReply::Integer { value: 1 }),
+    Ok(RedisReply::Integer { value: "1".into() }),
     "拒绝之后还在库 15"
+  );
+  // 整数按十进制文字给出：2^53 往上的到了页面上不差一
+  run(vec![b"SET", b"big", b"9007199254740992"]).await.expect("set big");
+  assert_eq!(
+    run(vec![b"INCR", b"big"]).await,
+    Ok(RedisReply::Integer { value: "9007199254740993".into() })
   );
 }
 

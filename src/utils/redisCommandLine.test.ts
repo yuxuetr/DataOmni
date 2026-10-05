@@ -46,7 +46,7 @@ describe('splitCommandLine', () => {
 describe('formatReply', () => {
   it('标量照 redis-cli 的写法', () => {
     expect(formatReply({ kind: 'nil' })).toBe('(nil)');
-    expect(formatReply({ kind: 'integer', value: 3 })).toBe('(integer) 3');
+    expect(formatReply({ kind: 'integer', value: '3' })).toBe('(integer) 3');
     expect(formatReply({ kind: 'status', value: 'OK' })).toBe('OK');
     expect(formatReply({ kind: 'error', message: 'ERR nope' })).toBe('(error) ERR nope');
     expect(formatReply({ kind: 'bulk', value: b('a "b"\n') })).toBe('"a \\"b\\"\\n"');
@@ -57,14 +57,14 @@ describe('formatReply', () => {
   it('数组编号，嵌套的按序号宽度缩进，空数组单说', () => {
     const reply = {
       kind: 'array' as const,
-      items: [{ kind: 'bulk' as const, value: b('a') }, { kind: 'array' as const, items: [{ kind: 'integer' as const, value: 1 }, { kind: 'nil' as const }] }]
+      items: [{ kind: 'bulk' as const, value: b('a') }, { kind: 'array' as const, items: [{ kind: 'integer' as const, value: '1' }, { kind: 'nil' as const }] }]
     };
     expect(formatReply(reply)).toBe('1) "a"\n2) 1) (integer) 1\n   2) (nil)');
     expect(formatReply({ kind: 'array', items: [] })).toBe('(empty array)');
   });
 
   it('十个以上时序号右对齐', () => {
-    const items = Array.from({ length: 10 }, (_, index) => ({ kind: 'integer' as const, value: index }));
+    const items = Array.from({ length: 10 }, (_, index) => ({ kind: 'integer' as const, value: String(index) }));
     const lines = formatReply({ kind: 'array', items }).split('\n');
     expect(lines[0]).toBe(' 1) (integer) 0');
     expect(lines[9]).toBe('10) (integer) 9');
