@@ -1,4 +1,5 @@
 import {
+  clickhouse,
   duckdb,
   format,
   formatDialect,
@@ -80,20 +81,28 @@ const NAMEABLE_KEYWORDS: Partial<Record<SqlLanguage, ReadonlySet<string>>> = {
 };
 
 /**
- * PostgreSQL 与 DuckDB 认 `N'…'`（从 SQL Server 搬来的脚本满是这种写法），sql-formatter 不认
- * 这个前缀，排成 `N 'a'`——在这两家里那是「类型 N 的字面量」，报类型不存在（PostgreSQL 16、
- * DuckDB 1.5 上试过）。给普通单引号字符串补上 N 前缀；前缀不分大小写，`n'…'` 也认
+ * 给方言里某种单引号字符串补上 sql-formatter 不认的前缀。它不认的前缀会被排成 `N 'a'`，
+ * 而前缀与引号之间不能有空白：
+ * - PostgreSQL 与 DuckDB 的 `N'…'`（从 SQL Server 搬来的脚本满是这种写法）拆开后是「类型 N 的
+ *   字面量」，报类型不存在（PostgreSQL 16、DuckDB 1.5 上试过）。
+ * - ClickHouse 的 `x'4142'`、`b'01000001'` 拆开后是语法错误（26.9 上试过）。
+ *
+ * 前缀不分大小写，`n'…'` 也认
  */
-const withNationalStrings = (dialect: DialectOptions): DialectOptions => ({
+const withStringPrefixes = (
+  dialect: DialectOptions,
+  quote: string,
+  prefixes: readonly string[]
+): DialectOptions => ({
   ...dialect,
   tokenizerOptions: {
     ...dialect.tokenizerOptions,
     stringTypes: dialect.tokenizerOptions.stringTypes.map((type) => {
-      if (type === "''-qq") {
-        return { quote: type, prefixes: ['N'] };
+      if (type === quote) {
+        return { quote: type, prefixes: [...prefixes] };
       }
-      if (typeof type === 'object' && 'quote' in type && type.quote === "''-qq") {
-        return { ...type, prefixes: [...type.prefixes, 'N'] };
+      if (typeof type === 'object' && 'quote' in type && type.quote === quote) {
+        return { ...type, prefixes: [...type.prefixes, ...prefixes] };
       }
       return type;
     })
@@ -101,8 +110,9 @@ const withNationalStrings = (dialect: DialectOptions): DialectOptions => ({
 });
 
 const PATCHED_DIALECTS: Partial<Record<SqlLanguage, DialectOptions>> = {
-  postgresql: withNationalStrings(postgresql),
-  duckdb: withNationalStrings(duckdb)
+  postgresql: withStringPrefixes(postgresql, "''-qq", ['N']),
+  duckdb: withStringPrefixes(duckdb, "''-qq", ['N']),
+  clickhouse: withStringPrefixes(clickhouse, "''-qq-bs", ['X', 'B'])
 };
 
 /**

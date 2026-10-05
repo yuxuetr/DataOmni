@@ -151,6 +151,15 @@ describe('排版不改内容', () => {
     }
   });
 
+  it('ClickHouse 的十六进制、二进制字面量不拆开', () => {
+    // `x '4142'` 在 ClickHouse 26.9 上是语法错误；原样的 `x'4142'` 是 'AB'
+    const result = formatSql("select x'4142', B'01000001' from t", 'clickhouse');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.sql.replace(/\s+/g, ' ')).toBe("select x'4142', B'01000001' from t");
+    }
+  });
+
   it('再排一次不会继续变（幂等）', () => {
     const once = formatSql('select id,name from users where id=1', 'postgresql');
     expect(once.ok).toBe(true);
