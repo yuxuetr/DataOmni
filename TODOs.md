@@ -992,6 +992,16 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 整张换掉表不要求确认（`utils/statementRisk.ts`；rpm 0.4.171 / 0.4.172，DuckDB 文件库）：**修了一处**（`5d5637d`）。
+    DuckDB / MariaDB / ClickHouse 的 `CREATE OR REPLACE [TEMP] TABLE` 与 ClickHouse 的 `REPLACE TABLE` 把原表连同数据换掉，等于
+    DROP 再 CREATE，却判成有界写入（`REPLACE TABLE` 还当成了 `REPLACE INTO` 那样的追加），开发环境默认门槛下一声不吭就执行；
+    ClickHouse 的 `ALTER … CLEAR COLUMN` 清空一整列，和 DROP COLUMN 一样却也是有界写入。三种改判破坏性；换掉视图、函数、
+    `CLEAR INDEX` 与 `REPLACE INTO` 不变。用例先红后绿，`bun run check` 通过。打包版 A/B：0.4.171 两条直接跑完、表被换掉；
+    0.4.172 弹「会丢数据」确认，列出的正是那条 `CREATE OR REPLACE TABLE`，取消后什么都没执行。
+    同一轮看过、判得对的五十来种写法：注释与字符串里的 WHERE、子查询里的 WHERE、CTE 里的写语句、`EXPLAIN ANALYZE`、多表
+    DELETE / UPDATE、MERGE、`SELECT … INTO`、各家的 DROP / TRUNCATE / 删分区 / 删约束。
+    没做：`DO $$ … $$`、`EXEC sp_executesql N'…'`、`CALL p()` 里面做了什么看不见，一律有界写入；ClickHouse 的
+    `ALTER TABLE … REPLACE PARTITION` 覆盖一个分区也算有界写入。重估条件：有人报。
   - 2026-10-05 MySQL 不写 DELIMITER 的存储过程被切碎（`utils/sqlStatements.ts`；rpm 0.4.170 / 0.4.171，本机 Docker 的 mysql:9.4）：
     **修了一处**（`d50edc2`）。编辑器里 `CREATE PROCEDURE … BEGIN …; …; END;` 按分号切成九段，第一段报语法错——DBeaver、DataGrip
     不写 DELIMITER 也认，而我们只给 SQLite 触发器与 PG 的 `BEGIN ATOMIC` 数块。MySQL 的 PROCEDURE / FUNCTION / TRIGGER / EVENT
