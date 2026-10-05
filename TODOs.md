@@ -992,6 +992,12 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 风险判定里的 `#` 与反斜杠（`sqlStatements.ts` 的 `sqlWords`；rpm 0.4.160 / 0.4.161，本机 Docker 的 PG 16）：**修了一处**（`a7fbf86`）。
+    切分早已按方言读，定级用的词级扫描却不分方言：`#` 一律当行注释、反斜杠一律当转义。SQL Server 的 `DELETE FROM #tmp WHERE id = 1`、
+    PostgreSQL 的 `UPDATE t SET flags = flags # 4 WHERE id = 1`、`'C:\' WHERE …` 里 WHERE 被吞掉，判成「没有 WHERE、影响整张表」——
+    这一档默认在任何环境都弹确认，用临时表的 T-SQL 脚本几乎每条写入都被拦。现在给了方言就按切分时的同一套规则，不给方言时照旧往危险那边读。
+    单测先红后绿，`#` 与反斜杠两处各撤一处都在对应断言上变红，前端 1860 条全过。打包版：0.4.160 上那句 PG 异或弹「没有 WHERE」，
+    0.4.161 直接执行、影响 1 行（`1 # 4` 得 5），不带 WHERE 的 `UPDATE om_t SET flags = flags # 4` 照样弹确认。SQL Server 那句只有单测，没上真库。
   - 2026-10-05 块注释嵌不嵌套（`sqlStatements.ts`；rpm 0.4.160，SQLite 文件；本机 Docker 的 MySQL 8.4、ClickHouse 26.9，本机 sqlite3 与 DuckDB CLI）：
     **修了一处**（`4ca2c55`）。切分与风险判定的词法器一律把 `/*` 当成可嵌套，而 MySQL、SQLite、Oracle 到第一个 `*/` 就结束：
     `/* old /* note */ DELETE FROM t` 原先整段读成注释，切出 0 条，按「执行全部」什么也不发、也没有提示；风险判定定级为只读，生产库上不弹确认。
