@@ -60,14 +60,17 @@ function riskOfWords(words: readonly SqlWord[]): StatementRisk {
     return verb < 0 ? 'read' : riskOfWords(words.slice(verb));
   }
 
-  if (first === 'DROP' || first === 'TRUNCATE') {
+  if (first === 'DROP' || first === 'TRUNCATE' || replacesTable(keywords)) {
     return 'destructive';
   }
 
   // ALTER 本身不一定危险，但 ALTER … DROP COLUMN 会丢掉一整列的数据，
-  // TRUNCATE PARTITION（MySQL、Oracle）清掉整个分区
+  // TRUNCATE PARTITION（MySQL、Oracle）清掉整个分区，ClickHouse 的 CLEAR COLUMN 清空一整列
   if (first === 'ALTER') {
-    return keywords.includes('DROP') || keywords.includes('TRUNCATE') ? 'destructive' : 'scoped-write';
+    const clearsColumn = keywords.some((keyword, index) => keyword === 'CLEAR' && keywords[index + 1] === 'COLUMN');
+    return keywords.includes('DROP') || keywords.includes('TRUNCATE') || clearsColumn
+      ? 'destructive'
+      : 'scoped-write';
   }
 
   if (first === 'DELETE' || first === 'UPDATE') {
@@ -110,6 +113,19 @@ function riskOfWords(words: readonly SqlWord[]): StatementRisk {
 
   // CREATE、GRANT、SET、BEGIN 等：会改状态，但不会抹掉已有数据
   return 'scoped-write';
+}
+
+/**
+ * 整张换掉已有的表：DuckDB、MariaDB、ClickHouse 的 `CREATE OR REPLACE [TEMP] TABLE`，ClickHouse 的
+ * `REPLACE TABLE`。原表连同数据一起没了。换掉视图、函数不丢数据，`REPLACE INTO` 是插入
+ */
+function replacesTable(keywords: readonly string[]): boolean {
+  const [first, ...rest] = keywords;
+  const afterReplace = first === 'CREATE' && rest[0] === 'OR' && rest[1] === 'REPLACE'
+    ? rest.slice(2)
+    : first === 'REPLACE' ? rest : null;
+  const object = afterReplace?.find((keyword) => keyword !== 'TEMP' && keyword !== 'TEMPORARY');
+  return object === 'TABLE';
 }
 
 /**

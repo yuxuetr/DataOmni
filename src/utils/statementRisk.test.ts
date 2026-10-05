@@ -76,6 +76,25 @@ describe('语句风险判定', () => {
     expect(classifyStatementRisk('ALTER TABLE orders TRUNCATE PARTITION p2025')).toBe('destructive');
   });
 
+  it('整张换掉已有的表和 DROP 一样算破坏性', () => {
+    // DuckDB、MariaDB、ClickHouse 的 CREATE OR REPLACE TABLE 与 ClickHouse 的 REPLACE TABLE：
+    // 原表连同数据一起没了，等于先 DROP 再 CREATE
+    expect(classifyStatementRisk('CREATE OR REPLACE TABLE t AS SELECT 1', 'duckdb')).toBe('destructive');
+    expect(classifyStatementRisk('CREATE OR REPLACE TEMP TABLE t (a int)', 'duckdb')).toBe('destructive');
+    expect(classifyStatementRisk('CREATE OR REPLACE TABLE t (a int)', 'mysql')).toBe('destructive');
+    expect(classifyStatementRisk('REPLACE TABLE t (a Int8) ENGINE = Memory', 'clickhouse')).toBe('destructive');
+    // 换掉视图、函数不丢数据；REPLACE INTO 是插入
+    expect(classifyStatementRisk('CREATE OR REPLACE VIEW v AS SELECT 1', 'postgresql')).toBe('scoped-write');
+    expect(classifyStatementRisk('CREATE TABLE t (a int)', 'duckdb')).toBe('scoped-write');
+    expect(classifyStatementRisk('REPLACE INTO t VALUES (1)', 'mysql')).toBe('append');
+  });
+
+  it('ClickHouse 清空一列和删列一样算破坏性', () => {
+    expect(classifyStatementRisk('ALTER TABLE t CLEAR COLUMN a', 'clickhouse')).toBe('destructive');
+    // CLEAR INDEX 只清掉能重建的索引数据
+    expect(classifyStatementRisk('ALTER TABLE t CLEAR INDEX i', 'clickhouse')).toBe('scoped-write');
+  });
+
   it('字符串里的 DROP 不算数', () => {
     // 不跳过字符串的话，这条查询会被当成删表
     expect(classifyStatementRisk("SELECT 'DROP TABLE users' AS note")).toBe('read');
