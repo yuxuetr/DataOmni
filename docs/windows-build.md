@@ -152,7 +152,7 @@ bun tauri build
 cargo report future-incompatibilities --manifest-path src-tauri/Cargo.toml
 ```
 ## 发布前核对
-1. 在干净或测试 Windows 虚拟机上安装 MSI 和 NSIS 安装包，验证启动、卸载与升级行为。
+1. 在干净或测试 Windows 虚拟机上安装 MSI 和 NSIS 安装包，验证启动、卸载与升级行为。逐项清单见 `windows-checklist.md`。
 2. 确认应用版本、图标、产品名称和安装包架构正确。
 3. 如需减少 SmartScreen 提示，应为 `.exe`、MSI 以及安装程序配置代码签名；当前构建流程不会自动签名。
 4. 不要提交 `dist/`、`src-tauri/target/` 或用户目录下的 Tauri 工具缓存。
