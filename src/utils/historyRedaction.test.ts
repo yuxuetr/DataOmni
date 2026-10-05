@@ -220,6 +220,10 @@ describe('redactConsoleForHistory', () => {
     expect(redis('MIGRATE h 6379 k 0 5000 AUTH2 u pw KEYS a')).toBe('MIGRATE h 6379 k 0 5000 AUTH2 u *** KEYS a');
     expect(redis('CONFIG SET requirepass s3cret maxmemory 1gb')).toBe('CONFIG SET requirepass *** maxmemory 1gb');
     expect(redis('ACL SETUSER app on >pw1 <old ~cache:* +get')).toBe('ACL SETUSER app on >*** <*** ~cache:* +get');
+    // redis-cli 在参数中间遇到引号也开始引用：`>"my pass"` 是一个参数 `>my pass`，后半截不能漏出来
+    expect(redis('ACL SETUSER app >"my pass" on')).toBe('ACL SETUSER app >*** on');
+    expect(redis("ACL SETUSER app >'my pass' on")).toBe('ACL SETUSER app >*** on');
+    expect(redis('AUTH reader x"y z"')).toBe('AUTH reader ***');
     expect(redactConsoleForHistory('redis', 'GET password')).toEqual({ sql: 'GET password', redacted: false });
   });
 

@@ -378,7 +378,9 @@ function redactEsRequest(text: string): string {
  * 按参数打码（参数可以带引号），不按正则套整行
  */
 function redactRedisCommand(text: string): string {
-  const tokens = [...text.matchAll(/"(?:[^"\\]|\\.)*"|'[^']*'|\S+/g)].map((match) => ({
+  // 和 redis-cli 一样，引号在参数中间也开始引用（`>"my pass"` 是一个参数）；
+  // 没收尾的引号当普通字符，免得把它连同后面的口令跳过去
+  const tokens = [...text.matchAll(/(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s"']|["'])+/g)].map((match) => ({
     text: match[0],
     from: match.index ?? 0,
     upper: match[0].replace(/^["']|["']$/g, '').toUpperCase()
