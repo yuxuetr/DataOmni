@@ -67,6 +67,13 @@ const URL_CREDENTIAL = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/[^:/\s?#]+:)([^@\
  */
 const LITERAL_PREFIX = /(?<![\w$])(?:[NnEe]|_[A-Za-z0-9]+)$/;
 
+/**
+ * 字面量里键值对写法的连接串：libpq 的 `host=db password=…`（DuckDB 的 `ATTACH`、PostgreSQL 的
+ * `dblink`）、ODBC / ADO 的 `Server=s;Pwd=…;`。只在字面量**里面**认——外面的 `pwd = col` 是比较。
+ * 值的三种写法：libpq 用单引号包（进了 SQL 字面量是 `''…''`）、ODBC 用花括号包、或者到空白 / 分号为止
+ */
+const KEY_VALUE_PASSWORD = /(\b(?:password|pwd)\s*=\s*)(?:''(?:[^']|'{4})*''|\{[^}]*\}|[^\s;']+)/gi;
+
 interface Span {
   from: number;
   to: number;
@@ -310,18 +317,26 @@ export function redactSqlForHistory(sql: string, dialect: SqlDialect): RedactedS
 
   let result = '';
   let cursor = 0;
-  for (const index of [...targets].sort((a, b) => a - b)) {
-    const literal = literals[index];
-    result += sql.slice(cursor, literal.from) + REDACTED;
+  let maskedInside = false;
+  literals.forEach((literal, index) => {
+    result += sql.slice(cursor, literal.from);
     cursor = literal.to;
-  }
+    if (targets.has(index)) {
+      result += REDACTED;
+      return;
+    }
+    const text = sql.slice(literal.from, literal.to);
+    const masked = text.replace(KEY_VALUE_PASSWORD, '$1***');
+    maskedInside ||= masked !== text;
+    result += masked;
+  });
   result += sql.slice(cursor);
 
   const withoutIdentifiers = dialect === 'oracle' ? result.replace(ORACLE_IDENTIFIED_BY, oracleRedaction) : result;
   const withoutUrlCredentials = withoutIdentifiers.replace(URL_CREDENTIAL, '$1***$3');
   return {
     sql: withoutUrlCredentials,
-    redacted: targets.size > 0 || withoutUrlCredentials !== result
+    redacted: targets.size > 0 || maskedInside || withoutUrlCredentials !== result
   };
 }
 

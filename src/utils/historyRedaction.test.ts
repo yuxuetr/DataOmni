@@ -141,6 +141,29 @@ describe('redactSqlForHistory', () => {
     ).toBe("INSERT INTO config (url) VALUES ('postgres://u:***@db:5432/app')");
   });
 
+  it('打掉键值对写法的连接串口令：libpq 的 password=、ODBC / ADO 的 Pwd=', () => {
+    // DuckDB 挂 PostgreSQL / MySQL 库、PostgreSQL 的 dblink 都用 libpq 的写法
+    expect(redact("ATTACH 'host=db user=u password=hunter2 dbname=app' AS p (TYPE postgres)", 'duckdb').sql).toBe(
+      "ATTACH 'host=db user=u password=*** dbname=app' AS p (TYPE postgres)"
+    );
+    expect(redact("SELECT * FROM dblink('host=db password = hunter2', 'SELECT 1') AS t(a int)", 'postgresql').sql).toBe(
+      "SELECT * FROM dblink('host=db password = ***', 'SELECT 1') AS t(a int)"
+    );
+    // libpq 的值可以用单引号包着，写进 SQL 字面量里是两个单引号
+    expect(redact("ATTACH 'host=db password=''a b'' dbname=app' AS p (TYPE postgres)", 'duckdb').sql).toBe(
+      "ATTACH 'host=db password=*** dbname=app' AS p (TYPE postgres)"
+    );
+    expect(
+      redact("SELECT * FROM OPENROWSET('MSOLEDBSQL', 'Server=s;Uid=u;Pwd=hunter2;', 'SELECT 1')", 'sqlserver').sql
+    ).toBe("SELECT * FROM OPENROWSET('MSOLEDBSQL', 'Server=s;Uid=u;Pwd=***;', 'SELECT 1')");
+    expect(redact("SELECT 'Server=s;Password={a;b};Database=d'", 'sqlserver').sql).toBe(
+      "SELECT 'Server=s;Password=***;Database=d'"
+    );
+    // 字面量外面的 pwd = 列是比较，不是连接串
+    expect(redact('SELECT * FROM t WHERE pwd = other_col').redacted).toBe(false);
+    expect(redact("SELECT 'password reset requested'").redacted).toBe(false);
+  });
+
   it('普通语句一个字都不改', () => {
     for (const sql of [
       'SELECT * FROM users ORDER BY name',
