@@ -992,6 +992,17 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 CSV 导入往自增列写给定的 id（`utils/csvImport.ts`；rpm 0.4.172 / 0.4.173，本机 Docker 的 mysql:9.4）：**修了一处**（`32711d0`）。
+    把 CSV 的 id 映射到 MySQL 的 `AUTO_INCREMENT`（或 PostgreSQL / Oracle `BY DEFAULT` 的 identity），导入前检查报 error「值由数据库产生，
+    往里写值会被拒绝」、「开始导入」按不下去；而这几种列照收给定的值，搬表时带着原 id 导是常事。现在只有计算列与 `ALWAYS` 的 identity
+    （SQL Server 的 identity 也算这种）是 error。MySQL 的计数器跟着写进去的最大值走，不提；PostgreSQL 的序列不动（本机 PG 16 试过：
+    写进 1、5 之后不带 id 插一行，报 `id=1` 重复），改成 warning 说清楚；Oracle 照文档同样处理，没在真库上试。用例先红后绿，
+    `bun run check` 通过。打包版 A/B：0.4.172 映射 id 后红字、按钮灰；0.4.173 没有提示，导入后表里是 1、5，再插一行拿到 6。
+    - 同一轮看到、没修：SQLite 的 rowid 别名（唯一主键列、类型恰好是 `INTEGER`）写了 `NOT NULL`（Django 的
+      `"id" integer NOT NULL PRIMARY KEY AUTOINCREMENT`、Android Room 的建表都这么写），或是 `STRICT` 表，目录报 `notnull = 1`，
+      于是新增行时它被当成必填项、CSV 不映射 id 就报「必填列没有映射」拦住导入——而 SQLite 自己会给 rowid（本机 sqlite3 试过）。
+      要在目录里把它报成「由数据库产生」，但那一位还牵着网格只读、INSERT 略去、结构页的标记，`WITHOUT ROWID` 表又不是别名，
+      留到下一轮单独修。
   - 2026-10-05 整张换掉表不要求确认（`utils/statementRisk.ts`；rpm 0.4.171 / 0.4.172，DuckDB 文件库）：**修了一处**（`5d5637d`）。
     DuckDB / MariaDB / ClickHouse 的 `CREATE OR REPLACE [TEMP] TABLE` 与 ClickHouse 的 `REPLACE TABLE` 把原表连同数据换掉，等于
     DROP 再 CREATE，却判成有界写入（`REPLACE TABLE` 还当成了 `REPLACE INTO` 那样的追加），开发环境默认门槛下一声不吭就执行；
