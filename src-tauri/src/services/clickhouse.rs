@@ -519,11 +519,13 @@ fn after_write(error: QueryError, written: bool) -> QueryError {
 }
 
 /// 导出前拒绝非查询时用：这些关键字开头的返回行。不在这里的都当写——导出只是拒跑，
-/// 认错了的代价是一句「这不是查询」
+/// 认错了的代价是一句「这不是查询」。`FROM t SELECT …` 是 ClickHouse 把 FROM 写在前面的查询
 fn is_query(sql: &str) -> bool {
   let (first, _) = crate::services::transaction_state::leading_keywords(sql);
-  matches!(first.as_str(), "SELECT" | "WITH" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN" | "EXISTS")
-    || sql.trim_start().starts_with('(')
+  matches!(
+    first.as_str(),
+    "SELECT" | "WITH" | "FROM" | "SHOW" | "DESCRIBE" | "DESC" | "EXPLAIN" | "EXISTS"
+  ) || sql.trim_start().starts_with('(')
 }
 
 /// 语句里第 `index` 个参数写的类型：`{p1:Nullable(String)}` 里的 `Nullable(String)`
@@ -1369,6 +1371,8 @@ mod tests {
       "SHOW TABLES",
       "(SELECT 1)",
       "EXPLAIN SELECT 1",
+      // FROM 写在 SELECT 前面，26.9 上试过
+      "FROM system.one SELECT dummy",
     ] {
       assert!(is_query(sql), "{sql}");
     }

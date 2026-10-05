@@ -878,6 +878,11 @@ async fn clickhouse_exports_stream_to_a_file_and_refuse_non_queries() {
   let summary = export("SELECT number FROM numbers(100000)").await.expect("stream");
   assert_eq!(summary.rows_written, 100000);
 
+  // FROM 写在前面的也是查询，不能当成写语句拒掉
+  let summary = export("FROM numbers(3) SELECT number").await.expect("FROM first");
+  assert_eq!(summary.rows_written, 3);
+  assert_eq!(std::fs::read_to_string(&target).expect("read back"), "number\n0\n1\n2");
+
   let error = export("ALTER TABLE smoke_export DELETE WHERE 1").await.expect_err("refused");
   assert_eq!(error.message, dataomni_lib::services::query_executor::NON_QUERY_MESSAGE);
   let left = pool.select("SELECT count() AS n FROM smoke_export", &[]).await.expect("count");
