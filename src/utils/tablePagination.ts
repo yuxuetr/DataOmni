@@ -267,6 +267,14 @@ function oracleSerializer(column: ColumnInfo): string | undefined {
  */
 const SQL_SERVER_MONEY = 'money';
 
+/**
+ * MySQL 9 的 `VECTOR`：sqlx 0.8 不认这个列类型（unknown column type 0xf2），结果里有一列就整条失败。
+ * 按二进制取：MySQL 9.4 与 MariaDB 11.8 都收 `CAST(v AS BINARY)`，改回去写长度对的二进制两家也都收
+ * （长度不对报错）。转成文本的函数两家不同（`VECTOR_TO_STRING` / `VEC_ToText`），而文本 MySQL 不收回去。
+ * MariaDB 的 VECTOR 本来就按二进制送来，取出来和原来一样
+ */
+const MYSQL_VECTOR = 'vector';
+
 function isUnreadableColumn(column: ColumnInfo, dialect: SqlIdentifierDialect): boolean {
   if (dialect === 'sqlserver') {
     const token = columnTypeToken(column.data_type);
@@ -274,6 +282,9 @@ function isUnreadableColumn(column: ColumnInfo, dialect: SqlIdentifierDialect): 
   }
   if (dialect === 'oracle') {
     return ORACLE_ZONED_TIMESTAMP.test(column.data_type.trim()) || oracleSerializer(column) !== undefined;
+  }
+  if (dialect === 'mysql') {
+    return columnTypeToken(column.data_type) === MYSQL_VECTOR;
   }
   return dialect === 'postgresql' && !POSTGRES_READABLE_TYPES.has(postgresTypeName(column.data_type));
 }
@@ -294,6 +305,9 @@ export function projectedColumn(column: ColumnInfo, dialect: SqlIdentifierDialec
     return columnTypeToken(column.data_type) === SQL_SERVER_MONEY
       ? `CAST(${name} AS decimal(19,4)) AS ${name}`
       : `CAST(${name} AS nvarchar(max)) AS ${name}`;
+  }
+  if (dialect === 'mysql') {
+    return `CAST(${name} AS BINARY) AS ${name}`;
   }
   const serializer = dialect === 'oracle' ? oracleSerializer(column) : undefined;
   if (serializer) {
@@ -332,7 +346,7 @@ function isLeftOutOfStar(column: ColumnInfo, dialect: SqlIdentifierDialect): boo
 /**
  * 取表数据时 SELECT 后面那一段。
  *
- * 多数方言是 `*`。SQL Server、PostgreSQL 与 Oracle 有驱动读不了的列时要点名，好把那几列转成文本。ClickHouse 的 `*` 不含 MATERIALIZED 与 ALIAS 列（网格里那几列会整列是 NULL），
+ * 多数方言是 `*`。SQL Server、PostgreSQL、Oracle 与 MySQL 有驱动读不了的列时要点名，好把那几列转成文本。ClickHouse 的 `*` 不含 MATERIALIZED 与 ALIAS 列（网格里那几列会整列是 NULL），
  * 要一个个点名；打开 `asterisk_include_materialized_columns` 也行，但那是个设置，`readonly = 1`
  * 的账号改不了。EPHEMERAL 列不点：它不存值，点名去查报「There is no column」（25.8 上试过）；
  * 网格上那一列是空的，本来也没有值
@@ -343,8 +357,8 @@ export function tableProjection(columns: readonly ColumnInfo[], dialect: SqlIden
       ? columns.map(column => projectedColumn(column, dialect)).join(', ')
       : '*';
   }
-  if (dialect === 'mysql' && columns.some(column => isLeftOutOfStar(column, dialect))) {
-    return columns.map(column => quoteSqlIdentifier(column.name, dialect)).join(', ');
+  if (dialect === 'mysql' && columns.some(column => isUnreadableColumn(column, dialect) || isLeftOutOfStar(column, dialect))) {
+    return columns.map(column => projectedColumn(column, dialect)).join(', ');
   }
   if (dialect !== 'clickhouse' || !columns.some(column => column.is_generated)) {
     return '*';

@@ -293,6 +293,15 @@ describe('取表数据的投影', () => {
     expect(tableProjection([extra('id', ''), extra('n', 'auto_increment')], 'mysql')).toBe('*');
   });
 
+  it('MySQL 9 的 VECTOR 按二进制取：sqlx 不认这个列类型（0xf2），有一列整张表打不开', () => {
+    const typed = (name: string, dataType: string) => ({
+      name, data_type: dataType, is_nullable: true, is_primary_key: false
+    });
+    expect(tableProjection([typed('id', 'int'), typed('v', 'vector(3)'), typed('note', 'varchar(10)')], 'mysql'))
+      .toBe('`id`, CAST(`v` AS BINARY) AS `v`, `note`');
+    expect(tableProjection([typed('id', 'int'), typed('note', 'varchar(10)')], 'mysql')).toBe('*');
+  });
+
   it('SQL Server 驱动读不了的列转成文本再取：不然这张表整张打不开，而报错让用户去改一条他看不到的查询', () => {
     const typed = (name: string, dataType: string) => ({
       name, data_type: dataType, is_nullable: true, is_primary_key: false
