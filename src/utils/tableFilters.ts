@@ -135,6 +135,7 @@ const LIKE_STRING_TYPE_TOKENS = new Set([
  *
  * ClickHouse 的 toString 去掉 Decimal 末尾的 0（12.50 写成 `12.5`），网格补齐了小数位，按网格搜要用 toDecimalString。
  * Oracle 同病，还更多：隐式转换写成 `12.5`、`.5`、`03:04:05.000000`，网格是 `12.50`、`0.5`、`03:04:05`。
+ * PostgreSQL 的 timestamptz 也是：`::text` 是 `2024-01-01 19:04:05.5+00`，网格是 `2024-01-01T19:04:05.500+00:00`。
  * BINARY_DOUBLE 不在里面：服务端最少给 17 位（`.10000000000000001`），网格是最短写法 `0.1`，SQL 里拼不出来
  */
 function likeOperand(quotedColumn: string, column: ColumnInfo, dialect: SqlIdentifierDialect): string {
@@ -143,7 +144,9 @@ function likeOperand(quotedColumn: string, column: ColumnInfo, dialect: SqlIdent
   }
   switch (dialect) {
     case 'postgresql':
-      return `CAST(${quotedColumn} AS text)`;
+      return POSTGRES_ZONED_TIMESTAMP.test(column.data_type.trim())
+        ? postgresRfc3339Text(quotedColumn)
+        : `CAST(${quotedColumn} AS text)`;
     case 'duckdb':
       return `CAST(${quotedColumn} AS VARCHAR)`;
     case 'clickhouse': {
@@ -170,6 +173,22 @@ function likeOperand(quotedColumn: string, column: ColumnInfo, dialect: SqlIdent
     default:
       return quotedColumn;
   }
+}
+
+const POSTGRES_ZONED_TIMESTAMP = /^(?:timestamptz|timestamp(?:\(\d+\))? with time zone)$/i;
+
+/**
+ * 网格里的 timestamptz 是 `to_rfc3339`：`T` 分隔，小数秒按 0 / 3 / 6 位写，偏移 `+00:00`（见 `query_executor.rs` 的
+ * `pg_instant`）。会话时区被 sqlx 写死成 UTC，`to_char` 照会话时区写，不用 `AT TIME ZONE`：CockroachDB 的上限时刻经它就越界。
+ * 判 infinity 不用 `isfinite`，CockroachDB 没有它
+ */
+function postgresRfc3339Text(quotedColumn: string): string {
+  const micros = `date_part('microseconds', ${quotedColumn})::bigint`;
+  return `CASE WHEN ${quotedColumn} IN ('infinity', '-infinity') THEN ${quotedColumn}::text`
+    + ` ELSE to_char(${quotedColumn}, 'YYYY-MM-DD"T"HH24:MI:SS') || CASE`
+    + ` WHEN ${micros} % 1000000 = 0 THEN ''`
+    + ` WHEN ${micros} % 1000 = 0 THEN to_char(${quotedColumn}, '.MS')`
+    + ` ELSE to_char(${quotedColumn}, '.US') END || '+00:00' END`;
 }
 
 /** 网格里的写法见 `oracle.rs` 的 `decode`：NUMBER(p,s) 补齐 s 位，其余的数补上小数点前的 0 */

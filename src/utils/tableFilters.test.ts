@@ -215,6 +215,21 @@ describe('buildFilterClause', () => {
       .toBe("WHERE toString(`d`) LIKE '%12.50%'");
   });
 
+  it('PostgreSQL 的 timestamptz 上「包含」按网格的 RFC 3339 写法搜', () => {
+    // ::text 是 `2024-01-01 19:04:05.5+00`，网格是 `2024-01-01T19:04:05.500+00:00`：搜 T19:04、+00:00 一行也中不了（PG 16、CockroachDB 25.2 上试过）
+    const expected = (name: string) => `WHERE CASE WHEN "${name}" IN ('infinity', '-infinity') THEN "${name}"::text`
+      + ` ELSE to_char("${name}", 'YYYY-MM-DD"T"HH24:MI:SS') || CASE`
+      + ` WHEN date_part('microseconds', "${name}")::bigint % 1000000 = 0 THEN ''`
+      + ` WHEN date_part('microseconds', "${name}")::bigint % 1000 = 0 THEN to_char("${name}", '.MS')`
+      + ` ELSE to_char("${name}", '.US') END || '+00:00' END LIKE '%T19:04%' ESCAPE '!'`;
+    const contains = (name: string) => filter({ column: name, operator: 'contains', value: 'T19:04' });
+    expect(buildFilterClause([contains('t')], [column('t', 'timestamp with time zone')], 'postgresql')).toBe(expected('t'));
+    expect(buildFilterClause([contains('p')], [column('p', 'timestamp(3) with time zone')], 'postgresql')).toBe(expected('p'));
+    // 不带时区的 ::text 本来就是网格的写法
+    expect(buildFilterClause([contains('n')], [column('n', 'timestamp without time zone')], 'postgresql'))
+      .toBe(`WHERE CAST("n" AS text) LIKE '%T19:04%' ESCAPE '!'`);
+  });
+
   it('ClickHouse 的 FixedString 上「结尾是」不算末尾补的 \\0', () => {
     // FixedString(4) 存 'ab' 是 ab\0\0，网格里看着是 ab；原列 LIKE '%ab' 一行也中不了，toString 去掉末尾的 \0（25.8 上试过）
     expect(buildFilterClause([filter({ column: 'fs', operator: 'ends-with', value: 'ab' })], [column('fs', 'FixedString(4)')], 'clickhouse'))
