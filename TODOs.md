@@ -991,6 +991,14 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-05 Elasticsearch 聚合表里的单桶聚合（`esAggregations.ts`；rpm 0.4.157，本机 Docker 的 Elasticsearch 8.19）：**修了一处**（`632bee1`）。
+    `nested`、`filter`（以及 `global`、`missing`、`sampler` 这类）只有 `doc_count` 与子聚合，原先被当成多值指标：
+    下面 `terms` 的桶整个写成指标表里的一格 JSON。查 nested 字段几乎必经 `nested` 再套 `terms`，这张表就等于没有。
+    现在照顶层摊开，表名带上外层（`c.by_author`），外层的 `doc_count` 与它下面的指标进指标表（`cheap.avg_price`）。
+    单测用真服务端的原话先红；打包版发同一条请求，「Aggregations」里是 `c.by_author`、`cheap.by_city` 两张表与一张指标表。
+    - 没改的：桶里面再套单桶聚合（`terms` → `filter` → `avg`）仍写成一格 JSON，那一格是整行的附属，展开要另定列名规则。
+    - 同一轮看过、没问题的：SVG 导出对 `fill="none"` 的线条保留原属性，不会被填黑；控制台日志的脱敏只到开发者工具，
+      不落盘，`ssh_password` 这类键名漏打不算外泄面。
   - 2026-10-05 Redis 命令行的回答与 Elasticsearch 控制台的风险判定（`redis.rs`、`esConsole.ts`；rpm 0.4.155 / 0.4.156，
     本机 Docker 的 Redis 7.4 与 Elasticsearch 8.19，cu 上的 Redis 7.4 与 OpenSearch 3.8）：**修了两处**：
     - Redis 的整数回答按 JSON 的数传到前端（`f8efef4`），到了 JS 是双精度：`INCR` 到 2^53 以上差一（`9007199254740993` 显示成 `…992`），
