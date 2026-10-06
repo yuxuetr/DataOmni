@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
-import type { ConnectionProfile } from '../contracts';
+import type { ConnectionProfile, TlsMode } from '../contracts';
+import { ENVIRONMENT_NAME_KEYS } from '../contracts/environment';
+import type { TranslationKey } from '../i18n/translate';
 import type { DatabaseSession } from '../contracts/session';
 import { useLanguageStore } from '../stores/languageStore';
 import { serverLabel } from '../utils/serverPresets';
@@ -8,6 +10,15 @@ import { serverAddress } from '../utils/mongoConnection';
 import { isFileDatabase } from '../utils/databaseFiles';
 import { backupSupported, startDatabaseBackup } from '../utils/databaseBackup';
 import { isImeKeyEvent } from '../utils/shortcuts';
+
+/** 与连接表单里 TLS 下拉的选项同名 */
+const TLS_MODE_KEYS: Record<TlsMode, TranslationKey> = {
+  disabled: 'form.tls.disabled',
+  preferred: 'form.tls.preferred',
+  required: 'form.tls.required',
+  'verify-ca': 'form.tls.verifyCa',
+  'verify-full': 'form.tls.verifyFull'
+};
 
 interface ConnectionInfoDialogProps {
   connection: ConnectionProfile;
@@ -88,13 +99,15 @@ export function ConnectionInfoDialog({ connection, session, onClose }: Connectio
           </div>
 
           <div className="py-2">
-            <Row label={t('info.environment')} value={connection.environment} />
+            <Row label={t('info.environment')} value={t(ENVIRONMENT_NAME_KEYS[connection.environment])} />
             {/* 文件库没有传输层也没有密码，配置里的默认值（ssl、save_password）写出来只会误导 */}
             {!fileDatabase && (
               <>
                 <Row
                   label="TLS"
-                  value={connection.tls_mode ?? (connection.ssl ? t('info.tlsEnabledUnspecified') : t('info.tlsDisabled'))}
+                  value={connection.tls_mode
+                    ? t(TLS_MODE_KEYS[connection.tls_mode])
+                    : connection.ssl ? t('info.tlsEnabledUnspecified') : t('info.tlsDisabled')}
                 />
                 <Row
                   label={t('info.savePassword')}

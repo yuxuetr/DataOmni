@@ -60,4 +60,22 @@ describe('ConnectionInfoDialog', () => {
     });
     expect(labels()).toEqual(expect.arrayContaining(['User', 'TLS', 'Save password']));
   });
+
+  it('环境与 TLS 模式写成界面上的名字，不是配置里的取值', () => {
+    // 此前中文界面上印着 `development`、`verify-full`
+    act(() => {
+      root.render(
+        <ConnectionInfoDialog
+          connection={{ ...profileOf(DatabaseType.PostgreSQL, 'shop'), environment: 'production', tls_mode: 'verify-full' }}
+          session={null}
+          onClose={() => undefined}
+        />
+      );
+    });
+    const text = container.textContent ?? '';
+    expect(text).toContain('Production');
+    expect(text).toContain('Verify the certificate and hostname');
+    expect(text).not.toContain('production');
+    expect(text).not.toContain('verify-full');
+  });
 });
