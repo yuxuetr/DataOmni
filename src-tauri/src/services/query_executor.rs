@@ -1924,7 +1924,7 @@ pub(crate) fn display_error(error: impl std::fmt::Display) -> QueryError {
 }
 
 /// 同名的列用编号区分：结果行按列名做键，`SELECT a.id, b.id` 的两个 `id` 会互相覆盖。
-/// Oracle 与 DuckDB 用它（SQL Server 的问题是**没有名字**的列，见那边的 `label_columns`）
+/// 各家的流式读取都用它（SQL Server 先给没名字的列起名，见那边的 `label_columns`）
 pub(crate) fn number_duplicate_columns<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
   let mut seen = std::collections::HashMap::<String, usize>::new();
   names

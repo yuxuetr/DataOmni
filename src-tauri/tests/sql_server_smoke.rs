@@ -157,7 +157,8 @@ async fn sql_server_decodes_values_the_way_the_other_dialects_do() {
            CAST(1.5 AS money) AS m,
            CAST(NULL AS int) AS nothing,
            1 + 1,
-           2 + 2",
+           2 + 2,
+           7 AS i",
         100,
       )
       .await
@@ -206,6 +207,9 @@ async fn sql_server_decodes_values_the_way_the_other_dialects_do() {
   // 两个没名字的列都在，没有互相覆盖
   assert_eq!(row["(No column name)"], json!(2));
   assert_eq!(row["(No column name) 2"], json!(4));
+  // 同名的列也一样：`SELECT a.id, b.id` 的第一列不能显示成第二列的值
+  assert_eq!(row["i"], json!(42));
+  assert_eq!(row["i 2"], json!(7));
 }
 
 /// real 是单精度：直接转 f64 的话 0.1 成了 0.10000000149011612，SSMS 写的是 0.1

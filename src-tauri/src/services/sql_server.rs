@@ -23,8 +23,9 @@ use crate::services::query_error::QueryErrorDetails;
 use crate::services::query_error::{CONNECTION_LOST, CONNECTION_LOST_CODE};
 use crate::services::query_executor::{
   admit_row_bytes, flush_full_batch, flush_remaining_batch, format_date, format_datetime,
-  format_time, tagged_value, widen_f32, NonQueryHandling, QueryColumnMetadata,
-  QueryExecutionSummary, QueryResultBatch, QueryRow, QueryTruncationReason, StreamOptions,
+  format_time, number_duplicate_columns, tagged_value, widen_f32, NonQueryHandling,
+  QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow, QueryTruncationReason,
+  StreamOptions,
 };
 use crate::services::transaction_state::{TransactionState, TransactionStatus};
 use crate::services::write_batch::{
@@ -840,26 +841,16 @@ async fn stream_first_result(
 }
 
 /// 列名。SQL Server 的表达式列没有名字（SSMS 显示「(No column name)」），而
-/// 结果行按列名做键——两个没名字的列会互相覆盖，所以给它们编上号。
+/// 结果行按列名做键——两个没名字的列、或是 `SELECT a.id, b.id` 的两个 `id`
+/// 会互相覆盖，所以同名的编上号。
 fn column_names(columns: &[tiberius::Column]) -> Vec<String> {
   label_columns(columns.iter().map(|column| column.name()))
 }
 
 fn label_columns<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
-  let mut unnamed = 0;
-  names
-    .map(|name| {
-      if !name.is_empty() {
-        return name.to_string();
-      }
-      unnamed += 1;
-      if unnamed == 1 {
-        "(No column name)".to_string()
-      } else {
-        format!("(No column name) {unnamed}")
-      }
-    })
-    .collect()
+  number_duplicate_columns(
+    names.map(|name| if name.is_empty() { "(No column name)" } else { name }),
+  )
 }
 
 /// 结果列头上显示的类型名，照 SQL Server 自己的叫法。
@@ -1145,6 +1136,8 @@ mod tests {
       label_columns(["", "a", ""].into_iter()),
       ["(No column name)", "a", "(No column name) 2"]
     );
+    // 有名字但同名的也是（`SELECT a.id, b.id`）
+    assert_eq!(label_columns(["id", "", "id"].into_iter()), ["id", "(No column name)", "id 2"]);
   }
 
   #[test]
