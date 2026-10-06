@@ -24,7 +24,7 @@
 | P5 | 统一桌面 UI 与交互 | [ ]（只差 5.4 的 Windows 安装验证） |
 | P6 | AI 设计、导出与备份 | [x] A0–A6c、A9 完成（A2b / A7 / A8 当前版本不做） |
 | P7 | 更多数据库：国产库与云库 | [-] OceanBase、openGauss 完成；KingbaseES 缺安装包；B3 不做；B4 按触发条件 |
-| v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [-] v0.6.0 的 R0–R4 完成；R5 的 CI 部分完成，人工部分待一台干净的 Windows |
+| v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [-] v0.6.0 已打 tag（草稿 Release 待发布）；R5 的 CI 部分完成，人工部分待一台干净的 Windows |
 
 ---
 
@@ -99,7 +99,7 @@
     - 查：「应用」里恰好一条且版本对、开始菜单项、主程序与 `instantclient\oci.dll`、启动 20 秒后进程还在、日志里有启动那一行；卸载后注册项、主程序、开始菜单都没了。
     - MSI 装在 `C:\Program Files\DataOmni`；NSIS 按用户装在 `%LOCALAPPDATA%\DataOmni`，静默卸载要轮询（`uninstall.exe` 自己会再起一个进程）。用户配置 `%APPDATA%\com.dataomni.app` 卸载后保留，这是有意的。
     - 结果：已发布的 v0.5.1 上除「日志」外都过（那时还没有日志）；新代码打的包（run 37484423539）全部通过，Windows 日志在 `%LOCALAPPDATA%\com.dataomni.app\logs`，联网检查也写进了日志。
-    - 升级那一步只在新包版本高于已发布版本时跑，这次两边都是 0.5.1 所以跳过；第一次真跑是推 `v0.6.0` 时（0.5.1 → 0.6.0）。
+    - 升级那一步只在新包版本高于已发布版本时跑，这次两边都是 0.5.1 所以跳过；推 `v0.6.0` 时第一次真跑（run 37489377113）：先装 0.5.1 的 MSI、新版直接装在上面，「应用」里仍只有一条且版本是 0.6.0，其余各项全部通过。
   - [ ] 人工走一遍 SmartScreen、界面与 Oracle，按 `docs/windows-checklist.md`。
   - 需要一台干净的 Windows。本机 Parallels 的虚拟机开着交易软件，不在上面做自动化。
 - [ ] R6 兼容库与 SSH 隧道的打包版回归
