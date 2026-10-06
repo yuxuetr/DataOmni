@@ -784,7 +784,7 @@ export const en: Translations = {
   'settings.fonts.codeFontSize': 'Code font size',
   'settings.fonts.uiZoom': 'Interface zoom',
   'settings.fonts.uiFontPlaceholder': 'System default, e.g. Inter',
-  'settings.fonts.codeFontPlaceholder': 'Default monospace, e.g. JetBrains Mono, Menlo',
+  'settings.fonts.codeFontPlaceholder': 'Default, e.g. JetBrains Mono',
   'settings.confirmation.title': 'Confirm risky statements',
   'settings.confirmation.description': 'Set this per environment: statements at or above the chosen risk level ask for confirmation first. A confirmation only gives you a chance to stop — it is not a substitute for database permissions. An account that should be read-only has to be configured that way in the database.',
   'settings.confirmation.environment': 'Environment',

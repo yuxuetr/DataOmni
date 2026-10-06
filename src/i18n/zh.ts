@@ -805,7 +805,7 @@ export const zh = {
   'settings.fonts.codeFontSize': '代码字号',
   'settings.fonts.uiZoom': '界面缩放',
   'settings.fonts.uiFontPlaceholder': '系统默认，如 PingFang SC',
-  'settings.fonts.codeFontPlaceholder': '默认等宽，如 JetBrains Mono, Menlo',
+  'settings.fonts.codeFontPlaceholder': '默认等宽，如 JetBrains Mono',
   'settings.confirmation.title': '危险语句确认',
   'settings.confirmation.description': '按连接所在环境分别设定：风险达到这一级及以上的语句，执行前先确认。确认只是给你一次停下来的机会，不能代替数据库权限——真正该只读的账号要在数据库里配。',
   'settings.confirmation.environment': '环境',
