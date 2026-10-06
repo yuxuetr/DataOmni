@@ -113,9 +113,47 @@ jobs:
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.exe
 
+  # 新打的 Windows 包装一遍、启动、卸载；版本比已发布的新时先装已发布的再升级。
+  # 过不了就不建草稿。脚本与要人看的部分见 scripts/windows-install-smoke.ps1、docs/windows-checklist.md
+  windows-install:
+    needs: package
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download the Windows packages
+        uses: actions/download-artifact@v4
+        with:
+          name: DataOmni-windows-x64
+          path: packages
+
+      - name: Download the latest published MSI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p previous
+          gh release download --repo "$GITHUB_REPOSITORY" --dir previous --pattern '*.msi' || echo "没有已发布的版本，不验升级"
+          ls -lR packages previous
+
+      - name: Install, upgrade, launch, uninstall
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem packages -Recurse -Filter *.msi).FullName
+          $nsis = (Get-ChildItem packages -Recurse -Filter *-setup.exe).FullName
+          # 包名是 DataOmni_<版本>_x64_en-US.msi
+          $version = [regex]::Match((Split-Path $msi -Leaf), '_(\d+\.\d+\.\d+[^_]*)_').Groups[1].Value
+          $previous = Get-ChildItem previous -Filter *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          $previousVersion = if ($previous) { [regex]::Match($previous.Name, '_(\d+\.\d+\.\d+[^_]*)_').Groups[1].Value } else { '' }
+          # 同一个版本号 MSI 不当升级处理，只验全新安装
+          $previousMsi = if ($previous -and $previousVersion -ne $version) { $previous.FullName } else { '' }
+          Write-Host "新包 $version，已发布 $previousVersion，验升级：$([bool]$previousMsi)"
+          ./scripts/windows-install-smoke.ps1 -Msi $msi -Nsis $nsis -Version $version -PreviousMsi $previousMsi
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: package
+    needs: [package, windows-install]
     runs-on: ubuntu-latest
     permissions:
       contents: write
