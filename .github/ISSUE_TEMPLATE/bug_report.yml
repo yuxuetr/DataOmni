@@ -1,0 +1,46 @@
+name: 缺陷 / Bug report
+description: 用起来不对、报错、崩溃 / Something is wrong, errors out or crashes
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        谢谢报告。下面几项填得越实，越快能复现。**不要贴口令、连接串里的口令或 API Key**——诊断信息和日志本身不含口令。
+        Thanks for reporting. The more concrete, the faster we can reproduce it. **Do not paste passwords or API keys** — the diagnostics and the log never contain them.
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断信息 / Diagnostics
+      description: 设置 → 关于与诊断 →「复制诊断信息」，粘贴到这里 / Settings → About & diagnostics → "Copy diagnostics", paste here
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: database
+    attributes:
+      label: 数据库与版本 / Database and version
+      description: 例如 PostgreSQL 16、MySQL 8.4、MongoDB 8.0；经 SSH 隧道、连接池或云厂商托管的话也写上 / e.g. PostgreSQL 16; mention SSH tunnel, pooler or managed service if any
+  - type: textarea
+    id: steps
+    attributes:
+      label: 怎么复现 / Steps to reproduce
+      description: 一步一步写；能附上最小的建表语句或 SQL 最好 / Step by step; a minimal CREATE TABLE or SQL helps most
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望与实际 / Expected vs. actual
+      description: 应该怎样、实际怎样；报错原文照抄，截图也行 / What should happen and what happened; copy the exact error text, screenshots welcome
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: 日志（可选）/ Log (optional)
+      description: 设置 → 关于与诊断 →「在文件夹中显示日志」，把出问题前后的几十行贴进来，或把 dataomni.log 拖进来 / Settings → About & diagnostics → "Show log in folder"; paste the lines around the problem or drag in dataomni.log
+      render: text

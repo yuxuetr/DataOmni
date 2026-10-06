@@ -1,0 +1,36 @@
+name: 想连的库或部署形态 / Database or deployment request
+description: 想连一种还不支持的数据库，或现有的库换一种部署（集群、Sentinel、云厂商认证……）连不上 / A database we don't support yet, or a deployment shape that doesn't connect (cluster, Sentinel, cloud auth…)
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        已支持什么、缺口在哪，见 README 的「兼容性矩阵」。很多缺口写着「有人拿着这种部署来再做」——你就是那个人。
+        What is supported and the known gaps are in the README's compatibility matrix. Many gaps say "when someone brings this deployment" — that's you.
+  - type: input
+    id: database
+    attributes:
+      label: 数据库与版本 / Database and version
+      placeholder: 例如 Redis 7.2 Cluster、KingbaseES V9、达梦 DM8 / e.g. Redis 7.2 Cluster
+    validations:
+      required: true
+  - type: textarea
+    id: deployment
+    attributes:
+      label: 怎么部署、怎么认证 / Deployment and authentication
+      description: 单机 / 集群 / 托管；口令、证书、IAM、Kerberos……；要不要经跳板机 / Standalone, cluster or managed; password, certificate, IAM, Kerberos…; through a bastion?
+    validations:
+      required: true
+  - type: textarea
+    id: usage
+    attributes:
+      label: 主要拿它做什么 / What you mainly do with it
+      description: 浏览表、写查询、改数据、导入导出、看执行计划……这决定先做哪一部分 / Browse, query, edit, import/export, explain plans… this decides what to build first
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断信息（可选）/ Diagnostics (optional)
+      description: 设置 → 关于与诊断 →「复制诊断信息」/ Settings → About & diagnostics → "Copy diagnostics"
+      render: text
