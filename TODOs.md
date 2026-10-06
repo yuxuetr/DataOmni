@@ -385,8 +385,17 @@
       rpm 0.4.183 上验过：开 11 个标签，按钮一直在原处（同一坐标连点三次加了三个标签）；滚轮滚到中间两头都渐隐、没有滚动条；
       点标签下沿（离底边 4px）切得过去。没做到的：恰好滚到标签边界时，渐隐盖住的是空白，看不出后面还有——重估条件：有人报找不到标签。
     - 带表别名的单表 SELECT 结果只读——有意，认不出就不改
-    没测：SQL Server、Oracle、OceanBase / openGauss / MariaDB / TiDB / CockroachDB（上一轮各自的冒烟都在）、SSH 隧道、
-    AI 设计（要 key）、Windows 与 macOS 打包版（本轮只有 Linux；macOS 的无障碍驱动工具已不在）。
+    没测：OceanBase / openGauss / MariaDB / TiDB / CockroachDB（上一轮各自的冒烟都在）、SSH 隧道、
+    Windows 与 macOS 打包版（本轮只有 Linux；macOS 的无障碍驱动工具已不在）。
+    - 2026-10-06 补测 SQL Server 2022、Oracle 23ai、AI 设计（rpm 0.4.183，GNOME 容器经隧道连 cu）：连接、浏览、编辑器里建表写入
+      （中文、DECIMAL、DATETIME2 / TIMESTAMP、NULL 显示对）、结果网格改一格、表数据页改一行、执行计划，两家服务端读回一致；
+      AI 设计（DeepSeek `deepseek-flash`）在 SQL Server 上出 3 表 2 外键、校验通过、建表成功、树刷新，服务端核对过。
+      测完删了表与钥匙串里的 key。**修了两处**：
+      - SQL Server 上 `IF OBJECT_ID(…) IS NOT NULL DROP TABLE` 删表不问（`60d7671`）：第一个词是 IF，落到兜底的有界写入。
+        IF / WHILE / ELSE 改按后面要执行的语句定级。新包上同一句弹「会丢数据」确认。
+      - 没存口令的连接弹出表单让补口令，填好保存后不连、「没有保存的口令」那句还挂着，要再点一次（`a9da693`）。
+        保存后接着连。新包上保存即连上。
+      新包是 `a9da693` 打的，rpm 文件名仍是 0.4.183（打包脚本不在仓库里，版本号这次没改到）。
   - 2026-09-29 Linux 打包版（rpm 0.4.9，GNOME Wayland，SQLite）回归事务、网格提交与 CSV 导入，**修了两处**：
     - SQL 标签事务开着时，网格提交 / 结构变更 / 导入走另一条连接、写在事务外面（`9250dc2`）：SQLite 等五秒报
       `database is locked`，PostgreSQL 撞上事务动过的行一直等，不撞时当场提交而状态栏仍说「事务中」、回滚撤不掉。
