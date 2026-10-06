@@ -1924,17 +1924,27 @@ pub(crate) fn display_error(error: impl std::fmt::Display) -> QueryError {
 }
 
 /// 同名的列用编号区分：结果行按列名做键，`SELECT a.id, b.id` 的两个 `id` 会互相覆盖。
-/// 各家的流式读取都用它（SQL Server 先给没名字的列起名，见那边的 `label_columns`）
+/// 各家的流式读取都用它（SQL Server 先给没名字的列起名，见那边的 `label_columns`）。
+/// 编号跳过已经有列叫的名字：`SELECT 1 AS id, 2 AS id, 3 AS "id 2"` 不能编出第二个 `id 2`
 pub(crate) fn number_duplicate_columns<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
-  let mut seen = std::collections::HashMap::<String, usize>::new();
+  let names: Vec<&str> = names.collect();
+  let mut taken: std::collections::HashSet<String> =
+    names.iter().map(|name| name.to_string()).collect();
+  let mut seen = std::collections::HashMap::<&str, usize>::new();
   names
-    .map(|name| {
-      let count = seen.entry(name.to_string()).or_insert(0);
+    .iter()
+    .map(|&name| {
+      let count = seen.entry(name).or_insert(0);
       *count += 1;
       if *count == 1 {
-        name.to_string()
-      } else {
-        format!("{name} {count}")
+        return name.to_string();
+      }
+      loop {
+        let label = format!("{name} {count}");
+        if taken.insert(label.clone()) {
+          return label;
+        }
+        *count += 1;
       }
     })
     .collect()
@@ -2003,6 +2013,13 @@ mod tests {
   #[test]
   fn duplicate_column_names_get_numbered() {
     assert_eq!(number_duplicate_columns(["A", "B", "A"].into_iter()), ["A", "B", "A 2"]);
+    // 编号跳过已有的名字，不管那一列在前在后
+    assert_eq!(number_duplicate_columns(["A", "A", "A 2"].into_iter()), ["A", "A 3", "A 2"]);
+    assert_eq!(number_duplicate_columns(["A 2", "A", "A"].into_iter()), ["A 2", "A", "A 3"]);
+    assert_eq!(
+      number_duplicate_columns(["A 2", "A", "A", "A 2"].into_iter()),
+      ["A 2", "A", "A 3", "A 2 2"]
+    );
   }
 
   #[test]
@@ -2139,6 +2156,30 @@ mod tests {
         let value = |key: &str| rows[0].get(key).and_then(|cell| cell.get("value")).cloned();
         assert_eq!(value("id"), Some(JsonValue::from("1")));
         assert_eq!(value("id 2"), Some(JsonValue::from("2")));
+      }
+      QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
+    }
+  }
+
+  /// 编出来的号撞上本来就叫这个名字的列：两列都叫 `id 2`，后一列又顶掉了前一列
+  #[tokio::test]
+  async fn a_numbered_column_does_not_take_the_name_of_a_real_one() {
+    let pool = SqlitePoolOptions::new()
+      .max_connections(1)
+      .connect("sqlite::memory:")
+      .await
+      .expect("connect to SQLite");
+    let result = execute_query(&DbPool::Sqlite(pool), "SELECT 1 AS id, 2 AS id, 3 AS \"id 2\"")
+      .await
+      .expect("execute");
+
+    match result {
+      QueryExecutionResult::Rows { columns, rows, .. } => {
+        assert_eq!(columns, vec!["id", "id 3", "id 2"]);
+        let value = |key: &str| rows[0].get(key).and_then(|cell| cell.get("value")).cloned();
+        assert_eq!(value("id"), Some(JsonValue::from("1")));
+        assert_eq!(value("id 3"), Some(JsonValue::from("2")));
+        assert_eq!(value("id 2"), Some(JsonValue::from("3")));
       }
       QueryExecutionResult::Affected { .. } => panic!("expected a row result"),
     }
