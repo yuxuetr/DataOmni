@@ -350,7 +350,7 @@
 - [ ] 完成三平台基础安装与冒烟测试
   - macOS 与 Linux（容器）已验；Windows 能构建（2026-10-02，2026-10-06 起 GitHub Actions 也出 MSI / NSIS），安装与冒烟没有，需真机或虚拟机。
   - 2026-10-06 v0.5.1 在 `fedcfa2` 重新打 tag（原 tag 在回归修复之前）：Release 工作流三平台与建草稿全绿，
-    草稿里五个包（dmg、deb、rpm、msi、exe）。草稿未发布。本机 Parallels 有 Windows 11 ARM 虚拟机，
+    草稿里五个包（dmg、deb、rpm、msi、exe），2026-10-06 已发布为 latest。本机 Parallels 有 Windows 11 ARM 虚拟机，
     但里面开着别的应用的交易界面，没在上面做 GUI 自动化，Windows 安装冒烟仍待做。
   - Windows ARM64 原生包：**当前版本不做**（2026-10-06 定）。初版先只出 x64，ARM 上的 Windows 11 靠系统转译跑 x64 包；
     Oracle 也没有 Windows ARM64 的 Instant Client，原生 ARM64 版连不了 Oracle。
