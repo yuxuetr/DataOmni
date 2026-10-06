@@ -1,0 +1,46 @@
+name: Windows install smoke
+
+# 拿一个已发布的版本在 Windows 上走一遍 安装 → 启动 → 卸载（MSI 与 NSIS）。
+# 新打的包在 release.yml 里用同一个脚本验，这里用来单独重跑、或验已经发出去的版本。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 要验的已发布版本
+        required: true
+        default: v0.5.1
+      previous:
+        description: 先装这个版本再升级（可空）
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p packages previous
+          gh release download "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --dir packages --pattern '*.msi' --pattern '*-setup.exe'
+          if [ -n "${{ inputs.previous }}" ]; then
+            gh release download "${{ inputs.previous }}" --repo "$GITHUB_REPOSITORY" --dir previous --pattern '*.msi'
+          fi
+          ls -l packages previous
+
+      - name: Install, launch, uninstall
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem packages -Filter *.msi).FullName
+          $nsis = (Get-ChildItem packages -Filter *-setup.exe).FullName
+          $previous = (Get-ChildItem previous -Filter *.msi -ErrorAction SilentlyContinue).FullName
+          $version = '${{ inputs.tag }}'.TrimStart('v')
+          ./scripts/windows-install-smoke.ps1 -Msi $msi -Nsis $nsis -Version $version -PreviousMsi $previous
