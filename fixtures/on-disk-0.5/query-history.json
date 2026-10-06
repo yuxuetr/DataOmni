@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "h1",
+      "startedAt": "2026-10-05T02:00:00.000Z",
+      "profileId": "7f0c2a52-0c1e-4c5e-9a57-3d1f0b6e2a01",
+      "connectionName": "生产 PostgreSQL",
+      "database": "app",
+      "sql": "SELECT * FROM orders WHERE id = 1",
+      "redacted": false,
+      "durationMs": 12,
+      "status": "succeeded",
+      "rowsAffected": 1,
+      "favorite": true,
+      "name": "查一单",
+      "tags": ["daily"]
+    },
+    {
+      "id": "h2",
+      "startedAt": "2026-10-05T01:00:00.000Z",
+      "profileId": "b5a4d1e0-55f3-4b7a-8a7e-1c9b2d3e4f02",
+      "connectionName": "MySQL via bastion",
+      "database": null,
+      "sql": "CREATE USER 'x' IDENTIFIED BY '***'",
+      "redacted": true,
+      "durationMs": 40,
+      "status": "failed",
+      "rowsAffected": null,
+      "errorMessage": "1396 (HY000): Operation CREATE USER failed"
+    },
+    {
+      "id": "h3",
+      "startedAt": "2026-10-04T01:00:00.000Z",
+      "profileId": "d4e5f6a7-2222-4333-8444-555566667704",
+      "connectionName": "Atlas",
+      "database": "shop",
+      "sql": "db.orders.find({ status: 'open' })",
+      "language": "mongodb",
+      "redacted": false,
+      "truncated": true,
+      "durationMs": 5000,
+      "status": "timed-out",
+      "rowsAffected": null
+    }
+  ]
+}

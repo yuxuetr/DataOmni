@@ -21,6 +21,12 @@ const CONSOLE_LANGUAGES: readonly string[] = ['cypher', 'elasticsearch', 'redis'
 const RETENTION_KEY = 'dataomni.history-retention';
 const SNAPSHOT_VERSION = 1;
 
+/**
+ * 读到的历史来自更新的版本：这一版不认得它的格式，也就不往回写，免得退回旧版跑一条查询
+ * 就把新版攒下的历史整份盖掉。读在建 store 时，总在写之前
+ */
+let newerHistoryOnDisk = false;
+
 export interface HistoryRetention {
   /** 保留天数。`0` 表示不按时间淘汰 */
   maxAgeDays: number;
@@ -186,6 +192,7 @@ export function loadQueryHistory(): QueryHistoryEntry[] {
     return [];
   }
   const snapshot = stored as Partial<HistorySnapshot>;
+  newerHistoryOnDisk = typeof snapshot.version === 'number' && snapshot.version > SNAPSHOT_VERSION;
   if (snapshot.version !== SNAPSHOT_VERSION || !Array.isArray(snapshot.entries)) {
     return [];
   }
@@ -202,6 +209,9 @@ export function loadQueryHistory(): QueryHistoryEntry[] {
  * 查询报错。
  */
 export function saveQueryHistory(entries: readonly QueryHistoryEntry[]): void {
+  if (newerHistoryOnDisk) {
+    return;
+  }
   let candidate = [...entries];
   while (candidate.length > 0) {
     const text = JSON.stringify({ version: SNAPSHOT_VERSION, entries: candidate });

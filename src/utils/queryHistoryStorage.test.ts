@@ -2,6 +2,7 @@
  * @vitest-environment happy-dom
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import ON_DISK_0_5 from '../../fixtures/on-disk-0.5/query-history.json?raw';
 import { MAX_HISTORY_SQL_CHARS, type QueryHistoryEntry } from '../contracts/queryHistory';
 import {
   DEFAULT_HISTORY_RETENTION,
@@ -287,5 +288,32 @@ describe('loadHistoryRetention / saveHistoryRetention', () => {
     // 一万条 SQL 足以撑满和工作区快照共用的 5MB 配额
     expect(RETENTION_ENTRY_CHOICES).not.toContain(0);
     expect(Math.max(...RETENTION_ENTRY_CHOICES)).toBeLessThanOrEqual(2000);
+  });
+});
+
+// 0.5 写下的历史。1.0 之后它必须一直读得出来：这条红了，就是改了历史格式而没写迁移
+
+describe('跨版本的查询历史', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('0.5 写下的历史逐条读得出来，事后加的收藏、名字、标签都在', () => {
+    localStorage.setItem('dataomni.query-history', ON_DISK_0_5);
+    const entries = loadQueryHistory();
+
+    expect(entries.map((entry) => entry.id)).toEqual(['h1', 'h2', 'h3']);
+    expect(entries[0]).toMatchObject({ favorite: true, name: '查一单', tags: ['daily'] });
+    expect(entries[2]).toMatchObject({ language: 'mongodb', truncated: true, status: 'timed-out' });
+  });
+
+  it('更新的版本写下的历史不被这一版覆盖：退回旧版跑一条查询，升回去历史还在', () => {
+    const newer = JSON.stringify({ ...JSON.parse(ON_DISK_0_5), version: 2 });
+    localStorage.setItem('dataomni.query-history', newer);
+
+    expect(loadQueryHistory()).toEqual([]);
+    saveQueryHistory([entry({ id: 'from-older-version' })]);
+
+    expect(localStorage.getItem('dataomni.query-history')).toBe(newer);
   });
 });

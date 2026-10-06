@@ -13,6 +13,14 @@ import { useWorkspaceStore } from '../stores/workspaceStore';
 const STORAGE_KEY = 'dataomni_workspace';
 const SNAPSHOT_VERSION = 1;
 
+/**
+ * 读到的快照来自更新的版本：这一版不认得它的格式，也就不往回写。
+ *
+ * 不然退回旧版启动一次，首帧的空工作区就把新版的标签与草稿整份盖掉，再升回去也找不回来。
+ * 读总在写之前（`restoreWorkspaceFromSnapshot` 在渲染前调用），所以记在模块里就够了
+ */
+let newerSnapshotOnDisk = false;
+
 export interface WorkspaceSnapshot {
   version: number;
   tabs: WorkspaceTab[];
@@ -118,6 +126,7 @@ export function loadWorkspaceSnapshot(): WorkspaceSnapshot | null {
   }
 
   const snapshot = parsed as Partial<WorkspaceSnapshot>;
+  newerSnapshotOnDisk = typeof snapshot.version === 'number' && snapshot.version > SNAPSHOT_VERSION;
   if (snapshot.version !== SNAPSHOT_VERSION || !Array.isArray(snapshot.tabs)) {
     return null;
   }
@@ -162,6 +171,9 @@ export function loadWorkspaceSnapshot(): WorkspaceSnapshot | null {
 export function saveWorkspaceSnapshot(
   snapshot: Omit<WorkspaceSnapshot, 'version' | 'savedAt'>
 ): void {
+  if (newerSnapshotOnDisk) {
+    return;
+  }
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       version: SNAPSHOT_VERSION,

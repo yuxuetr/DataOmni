@@ -1,5 +1,6 @@
 use crate::models::{ConnectionProfile, DatabaseType, TlsMode};
 use keyring::Entry;
+use serde::Deserialize;
 use serde_json;
 use std::collections::HashMap;
 use std::fs;
@@ -111,6 +112,36 @@ pub(crate) fn describe_credential_write_failure(error: &keyring::Error) -> Strin
 
 struct SystemCredentialStore;
 
+#[derive(Default)]
+struct LoadedConnections {
+  connections: HashMap<String, ConnectionProfile>,
+  newer_entries: Vec<serde_json::Value>,
+  unknown_fields: HashMap<String, serde_json::Map<String, serde_json::Value>>,
+  /// 读的时候把明文口令挪进了钥匙串，要立刻写回一次
+  migrated: bool,
+}
+
+/// 原文里有、这一版的 `ConnectionProfile` 写不出来的字段。
+///
+/// 拿「这一版自己会写出哪些键」来比，而不是维护一张已知字段表：结构体的每个字段都会
+/// 被写出（没有 `skip_serializing_if`），表就不会和结构体对不上。`password` 也会被写出，
+/// 所以老版本落盘的明文口令不会被当成「不认得的字段」再补回文件里
+fn unknown_fields(
+  entry: &serde_json::Value,
+  conn: &ConnectionProfile,
+) -> Result<serde_json::Map<String, serde_json::Value>, serde_json::Error> {
+  let known = serde_json::to_value(conn)?;
+  let mut unknown = serde_json::Map::new();
+  if let (Some(entry), Some(known)) = (entry.as_object(), known.as_object()) {
+    for (key, value) in entry {
+      if !known.contains_key(key) {
+        unknown.insert(key.clone(), value.clone());
+      }
+    }
+  }
+  Ok(unknown)
+}
+
 impl CredentialStore for SystemCredentialStore {
   fn set_password(&self, profile_id: &str, password: &str) -> Result<(), String> {
     credential_entry(profile_id)?
@@ -135,6 +166,11 @@ impl CredentialStore for SystemCredentialStore {
 pub struct ConnectionService {
   config_path: PathBuf,
   connections: HashMap<String, ConnectionProfile>,
+  /// 更新的版本写下、这一版读不懂的连接（新的连接类型、新的环境档位……）。
+  /// 界面上看不到，保存时原样写回：退回旧版再升回来，它们还在
+  newer_entries: Vec<serde_json::Value>,
+  /// 读得懂的连接上，更新的版本加的、这一版不认得的字段。保存时按 id 补回去
+  unknown_fields: HashMap<String, serde_json::Map<String, serde_json::Value>>,
   credential_store: Box<dyn CredentialStore>,
   session_passwords: HashMap<String, String>,
 }
@@ -158,10 +194,13 @@ impl ConnectionService {
     config_path: &PathBuf,
     credential_store: Box<dyn CredentialStore>,
   ) -> Result<Self, Box<dyn std::error::Error>> {
-    let (connections, migrated) = Self::load_connections(config_path, credential_store.as_ref())?;
+    let loaded = Self::load_connections(config_path, credential_store.as_ref())?;
+    let migrated = loaded.migrated;
     let service = Self {
       config_path: config_path.clone(),
-      connections,
+      connections: loaded.connections,
+      newer_entries: loaded.newer_entries,
+      unknown_fields: loaded.unknown_fields,
       credential_store,
       session_passwords: HashMap::new(),
     };
@@ -176,33 +215,45 @@ impl ConnectionService {
   fn load_connections(
     config_path: &PathBuf,
     credential_store: &dyn CredentialStore,
-  ) -> Result<(HashMap<String, ConnectionProfile>, bool), Box<dyn std::error::Error>> {
+  ) -> Result<LoadedConnections, Box<dyn std::error::Error>> {
+    let mut loaded = LoadedConnections::default();
     if !config_path.exists() {
-      return Ok((HashMap::new(), false));
+      return Ok(loaded);
     }
 
     // 带上路径：读不出来时用户要去改的就是这个文件，而 serde 的报错只有行列号
     let content = fs::read_to_string(config_path)
       .map_err(|error| format!("{}: {error}", config_path.display()))?;
-    let mut connections: Vec<ConnectionProfile> = serde_json::from_str(&content)
+    // 整份不是数组才算读不出来；数组里的每一条单独解析，一条读不懂不连累其余
+    let entries: Vec<serde_json::Value> = serde_json::from_str(&content)
       .map_err(|error| format!("{}: {error}", config_path.display()))?;
-    let mut map = HashMap::new();
-    let mut migrated = false;
 
-    for mut conn in connections.drain(..) {
+    for entry in entries {
+      let mut conn = match ConnectionProfile::deserialize(&entry) {
+        Ok(conn) => conn,
+        Err(error) => {
+          eprintln!("连接配置里有一条这一版读不懂，保留原样: {error}");
+          loaded.newer_entries.push(entry);
+          continue;
+        }
+      };
+      let unknown = unknown_fields(&entry, &conn)?;
+      if !unknown.is_empty() {
+        loaded.unknown_fields.insert(conn.id.clone(), unknown);
+      }
       if !conn.password.is_empty() {
         credential_store
           .set_password(&conn.id, &conn.password)
           .map_err(|error| format!("{CREDENTIAL_MIGRATION_FAILED}: {} · {error}", conn.name))?;
         conn.credential_ref = Some(credential_ref(&conn.id));
         conn.password.clear();
-        migrated = true;
+        loaded.migrated = true;
       }
 
-      map.insert(conn.id.clone(), conn);
+      loaded.connections.insert(conn.id.clone(), conn);
     }
 
-    Ok((map, migrated))
+    Ok(loaded)
   }
 
   /// 保存连接配置到文件
@@ -214,9 +265,15 @@ impl ConnectionService {
         let mut value = serde_json::to_value(connection)?;
         if let Some(object) = value.as_object_mut() {
           object.remove("password");
+          if let Some(unknown) = self.unknown_fields.get(&connection.id) {
+            for (key, field) in unknown {
+              object.entry(key.clone()).or_insert_with(|| field.clone());
+            }
+          }
         }
         Ok(value)
       })
+      .chain(self.newer_entries.iter().cloned().map(Ok))
       .collect::<Result<Vec<_>, serde_json::Error>>()?;
     let content = serde_json::to_string_pretty(&connections)?;
     // 先写旁边的 .part 再改名：`fs::write` 先截断再写，写到一半崩溃或断电就留下
@@ -1208,7 +1265,9 @@ mod tests {
     let config_path = temporary_config_path();
     fs::write(
       &config_path,
-      r#"[{"id":"a","name":"a","db_type":"cockroachdb","host":"h","port":1}]"#,
+      // 整份读不出来（写到一半的文件、被手改坏）才报错；一条读不懂的连接不算，见
+      // `connections_from_a_newer_version_neither_hide_the_others_nor_vanish_on_save`
+      r#"[{"id":"a","name":"a","db_type":"mysql""#,
     )
     .unwrap();
 
@@ -1217,7 +1276,7 @@ mod tests {
       .unwrap()
       .to_string();
     assert!(error.contains(&config_path.display().to_string()), "{error}");
-    assert!(error.contains("unknown variant `cockroachdb`"), "{error}");
+    assert!(error.contains("EOF"), "{error}");
 
     fs::remove_file(config_path).unwrap();
   }
@@ -1530,5 +1589,115 @@ mod tests {
       }
     }
     assert!(service.get_connections().is_empty());
+  }
+
+  /// 0.5 写出的 `connections.json`。1.0 之后它必须一直读得出来：这条红了，就是改了落盘格式而没写迁移
+  const ON_DISK_0_5: &str = include_str!("../../../fixtures/on-disk-0.5/connections.json");
+
+  fn config_with(entries: &[serde_json::Value]) -> PathBuf {
+    let path = temporary_config_path();
+    let content = match serde_json::to_string_pretty(entries) {
+      Ok(content) => content,
+      Err(error) => panic!("样本应当写得出来: {error}"),
+    };
+    if let Err(error) = fs::write(&path, content) {
+      panic!("样本应当写得进去: {error}");
+    }
+    path
+  }
+
+  fn sample_entries() -> Vec<serde_json::Value> {
+    match serde_json::from_str(ON_DISK_0_5) {
+      Ok(entries) => entries,
+      Err(error) => panic!("样本是合法 JSON: {error}"),
+    }
+  }
+
+  fn entries_on_disk(path: &PathBuf) -> Vec<serde_json::Value> {
+    let content = match fs::read_to_string(path) {
+      Ok(content) => content,
+      Err(error) => panic!("配置文件应当在: {error}"),
+    };
+    match serde_json::from_str(&content) {
+      Ok(entries) => entries,
+      Err(error) => panic!("写回的仍是数组: {error}"),
+    }
+  }
+
+  #[test]
+  fn connections_written_by_0_5_still_load() {
+    let service = service_at(&config_with(&sample_entries()));
+    let connections = service.get_connections();
+    assert_eq!(connections.len(), 5);
+    let tunnelled = connections.iter().find(|connection| connection.name == "MySQL via bastion");
+    let tunnel = tunnelled.and_then(|connection| connection.ssh_tunnel.as_ref());
+    assert_eq!(tunnel.map(|tunnel| tunnel.port), Some(2222));
+    assert!(tunnel.is_some_and(|tunnel| tunnel.secret_ref.is_some()));
+    let production = connections.iter().find(|connection| connection.name == "生产 PostgreSQL");
+    assert_eq!(
+      production.map(|connection| connection.environment.clone()),
+      Some(ConnectionEnvironment::Production)
+    );
+    assert_eq!(production.map(|connection| connection.tls_mode), Some(Some(TlsMode::VerifyFull)));
+    let mongo = connections.iter().find(|connection| connection.db_type == DatabaseType::MongoDB);
+    assert_eq!(
+      mongo.and_then(|connection| connection.options.get("srv")).map(String::as_str),
+      Some("true")
+    );
+  }
+
+  /// 以后的版本加一种连接类型、一个环境档位，用户再退回这一版：读不懂的那几条只是看不到，
+  /// 其余照常；随便存一次，它们原样还在文件里——升回去就又回来了
+  #[test]
+  fn connections_from_a_newer_version_neither_hide_the_others_nor_vanish_on_save() {
+    let mut entries = sample_entries();
+    let mut newer_type = entries[0].clone();
+    newer_type["id"] = "f0000000-0000-4000-8000-000000000001".into();
+    newer_type["db_type"] = "dameng".into();
+    let mut newer_environment = entries[1].clone();
+    newer_environment["id"] = "f0000000-0000-4000-8000-000000000002".into();
+    newer_environment["environment"] = "qa".into();
+    entries.push(newer_type.clone());
+    entries.push(newer_environment.clone());
+    let path = config_with(&entries);
+
+    let mut service = service_at(&path);
+    assert_eq!(service.get_connections().len(), 5);
+    if let Err(error) = service.create_connection(profile("", "")) {
+      panic!("保存不该失败: {error}");
+    }
+
+    let on_disk = entries_on_disk(&path);
+    assert_eq!(on_disk.len(), 8);
+    assert!(on_disk.contains(&newer_type));
+    assert!(on_disk.contains(&newer_environment));
+  }
+
+  /// 以后的版本给连接加一个字段，退回这一版改了这个连接：新字段不能因为这一版不认得就被存丢
+  #[test]
+  fn fields_from_a_newer_version_survive_an_edit() {
+    let mut entries = sample_entries();
+    entries[2]["folder"] = "team-a".into();
+    let id = entries[2]["id"].as_str().map(str::to_string).unwrap_or_default();
+    let path = config_with(&entries);
+
+    let mut service = service_at(&path);
+    let Some(mut edited) =
+      service.get_connections().into_iter().find(|connection| connection.id == id)
+    else {
+      panic!("样本里的连接应当读得出来");
+    };
+    edited.name = "renamed.sqlite".to_string();
+    if let Err(error) = service.update_connection(&id, edited) {
+      panic!("保存不该失败: {error}");
+    }
+
+    let on_disk = entries_on_disk(&path);
+    let Some(saved) = on_disk.iter().find(|entry| entry["id"] == id.as_str()) else {
+      panic!("改过的连接应当还在");
+    };
+    assert_eq!(saved["name"], "renamed.sqlite");
+    assert_eq!(saved["folder"], "team-a");
+    assert!(saved.get("password").is_none());
   }
 }

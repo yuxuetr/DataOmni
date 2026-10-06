@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import ON_DISK_0_5 from '../../fixtures/on-disk-0.5/workspace.json?raw';
 import { createSqlWorkspaceTab, createTableWorkspaceTab } from '../contracts/workspace';
 import {
   clearWorkspaceSnapshot,
@@ -272,5 +273,44 @@ describe('工作区快照', () => {
     expect(() => saveWorkspaceSnapshot({ tabs: [], activeTabId: null, drafts: {}, closedTabs: [] }))
       .not.toThrow();
     expect(() => clearWorkspaceSnapshot()).not.toThrow();
+  });
+});
+
+// 0.5 写下的快照。1.0 之后它必须一直恢复得出来：这条红了，就是改了快照格式而没写迁移
+
+describe('跨版本的工作区快照', () => {
+  let storage: Map<string, string>;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    storage = installMemoryStorage();
+  });
+
+  it('0.5 写下的快照恢复得出全部标签、草稿与最近关闭', () => {
+    storage.set(STORAGE_KEY, ON_DISK_0_5);
+    const snapshot = loadWorkspaceSnapshot();
+
+    expect(snapshot?.tabs.map((tab) => tab.kind)).toEqual([
+      'sql', 'table-data', 'table-structure', 'er-diagram', 'ai-design'
+    ]);
+    expect(snapshot?.activeTabId).toBe('table-data:7f0c2a52:public.orders');
+    expect(snapshot?.drafts['sql:7f0c2a52:1']).toContain('未保存的改动');
+    expect(snapshot?.closedTabs[0]?.draft).toBe('DELETE FROM sessions WHERE expired;');
+    const sql = snapshot?.tabs[0];
+    expect(sql?.kind === 'sql' ? sql.file : undefined).toEqual({
+      path: '/Users/someone/sql/report.sql', contentHash: 'a1b2c3', crlf: true, bom: true
+    });
+    expect(sql?.pinned).toBe(true);
+    expect(sql?.binding.sessionId).toBeNull();
+  });
+
+  it('更新的版本写下的快照不被这一版覆盖：退回旧版再升回去，标签还在', () => {
+    const newer = JSON.stringify({ ...JSON.parse(ON_DISK_0_5), version: 2 });
+    storage.set(STORAGE_KEY, newer);
+
+    expect(loadWorkspaceSnapshot()).toBeNull();
+    saveWorkspaceSnapshot({ tabs: [], activeTabId: null, drafts: {}, closedTabs: [] });
+
+    expect(storage.get(STORAGE_KEY)).toBe(newer);
   });
 });

@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "tabs": [
+    {
+      "id": "sql:7f0c2a52:1",
+      "kind": "sql",
+      "title": "查询 1",
+      "titleKey": "tab.queryNumbered",
+      "titleParams": { "index": 1, "connection": "生产 PostgreSQL" },
+      "binding": { "profileId": "7f0c2a52-0c1e-4c5e-9a57-3d1f0b6e2a01", "sessionId": "session-from-last-run" },
+      "availability": "available",
+      "pinned": true,
+      "dirty": true,
+      "createdAt": "2026-10-05T01:00:00.000Z",
+      "lastActivatedAt": "2026-10-05T02:00:00.000Z",
+      "draft": { "sql": "SELECT * FROM orders WHERE id = 1;" },
+      "file": { "path": "/Users/someone/sql/report.sql", "contentHash": "a1b2c3", "crlf": true, "bom": true }
+    },
+    {
+      "id": "table-data:7f0c2a52:public.orders",
+      "kind": "table-data",
+      "title": "orders",
+      "binding": { "profileId": "7f0c2a52-0c1e-4c5e-9a57-3d1f0b6e2a01", "sessionId": null },
+      "availability": "available",
+      "pinned": false,
+      "dirty": false,
+      "createdAt": "2026-10-05T01:10:00.000Z",
+      "lastActivatedAt": "2026-10-05T01:10:00.000Z",
+      "object": { "schema": "public", "table": "orders" }
+    },
+    {
+      "id": "table-structure:c3d2e1f0:items",
+      "kind": "table-structure",
+      "title": "items",
+      "binding": { "profileId": "c3d2e1f0-1111-4222-8333-444455556603", "sessionId": null },
+      "availability": "available",
+      "pinned": false,
+      "dirty": false,
+      "createdAt": "2026-10-05T01:20:00.000Z",
+      "lastActivatedAt": "2026-10-05T01:20:00.000Z",
+      "object": { "schema": null, "table": "items" }
+    },
+    {
+      "id": "er-diagram:7f0c2a52",
+      "kind": "er-diagram",
+      "title": "app",
+      "binding": { "profileId": "7f0c2a52-0c1e-4c5e-9a57-3d1f0b6e2a01", "sessionId": null },
+      "availability": "available",
+      "pinned": false,
+      "dirty": false,
+      "createdAt": "2026-10-05T01:30:00.000Z",
+      "lastActivatedAt": "2026-10-05T01:30:00.000Z"
+    },
+    {
+      "id": "ai-design:b5a4d1e0",
+      "kind": "ai-design",
+      "title": "AI 设计",
+      "binding": { "profileId": "b5a4d1e0-55f3-4b7a-8a7e-1c9b2d3e4f02", "sessionId": null },
+      "availability": "available",
+      "pinned": false,
+      "dirty": false,
+      "createdAt": "2026-10-05T01:40:00.000Z",
+      "lastActivatedAt": "2026-10-05T01:40:00.000Z"
+    }
+  ],
+  "activeTabId": "table-data:7f0c2a52:public.orders",
+  "drafts": { "sql:7f0c2a52:1": "SELECT * FROM orders WHERE id = 1;\r\n-- 未保存的改动" },
+  "closedTabs": [
+    {
+      "tab": {
+        "id": "sql:7f0c2a52:2",
+        "kind": "sql",
+        "title": "查询 2",
+        "binding": { "profileId": "7f0c2a52-0c1e-4c5e-9a57-3d1f0b6e2a01", "sessionId": null },
+        "availability": "available",
+        "pinned": false,
+        "dirty": true,
+        "createdAt": "2026-10-04T01:00:00.000Z",
+        "lastActivatedAt": "2026-10-04T01:00:00.000Z",
+        "draft": { "sql": "" }
+      },
+      "draft": "DELETE FROM sessions WHERE expired;",
+      "closedAt": "2026-10-04T02:00:00.000Z"
+    }
+  ],
+  "savedAt": "2026-10-05T02:00:01.000Z"
+}
