@@ -84,6 +84,8 @@ neo4j = "0.2.0"
 # Elasticsearch（`services/elasticsearch.rs`）没有驱动，就是 HTTP。只开 rustls：不要 system-proxy
 # （数据库连接一律直连），也不要 HTTP/2（ES 的 REST 是 HTTP/1.1）
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls"] }
+tauri-plugin-log = "2"
+log = "0.4"
 
 [dev-dependencies]
 # 只为在测试里**造**一把带口令的私钥：russh 依赖的 ssh-key 默认不开

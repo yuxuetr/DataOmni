@@ -13,12 +13,36 @@ use commands::{connection_commands::ConnectionServiceState, *};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+  // 崩溃原因进日志文件。打包版没有控制台，默认的钩子印在标准错误上，谁也看不到。
+  // 默认钩子照样调用：开发时终端里还是那一段
+  let default_hook = std::panic::take_hook();
+  std::panic::set_hook(Box::new(move |info| {
+    log::error!("panic: {info}");
+    default_hook(info);
+  }));
+
   let builder = tauri::Builder::default();
   #[cfg(target_os = "macos")]
   let builder = builder
     .menu(app_menu::build)
     .on_menu_event(|app, event| app_menu::handle_event(app, event.id().as_ref()));
   builder
+    // 第一个装：后面的插件与 setup 里打的日志才进得了文件。
+    // 一个文件上限 2 MB、写满轮转、只留最近两份：日志是给报缺陷时贴的，不是审计
+    .plugin(
+      tauri_plugin_log::Builder::new()
+        .targets([
+          tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+          tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+            file_name: Some(commands::app_commands::LOG_FILE_NAME.to_string()),
+          }),
+        ])
+        .level(log::LevelFilter::Info)
+        .max_file_size(2 * 1024 * 1024)
+        .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(2))
+        .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
+        .build(),
+    )
     // 记住窗口大小与位置；默认在退出时保存、启动时恢复
     .plugin(tauri_plugin_window_state::Builder::default().build())
     .plugin(tauri_plugin_dialog::init())
@@ -38,7 +62,7 @@ pub fn run() {
     .manage(services::clickhouse::ClickHouseRegistry::default())
     .setup(|app| {
       // 启动日志留着：窗口起不来时，这一行是唯一能说明进程到底跑没跑的证据
-      println!("🎯 DataOmni 启动");
+      log::info!("DataOmni {} 启动", app.package_info().version);
       // 安装包把 Instant Client 放在资源目录的 `instantclient` 下（见
       // `scripts/fetch-oracle-client.sh`）；只记下位置，第一次连 Oracle 时才加载
       use tauri::Manager;
@@ -53,6 +77,8 @@ pub fn run() {
       update_connection,
       delete_connection,
       get_connections,
+      diagnostics,
+      reveal_log_file,
       export_connections,
       import_connections,
       test_connection,

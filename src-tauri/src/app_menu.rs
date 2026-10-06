@@ -94,7 +94,7 @@ pub fn handle_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
     // 关哪个标签、要不要先问一句草稿，全在前端：那些状态只有前端有
     CLOSE_TAB_ID => {
       if let Err(error) = app.emit(CLOSE_TAB_EVENT, ()) {
-        eprintln!("发送关闭标签事件失败: {error}");
+        log::warn!("发送关闭标签事件失败: {error}");
       }
     }
     CLOSE_WINDOW_ID => {
@@ -102,7 +102,7 @@ pub fn handle_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
         app.webview_windows().into_values().find(|window| window.is_focused().unwrap_or(false));
       if let Some(window) = focused {
         if let Err(error) = window.close() {
-          eprintln!("关闭窗口失败: {error}");
+          log::warn!("关闭窗口失败: {error}");
         }
       }
     }

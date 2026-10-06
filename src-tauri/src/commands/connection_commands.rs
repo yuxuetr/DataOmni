@@ -51,7 +51,7 @@ pub async fn create_connection(
   app_handle: AppHandle,
   service_state: State<'_, ConnectionServiceState>,
 ) -> Result<String, String> {
-  println!("🔧 创建数据库连接: {}", config.name);
+  log::info!("创建连接: {}", config.name);
 
   with_service(&service_state, &app_handle, |service| service.create_connection(config))
 }
@@ -63,7 +63,7 @@ pub async fn update_connection(
   app_handle: AppHandle,
   service_state: State<'_, ConnectionServiceState>,
 ) -> Result<(), String> {
-  println!("📝 更新数据库连接: {} (ID: {})", config.name, id);
+  log::info!("更新连接: {} ({id})", config.name);
 
   with_service(&service_state, &app_handle, |service| service.update_connection(&id, config))
 }
@@ -74,7 +74,7 @@ pub async fn delete_connection(
   app_handle: AppHandle,
   service_state: State<'_, ConnectionServiceState>,
 ) -> Result<(), String> {
-  println!("🗑️ 删除数据库连接: {}", id);
+  log::info!("删除连接: {id}");
 
   with_service(&service_state, &app_handle, |service| service.delete_connection(&id))
 }
@@ -84,8 +84,6 @@ pub async fn get_connections(
   app_handle: AppHandle,
   service_state: State<'_, ConnectionServiceState>,
 ) -> Result<Vec<ConnectionProfile>, String> {
-  println!("📋 获取所有数据库连接");
-
   with_service(&service_state, &app_handle, |service| Ok(service.get_connections()))
 }
 
@@ -125,7 +123,7 @@ pub async fn import_connections(
 pub async fn diagnose_connection(
   config: ConnectionProfile,
 ) -> Result<crate::services::ConnectionDiagnosis, String> {
-  println!("🩺 诊断数据库连接: {}", config.name);
+  log::info!("诊断连接: {}", config.name);
   Ok(crate::services::diagnose(&config).await)
 }
 
@@ -151,7 +149,7 @@ pub async fn test_connection(
   duckdb_registry: State<'_, DuckDbRegistry>,
   clickhouse_registry: State<'_, crate::services::clickhouse::ClickHouseRegistry>,
 ) -> Result<String, String> {
-  println!("🧪 测试数据库连接: {}", config.name);
+  log::info!("测试连接: {}", config.name);
 
   // 校验与读钥匙串都是同步的，锁在这个块里拿了就还——下面建隧道要 await,
   // 而跨 await 持有 std 的 MutexGuard 会把整个命令变成不可 Send
@@ -168,7 +166,7 @@ pub async fn test_connection(
         .ensure(&resolved, &tunnel, &known_hosts)
         .await
         .map_err(|error| error.to_string())?;
-      println!("🔒 SSH 隧道已就绪: 127.0.0.1:{port} → {}:{}", tunnel.host, tunnel.port);
+      log::info!("SSH 隧道已就绪: 127.0.0.1:{port} → {}:{}", tunnel.host, tunnel.port);
       Some(port)
     }
   };

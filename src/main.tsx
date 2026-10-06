@@ -3,7 +3,8 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { RenderErrorBoundary } from "./components/RenderErrorBoundary";
 import "./index.css";
-import { installConsoleRedaction } from "./utils/logRedaction";
+import { warn as logWarn, error as logError } from "@tauri-apps/plugin-log";
+import { forwardLogs, installConsoleRedaction } from "./utils/logRedaction";
 import { restoreWorkspaceFromSnapshot } from "./utils/workspacePersistence";
 import { initializeTheme } from "./utils/theme";
 import { initializeLanguage } from "./i18n/language";
@@ -11,6 +12,10 @@ import { installNativeContextMenuGuard } from "./utils/nativeContextMenu";
 import { applyFontSettings, applyUiZoom, loadFontSettings } from "./utils/fontSettings";
 
 installConsoleRedaction();
+// 打包版没有开发者工具：warn / error 与没接住的异常进日志文件（设置 → 关于与诊断）
+forwardLogs((level, message) => {
+  void (level === "error" ? logError(message) : logWarn(message)).catch(() => undefined);
+});
 if (import.meta.env.PROD) {
   installNativeContextMenuGuard();
 }

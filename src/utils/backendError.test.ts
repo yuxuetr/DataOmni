@@ -92,7 +92,7 @@ describe('backendError', () => {
    *    从那行起整个文件失效。
    *
    * 所以注释剥离必须放进字符遍历里，并且认得出字符字面量与生命周期标注。
-   * `println!` 打终端、打包后没人看得见，中文反而好读——唯一的例外。
+   * 日志宏（`log::info!` 等）是唯一的例外：日志是给维护者读的，用户只是把文件转交过来，中文反而好读。
    */
   it('后端的字符串字面量里一个中文字都不许有', () => {
     const root = fileURLToPath(new URL('../../src-tauri/src', import.meta.url));
@@ -169,7 +169,7 @@ describe('backendError', () => {
           continue;
         }
         if (character === '(') {
-          if (printAt === null && /\b(eprintln|println|eprint|print)!\s*$/.test(recent.slice(0, -1))) {
+          if (printAt === null && /\b(trace|debug|info|warn|error)!\s*$/.test(recent.slice(0, -1))) {
             printAt = depth;
           }
           depth += 1;

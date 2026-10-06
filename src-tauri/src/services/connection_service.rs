@@ -232,7 +232,7 @@ impl ConnectionService {
       let mut conn = match ConnectionProfile::deserialize(&entry) {
         Ok(conn) => conn,
         Err(error) => {
-          eprintln!("连接配置里有一条这一版读不懂，保留原样: {error}");
+          log::warn!("连接配置里有一条这一版读不懂，保留原样: {error}");
           loaded.newer_entries.push(entry);
           continue;
         }
@@ -507,8 +507,7 @@ impl ConnectionService {
 
     // 拼 URL 放在校验之后：校验不过的配置不该被拼成串打进日志
     let connection_string = resolved_config.connection_string_via(None);
-    println!("🔗 准备测试数据库连接: {}", redact_connection_string(&connection_string));
-    println!("✅ 连接配置验证通过，返回连接字符串用于前端测试");
+    log::debug!("准备测试连接: {}", redact_connection_string(&connection_string));
     Ok(connection_string)
   }
 

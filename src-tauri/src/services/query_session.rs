@@ -149,8 +149,8 @@ impl Terminator {
     // 停不下来不算错：下一条语句照样换连接。记一笔，免得「服务端没停」查不到原因
     match outcome {
       Ok(Ok(())) => {}
-      Ok(Err(error)) => eprintln!("结束被放弃的语句失败: {error}"),
-      Err(_) => eprintln!("结束被放弃的语句超时"),
+      Ok(Err(error)) => log::warn!("结束被放弃的语句失败: {error}"),
+      Err(_) => log::warn!("结束被放弃的语句超时"),
     }
   }
 }

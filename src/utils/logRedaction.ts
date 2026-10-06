@@ -75,3 +75,58 @@ export function installConsoleRedaction(): void {
     };
   }
 }
+
+export type LogSink = (level: 'warn' | 'error', message: string) => void;
+
+function formatForLog(argument: unknown): string {
+  // Error 要栈；redactLogValue 会把它拆成普通对象，序列化出来的栈是一行转义的 \n
+  if (argument instanceof Error) {
+    return redactSensitiveText(argument.stack ?? `${argument.name}: ${argument.message}`);
+  }
+  const redacted = redactLogValue(argument);
+  if (typeof redacted === 'string') {
+    return redacted;
+  }
+  try {
+    return JSON.stringify(redacted) ?? String(redacted);
+  } catch {
+    return String(redacted);
+  }
+}
+
+/**
+ * 把 `console.warn` / `console.error` 与没接住的异常送进日志文件。
+ *
+ * 打包版没有开发者工具，这些输出原先谁也看不到；而用户报缺陷时能带回来的只有日志文件。
+ * 自己先脱敏，不依赖 `installConsoleRedaction` 装在里层还是外层。`log` / `info` 不送：
+ * 那是开发时看的。返回撤销函数，测试用
+ */
+export function forwardLogs(sink: LogSink): () => void {
+  const originalWarn = console.warn;
+  const originalError = console.error;
+  const send = (level: 'warn' | 'error', args: unknown[]) => {
+    try {
+      sink(level, args.map(formatForLog).join(' '));
+    } catch {
+      // 日志写不进去不该连累正在做的事
+    }
+  };
+  console.warn = (...args: unknown[]) => {
+    originalWarn(...args);
+    send('warn', args);
+  };
+  console.error = (...args: unknown[]) => {
+    originalError(...args);
+    send('error', args);
+  };
+  const onError = (event: ErrorEvent) => send('error', [event.error ?? event.message]);
+  const onRejection = (event: PromiseRejectionEvent) => send('error', ['unhandled rejection', event.reason]);
+  window.addEventListener('error', onError);
+  window.addEventListener('unhandledrejection', onRejection);
+  return () => {
+    console.warn = originalWarn;
+    console.error = originalError;
+    window.removeEventListener('error', onError);
+    window.removeEventListener('unhandledrejection', onRejection);
+  };
+}

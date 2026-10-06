@@ -16,6 +16,7 @@ import {
 } from '../utils/queryHistoryStorage';
 import { useLanguageStore } from '../stores/languageStore';
 import { AiSettingsSection } from './AiSettingsSection';
+import { AboutSection } from './AboutSection';
 import type { TranslationKey } from '../i18n/translate';
 import { isImeKeyEvent } from '../utils/shortcuts';
 import { PLAIN_TEXT_INPUT } from './FormControls';
@@ -289,6 +290,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
           </div>
 
           <AiSettingsSection />
+          <AboutSection />
         </div>
       </div>
     </div>
