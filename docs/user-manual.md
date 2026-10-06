@@ -1001,6 +1001,9 @@ TiDB 与 OceanBase 上同时改列和改表名会拆成两条语句（它们不�
 - **查询历史保留**：保留期（7、30、90、365 天或不按时间删）、条数上限（100 到
   2000）、慢查询阈值。调小上限立刻生效，删掉的不可恢复。
 - **AI 设计**：开关、接口、地址、模型与 API Key，见 [AI 设计新表](#ai-设计新表)。不带 AI 的构建里没有这一节。
+- **关于与诊断**：当前版本；「启动时检查新版本」（默认开，每天最多一次，只问 GitHub 最新的版本号，有新版本时在
+  标签栏下面提示一行，不自动下载）；日志文件的位置。报告问题时按「复制诊断信息」，贴进 issue——里面是版本、系统、
+  架构和 WebView 版本，不含连接与口令；「在文件夹中显示日志」找到日志文件一并附上。
 
 主题（浅色 / 深色 / 跟随系统）和语言（中文 / English / 跟随系统）在侧边栏底部
 直接切换，命令面板里也有。
@@ -1034,12 +1037,15 @@ TiDB 与 OceanBase 上同时改列和改表名会拆成两条语句（它们不�
 
 | 什么 | 存在哪里 |
 | --- | --- |
-| 连接配置（不含密码） | 应用配置目录下的 `connections.json`：macOS 是 `~/Library/Application Support/com.dataomni.app/`，Linux 是 `~/.config/com.dataomni.app/` |
+| 连接配置（不含密码） | 应用配置目录下的 `connections.json`：macOS 是 `~/Library/Application Support/com.dataomni.app/`，Linux 是 `~/.config/com.dataomni.app/`，Windows 是 `%APPDATA%\com.dataomni.app\`。卸载时不删 |
 | 数据库密码、SSH 口令 | 系统钥匙串 |
 | 标签、SQL 草稿、查询历史、设置 | 应用自己的本地存储，只在这台机器上 |
 | 查询结果 | 不保存 |
+| 日志 | `dataomni.log`，满 2 MB 换一份，留最近两份：macOS 在 `~/Library/Logs/com.dataomni.app/`，Linux 在 `~/.local/share/com.dataomni.app/logs/`，Windows 在 `%LOCALAPPDATA%\com.dataomni.app\logs\` |
 
-应用不联网，不上传任何东西。日志里不打印密码、Token 和完整的连接串。
+应用只在两种情况下访问你的数据库以外的地址：检查新版本（每天最多一次，只问 GitHub，设置里可关），
+以及你启用了 AI 设计后按「生成设计」（发给你填的地址，发什么见上文）。不上传数据、连接配置和使用情况。
+日志里不打印密码、Token 和完整的连接串。
 
 ## 常见问题
 
