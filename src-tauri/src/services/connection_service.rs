@@ -356,7 +356,11 @@ impl ConnectionService {
     let mut resolved_config = config.clone();
     if resolved_config.password.is_empty() && resolved_config.credential_ref.is_some() {
       resolved_config.password = self.credential_store.get_password(&resolved_config.id)?;
-    } else if resolved_config.password.is_empty() && !resolved_config.save_password {
+    } else if resolved_config.password.is_empty()
+      && !resolved_config.save_password
+      // 还没存过的（新建表单里测）不可能有这次会话的口令：表单里空着就是没有
+      && self.connections.contains_key(&resolved_config.id)
+    {
       resolved_config.password = self
         .session_passwords
         .get(&resolved_config.id)
@@ -1090,6 +1094,20 @@ mod tests {
     assert!(error.contains("unknown variant `cockroachdb`"), "{error}");
 
     fs::remove_file(config_path).unwrap();
+  }
+
+  #[test]
+  fn an_unsaved_connection_without_a_password_tests_with_an_empty_one() {
+    // 新建表单里测一个不要口令的库（不勾保存密码）：还没存过，就不可能有这次会话的口令，
+    // 表单里空着就是没有。此前报 SESSION_PASSWORD_REQUIRED，测不了
+    let config_path = temporary_config_path();
+    let service =
+      ConnectionService::from_path(&config_path, Box::<MemoryCredentialStore>::default()).unwrap();
+    let mut config = profile("", "");
+    config.save_password = false;
+    assert!(service.test_connection(&config).is_ok());
+
+    fs::remove_file(config_path).ok();
   }
 
   #[test]
