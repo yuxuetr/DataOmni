@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   activatesFocusedTab,
+  hiddenTabEdges,
   nextTabIndex,
   tabIndexForShortcut,
   workspaceTabDomId,
@@ -85,5 +86,23 @@ describe('切标签快捷键落到第几个', () => {
     expect(tabIndexForShortcut({ kind: 'step', delta: -1 }, 0, 3)).toBe(2);
     // 没有活动标签（欢迎页）时从第一个开始
     expect(tabIndexForShortcut({ kind: 'step', delta: -1 }, -1, 3)).toBe(0);
+  });
+});
+
+describe('标签栏两头还有没有藏着的标签', () => {
+  it('没溢出时两头都没有', () => {
+    expect(hiddenTabEdges({ scrollLeft: 0, clientWidth: 500, scrollWidth: 500 })).toEqual({ before: false, after: false });
+  });
+
+  it('滚到最左只有右边藏着，滚到最右只有左边', () => {
+    expect(hiddenTabEdges({ scrollLeft: 0, clientWidth: 500, scrollWidth: 900 })).toEqual({ before: false, after: true });
+    expect(hiddenTabEdges({ scrollLeft: 400, clientWidth: 500, scrollWidth: 900 })).toEqual({ before: true, after: false });
+    expect(hiddenTabEdges({ scrollLeft: 200, clientWidth: 500, scrollWidth: 900 })).toEqual({ before: true, after: true });
+  });
+
+  // 缩放后 scrollLeft 是小数，滚到头也差零点几像素：不能因此一直挂着渐隐
+  it('不到一像素的差不算藏着', () => {
+    expect(hiddenTabEdges({ scrollLeft: 399.4, clientWidth: 500, scrollWidth: 900 })).toEqual({ before: true, after: false });
+    expect(hiddenTabEdges({ scrollLeft: 0.6, clientWidth: 500, scrollWidth: 900 })).toEqual({ before: false, after: true });
   });
 });

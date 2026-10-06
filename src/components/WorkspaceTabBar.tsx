@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FolderOpen, GitBranch, FileText, History, Pin, Plus, Sparkles, Table, X } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -10,6 +10,7 @@ import { tabTitle } from '../utils/tabTitle';
 import { SHORTCUTS, formatShortcut } from '../utils/shortcuts';
 import {
   activatesFocusedTab,
+  hiddenTabEdges,
   nextTabIndex,
   workspaceTabDomId,
   WORKSPACE_PANEL_DOM_ID
@@ -81,6 +82,30 @@ export function WorkspaceTabBar({
     }
   }, [activeTabId]);
 
+  const [edges, setEdges] = useState({ before: false, after: false });
+  const updateEdges = useCallback(() => {
+    const list = listRef.current;
+    if (!list) {
+      return;
+    }
+    const next = hiddenTabEdges(list);
+    setEdges((current) =>
+      current.before === next.before && current.after === next.after ? current : next
+    );
+  }, []);
+
+  // 开关标签改的是内容宽度，窗口缩放改的是可视宽度，两样都要重算两头
+  useEffect(updateEdges, [updateEdges, tabs]);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) {
+      return;
+    }
+    const observer = new ResizeObserver(updateEdges);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [updateEdges]);
+
   // 标签栏只能横着滚，而多数鼠标只有竖着的滚轮：不转过来的话，溢出的标签
   // 只有触控板横扫才够得着。有横向分量（触控板）时原样交给浏览器
   const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
@@ -119,92 +144,105 @@ export function WorkspaceTabBar({
   };
 
   return (
-    <div
-      role="tablist"
-      aria-label={t('tab.listLabel')}
-      ref={listRef}
-      onKeyDown={handleKeyDown}
-      onWheel={handleWheel}
-      className="flex items-stretch bg-surface-sunken border-b border-line overflow-x-auto"
-    >
-      {ordered.map((tab) => {
-        const Icon = TAB_ICONS[tab.kind];
-        const isActive = tab.id === activeTabId;
-        // 只有一个活跃会话，绑定到其它连接的标签无法执行，先在标签上说明
-        const isDetached = tab.availability === 'profile-deleted'
-          || tab.binding.profileId !== activeProfileId;
+    <div className="flex items-stretch bg-surface-sunken border-b border-line">
+      {/* 只有标签滚，后面几个按钮钉住：标签一多它们会跟着滚出视野。
+          不画滚动条（见 hiddenTabEdges），哪头还有标签由渐隐提示 */}
+      <div className="relative flex min-w-0">
+        <div
+          role="tablist"
+          aria-label={t('tab.listLabel')}
+          ref={listRef}
+          onKeyDown={handleKeyDown}
+          onWheel={handleWheel}
+          onScroll={updateEdges}
+          className="flex min-w-0 items-stretch overflow-x-auto [scrollbar-width:none]"
+        >
+          {ordered.map((tab) => {
+            const Icon = TAB_ICONS[tab.kind];
+            const isActive = tab.id === activeTabId;
+            // 只有一个活跃会话，绑定到其它连接的标签无法执行，先在标签上说明
+            const isDetached = tab.availability === 'profile-deleted'
+              || tab.binding.profileId !== activeProfileId;
 
-        return (
-          <div
-            key={tab.id}
-            ref={(node) => {
-              if (node) {
-                tabRefs.current.set(tab.id, node);
-              } else {
-                tabRefs.current.delete(tab.id);
-              }
-            }}
-            id={workspaceTabDomId(tab.id)}
-            role="tab"
-            aria-selected={isActive}
-            // 只有选中的标签指内容区：同一时刻只画一块内容，让没选中的标签去
-            // 指一个不存在的 id，比不指更糟
-            aria-controls={isActive ? WORKSPACE_PANEL_DOM_ID : undefined}
-            // roving tabindex：整条标签栏只有一个 Tab 停靠点，进来之后用方向键走。
-            // 每个标签各留一个停靠点的话，开十个标签就要按十次 Tab 才能走过去
-            tabIndex={tab.id === rovingTabId ? 0 : -1}
-            onFocus={() => setFocusedTabId(tab.id)}
-            onClick={() => onActivate(tab.id)}
-            onContextMenu={(event) => {
-              event.preventDefault();
-              onActivate(tab.id);
-              onContextMenu(tab.id, { x: event.clientX, y: event.clientY });
-            }}
-            title={
-              tab.availability === 'profile-deleted'
-                ? t('tab.connectionDeleted', { title: tabTitle(tab, t) })
-                : isDetached
-                  ? t('tab.connectionInactive', { title: tabTitle(tab, t) })
-                  : tabTitle(tab, t)
-            }
-            className={clsx(
-              'group flex items-center gap-2 px-3 py-2 text-sm border-r border-line cursor-pointer select-none whitespace-nowrap',
-              isActive
-                ? 'bg-surface text-fg border-b-2 border-b-accent'
-                : 'text-fg-muted hover:bg-surface-hover',
-              isDetached && 'italic text-fg-subtle'
-            )}
-          >
-            {tab.pinned
-              ? <Pin size={12} className="shrink-0 text-accent" />
-              : <Icon size={14} className="shrink-0" />}
-            <span className="max-w-[160px] truncate">{tabTitle(tab, t)}</span>
-            {environmentByProfileId[tab.binding.profileId] && (
-              <EnvironmentBadgeTag
-                environment={environmentByProfileId[tab.binding.profileId]}
-                compact
-              />
-            )}
-            {(tab.dirty || unsavedTabIds.has(tab.id)) && (
-              <span
-                className="w-1.5 h-1.5 rounded-full bg-warning shrink-0"
-                title={t('tab.unsaved')}
-              />
-            )}
-            <button
-              type="button"
-              aria-label={t('tab.close', { title: tabTitle(tab, t) })}
-              onClick={(event) => {
-                event.stopPropagation();
-                onClose(tab.id);
-              }}
-              className="p-0.5 rounded-control text-fg-subtle opacity-0 group-hover:opacity-100 hover:bg-surface-active hover:text-fg"
-            >
-              <X size={12} />
-            </button>
-          </div>
-        );
-      })}
+            return (
+              <div
+                key={tab.id}
+                ref={(node) => {
+                  if (node) {
+                    tabRefs.current.set(tab.id, node);
+                  } else {
+                    tabRefs.current.delete(tab.id);
+                  }
+                }}
+                id={workspaceTabDomId(tab.id)}
+                role="tab"
+                aria-selected={isActive}
+                // 只有选中的标签指内容区：同一时刻只画一块内容，让没选中的标签去
+                // 指一个不存在的 id，比不指更糟
+                aria-controls={isActive ? WORKSPACE_PANEL_DOM_ID : undefined}
+                // roving tabindex：整条标签栏只有一个 Tab 停靠点，进来之后用方向键走。
+                // 每个标签各留一个停靠点的话，开十个标签就要按十次 Tab 才能走过去
+                tabIndex={tab.id === rovingTabId ? 0 : -1}
+                onFocus={() => setFocusedTabId(tab.id)}
+                onClick={() => onActivate(tab.id)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  onActivate(tab.id);
+                  onContextMenu(tab.id, { x: event.clientX, y: event.clientY });
+                }}
+                title={
+                  tab.availability === 'profile-deleted'
+                    ? t('tab.connectionDeleted', { title: tabTitle(tab, t) })
+                    : isDetached
+                      ? t('tab.connectionInactive', { title: tabTitle(tab, t) })
+                      : tabTitle(tab, t)
+                }
+                className={clsx(
+                  'group flex items-center gap-2 px-3 py-2 text-sm border-r border-line cursor-pointer select-none whitespace-nowrap',
+                  isActive
+                    ? 'bg-surface text-fg border-b-2 border-b-accent'
+                    : 'text-fg-muted hover:bg-surface-hover',
+                  isDetached && 'italic text-fg-subtle'
+                )}
+              >
+                {tab.pinned
+                  ? <Pin size={12} className="shrink-0 text-accent" />
+                  : <Icon size={14} className="shrink-0" />}
+                <span className="max-w-[160px] truncate">{tabTitle(tab, t)}</span>
+                {environmentByProfileId[tab.binding.profileId] && (
+                  <EnvironmentBadgeTag
+                    environment={environmentByProfileId[tab.binding.profileId]}
+                    compact
+                  />
+                )}
+                {(tab.dirty || unsavedTabIds.has(tab.id)) && (
+                  <span
+                    className="w-1.5 h-1.5 rounded-full bg-warning shrink-0"
+                    title={t('tab.unsaved')}
+                  />
+                )}
+                <button
+                  type="button"
+                  aria-label={t('tab.close', { title: tabTitle(tab, t) })}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onClose(tab.id);
+                  }}
+                  className="p-0.5 rounded-control text-fg-subtle opacity-0 group-hover:opacity-100 hover:bg-surface-active hover:text-fg"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        {edges.before && (
+          <div className="pointer-events-none absolute inset-y-0 left-0 w-8 bg-linear-to-r from-surface-sunken" />
+        )}
+        {edges.after && (
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-linear-to-l from-surface-sunken" />
+        )}
+      </div>
       {onNewSqlTab && (
         <button
           type="button"

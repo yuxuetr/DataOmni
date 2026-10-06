@@ -73,3 +73,19 @@ export function tabIndexForShortcut(
 export function activatesFocusedTab(key: string): boolean {
   return key === 'Enter' || key === ' ';
 }
+
+/**
+ * 标签栏左右两头各有没有被挤出去的标签，用来画两头的渐隐。
+ *
+ * 标签栏不画滚动条：WebKitGTK 的覆盖滚动条压在标签下半部，那一条点不中标签。
+ * 滚轮能横着滚、切到的标签会自己滚出来，缺的只是「那边还有」的提示，就是这个。
+ * 不到一像素的差不算：缩放后 `scrollLeft` 是小数，滚到头也差零点几。
+ */
+export function hiddenTabEdges(
+  { scrollLeft, clientWidth, scrollWidth }: { scrollLeft: number; clientWidth: number; scrollWidth: number }
+): { before: boolean; after: boolean } {
+  return {
+    before: scrollLeft >= 1,
+    after: scrollWidth - clientWidth - scrollLeft >= 1
+  };
+}
