@@ -137,6 +137,14 @@ export const en: Translations = {
 
   'welcome.hint': 'Pick a connection, or create one.',
   'welcome.openDatabaseFileEllipsis': 'Open a database file…',
+  'welcome.importConnections': 'Import connections…',
+  'welcome.exportConnections': 'Export connections…',
+  'connectionTransfer.exported': 'Exported {count} connections to {path}. The file contains no passwords or SSH keys.',
+  'connectionTransfer.imported': 'Imported {count} connections.',
+  'connectionTransfer.importedSkipped': 'Imported {count} connections; {skipped} already existed here and were left alone.',
+  'connectionTransfer.secretsNotIncluded': ' The file has no passwords: connections that had a saved password will ask for it on first connect; SSH tunnels using a password or a passphrase-protected key need it re-entered in Edit connection.',
+  'connectionTransfer.allPresent': 'All {count} connections in the file already exist here; nothing new was imported.',
+  'connectionTransfer.empty': 'The file contains no connections.',
 
   'environment.production.description': 'Production connection — changes affect live data',
   'environment.staging.description': 'Staging connection — changes may affect release validation',
@@ -1099,6 +1107,8 @@ export const en: Translations = {
   'error.backend.configDirUnavailable': 'The app config directory could not be located, so connections cannot be read or written. Details: {detail}',
   'error.backend.configSaveFailed': 'The connection config could not be saved; this change will be lost on restart. Details: {detail}',
   'error.backend.connectionNotFound': 'That connection no longer exists; it may have been deleted.',
+  'error.backend.importNotConnectionsFile': 'This file was not written by DataOmni\'s Export connections and cannot be imported. Details: {detail}',
+  'error.backend.importNewerVersion': 'This file was exported by a newer DataOmni (format version {detail}) and this version cannot read it. Please upgrade first.',
   'error.backend.directoryMissing': 'No such directory: {detail}',
   'error.backend.aiNotInBuild': 'This build does not include AI features.',
   'error.backend.aiRequestFailed': 'The request to the model service failed: {detail}',

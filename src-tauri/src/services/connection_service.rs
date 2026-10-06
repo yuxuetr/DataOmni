@@ -55,6 +55,28 @@ pub const CONFIG_DIR_UNAVAILABLE: &str = "DATAOMNI_CONFIG_DIR_UNAVAILABLE";
 /// 连接配置写盘失败。增删改共用一条：对用户来说都是「这次改动没存住」
 pub const CONFIG_SAVE_FAILED: &str = "DATAOMNI_CONFIG_SAVE_FAILED";
 pub const CONNECTION_NOT_FOUND: &str = "DATAOMNI_CONNECTION_NOT_FOUND";
+/// 导入的文件不是「导出连接」写出来的。最常拿错的是 `connections.json` 本身
+pub const IMPORT_NOT_CONNECTIONS_FILE: &str = "DATAOMNI_IMPORT_NOT_CONNECTIONS_FILE";
+/// 文件是更新的版本导出的，这一版不认得它的格式
+pub const IMPORT_NEWER_VERSION: &str = "DATAOMNI_IMPORT_NEWER_VERSION";
+
+const EXPORT_FORMAT: &str = "dataomni-connections";
+const EXPORT_VERSION: u32 = 1;
+
+/// 导出文件的外层。带上格式名和版本：导入时认得出拿错的文件，以后改格式也认得出旧文件
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ConnectionsDocument {
+  format: String,
+  version: u32,
+  connections: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct ConnectionImport {
+  pub imported: usize,
+  /// 本机已经有同一个连接（名字、类型、地址、库、用户都一样），没再加一份
+  pub skipped: usize,
+}
 /// 钥匙串拒绝访问。最常见的成因是条目由另一个签名身份写入（未签名的开发构建
 /// 每次重建都换身份），这句解释放在前端文案里
 pub const CREDENTIAL_STORE_REJECTED: &str = "DATAOMNI_CREDENTIAL_STORE_REJECTED";
@@ -294,6 +316,110 @@ impl ConnectionService {
   /// 根据ID获取连接配置
   pub fn get_connection(&self, id: &str) -> Option<&ConnectionProfile> {
     self.connections.get(id)
+  }
+
+  /// 把所有连接写成一份可以拿到别的机器上导入的 JSON。
+  ///
+  /// 口令和 SSH 密钥**不导出**：它们只在钥匙串里，写进文件就是明文落盘。存过口令的连接
+  /// 在文件里写成「不保存口令」，导入后第一次连接时会问——而不是带着一个取不到的钥匙串
+  /// 引用，连的时候报「钥匙串里没有这条」。本机的 id 与时间戳也不带，导入时重新生成
+  pub fn export_document(&self) -> Result<String, String> {
+    let mut connections = self.connections.values().cloned().collect::<Vec<_>>();
+    connections.sort_by(|left, right| left.name.cmp(&right.name));
+    let connections = connections
+      .into_iter()
+      .map(|mut connection| {
+        if connection.credential_ref.is_some() {
+          connection.save_password = false;
+        }
+        let mut value = serde_json::to_value(&connection).map_err(|error| error.to_string())?;
+        if let Some(object) = value.as_object_mut() {
+          for key in ["id", "password", "credential_ref", "created_at", "updated_at"] {
+            object.remove(key);
+          }
+          if let Some(tunnel) =
+            object.get_mut("ssh_tunnel").and_then(|tunnel| tunnel.as_object_mut())
+          {
+            tunnel.remove("secret");
+            tunnel.remove("secret_ref");
+          }
+        }
+        Ok(value)
+      })
+      .collect::<Result<Vec<_>, String>>()?;
+    let document = ConnectionsDocument {
+      format: EXPORT_FORMAT.to_string(),
+      version: EXPORT_VERSION,
+      connections,
+    };
+    serde_json::to_string_pretty(&document).map_err(|error| error.to_string())
+  }
+
+  /// 导入 [`Self::export_document`] 写出的文件。每个连接拿新 id；本机已有的同一个连接跳过，
+  /// 同一个文件导两次不会多出一份。整个文件先全部读懂再写：有一条读不懂就一条都不加
+  pub fn import_document(&mut self, content: &str) -> Result<ConnectionImport, String> {
+    let document: ConnectionsDocument = serde_json::from_str(content)
+      .map_err(|error| format!("{IMPORT_NOT_CONNECTIONS_FILE}: {error}"))?;
+    if document.format != EXPORT_FORMAT {
+      return Err(format!("{IMPORT_NOT_CONNECTIONS_FILE}: {}", document.format));
+    }
+    if document.version > EXPORT_VERSION {
+      return Err(format!("{IMPORT_NEWER_VERSION}: {}", document.version));
+    }
+    let incoming = document
+      .connections
+      .into_iter()
+      .map(serde_json::from_value::<ConnectionProfile>)
+      .collect::<Result<Vec<_>, _>>()
+      .map_err(|error| format!("{IMPORT_NOT_CONNECTIONS_FILE}: {error}"))?;
+
+    let same = |left: &ConnectionProfile, right: &ConnectionProfile| {
+      left.name == right.name
+        && left.db_type == right.db_type
+        && left.host == right.host
+        && left.port == right.port
+        && left.database == right.database
+        && left.username == right.username
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut report = ConnectionImport { imported: 0, skipped: 0 };
+    let mut added = Vec::new();
+    for mut connection in incoming {
+      if self.connections.values().chain(added.iter()).any(|existing| same(existing, &connection)) {
+        report.skipped += 1;
+        continue;
+      }
+      connection.id = uuid::Uuid::new_v4().to_string();
+      // 文件是别人给的：就算里面写了口令或钥匙串引用，也不认
+      connection.password.clear();
+      connection.credential_ref = None;
+      if let Some(tunnel) = connection.ssh_tunnel.as_mut() {
+        tunnel.secret.clear();
+        tunnel.secret_ref = None;
+      }
+      if connection.port == 0 {
+        connection.port = connection.db_type.get_default_port();
+      }
+      connection.created_at = now.clone();
+      connection.updated_at = now.clone();
+      added.push(connection);
+    }
+
+    report.imported = added.len();
+    if added.is_empty() {
+      return Ok(report);
+    }
+    let ids = added.iter().map(|connection| connection.id.clone()).collect::<Vec<_>>();
+    for connection in added {
+      self.connections.insert(connection.id.clone(), connection);
+    }
+    if let Err(error) = self.save_connections() {
+      for id in ids {
+        self.connections.remove(&id);
+      }
+      return Err(format!("{CONFIG_SAVE_FAILED}: {error}"));
+    }
+    Ok(report)
   }
 
   /// 按 id 算连接串。有隧道的连接必须把本地转发端口传进来。
@@ -1284,5 +1410,125 @@ mod tests {
     mysql.db_type = DatabaseType::MySQL;
     mysql.host = String::new();
     assert_eq!(service.test_connection(&mysql), Err(HOST_REQUIRED.to_string()));
+  }
+
+  fn service_at(path: &PathBuf) -> ConnectionService {
+    match ConnectionService::from_path(path, Box::<MemoryCredentialStore>::default()) {
+      Ok(service) => service,
+      Err(error) => panic!("服务应当建得起来: {error}"),
+    }
+  }
+
+  /// 导出文件是拿去别的机器上用的：口令、SSH 密钥、钥匙串引用和本机的 id 都不该在里面
+  #[test]
+  fn exported_connections_carry_no_secrets_or_local_ids() {
+    let mut service = service_at(&temporary_config_path());
+    if let Err(error) = service.create_connection(tunnelled_with_secret("profile-1", "key-pass")) {
+      panic!("保存不该失败: {error}");
+    }
+
+    let document = match service.export_document() {
+      Ok(document) => document,
+      Err(error) => panic!("导出不该失败: {error}"),
+    };
+    for leaked in [
+      "\"secret\"",
+      "key-pass",
+      "system-keyring",
+      "profile-1",
+      "\"password\"",
+      "credential_ref",
+      "secret_ref",
+    ] {
+      assert!(!document.contains(leaked), "导出里不该有 {leaked}: {document}");
+    }
+    assert!(document.contains("\"format\": \"dataomni-connections\""), "{document}");
+    assert!(document.contains("jump.example.com"), "隧道的地址要带上: {document}");
+  }
+
+  /// 换一台机器导入：拿到新 id，钥匙串里什么都没有；存过口令的那个连接时会问口令
+  #[test]
+  fn imported_connections_get_new_ids_and_ask_for_stored_passwords() {
+    let mut source = service_at(&temporary_config_path());
+    let mut open = profile("profile-2", "");
+    open.name = "No password".to_string();
+    for config in [profile("profile-1", "secret"), open] {
+      if let Err(error) = source.create_connection(config) {
+        panic!("保存不该失败: {error}");
+      }
+    }
+    let document = match source.export_document() {
+      Ok(document) => document,
+      Err(error) => panic!("导出不该失败: {error}"),
+    };
+
+    let mut target = service_at(&temporary_config_path());
+    let report = match target.import_document(&document) {
+      Ok(report) => report,
+      Err(error) => panic!("导入不该失败: {error}"),
+    };
+    assert_eq!((report.imported, report.skipped), (2, 0));
+
+    let imported = target.get_connections();
+    let stored = imported.iter().find(|config| config.name == "Local PostgreSQL");
+    let Some(stored) = stored else { panic!("导入的连接应当在: {imported:?}") };
+    assert!(stored.id != "profile-1" && !stored.id.is_empty(), "要给新 id: {}", stored.id);
+    assert_eq!((stored.host.as_str(), stored.port), ("localhost", 5432));
+    assert_eq!(stored.credential_ref, None);
+    assert!(!stored.save_password, "原来存了口令、文件里没有：连接时要问");
+    assert_eq!(
+      target.resolve_for_connection(stored).map(|resolved| resolved.password),
+      Err(SESSION_PASSWORD_REQUIRED.to_string())
+    );
+
+    // 原来就没有口令的，导入后照样直接连，不凭空多问一次
+    let open = imported.iter().find(|config| config.name == "No password");
+    let Some(open) = open else { panic!("导入的连接应当在: {imported:?}") };
+    assert!(open.save_password);
+    assert_eq!(
+      target.resolve_for_connection(open).map(|resolved| resolved.password),
+      Ok(String::new())
+    );
+  }
+
+  /// 同一个文件导两次，或导回原来那台机器：已经有的不再多出一份
+  #[test]
+  fn importing_the_same_connections_again_skips_them() {
+    let mut service = service_at(&temporary_config_path());
+    if let Err(error) = service.create_connection(profile("profile-1", "secret")) {
+      panic!("保存不该失败: {error}");
+    }
+    let document = match service.export_document() {
+      Ok(document) => document,
+      Err(error) => panic!("导出不该失败: {error}"),
+    };
+
+    match service.import_document(&document) {
+      Ok(report) => assert_eq!((report.imported, report.skipped), (0, 1)),
+      Err(error) => panic!("导入不该失败: {error}"),
+    }
+    assert_eq!(service.get_connections().len(), 1);
+  }
+
+  #[test]
+  fn import_rejects_files_that_are_not_exported_connections() {
+    let mut service = service_at(&temporary_config_path());
+    // 最容易拿错的就是 connections.json 本身：它是一个数组
+    let rejected = [
+      ("[]", IMPORT_NOT_CONNECTIONS_FILE),
+      ("{\"connections\":[]}", IMPORT_NOT_CONNECTIONS_FILE),
+      ("not json", IMPORT_NOT_CONNECTIONS_FILE),
+      (
+        "{\"format\":\"dataomni-connections\",\"version\":2,\"connections\":[]}",
+        IMPORT_NEWER_VERSION,
+      ),
+    ];
+    for (content, code) in rejected {
+      match service.import_document(content) {
+        Ok(report) => panic!("{content} 不该导得进: {} 个", report.imported),
+        Err(error) => assert!(error.starts_with(code), "{content}: {error}"),
+      }
+    }
+    assert!(service.get_connections().is_empty());
   }
 }

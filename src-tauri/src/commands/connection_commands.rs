@@ -89,6 +89,34 @@ pub async fn get_connections(
   with_service(&service_state, &app_handle, |service| Ok(service.get_connections()))
 }
 
+/// 把所有连接导出到 `path`（不含口令，见 `ConnectionService::export_document`），返回导出了几个
+#[tauri::command]
+pub async fn export_connections(
+  path: String,
+  app_handle: AppHandle,
+  service_state: State<'_, ConnectionServiceState>,
+) -> Result<usize, String> {
+  let (document, count) = with_service(&service_state, &app_handle, |service| {
+    Ok((service.export_document()?, service.get_connections().len()))
+  })?;
+  // 和连接配置、导出、备份一样先写 .part 再改名：覆盖一份旧的导出时，写到一半不会把它弄坏
+  let target = std::path::PathBuf::from(&path);
+  let part = target.with_extension("json.part");
+  std::fs::write(&part, document).map_err(|error| format!("{}: {error}", part.display()))?;
+  std::fs::rename(&part, &target).map_err(|error| format!("{path}: {error}"))?;
+  Ok(count)
+}
+
+#[tauri::command]
+pub async fn import_connections(
+  path: String,
+  app_handle: AppHandle,
+  service_state: State<'_, ConnectionServiceState>,
+) -> Result<crate::services::connection_service::ConnectionImport, String> {
+  let content = std::fs::read_to_string(&path).map_err(|error| format!("{path}: {error}"))?;
+  with_service(&service_state, &app_handle, |service| service.import_document(&content))
+}
+
 /// 连接失败之后查一遍断在哪一段。
 ///
 /// 不经过 `ConnectionService`：这里只看主机、端口和文件路径，用不到凭据，

@@ -53,6 +53,8 @@ pub fn run() {
       update_connection,
       delete_connection,
       get_connections,
+      export_connections,
+      import_connections,
       test_connection,
       open_database_pool,
       sqlx_select,

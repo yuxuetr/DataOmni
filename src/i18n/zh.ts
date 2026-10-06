@@ -153,6 +153,14 @@ export const zh = {
 
   'welcome.hint': '选择一个连接，或新建一个。',
   'welcome.openDatabaseFileEllipsis': '打开数据库文件…',
+  'welcome.importConnections': '导入连接…',
+  'welcome.exportConnections': '导出连接…',
+  'connectionTransfer.exported': '已导出 {count} 个连接到 {path}。文件里没有口令和 SSH 密钥。',
+  'connectionTransfer.imported': '已导入 {count} 个连接。',
+  'connectionTransfer.importedSkipped': '已导入 {count} 个连接，另有 {skipped} 个本机已经有了，没再加。',
+  'connectionTransfer.secretsNotIncluded': '文件里没有口令：存过口令的连接，第一次连接时会请你输入；SSH 隧道用口令或带口令的私钥的，要在编辑连接里重新填。',
+  'connectionTransfer.allPresent': '文件里的 {count} 个连接本机都已经有了，没有导入新的。',
+  'connectionTransfer.empty': '文件里没有连接。',
 
   'environment.production.description': '生产环境连接，改动会影响线上数据',
   'environment.staging.description': '预发环境连接，改动可能影响发布验证',
@@ -1114,6 +1122,8 @@ export const zh = {
   'error.backend.configDirUnavailable': '找不到应用的配置目录，连接列表无法读写。技术细节：{detail}',
   'error.backend.configSaveFailed': '连接配置没能存盘，这次改动重启后就没了。技术细节：{detail}',
   'error.backend.connectionNotFound': '找不到这个连接，它可能已经被删除了。',
+  'error.backend.importNotConnectionsFile': '这个文件不是 DataOmni「导出连接」写出来的，导不进。技术细节：{detail}',
+  'error.backend.importNewerVersion': '这个文件是更新版本的 DataOmni 导出的（格式版本 {detail}），这一版读不了，请先升级。',
   'error.backend.directoryMissing': '目录不存在：{detail}',
   'error.backend.aiNotInBuild': '这个版本没有带 AI 功能。',
   'error.backend.aiRequestFailed': '请求模型服务失败：{detail}',
