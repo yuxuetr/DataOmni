@@ -67,7 +67,7 @@ if [ -n "$sha" ]; then
     actual="$(shasum -a 256 "$archive" | cut -d' ' -f1)"
   fi
   if [ "$actual" != "$sha" ]; then
-    echo "校验和不对：$archive（期望 $sha，实际 $actual）" >&2
+    echo "校验和不对：${archive}（期望 ${sha}，实际 ${actual}）" >&2
     exit 1
   fi
 else
@@ -99,4 +99,4 @@ case "$archive" in
   *.dmg) hdiutil detach "$work/mnt" >/dev/null ;;
 esac
 rm -rf "$work"
-echo "Instant Client（$platform）已放到 $target：$(du -sh "$target" | cut -f1)"
+echo "Instant Client（${platform}）已放到 ${target}：$(du -sh "$target" | cut -f1)"

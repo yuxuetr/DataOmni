@@ -23,7 +23,7 @@ for argument in "$@"; do
     --no-open) open_after=0 ;;
     -y|--yes) assume_yes=1 ;;
     -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "不认识的参数：$argument（--help 看用法）" >&2; exit 2 ;;
+    *) echo "不认识的参数：${argument}（--help 看用法）" >&2; exit 2 ;;
   esac
 done
 
@@ -60,7 +60,7 @@ rm -rf "$staging"
 ditto "$bundle" "$staging"
 rm -rf "$destination"
 mv "$staging" "$destination"
-echo "已安装：$destination（$(defaults read "$destination/Contents/Info" CFBundleShortVersionString)）"
+echo "已安装：${destination}（$(defaults read "$destination/Contents/Info" CFBundleShortVersionString)）"
 
 # 用 open 启动，别直接跑二进制：shell 里的 LD_LIBRARY_PATH 会让它启动就崩（见 CLAUDE.md）
 [ "$open_after" = 1 ] && open "$destination"
