@@ -335,7 +335,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
       const index = typeof (error as { statement_index?: unknown })?.statement_index === 'number'
         ? (error as { statement_index: number }).statement_index
         : 0;
-      setCommitFailure({ index, error: failure });
+      setCommitFailure({ changeId: changes[index]?.id ?? '', error: failure });
       setCommitError(
         failure.code === ROW_COUNT_MISMATCH_CODE
           ? t('changes.conflict', { index: index + 1 })
@@ -477,7 +477,14 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
           target={writeTarget()}
           committing={committing}
           failure={commitFailure}
-          onRevert={(id) => setChanges((current) => revertChange(current, id))}
+          onRevert={(id) => {
+            setChanges((current) => revertChange(current, id));
+            // 撤掉的正是出错的那一项：那次失败说的这一批已经不存在了
+            if (commitFailure?.changeId === id) {
+              setCommitFailure(null);
+              setCommitError(null);
+            }
+          }}
           onRevertAll={revertAllChanges}
           onCommit={commitChanges}
           onClose={() => setShowChanges(false)}

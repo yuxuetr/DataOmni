@@ -9,8 +9,11 @@ import { renderStatementForDisplay, type TableTarget } from '../utils/rowStateme
 import { changeStatements, type PendingChange } from '../utils/pendingChanges';
 
 export interface CommitFailure {
-  /** 出错的是第几条，与 `changes` 同序 */
-  index: number;
+  /**
+   * 出错的那一项改动。认 id 不认下标：撤掉一项后后面的顶上来，按下标标记会把
+   * 这条错误安到另一项头上
+   */
+  changeId: string;
   error: QueryExecutionError;
 }
 
@@ -89,7 +92,7 @@ export function ChangeDiffDialog({
             <ol className="flex flex-col gap-3">
               {changes.map((change, index) => {
                 const Icon = KIND_ICON[change.kind];
-                const failed = failure?.index === index;
+                const failed = failure?.changeId === change.id;
                 return (
                   <li
                     key={change.id}

@@ -932,7 +932,7 @@ export default function TableDataViewer({
         : 0;
       // ClickHouse 一次只有一项，那几条语句（数一遍、执行、核对）都属于它
       const index = dialect === 'clickhouse' ? 0 : statementIndex;
-      setCommitFailure({ index, error: failure });
+      setCommitFailure({ changeId: changes[index]?.id ?? '', error: failure });
       setEditingError(
         failure.code === ROW_COUNT_MISMATCH_CODE
           ? t('changes.conflict', { index: index + 1 })
@@ -1862,7 +1862,14 @@ export default function TableDataViewer({
           target={writeTarget()}
           committing={editingLoading}
           failure={commitFailure}
-          onRevert={(id) => setChanges((current) => revertChange(current, id))}
+          onRevert={(id) => {
+            setChanges((current) => revertChange(current, id));
+            // 撤掉的正是出错的那一项：那次失败说的这一批已经不存在了
+            if (commitFailure?.changeId === id) {
+              setCommitFailure(null);
+              setEditingError(null);
+            }
+          }}
           onRevertAll={revertAllChanges}
           onCommit={commitChanges}
           onClose={() => setShowChanges(false)}
