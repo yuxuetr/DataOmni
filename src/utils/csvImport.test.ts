@@ -92,6 +92,16 @@ describe('columnKind / fitsColumn', () => {
     expect(fitsColumn('{a:1}', 'json')).toBe(false);
   });
 
+  it('认得出 PostgreSQL 写出来的时区：整点时区只有两位', () => {
+    // psql 与 COPY 给 timestamptz / timetz 写 `+08`，半点时区才写 `+05:30`
+    expect(fitsColumn('2026-01-02 03:04:05+08', 'timestamp')).toBe(true);
+    expect(fitsColumn('2026-01-02 03:04:05.123456-03', 'timestamp')).toBe(true);
+    expect(fitsColumn('2026-01-02 03:04:05+05:30', 'timestamp')).toBe(true);
+    expect(fitsColumn('03:04:05+08', 'time')).toBe(true);
+    expect(fitsColumn('03:04:05.5+05:30', 'time')).toBe(true);
+    expect(fitsColumn('2026-01-02 03:04:05+8', 'timestamp')).toBe(false);
+  });
+
   it('文本列什么都收', () => {
     // 判断谁能进这一列的是数据库；这里的结论只用来提醒
     expect(fitsColumn('随便什么', 'text')).toBe(true);

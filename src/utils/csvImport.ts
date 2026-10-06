@@ -104,8 +104,9 @@ export function columnKind(dataType: string, dialect?: SqlIdentifierDialect): Co
 
 const BOOLEAN_WORDS = new Set(['true', 'false', 't', 'f', 'yes', 'no', 'y', 'n', '1', '0']);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const TIME_PATTERN = /^\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?$/;
-const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
+// 时区：PostgreSQL 的 timestamptz / timetz 整点时区只写两位（`+08`），半点的才是 `+05:30`
+const TIME_PATTERN = /^\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}(:?\d{2})?)?$/;
+const TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}(:?\d{2})?)?$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
