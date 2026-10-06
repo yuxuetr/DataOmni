@@ -9,6 +9,8 @@ macOS 与 Linux 上验过的功能逻辑不必在这里逐项重来，这份只�
 ## 0. 准备
 
 - 一台干净的 Windows 11（虚拟机最好，能回到快照）；有条件再来一台 Windows 10。
+- 安装包不必在 Windows 上自己打：GitHub 的 Actions → Release → Run workflow，跑完在那次运行的 Artifacts 里下载
+  `DataOmni-windows-x64`（MSI 与 NSIS 都在，带 Instant Client）。验升级要两个版本时仍照下面在本机打。
 - 构建两个版本，用来验升级（版本号只在命令行改，不改仓库）：
   ```powershell
   bun tauri build --config '{\"version\":\"0.5.0\"}'

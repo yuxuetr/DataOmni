@@ -282,7 +282,18 @@
 - [-] Windows、macOS、Linux 完成安装、升级和卸载验证
   - 未做：Windows 三件事，必须真机 / 虚拟机（MSI/NSIS 注册表、开始菜单、SmartScreen）。
     逐项清单在 `docs/windows-checklist.md`（2026-10-05），在 Windows 真机上照着核对。
-  - macOS 缺口：ad-hoc 签名被 Gatekeeper 拒（需 Developer ID + 公证）、只有 arm64、无 updater。
+  - macOS 缺口：没有 Developer ID（开通不了），只能 ad-hoc 签名，首次打开要手动放行；只有 arm64、无 updater。
+  - 2026-10-06 GitHub Actions 出三平台安装包（`.github/workflows/release.yml`，`8776960`）：推 `v*` tag 打包进草稿 Release，手动触发只挂 Artifacts。
+    手动跑通过一次（run 37404823579，三个 job 全绿）。核对过产物：deb 在干净的 Ubuntu 22.04 容器里装上、依赖齐，Instant Client 与 Oracle
+    原件逐字节一致，二进制要求 glibc 2.34；NSIS 里有主程序与 Instant Client；dmg 带上下载隔离标记后签名校验通过、Gatekeeper 判为
+    「不认识的开发者」（可放行），去掉标记后能启动。**修了两处**：
+    - 原先的 macOS 包只有链接器给主程序的签名，整包 `codesign --verify` 不过（`code has no resources but signature indicates they must be
+      present`），下载下来会被说成「已损坏」、没有「仍要打开」。CI 里改为整包 ad-hoc 签名，并**关掉 hardened runtime**：开着时 Oracle
+      签的 Instant Client 被 dlopen 拒绝（本机小程序实测，关掉即可加载）。两件事都有门，本机反向验过（旧包、带 runtime 的二进制各红一次）。
+    - `fetch-oracle-client.sh` / `install-macos.sh` 在 macOS 自带的 bash 3.2（UTF-8 locale）下把 `$platform（` 的全角括号读进变量名，
+      `set -u` 时失败；本机用 Homebrew bash 撞不上，runner 撞上了（`88e02d8`）。
+    - 没验到：在 Windows 上装（仍是清单 5.4）；Gatekeeper 的「仍要打开」没有真点（会改本机安全设置），只看了 `spctl` 的判定；
+      CI 版的 Oracle 没真连过，加载性由 runtime 标志的门与 dlopen 实验推出。
   - Linux（2026-09-28，本机 Docker 以 amd64 模拟构建与运行，包与发版的同一份配置，带 Instant Client）：
     - rpm（Fedora 42）：`dnf` 自动装上 `libaio`、webkit2gtk4.1；0.4.0 装好能起窗口，升到 0.4.1（Instant Client 9 个文件都在）
       再起一次，卸载干净。**修了一处**：卸载后留下 `/usr/lib/DataOmni/instantclient` 两层空目录（tauri 的 rpm 不登记子目录），
@@ -314,7 +325,7 @@
 ### v0.3：可日常使用的关系型数据库 MVP
 
 - [ ] 完成三平台基础安装与冒烟测试
-  - macOS 与 Linux（容器）已验；Windows 能构建（2026-10-02），安装与冒烟没有，需真机或虚拟机。
+  - macOS 与 Linux（容器）已验；Windows 能构建（2026-10-02，2026-10-06 起 GitHub Actions 也出 MSI / NSIS），安装与冒烟没有，需真机或虚拟机。
 
 ### v1.0：稳定桌面客户端
 
