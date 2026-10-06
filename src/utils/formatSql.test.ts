@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { DatabaseType } from '../contracts/connection';
-import { cursorAfterFormat, formatSql, planFormat, sqlFormatterLanguage } from './formatSql';
+import { history, undo } from '@codemirror/commands';
+import { EditorState } from '@codemirror/state';
+import { cursorAfterFormat, formatSql, formatTransaction, planFormat, sqlFormatterLanguage } from './formatSql';
 
 /**
  * 去掉所有空白再比。
@@ -265,5 +267,21 @@ describe('planFormat', () => {
       'sqlite'
     );
     expect(plan.kind === 'failed' || plan.kind === 'unchanged').toBe(true);
+  });
+});
+
+describe('formatTransaction', () => {
+  // 回归时看到的：刚打完字就按格式化，撤销一次连格式化带那几个字一起没了——
+  // CodeMirror 把 500ms 内的改动并成一步
+  it('格式化单独一步撤销，不和刚打的字并在一起', () => {
+    let state = EditorState.create({ doc: 'select 1', extensions: [history()] });
+    state = state.update({ changes: { from: 8, insert: ' from t' }, userEvent: 'input.type' }).state;
+    const plan = planFormat(state.doc.toString(), { from: 0, to: 0, head: 0 }, 'postgresql');
+    if (plan.kind !== 'replace') throw new Error(plan.kind);
+    state = state.update(formatTransaction(plan)).state;
+    expect(state.doc.toString()).not.toBe('select 1 from t');
+
+    undo({ state, dispatch: (transaction) => { state = transaction.state; } });
+    expect(state.doc.toString()).toBe('select 1 from t');
   });
 });

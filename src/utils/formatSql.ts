@@ -8,6 +8,8 @@ import {
   type KeywordCase,
   type SqlLanguage
 } from 'sql-formatter';
+import { isolateHistory } from '@codemirror/commands';
+import type { TransactionSpec } from '@codemirror/state';
 import { DatabaseType } from '../contracts/connection';
 import { describeError } from './describeError';
 import { findSqlStatementAtOffset, getSqlStatementRanges } from './sqlStatements';
@@ -249,6 +251,20 @@ export function planFormat(
     insert: result.sql,
     anchor,
     head: onlySelection ? from + result.sql.length : anchor
+  };
+}
+
+/**
+ * 把排版计划写成编辑器的一次改动。
+ *
+ * 单独成一步撤销：CodeMirror 把 500ms 内的改动并成一步，刚打完字就按格式化，
+ * 撤销一次会连那几个字一起撤掉
+ */
+export function formatTransaction(plan: Extract<FormatPlan, { kind: 'replace' }>): TransactionSpec {
+  return {
+    changes: { from: plan.from, to: plan.to, insert: plan.insert },
+    selection: { anchor: plan.anchor, head: plan.head },
+    annotations: isolateHistory.of('full')
   };
 }
 

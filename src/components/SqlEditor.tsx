@@ -47,7 +47,7 @@ import {
   splitSqlStatements
 } from '../utils/sqlStatements';
 import { statementOutcome, withTrailingSemicolon } from '../utils/queryStatements';
-import { planFormat, sqlFormatterLanguage } from '../utils/formatSql';
+import { formatTransaction, planFormat, sqlFormatterLanguage } from '../utils/formatSql';
 import {
   SQL_FILE_FILTER,
   linkSqlFile,
@@ -406,10 +406,7 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
       return;
     }
 
-    view.dispatch({
-      changes: { from: plan.from, to: plan.to, insert: plan.insert },
-      selection: { anchor: plan.anchor, head: plan.head }
-    });
+    view.dispatch(formatTransaction(plan));
   };
 
   /** 把光标移到出错处并滚过去。选中一个字符，让它在编辑器里看得见 */
