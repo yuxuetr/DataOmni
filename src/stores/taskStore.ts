@@ -140,6 +140,7 @@ export const useTaskStore = create<TaskState>((set, get) => {
     patch(id, (task) => ({ ...task, ...appendLog(task, entries) }));
   };
 
+  /** 失败时 detail 给原因：一行只写「失败」，人还得展开日志才知道为什么 */
   const finish = (
     id: string,
     status: BackgroundTask['status'],
@@ -221,10 +222,11 @@ export const useTaskStore = create<TaskState>((set, get) => {
         summary.rowsInserted > 0
       );
     } catch (error) {
-      log(id, [entry('error', describeError(error, translateNow('import.failed')))]);
+      const reason = describeError(error, translateNow('import.failed'));
+      log(id, [entry('error', reason)]);
       // 单事务下报错意味着那个事务从没提交过，库里什么都没留下；分批提交
       // 则可能有批次已经进去了，而我们证明不了没有——那一侧不给「重试」
-      finish(id, 'failed', null, keepsEarlierBatches(payload));
+      finish(id, 'failed', reason, keepsEarlierBatches(payload));
     }
   };
 
@@ -272,10 +274,13 @@ export const useTaskStore = create<TaskState>((set, get) => {
         typeof error === 'object' && error !== null && 'code' in error
           ? (error as { code?: string }).code === EXPORT_CANCELLED_CODE
           : false;
-      if (!cancelled) {
-        log(id, [entry('error', describeError(error, translateNow('export.failed')))]);
+      if (cancelled) {
+        finish(id, 'cancelled', null, false);
+        return;
       }
-      finish(id, cancelled ? 'cancelled' : 'failed', null, false);
+      const reason = describeError(error, translateNow('export.failed'));
+      log(id, [entry('error', reason)]);
+      finish(id, 'failed', reason, false);
     }
   };
 
@@ -302,8 +307,9 @@ export const useTaskStore = create<TaskState>((set, get) => {
       // 备份写的是新文件 / 新目录，重跑不会往库里重复写东西
       finish(id, 'succeeded', translateNow('backup.done'), false);
     } catch (error) {
-      log(id, [entry('error', describeError(error, translateNow('backup.failed')))]);
-      finish(id, 'failed', null, false);
+      const reason = describeError(error, translateNow('backup.failed'));
+      log(id, [entry('error', reason)]);
+      finish(id, 'failed', reason, false);
     }
   };
 

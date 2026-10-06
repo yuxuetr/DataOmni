@@ -103,7 +103,8 @@ function TaskRow({ task }: { task: BackgroundTask }) {
         <StatusIcon tone={display.tone} />
         <div className="min-w-0 flex-1">
           <p className="truncate text-xs font-medium text-fg">{task.title}</p>
-          <p className="text-xs text-fg-muted">
+          {/* 失败时 detail 是原因，pg_dump 之类的原话能有十几行；全文在日志里 */}
+          <p className="line-clamp-3 break-words text-xs text-fg-muted">
             {t(display.labelKey)}
             {' · '}
             {formatTaskElapsed(display.elapsedMs)}
