@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { zh } from '../i18n/zh';
-import { parseBackendError, translateBackendMessage } from './backendError';
+import { translateNow } from '../stores/languageStore';
+import { isSessionPasswordRequired, parseBackendError, translateBackendMessage } from './backendError';
 
 
 describe('backendError', () => {
@@ -27,6 +28,11 @@ describe('backendError', () => {
     expect(parsed?.detail).toBe('SHA256:aaa → SHA256:bbb');
   });
 
+  it('未保存密码的连接要会话口令：说成一句话，不印码', () => {
+    // 表单里按「测试连接」时原样印过 `Connection test failed: SESSION_PASSWORD_REQUIRED`
+    expect(translateBackendMessage('SESSION_PASSWORD_REQUIRED')).toBe(translateNow('connect.passwordRequired'));
+  });
+
   it('认不出的码返回 null，让调用方原样显示', () => {
     // 后端加了新错误而这里忘了配时走这条路——看到的是原串，不是空白
     expect(parseBackendError('DATAOMNI_SOMETHING_NEW: 细节')).toBeNull();
@@ -39,10 +45,13 @@ describe('backendError', () => {
     expect(parseBackendError('connection refused')).toBeNull();
   });
 
-  it('已有的 SESSION_PASSWORD_REQUIRED 不在表里，不能被改写', () => {
-    // `useProfileConnector` 靠 `message.includes('SESSION_PASSWORD_REQUIRED')`
-    // 认它。翻译掉就等于把未保存密码的连接流程拆了
-    expect(parseBackendError('SESSION_PASSWORD_REQUIRED: 此连接未保存密码')).toBeNull();
+  it('SESSION_PASSWORD_REQUIRED 换成一句话之后，连接流程照样认得出', () => {
+    // `useProfileConnector` 此前拿翻译后的那句话找这个码，所以它一直没敢进表——
+    // 于是表单里按「测试连接」原样印出这个码。现在认原串
+    expect(isSessionPasswordRequired('SESSION_PASSWORD_REQUIRED')).toBe(true);
+    expect(isSessionPasswordRequired(new Error('SESSION_PASSWORD_REQUIRED'))).toBe(true);
+    expect(isSessionPasswordRequired(translateBackendMessage('SESSION_PASSWORD_REQUIRED'))).toBe(false);
+    expect(isSessionPasswordRequired('connection refused')).toBe(false);
   });
 
   it('后端定义的每个码，前端都有文案', () => {

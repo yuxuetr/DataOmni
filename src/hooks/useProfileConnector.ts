@@ -9,6 +9,7 @@ import { useSessionManager } from '../utils/stateSync';
 import { recordConnectionUse } from '../utils/connectionRecency';
 import { withTimeout } from '../utils/withTimeout';
 import { describeError } from '../utils/describeError';
+import { isSessionPasswordRequired } from '../utils/backendError';
 import {
   connectionNameFromFile,
   databaseFileExtensions,
@@ -81,7 +82,7 @@ export function useProfileConnector(): ProfileConnector {
     } catch (cause) {
       const message = describeError(cause);
 
-      if (message.includes('SESSION_PASSWORD_REQUIRED')) {
+      if (isSessionPasswordRequired(cause)) {
         setError(t('connect.passwordRequired'));
         openConnectionForm(profile);
         return 'password-required';

@@ -43,6 +43,8 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_CREDENTIAL_STORE_LOCKED: 'error.backend.credentialStoreLocked',
   DATAOMNI_CREDENTIAL_DELETE_FAILED: 'error.backend.credentialDeleteFailed',
   DATAOMNI_CREDENTIAL_MISSING: 'error.backend.credentialMissing',
+  // 不带前缀：连接流程按这个原串认出「去要口令」（`useProfileConnector`），改名要两头一起改
+  SESSION_PASSWORD_REQUIRED: 'connect.passwordRequired',
   DATAOMNI_AI_KEY_MISSING: 'error.backend.aiKeyMissing',
   DATAOMNI_AI_KEY_SAVE_FAILED: 'error.backend.aiKeySaveFailed',
   DATAOMNI_BACKUP_UNSUPPORTED: 'error.backend.backupUnsupported',
@@ -192,6 +194,15 @@ export interface BackendError {
   readonly key: TranslationKey;
   /** 冒号后面那段数据。没有就是空串，文案里的 {detail} 会留空 */
   readonly detail: string;
+}
+
+/**
+ * 未保存密码的连接要先问一次口令。认 reject 出来的原串：经过 `describeError` 之后这个码
+ * 已经换成了当前语言的一句话，再拿那句去找码就找不到了
+ */
+export function isSessionPasswordRequired(cause: unknown): boolean {
+  const raw = cause instanceof Error ? cause.message : String(cause);
+  return raw.trim().startsWith('SESSION_PASSWORD_REQUIRED');
 }
 
 /**
