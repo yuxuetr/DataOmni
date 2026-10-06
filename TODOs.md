@@ -1005,6 +1005,10 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-06 给同名列编的号撞上已有的列名（`query_executor.rs` 的 `number_duplicate_columns`，各方言共用；SQLite 内存库）：**修了一处**（`1663e94`）。
+    `SELECT 1 AS id, 2 AS id, 3 AS "id 2"` 编出两个 `id 2`，后一列顶掉前一列（单测与 SQLite 端到端用例先红：列名读出 `id, id 2, id 2`）。
+    现在编号跳过已有的名字，第二个 `id` 叫 `id 3`；导出那边的 `unique_column_names` 本来就这样。`bun run check` 通过。
+    纯后端，没有在打包版上看。
   - 2026-10-06 SQL Server 结果里同名的列互相覆盖（`services/sql_server.rs`；cu 上的 SQL Server 2022）：**修了一处**（`bc928a1`）。
     结果行按列名做键，别的方言都经 `number_duplicate_columns` 把第二个 `id` 叫成 `id 2`，SQL Server 只给没名字的列编了号：
     `SELECT a.id, b.id` 两列都显示 `b.id` 的值，没有任何提示（真库用例先红：`i` 读出 7 而不是 42）。现在同一条规矩。
