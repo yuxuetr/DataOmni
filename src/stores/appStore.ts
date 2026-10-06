@@ -64,7 +64,12 @@ export interface AppState {
   // 连接表单弹窗。放在应用级状态里，好让欢迎页等非侧边栏入口也能打开它
   connectionForm:
     | { mode: 'create' }
-    | { mode: 'edit'; connection: ConnectionProfile }
+    | {
+        mode: 'edit';
+        connection: ConnectionProfile;
+        /** 保存成功后要接着做的事。为补本次会话口令而打开时，是「接着连上去」 */
+        onSaved?: () => Promise<unknown>;
+      }
     | null;
   
   // 数据库元数据缓存
@@ -96,7 +101,7 @@ export interface AppState {
 // 应用操作接口
 export interface AppActions {
   // 连接表单管理
-  openConnectionForm: (connection?: ConnectionProfile) => void;
+  openConnectionForm: (connection?: ConnectionProfile, onSaved?: () => Promise<unknown>) => void;
   closeConnectionForm: () => void;
   
   // 表选择管理
@@ -164,7 +169,7 @@ export const useAppStore = create<AppStore>((set) => ({
   connectionReady: false,
   schemaVersion: 0,
 
-  openConnectionForm: (connection?: ConnectionProfile) => {
+  openConnectionForm: (connection?: ConnectionProfile, onSaved?: () => Promise<unknown>) => {
     // 只认真正的配置对象。把这个动作直接挂到 onClick 上时，React 传进来的是
     // MouseEvent——它是真值，会让表单以「编辑」模式打开一个事件对象，
     // 而 TypeScript 拦不住：`() => void` 的调用点允许多传实参。
@@ -174,7 +179,7 @@ export const useAppStore = create<AppStore>((set) => ({
 
     set({
       connectionForm: editing
-        ? { mode: 'edit', connection: connection as ConnectionProfile }
+        ? { mode: 'edit', connection: connection as ConnectionProfile, onSaved }
         : { mode: 'create' }
     });
   },

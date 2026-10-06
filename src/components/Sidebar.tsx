@@ -346,6 +346,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <ConnectionForm
           connection={connectionForm.mode === 'edit' ? connectionForm.connection : undefined}
           mode={connectionForm.mode}
+          onSaved={connectionForm.mode === 'edit' ? connectionForm.onSaved : undefined}
           onClose={() => {
             closeConnectionForm();
             // 重新加载连接列表

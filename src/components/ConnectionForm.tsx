@@ -68,6 +68,8 @@ import type { TranslationKey } from '../i18n/translate';
 interface ConnectionFormProps {
   connection?: ConnectionConfig;
   onClose: () => void;
+  /** 保存成功、表单关掉之后调用 */
+  onSaved?: () => Promise<unknown>;
   mode: 'create' | 'edit';
 }
 
@@ -179,6 +181,7 @@ const databaseTypes: ReadonlyArray<{
 export const ConnectionForm: React.FC<ConnectionFormProps> = ({ 
   connection, 
   onClose, 
+  onSaved,
   mode 
 }) => {
   const t = useLanguageStore((state) => state.t);
@@ -448,6 +451,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
         await updateConnection(connection.id, submittableConfig());
       }
       onClose();
+      void onSaved?.();
     } catch {
       // 错误已在store中处理
     } finally {

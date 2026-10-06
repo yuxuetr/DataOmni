@@ -84,7 +84,14 @@ export function useProfileConnector(): ProfileConnector {
 
       if (isSessionPasswordRequired(cause)) {
         setError(t('connect.passwordRequired'));
-        openConnectionForm(profile);
+        // 在表单里填好口令、点了保存，就是要连上去：接着连（提示随之清掉），不让人再点一次。
+        // 连的是保存后的那份，表单里可能顺手改了主机。取消则停在这里，提示照旧成立
+        openConnectionForm(profile, async () => {
+          const saved = useConnectionStore.getState().connections.find((candidate) => candidate.id === profile.id);
+          if (saved) {
+            await connect(saved);
+          }
+        });
         return 'password-required';
       }
 
