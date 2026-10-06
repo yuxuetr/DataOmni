@@ -67,6 +67,7 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_IMPORT_NOT_CONNECTIONS_FILE: 'error.backend.importNotConnectionsFile',
   DATAOMNI_IMPORT_NEWER_VERSION: 'error.backend.importNewerVersion',
   DATAOMNI_LOG_REVEAL_FAILED: 'error.backend.logRevealFailed',
+  DATAOMNI_UPDATE_CHECK_FAILED: 'error.backend.updateCheckFailed',
   DATAOMNI_DIRECTORY_MISSING: 'error.backend.directoryMissing',
   DATAOMNI_FILE_WRITE_FAILED: 'error.backend.fileWriteFailed',
   DATAOMNI_FILE_READ_FAILED: 'error.backend.fileReadFailed',

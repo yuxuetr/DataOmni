@@ -79,6 +79,8 @@ pub fn run() {
       get_connections,
       diagnostics,
       reveal_log_file,
+      latest_release,
+      open_release_page,
       export_connections,
       import_connections,
       test_connection,

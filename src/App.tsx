@@ -12,6 +12,7 @@ import { planCloseOthers } from './utils/closeOtherTabs';
 import { PanelLeftOpen } from 'lucide-react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { RenderErrorBoundary } from './components/RenderErrorBoundary';
+import { UpdateNotice } from './components/UpdateNotice';
 import { Sidebar } from './components/Sidebar';
 import { TaskCenter } from './components/TaskCenter';
 import { SqlWorkbench } from './components/SqlWorkbench';
@@ -1035,6 +1036,7 @@ function App() {
             closedTabCount={closedTabs.length}
           />
         )}
+        <UpdateNotice />
         {/* 打开文件失败、从命令面板连接失败都报在标签栏底下：动作不是从某个标签里发起的，
             提示不该挤进某个标签的内容里。命令面板那一路此前没人渲染它的错误，失败时什么也不说 */}
         {(fileError ?? connectError) && (

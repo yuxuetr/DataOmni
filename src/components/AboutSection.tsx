@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useLanguageStore } from '../stores/languageStore';
 import { describeError } from '../utils/describeError';
 import { diagnosticsReport, loadDiagnostics, type Diagnostics } from '../utils/diagnostics';
+import { loadUpdateCheck, saveUpdateCheck } from '../utils/updateCheck';
 
 const BUTTON_CLASS =
   'rounded-control border border-line-strong bg-surface px-2.5 py-1 text-sm text-fg hover:bg-surface-hover disabled:opacity-50';
@@ -18,6 +19,7 @@ export function AboutSection() {
   const [info, setInfo] = useState<Diagnostics | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checkUpdates, setCheckUpdates] = useState(() => loadUpdateCheck().enabled);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,6 +55,22 @@ export function AboutSection() {
       <p className="mt-3 px-2 text-sm text-fg">
         {info ? `DataOmni ${info.app_version}` : 'DataOmni'}
       </p>
+      <label className="mt-2 flex items-center justify-between gap-3 rounded-control px-2 py-1.5 hover:bg-surface-hover">
+        <span className="min-w-0">
+          <span className="block text-sm text-fg">{t('settings.about.checkUpdates')}</span>
+          <span className="block text-xs text-fg-subtle">{t('settings.about.checkUpdatesNote')}</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={checkUpdates}
+          onChange={(event) => {
+            const enabled = event.target.checked;
+            saveUpdateCheck({ ...loadUpdateCheck(), enabled });
+            setCheckUpdates(enabled);
+          }}
+          className="shrink-0"
+        />
+      </label>
       {info?.log_file && (
         <p className="mt-1 select-text break-all px-2 font-mono text-xs text-fg-subtle">{info.log_file}</p>
       )}
