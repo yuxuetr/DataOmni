@@ -9,6 +9,7 @@ import {
 import { isUsablePort } from '../utils/connectionPort';
 import { describeError } from '../utils/describeError';
 import { translateNow } from './languageStore';
+import { useAppStore } from './appStore';
 
 export {
   DatabaseType,
@@ -257,6 +258,19 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       
       // 重新加载连接列表
       await get().loadConnections();
+      // 正连着的就是这一条：名字与环境当场生效。工作台拿的是连上时那份配置，不换的话改成
+      // 生产环境后徽标变了，写语句却照旧按开发环境的门槛不问就跑。主机、口令这些连接参数
+      // 不换——池子还连着原来那一个，等重连
+      const saved = get().connections.find((candidate) => candidate.id === id);
+      const { activeConnection } = useAppStore.getState();
+      if (saved && activeConnection?.config.id === id) {
+        useAppStore.setState({
+          activeConnection: {
+            ...activeConnection,
+            config: { ...activeConnection.config, name: saved.name, environment: saved.environment }
+          }
+        });
+      }
       set({ isLoading: false });
     } catch (error) {
       console.error('更新连接失败:', error);

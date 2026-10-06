@@ -18,6 +18,7 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 
 const { useConnectionStore } = await import('./connectionStore');
 const { useQueryStore } = await import('./queryStore');
+const { useAppStore } = await import('./appStore');
 
 const LIVE = 'mysql://root@127.0.0.1:3306/app';
 const CONFIG = { db_type: 'mysql', port: 3306 } as never;
@@ -75,5 +76,40 @@ describe('读连接列表', () => {
     invokeMock.mockRejectedValue('connection refused');
     await useConnectionStore.getState().testConnection(CONFIG).catch(() => undefined);
     expect(useConnectionStore.getState().loadError).toBeNull();
+  });
+});
+
+/**
+ * 正连着的那一条在表单里改成生产环境：徽标立刻变了，工作台拿的却还是连上时那份配置，
+ * 写语句照开发环境的门槛不问就跑（0.4.177 上 `UPDATE … WHERE` 直接执行）。
+ */
+describe('改正连着的连接', () => {
+  const LIVE_PROFILE = {
+    id: 'p1', name: 'shop', db_type: 'postgresql', host: 'db1', port: 5432,
+    environment: 'development'
+  } as never;
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    useAppStore.setState({ activeConnection: { config: LIVE_PROFILE, connectionString: LIVE } });
+  });
+
+  it('名字与环境当场生效；连接参数等重连再换', async () => {
+    const saved = { ...(LIVE_PROFILE as object), name: 'shop-prod', environment: 'production', host: 'db2' };
+    invokeMock.mockImplementation(async (command: string) => (command === 'get_connections' ? [saved] : undefined));
+    await useConnectionStore.getState().updateConnection('p1', saved as never);
+    const active = useAppStore.getState().activeConnection;
+    expect(active?.config.environment).toBe('production');
+    expect(active?.config.name).toBe('shop-prod');
+    // 池子还是连着 db1 的那一个，页头不能说成 db2
+    expect(active?.config.host).toBe('db1');
+    expect(active?.connectionString).toBe(LIVE);
+  });
+
+  it('改的是别的连接：正连着的不动', async () => {
+    const other = { id: 'p2', name: 'other', environment: 'production' };
+    invokeMock.mockImplementation(async (command: string) => (command === 'get_connections' ? [other] : undefined));
+    await useConnectionStore.getState().updateConnection('p2', other as never);
+    expect(useAppStore.getState().activeConnection?.config.environment).toBe('development');
   });
 });
