@@ -445,6 +445,9 @@ export default function TableDataViewer({
     
     setLoading(true);
     setError(null);
+    // 「已提交 N 项」只说刚才那一次；翻页、排序、改完结构再读，它还挂着就像又提交了一次。
+    // 提交本身是先重读、再写这句，不受影响
+    setCommitNotice(null);
     
     try {
         const tableReference = quoteQualifiedSqlIdentifier(
@@ -816,6 +819,7 @@ export default function TableDataViewer({
   // 处理标签页切换
   const handleTabChange = (tabId: TabType) => {
     setActiveTab(tabId);
+    setCommitNotice(null);
     
     // 根据标签页类型加载相应数据
     if (tabId === 'schema' && !tableSchema) {

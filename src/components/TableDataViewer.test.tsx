@@ -143,4 +143,25 @@ describe('TableDataViewer（ClickHouse）', () => {
     const dataQueries = readQuery.mock.calls.map(([sql]) => sql as string).filter((sql) => !sql.startsWith('SELECT COUNT(*)'));
     expect(dataQueries[dataQueries.length - 1]).not.toContain('ORDER BY `note`');
   });
+
+  // 回归时看到的：「已提交 1 项」在翻页、排序、改完结构之后还挂着，像是刚又提交了一次
+  it('「已提交」只说刚才那一次：之后重读了表就收起', async () => {
+    await act(async () => {
+      root.render(<TableDataViewer connection={connection} tableName="t" schema="db" initialTab="data" />);
+    });
+    await act(async () => {
+      byTitle('delete').click();
+    });
+    const commit = [...container.querySelectorAll('button')].find((button) => button.textContent === 'Commit 1');
+    if (!commit) throw new Error('没有提交按钮');
+    await act(async () => {
+      commit.click();
+    });
+    expect(container.textContent).toContain('Committed 1 change.');
+
+    await act(async () => {
+      byTitle('note: click to sort ascending').click();
+    });
+    expect(container.textContent).not.toContain('Committed 1 change.');
+  });
 });
