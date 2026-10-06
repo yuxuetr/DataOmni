@@ -13,7 +13,7 @@ Rust 后端在 `src-tauri/`，前端在 `src/`。
 | 想知道 | 看哪里 |
 | --- | --- |
 | 还没做完的与接下来做什么 | `TODOs.md`（活文档；只留未完成项与规划，做完的记录写在条目下） |
-| 已做完的为什么这么选、判据与反向验证记录 | `docs/archive/TODOs-2026-09-27.md`（2026-09-27 之前的完整原文；本文件与代码注释里「TODOs 4.2」这类章节号指这里） |
+| 已做完的为什么这么选、判据与反向验证记录 | `docs/archive/TODOs-2026-10-06.md`（到 v0.5.1；代码里「TODOs A6b / B2b / P0-P3 无阻塞级缺陷」指这里）与 `docs/archive/TODOs-2026-09-27.md`（更早；「TODOs 4.2」这类章节号指这里） |
 | 对外的能力说明 | `README.md` |
 | Tauri 命令清单 | `src-tauri/src/lib.rs` 的 `invoke_handler` |
 | 立项时的设计意图 | `rfcs/design.md`（2025-06，**已不跟代码走**，开头有说明） |
