@@ -8,6 +8,7 @@
   "permissions": [
     "core:default",
     "core:window:allow-destroy",
+    "core:webview:allow-set-webview-zoom",
     "opener:default",
     "sql:default",
     "sql:allow-load",

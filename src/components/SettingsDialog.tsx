@@ -7,6 +7,7 @@ import {
 } from '../utils/confirmationPolicy';
 import { useSettingsStore } from '../stores/settingsStore';
 import { GRID_DENSITIES, type GridDensity } from '../utils/gridColumns';
+import { CODE_FONT_SIZES, UI_ZOOM_LEVELS } from '../utils/fontSettings';
 import { useHistoryStore } from '../stores/historyStore';
 import {
   RETENTION_DAY_CHOICES,
@@ -17,6 +18,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import { AiSettingsSection } from './AiSettingsSection';
 import type { TranslationKey } from '../i18n/translate';
 import { isImeKeyEvent } from '../utils/shortcuts';
+import { PLAIN_TEXT_INPUT } from './FormControls';
 
 interface SettingsDialogProps {
   onClose: () => void;
@@ -35,6 +37,8 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
   const confirmationPolicy = useSettingsStore((state) => state.confirmationPolicy);
   const gridDensity = useSettingsStore((state) => state.gridDensity);
   const setGridDensity = useSettingsStore((state) => state.setGridDensity);
+  const fonts = useSettingsStore((state) => state.fonts);
+  const setFonts = useSettingsStore((state) => state.setFonts);
   const setConfirmationThreshold = useSettingsStore((state) => state.setConfirmationThreshold);
   const retention = useHistoryStore((state) => state.retention);
   const setRetention = useHistoryStore((state) => state.setRetention);
@@ -152,6 +156,62 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                   <option key={density} value={density}>
                     {t(`columns.density.${density}` as TranslationKey)}
                   </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <p className="mt-3 text-xs leading-relaxed text-fg-muted">
+            {t('settings.fonts.description')}
+          </p>
+
+          <div className="mt-3 space-y-1.5">
+            <label className="flex items-center justify-between gap-3 rounded-control px-2 py-1.5 hover:bg-surface-hover">
+              <span className="shrink-0 text-sm text-fg">{t('settings.fonts.uiFont')}</span>
+              <input
+                type="text"
+                value={fonts.uiFont}
+                onChange={(event) => setFonts({ uiFont: event.target.value })}
+                placeholder={t('settings.fonts.uiFontPlaceholder')}
+                {...PLAIN_TEXT_INPUT}
+                className="w-64 min-w-0 rounded-control border border-line-strong bg-surface px-2 py-1 text-sm text-fg placeholder:text-fg-subtle"
+              />
+            </label>
+
+            <label className="flex items-center justify-between gap-3 rounded-control px-2 py-1.5 hover:bg-surface-hover">
+              <span className="shrink-0 text-sm text-fg">{t('settings.fonts.codeFont')}</span>
+              <input
+                type="text"
+                value={fonts.codeFont}
+                onChange={(event) => setFonts({ codeFont: event.target.value })}
+                placeholder={t('settings.fonts.codeFontPlaceholder')}
+                {...PLAIN_TEXT_INPUT}
+                className="w-64 min-w-0 rounded-control border border-line-strong bg-surface px-2 py-1 text-sm text-fg placeholder:text-fg-subtle"
+              />
+            </label>
+
+            <label className="flex items-center justify-between gap-3 rounded-control px-2 py-1.5 hover:bg-surface-hover">
+              <span className="text-sm text-fg">{t('settings.fonts.codeFontSize')}</span>
+              <select
+                value={fonts.codeFontSize}
+                onChange={(event) => setFonts({ codeFontSize: Number(event.target.value) })}
+                className="shrink-0 rounded-control border border-line-strong bg-surface px-2 py-1 text-sm text-fg"
+              >
+                {CODE_FONT_SIZES.map((size) => (
+                  <option key={size} value={size}>{size}px</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="flex items-center justify-between gap-3 rounded-control px-2 py-1.5 hover:bg-surface-hover">
+              <span className="text-sm text-fg">{t('settings.fonts.uiZoom')}</span>
+              <select
+                value={fonts.uiZoom}
+                onChange={(event) => setFonts({ uiZoom: Number(event.target.value) })}
+                className="shrink-0 rounded-control border border-line-strong bg-surface px-2 py-1 text-sm text-fg"
+              >
+                {UI_ZOOM_LEVELS.map((zoom) => (
+                  <option key={zoom} value={zoom}>{Math.round(zoom * 100)}%</option>
                 ))}
               </select>
             </label>

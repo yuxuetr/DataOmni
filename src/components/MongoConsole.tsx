@@ -220,7 +220,6 @@ export function MongoConsole({ connection }: { connection: ConnectionProfile }) 
               searchKeymap: true
             }}
             className="text-sm"
-            style={{ fontSize: '14px' }}
             height="200px"
           />
         </div>

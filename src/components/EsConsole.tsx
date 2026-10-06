@@ -320,7 +320,6 @@ export function EsConsole({ connection }: EsConsoleProps) {
               searchKeymap: true
             }}
             className="text-sm"
-            style={{ fontSize: '14px' }}
             height={`${editorPanel.size}px`}
           />
         </div>

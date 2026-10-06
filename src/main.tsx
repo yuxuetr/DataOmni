@@ -8,6 +8,7 @@ import { restoreWorkspaceFromSnapshot } from "./utils/workspacePersistence";
 import { initializeTheme } from "./utils/theme";
 import { initializeLanguage } from "./i18n/language";
 import { installNativeContextMenuGuard } from "./utils/nativeContextMenu";
+import { applyFontSettings, applyUiZoom, loadFontSettings } from "./utils/fontSettings";
 
 installConsoleRedaction();
 if (import.meta.env.PROD) {
@@ -17,6 +18,12 @@ if (import.meta.env.PROD) {
 initializeTheme();
 // 同理：先把 <html lang> 写好，字体回落与断行规则从第一帧就对
 initializeLanguage();
+// 字体与字号同样首帧前落地；缩放是 WebView 的，只有不是 100% 时才去设
+const fontSettings = loadFontSettings();
+applyFontSettings(fontSettings);
+if (fontSettings.uiZoom !== 1) {
+  void applyUiZoom(fontSettings.uiZoom);
+}
 // 必须在首次渲染前恢复，否则 App 的保存 effect 会先写出一份空快照
 restoreWorkspaceFromSnapshot();
 

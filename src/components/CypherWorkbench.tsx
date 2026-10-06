@@ -543,7 +543,6 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
               searchKeymap: true
             }}
             className="text-sm"
-            style={{ fontSize: '14px' }}
             height={`${editorPanel.size}px`}
           />
         </div>

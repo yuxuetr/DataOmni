@@ -194,6 +194,13 @@ body {
   color: var(--dm-fg);
 }
 
+/* 设置里的界面字体与代码字体、字号，由 utils/fontSettings.ts 写到 <html> 上。
+   没设时 --dm-ui-font 不存在，落回 Tailwind 的默认那一组 */
+html {
+  --dm-code-font-size: 14px;
+  font-family: var(--dm-ui-font, var(--default-font-family));
+}
+
 /* HighlightedCode 的片段，见 utils/codeHighlight.ts */
 .code-keyword { color: var(--dm-code-keyword); }
 .code-type { color: var(--dm-code-type); }

@@ -12,6 +12,14 @@ import { EditorView } from '@codemirror/view';
  * 同优先级时谁的样式表在后面谁赢，而 oneDark 在后面。多一个类就不用赌顺序。
  */
 export const appEditorTheme = EditorView.theme({
+  // 设置里的代码字体与字号（utils/fontSettings.ts）。没设字体时与 CodeMirror 自带的一样是 monospace
+  '&.cm-editor': {
+    fontSize: 'var(--dm-code-font-size)'
+  },
+  '&.cm-editor .cm-scroller': {
+    fontFamily: 'var(--dm-code-font, monospace)'
+  },
+
   // 补全弹窗的选中项。oneDark 给的背景是 #2c313a，压在 #21252b 的弹窗上
   // 几乎分辨不出来——而这个列表是用上下键翻的，看不见光标就不知道回车会
   // 插入哪一条。
