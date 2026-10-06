@@ -529,6 +529,16 @@ bun install
 
 ### 未发布
 
+（暂无）
+
+### v0.5.1（2026-10-06）
+
+安装包第一次由 GitHub Actions 打：macOS（Apple Silicon）、Linux（x86_64）、Windows（x86_64，还没在 Windows 上装过），均未签名，
+首次打开怎么放行见上文「安装方式」。
+
+- 🐛 七十多处缺陷修正，记录见 TODOs「P0-P3 无阻塞级缺陷」，其中会悄悄出错的几处：SQL Server 结果里同名的列互相覆盖；
+  风险判定把整张换掉表、清空一列当成非破坏性；块注释、`#` 与反斜杠没按方言读；CSV 导入往自增 / serial 列写 id 不提醒序列不跟着走；
+  SQLite 的 rowid 别名写了 NOT NULL 就被当成必填
 - 📦 GitHub Actions 打三个平台的安装包（macOS Apple Silicon、Linux x86_64、Windows x86_64），推 tag 时放进草稿 Release；
   第一次有 Windows 安装包（还没在 Windows 上装过）
 
