@@ -992,6 +992,10 @@
     取消后导入照常跑完 400000 行，跑完再关不问，选「中断并关闭」则退出。
     同一轮看过、没问题的：事务只有当前连接一份会话，切换连接与关窗口都经同一道询问；导出与备份先写 `.part` 再改名，中断不会留下假文件
     （`.part` 本身会留着）。数据字典的 Markdown 转义了 `|` 与换行。
+  - 2026-10-06 SQL Server 结果里同名的列互相覆盖（`services/sql_server.rs`；cu 上的 SQL Server 2022）：**修了一处**（`bc928a1`）。
+    结果行按列名做键，别的方言都经 `number_duplicate_columns` 把第二个 `id` 叫成 `id 2`，SQL Server 只给没名字的列编了号：
+    `SELECT a.id, b.id` 两列都显示 `b.id` 的值，没有任何提示（真库用例先红：`i` 读出 7 而不是 42）。现在同一条规矩。
+    `sql_server_smoke.rs` 30 条全过，`bun run check` 通过。纯后端，界面没有在打包版上看——列名带编号的显示与 Oracle / DuckDB 是同一条路径。
   - 2026-10-05 CSV 导入往 serial 一类的列写 id 不提醒（`utils/csvImport.ts`；rpm 0.4.174 / 0.4.175，本机 Docker 的 postgres:16-alpine）：
     **修了一处**（`f45f52f`）。`32711d0` 只对 `BY DEFAULT` 的 identity 提醒「序列不跟着走」，而更常见的 PostgreSQL `serial`（默认值
     `nextval(…)`）是同一回事、却一声不吭：带着 1、5 导进去之后再插一行，报 `Key (id)=(1) already exists`（打包版里真导过）。现在默认值
