@@ -68,6 +68,17 @@ describe('单元格比较', () => {
     expect(compareResultValues(5, bigint('10'))).toBe(-1);
   });
 
+  it('写成指数的数字与 bigint 混排也按数值比较', () => {
+    // SQLite 的 NUMERIC / DECIMAL 列里整数是 bigint、实数是 JSON 数；
+    // 小于 1e-6 或不小于 1e21 的数 JS 写成 5e-7 / 1e+21，解析不了就整个退回了文本比较
+    const sorted = [
+      bigint('3'), 5e-7, bigint('0'), 1e21, -2.5e-8, bigint('999999999999999999999999'), bigint('-1')
+    ].sort(compareResultValues);
+    expect(sorted).toEqual([
+      bigint('-1'), -2.5e-8, bigint('0'), 5e-7, bigint('3'), 1e21, bigint('999999999999999999999999')
+    ]);
+  });
+
   it('无穷与 NaN 按数值排：负无穷最小，NaN 比正无穷还大（同 PostgreSQL）', () => {
     // 浮点列里它们是字符串（JSON 没有这几个数），各家拼法不同
     const sorted = (values: SerializedResultValue[]) => [...values].sort(compareResultValues);

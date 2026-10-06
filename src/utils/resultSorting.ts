@@ -133,7 +133,7 @@ function specialRank(text: string): number {
 
 function numericText(value: SerializedResultValue): string | null {
   if (typeof value === 'number') {
-    return String(value);
+    return plainDecimal(value);
   }
   if (typeof value === 'string' && SPECIAL_NUMBER.test(value)) {
     return value;
@@ -145,6 +145,28 @@ function numericText(value: SerializedResultValue): string | null {
     return durationSeconds(value.value);
   }
   return null;
+}
+
+/**
+ * 不带指数的十进制写法。小于 1e-6 或不小于 1e21 的数 JS 写成 `5e-7` / `1e+21`，
+ * 和 bigint 比时 `compareDecimalStrings` 解析不了——SQLite 的 NUMERIC 列里整数是 bigint、实数是 JSON 数
+ */
+function plainDecimal(value: number): string {
+  const text = String(value);
+  const match = /^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/.exec(text);
+  if (!match) {
+    return text;
+  }
+  const [, sign, integer, fraction = '', exponent] = match;
+  const digits = integer + fraction;
+  const point = integer.length + Number(exponent);
+  if (point <= 0) {
+    return `${sign}0.${'0'.repeat(-point)}${digits}`;
+  }
+  if (point >= digits.length) {
+    return `${sign}${digits}${'0'.repeat(point - digits.length)}`;
+  }
+  return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
 }
 
 /**
