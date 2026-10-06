@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatResultValue,
   formatResultValueOneLine,
+  editStartValue,
   isNumericResultValue,
   unwrapResultValue
 } from './resultValues';
@@ -90,5 +91,23 @@ describe('数值判定', () => {
   it('NULL 和布尔不是数值', () => {
     expect(isNumericResultValue(null)).toBe(false);
     expect(isNumericResultValue(true)).toBe(false);
+  });
+});
+
+describe('编辑的起点', () => {
+  it('二进制列的值按文本送来时，起点是这段文本的字节', () => {
+    // MySQL 的 VARBINARY 里恰好是可打印 UTF-8 的，后端按文本送（分不清 `_bin` 排序规则的文本列）。
+    // 放进十六进制框：`A` 报「要偶数位」，`cafe` 不报错，却被当成 0xCAFE 写回去
+    expect(editStartValue('A', 'binary')).toBe('41');
+    expect(editStartValue('cafe', 'binary')).toBe('63616665');
+    expect(editStartValue('苹', 'binary')).toBe('e88bb9');
+    expect(editStartValue({ type: 'binary', value: '00ff10' }, 'binary')).toBe('00ff10');
+    expect(editStartValue(null, 'binary')).toBeNull();
+  });
+
+  it('别的列照旧拆包', () => {
+    expect(editStartValue('cafe', 'text')).toBe('cafe');
+    expect(editStartValue({ type: 'bigint', value: '9223372036854775807' }, 'text')).toBe('9223372036854775807');
+    expect(editStartValue(3.5, 'text')).toBe(3.5);
   });
 });

@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { supportsFeature } from '../contracts/databaseSupport';
 import { useLanguageStore } from '../stores/languageStore';
 import { runReadQuery, useQueryStore } from '../stores/queryStore';
-import { isTaggedResultValue, unwrapResultValue } from '../utils/resultValues';
+import { editStartValue, isTaggedResultValue, unwrapResultValue } from '../utils/resultValues';
 import { describeError } from '../utils/describeError';
 import type { SerializedResultValue } from '../contracts/resultSet';
 import {
@@ -831,10 +831,14 @@ export default function TableDataViewer({
   const startEditRow = (rowIndex: number) => {
     // 编辑态一律用拆包后的原始值：主键原值要回到 WHERE 里，
     // 「是否被改过」的比较也要对着字面量做，tagged 对象两者都会破坏
+    // 二进制列按字节起步（`editStartValue`）；原值也用这一份，「没改过」才比得对
     const rowData = Object.fromEntries(
       Object.entries(tableData[rowIndex] ?? {}).map(([column, value]) => [
         column,
-        unwrapResultValue(value as SerializedResultValue)
+        editStartValue(
+          value as SerializedResultValue,
+          columnEditorKind(tableSchema?.columns.find((info) => info.name === column)?.data_type ?? '', dialect)
+        )
       ])
     );
     setEditState({

@@ -1,5 +1,5 @@
 import type { SerializedResultValue } from '../contracts/resultSet';
-import { prettyJson } from './columnEditors';
+import { prettyJson, type ColumnEditorKind } from './columnEditors';
 
 export function isTaggedResultValue(
   value: SerializedResultValue
@@ -39,6 +39,21 @@ export function unwrapResultValue(value: SerializedResultValue): string | number
     return null;
   }
   return isTaggedResultValue(value) ? value.value : value;
+}
+
+/**
+ * 编辑从什么值开始。二进制列多半送来 tagged 的十六进制，而 MySQL 的 BINARY / VARBINARY / BLOB 里恰好是
+ * 可打印 UTF-8 的按文本送（后端分不清 `_bin` 排序规则的文本列，见 `mysql_bytes_value`）。
+ * 原样放进十六进制框：`A` 报「要偶数位」，`cafe` 不报错，却被当成 0xCAFE 写回去。起点换成这段文本的字节
+ */
+export function editStartValue(
+  value: SerializedResultValue,
+  editor: ColumnEditorKind
+): string | number | boolean | null {
+  if (editor === 'binary' && typeof value === 'string') {
+    return [...new TextEncoder().encode(value)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  }
+  return unwrapResultValue(value);
 }
 
 /**

@@ -19,7 +19,8 @@ import {
 } from '../utils/resultTableHeight';
 import type { QueryResult } from '../contracts/query';
 import { selectSqlDialect, useQueryStore } from '../stores/queryStore';
-import { unwrapResultValue } from '../utils/resultValues';
+import { editStartValue } from '../utils/resultValues';
+import { columnEditorKind } from '../utils/columnEditors';
 import type { SerializedResultValue } from '../contracts/resultSet';
 import { cellInputFromValue, type CellInput } from '../utils/cellInput';
 import {
@@ -204,13 +205,17 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   })();
   
   /**
-   * 列的声明类型。优先用驱动给的 `database_type`——它是这一次查询真正返回的
-   * 类型；目录里的列信息只有在认得出目标表时才有，而且列清单可能对不上
+   * 挑编辑器用的列类型。目录里的声明类型优先：驱动给的 `database_type` 对 MySQL `_bin` 排序规则的
+   * 文本列报 VARBINARY，照它挑就给 varchar 配了十六进制框。能编辑时一定认出了目标表，投影又都是
+   * 裸列名，目录列按名字找得到；找不到才退回驱动的类型
    */
   const columnType = (index: number): string =>
-    result.column_metadata?.[index]?.database_type
-      ?? result.tableColumns?.find(column => column.name === result.columns[index])?.data_type
+    result.tableColumns?.find(column => column.name === result.columns[index])?.data_type
+      ?? result.column_metadata?.[index]?.database_type
       ?? '';
+  /** 编辑从什么值开始：二进制列按字节（`editStartValue`）。排队的原值也用这一份，「没改过」才比得对 */
+  const editStart = (index: number, value: SerializedResultValue) =>
+    editStartValue(value, columnEditorKind(columnType(index), dialect));
 
   const ACTION_COLUMN_WIDTH = 72;
   // 列宽按当前页的内容估算，可拖动覆盖
@@ -228,7 +233,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
     if (!canEdit || generatedColumns.has(result.columns[columnIndex])) return;
     setEditingCell({ rowIndex, columnIndex });
     // NULL 回到 `null` 档：否则打开编辑框再关掉就把 NULL 变成了空字符串
-    setEditValue(cellInputFromValue(unwrapResultValue(currentValue)));
+    setEditValue(cellInputFromValue(editStart(columnIndex, currentValue)));
   };
   
   const cancelEditing = () => {
@@ -247,7 +252,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
     }
     const wrapped = Object.fromEntries(result.columns.map((column, index) => [column, row[index]]));
     const original = Object.fromEntries(
-      result.columns.map((column, index) => [column, unwrapResultValue(row[index])])
+      result.columns.map((column, index) => [column, editStart(index, row[index])])
     );
     // 键值从带包装的原值取：二进制键要按字节写进 WHERE（`rowKeyFromColumns`）
     return { key: rowKeyFromColumns(editability.keyColumns, wrapped), original };
