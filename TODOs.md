@@ -352,6 +352,9 @@
   - 2026-10-06 v0.5.1 在 `fedcfa2` 重新打 tag（原 tag 在回归修复之前）：Release 工作流三平台与建草稿全绿，
     草稿里五个包（dmg、deb、rpm、msi、exe）。草稿未发布。本机 Parallels 有 Windows 11 ARM 虚拟机，
     但里面开着别的应用的交易界面，没在上面做 GUI 自动化，Windows 安装冒烟仍待做。
+  - Windows ARM64 原生包：**当前版本不做**（2026-10-06 定）。初版先只出 x64，ARM 上的 Windows 11 靠系统转译跑 x64 包；
+    Oracle 也没有 Windows ARM64 的 Instant Client，原生 ARM64 版连不了 Oracle。
+    重估条件：有 ARM Windows 用户反馈转译下慢或装不上。
 
 ### v1.0：稳定桌面客户端
 
