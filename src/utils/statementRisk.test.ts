@@ -285,3 +285,28 @@ describe('方括号里的关键字', () => {
     expect(classifyStatementRisk('DELETE FROM [t] WHERE [id] = 1')).toBe('scoped-write');
   });
 });
+
+// 回归时看到的：SQL Server 上 `IF OBJECT_ID(…) IS NOT NULL DROP TABLE` 删了表、一声没问——
+// 第一个词是 IF，落到兜底的有界写入
+describe('T-SQL 的 IF / ELSE / WHILE', () => {
+  it('按条件后面那条语句定级', () => {
+    expect(classifyBatchRisk("IF OBJECT_ID('dbo.t') IS NOT NULL DROP TABLE dbo.t", 'sqlserver')).toBe('destructive');
+    expect(classifyBatchRisk('IF EXISTS (SELECT 1 FROM t WHERE id = 1) DELETE FROM t', 'sqlserver')).toBe('bulk-write');
+    expect(classifyBatchRisk('IF @x = 1 DELETE FROM t WHERE id = 1', 'sqlserver')).toBe('scoped-write');
+    expect(classifyBatchRisk('WHILE @@ROWCOUNT > 0 DELETE TOP (1000) FROM t', 'sqlserver')).toBe('bulk-write');
+  });
+
+  it('两个分支取更危险的那个；BEGIN … END 里的也算', () => {
+    expect(classifyBatchRisk('IF @x = 1 SELECT 1 ELSE TRUNCATE TABLE t', 'sqlserver')).toBe('destructive');
+    expect(classifyBatchRisk('IF @x = 1 BEGIN UPDATE t SET a = 1; END', 'sqlserver')).toBe('bulk-write');
+    // ELSE 分支里的 WHERE 限制不了前一个分支
+    expect(classifyBatchRisk('IF @x = 1 DELETE FROM a ELSE DELETE FROM b WHERE id = 1', 'sqlserver')).toBe('bulk-write');
+  });
+
+  // 反向：条件里的子查询不是要执行的写语句，只建不删的照旧是有界写入
+  it('条件里只是查询、要做的只是建表时不升级', () => {
+    expect(classifyBatchRisk("IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 't') CREATE TABLE t (id INT)", 'sqlserver'))
+      .toBe('scoped-write');
+    expect(classifyBatchRisk('IF @x = 1 SELECT 1', 'sqlserver')).toBe('scoped-write');
+  });
+});

@@ -38,6 +38,11 @@ const EXPLAINED_VERBS = new Set([
   'CREATE', 'EXECUTE'
 ]);
 
+/** IF / WHILE / ELSE 后面会被执行的语句的开头 */
+const CONTROLLED_VERBS = new Set([
+  'DROP', 'TRUNCATE', 'DELETE', 'UPDATE', 'INSERT', 'MERGE', 'ALTER', 'SELECT'
+]);
+
 function riskOfWords(words: readonly SqlWord[]): StatementRisk {
   const keywords = words.filter((word) => word.group === 0).map((word) => word.word);
   // 括号开头的只能是查询，`(SELECT 1) UNION (SELECT 2)` 的顶层第一个词是 UNION，
@@ -58,6 +63,18 @@ function riskOfWords(words: readonly SqlWord[]): StatementRisk {
       (word, index) => index > 0 && word.group === 0 && EXPLAINED_VERBS.has(word.word)
     );
     return verb < 0 ? 'read' : riskOfWords(words.slice(verb));
+  }
+
+  // T-SQL 的流程控制：IF / WHILE 后面先是条件，再是此刻就执行的语句（`IF OBJECT_ID(…) IS NOT NULL
+  // DROP TABLE t`）。条件里的子查询在括号里，不算；每条到下一个 ELSE 为止，两个分支取更危险的
+  if (first === 'IF' || first === 'WHILE' || first === 'ELSE') {
+    return words.reduce<StatementRisk>((risk, word, index) => {
+      if (index === 0 || word.group !== 0 || !CONTROLLED_VERBS.has(word.word)) {
+        return risk;
+      }
+      const elseAt = words.findIndex((other, at) => at > index && other.group === 0 && other.word === 'ELSE');
+      return worse(risk, riskOfWords(words.slice(index, elseAt < 0 ? undefined : elseAt)));
+    }, 'scoped-write');
   }
 
   if (first === 'DROP' || first === 'TRUNCATE' || replacesTable(keywords)) {
