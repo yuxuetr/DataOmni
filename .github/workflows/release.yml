@@ -140,7 +140,9 @@ jobs:
 
           各版本的改动见 README「更新日志」。
           EOF
-          gh release create "$GITHUB_REF_NAME" packages/* \
+          # 产物按 dmg/、deb/… 分了子目录，传文件不传目录
+          mapfile -t files < <(find packages -type f)
+          gh release create "$GITHUB_REF_NAME" "${files[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --draft \
             --title "DataOmni $GITHUB_REF_NAME" \

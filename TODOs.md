@@ -292,6 +292,8 @@
       签的 Instant Client 被 dlopen 拒绝（本机小程序实测，关掉即可加载）。两件事都有门，本机反向验过（旧包、带 runtime 的二进制各红一次）。
     - `fetch-oracle-client.sh` / `install-macos.sh` 在 macOS 自带的 bash 3.2（UTF-8 locale）下把 `$platform（` 的全角括号读进变量名，
       `set -u` 时失败；本机用 Homebrew bash 撞不上，runner 撞上了（`88e02d8`）。
+    - v0.5.1 的 tag 跑出来三个包 job 全绿，建 Release 那步失败：合并下载的产物按 `dmg/`、`deb/` 分着子目录，`packages/*` 把目录当文件传
+      （`read packages/nsis: is a directory`），留下一个空草稿。流程改成传 `find -type f`；v0.5.1 的五个包从那次运行的 Artifacts 手动传进草稿。
     - 没验到：在 Windows 上装（仍是清单 5.4）；Gatekeeper 的「仍要打开」没有真点（会改本机安全设置），只看了 `spctl` 的判定；
       CI 版的 Oracle 没真连过，加载性由 runtime 标志的门与 dlopen 实验推出。
   - Linux（2026-09-28，本机 Docker 以 amd64 模拟构建与运行，包与发版的同一份配置，带 Instant Client）：
