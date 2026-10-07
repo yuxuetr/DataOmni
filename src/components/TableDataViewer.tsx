@@ -1814,6 +1814,8 @@ export default function TableDataViewer({
                           onClick={() => handlePageChange(1)}
                           disabled={currentPage === 1}
                           className="p-1 rounded-control hover:bg-surface-active disabled:opacity-50"
+                          aria-label={t('result.firstPage')}
+                          title={t('result.firstPage')}
                         >
                           <ChevronsLeft size={16} />
                         </button>
@@ -1821,6 +1823,8 @@ export default function TableDataViewer({
                           onClick={() => handlePageChange(currentPage - 1)}
                           disabled={currentPage === 1}
                           className="p-1 rounded-control hover:bg-surface-active disabled:opacity-50"
+                          aria-label={t('result.previousPage')}
+                          title={t('result.previousPage')}
                         >
                           <ChevronLeft size={16} />
                         </button>
@@ -1831,6 +1835,8 @@ export default function TableDataViewer({
                           onClick={() => handlePageChange(currentPage + 1)}
                           disabled={currentPage === totalPages}
                           className="p-1 rounded-control hover:bg-surface-active disabled:opacity-50"
+                          aria-label={t('result.nextPage')}
+                          title={t('result.nextPage')}
                         >
                           <ChevronRight size={16} />
                         </button>
@@ -1838,6 +1844,8 @@ export default function TableDataViewer({
                           onClick={() => handlePageChange(totalPages)}
                           disabled={currentPage === totalPages}
                           className="p-1 rounded-control hover:bg-surface-active disabled:opacity-50"
+                          aria-label={t('result.lastPage')}
+                          title={t('result.lastPage')}
                         >
                           <ChevronsRight size={16} />
                         </button>

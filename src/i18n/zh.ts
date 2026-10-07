@@ -423,8 +423,10 @@ export const zh = {
   'result.range': '显示 {from}-{to} 行，共 {total} 行',
   'result.pageSizeOption': '{size} 条/页',
   'result.pageOf': '第 {page} 页，共 {total} 页',
+  'result.firstPage': '第一页',
   'result.previousPage': '上一页',
   'result.nextPage': '下一页',
+  'result.lastPage': '最后一页',
 
   // 导出
   // --- 后台任务 ---

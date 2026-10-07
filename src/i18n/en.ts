@@ -406,8 +406,10 @@ export const en: Translations = {
   'result.range': 'Showing {from}-{to} of {total} rows',
   'result.pageSizeOption': '{size} / page',
   'result.pageOf': 'Page {page} of {total}',
+  'result.firstPage': 'First page',
   'result.previousPage': 'Previous page',
   'result.nextPage': 'Next page',
+  'result.lastPage': 'Last page',
 
   // --- Background tasks ---
   'app.closeWithTasks.title': 'Tasks are still running',
@@ -622,7 +624,7 @@ export const en: Translations = {
   'write.noAssignments': 'Nothing to write.',
   'write.clickhouseNoUpdateDefault': 'ClickHouse cannot set an existing value to "default": the right side of ALTER TABLE … UPDATE must be a value or an expression',
   'write.sqliteNoUpdateDefault': 'SQLite cannot restore a column default on UPDATE — it has no SET col = DEFAULT. Type a value instead, or choose the default when inserting a new row.',
-  'table.operation.delete': 'delete',
+  'table.operation.delete': 'Delete',
   'table.pickDate': 'Pick a date',
   'table.pickTime': 'Pick a time',
   'table.pickDateTime': 'Pick a date and time',

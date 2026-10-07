@@ -776,6 +776,8 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
                   onClick={() => void load(1, applied, pageSize)}
                   disabled={!range.hasPrevious || loading}
                   className="rounded-control p-1 hover:bg-surface-active disabled:opacity-50"
+                  aria-label={t('result.firstPage')}
+                  title={t('result.firstPage')}
                 >
                   <ChevronsLeft size={16} />
                 </button>
@@ -783,6 +785,8 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
                   onClick={() => void load(page - 1, applied, pageSize)}
                   disabled={!range.hasPrevious || loading}
                   className="rounded-control p-1 hover:bg-surface-active disabled:opacity-50"
+                  aria-label={t('result.previousPage')}
+                  title={t('result.previousPage')}
                 >
                   <ChevronLeft size={16} />
                 </button>
@@ -795,6 +799,8 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
                   onClick={() => void load(page + 1, applied, pageSize)}
                   disabled={!range.hasNext || loading}
                   className="rounded-control p-1 hover:bg-surface-active disabled:opacity-50"
+                  aria-label={t('result.nextPage')}
+                  title={t('result.nextPage')}
                 >
                   <ChevronRight size={16} />
                 </button>
@@ -804,6 +810,8 @@ export function MongoCollectionViewer({ database, collection, readOnly }: MongoC
                     onClick={() => void load(range.lastPage ?? 1, applied, pageSize)}
                     disabled={!range.hasNext || loading}
                     className="rounded-control p-1 hover:bg-surface-active disabled:opacity-50"
+                    aria-label={t('result.lastPage')}
+                    title={t('result.lastPage')}
                   >
                     <ChevronsRight size={16} />
                   </button>

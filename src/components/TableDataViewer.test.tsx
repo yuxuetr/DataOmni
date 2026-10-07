@@ -112,12 +112,25 @@ describe('TableDataViewer（ClickHouse）', () => {
       root.render(<TableDataViewer connection={connection} tableName="t" schema="db" initialTab="data" />);
     });
     await act(async () => {
-      byTitle('delete').click();
+      byTitle('Delete').click();
     });
 
     const [change] = Object.values(useTableEditStore.getState().changes).flat();
     expect(change?.kind).toBe('delete');
     expect(change && 'key' in change ? change.key.columns : null).toEqual(['id', 'note']);
+  });
+
+  // 打包版上看到的：四个翻页按钮只有图标，读屏与自动化都只拿到一个空名字
+  it('翻页按钮有名字', async () => {
+    readQuery.mockImplementation(async (sql: string) => (
+      sql.startsWith('SELECT COUNT(*)') ? [{ total: 120 }] : [{ id: 1, fs: 'a', note: 'x' }]
+    ));
+    await act(async () => {
+      root.render(<TableDataViewer connection={connection} tableName="t" schema="db" initialTab="data" />);
+    });
+
+    const labels = [...container.querySelectorAll('button[aria-label]')].map((button) => button.getAttribute('aria-label'));
+    expect(labels).toEqual(expect.arrayContaining(['First page', 'Previous page', 'Next page', 'Last page']));
   });
 
   // 打包版上撞到的：AggregateFunction 列点了排序，查询报错、行清空，表头跟着没了，
@@ -150,7 +163,7 @@ describe('TableDataViewer（ClickHouse）', () => {
       root.render(<TableDataViewer connection={connection} tableName="t" schema="db" initialTab="data" />);
     });
     await act(async () => {
-      byTitle('delete').click();
+      byTitle('Delete').click();
     });
     const commit = [...container.querySelectorAll('button')].find((button) => button.textContent === 'Commit 1');
     if (!commit) throw new Error('没有提交按钮');
