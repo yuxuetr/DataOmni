@@ -141,6 +141,23 @@ function createTabBase(
   };
 }
 
+/**
+ * 连上（或重连上）一条连接之后，要不要留在当前标签。
+ *
+ * 每条连接有一个固定的查询标签，连接就绪时注册它；注册会顺带切过去。重连也会走到这里——
+ * 换的只是连接串——于是人在「查询 5」里按了重连，回来却停在第一个查询标签上，接着敲的字
+ * 进了那里。连接的查询标签已经在、当前标签又属于这条连接时，什么都不用做
+ */
+export function keepsActiveTabOnConnect(
+  tabs: readonly WorkspaceTab[],
+  activeTabId: string | null,
+  profileId: string
+): boolean {
+  const active = tabs.find((tab) => tab.id === activeTabId);
+  return active?.binding.profileId === profileId
+    && tabs.some((tab) => tab.id === workspaceTabId(profileId, 'sql'));
+}
+
 export function createSqlWorkspaceTab(
   profileId: string,
   options: CreateSqlWorkspaceTabOptions = {}

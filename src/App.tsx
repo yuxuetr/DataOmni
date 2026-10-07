@@ -65,6 +65,7 @@ import {
   createAiDesignWorkspaceTab,
   createErDiagramWorkspaceTab,
   createSqlWorkspaceTab,
+  keepsActiveTabOnConnect,
   createTableWorkspaceTab,
   orderWorkspaceTabs,
   tabsShowingTable,
@@ -238,6 +239,10 @@ function App() {
     }
 
     const profileId = activeConnection.config.id;
+    const workspace = useWorkspaceStore.getState();
+    if (keepsActiveTabOnConnect(workspace.tabs, workspace.activeTabId, profileId)) {
+      return;
+    }
     registerTab(
       createSqlWorkspaceTab(profileId, {
         id: workspaceTabId(profileId, 'sql'),

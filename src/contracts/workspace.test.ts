@@ -4,6 +4,7 @@ import {
   createTableWorkspaceTab,
   markWorkspaceTabProfileDeleted,
   orderWorkspaceTabs,
+  keepsActiveTabOnConnect,
   tabsShowingTable,
   updateSqlWorkspaceTabDraft,
   workspaceTabId
@@ -148,5 +149,27 @@ describe('tabsShowingTable', () => {
     );
 
     expect(found.map((tab) => tab.id)).toEqual(['a', 'b']);
+  });
+});
+
+/**
+ * R7-mac 看到的：在「查询 5」里按「重新连接」，回来时停在第一个查询标签上——接着敲的字
+ * 进了那个标签，把它原来的草稿盖掉了。重连换的是连接串，不是连接
+ */
+describe('keepsActiveTabOnConnect', () => {
+  const sqlTab = createSqlWorkspaceTab('p1', { id: workspaceTabId('p1', 'sql'), now });
+  const other = createSqlWorkspaceTab('p1', { id: 'query-5', now });
+  const elsewhere = createSqlWorkspaceTab('p2', { id: 'p2-query', now });
+
+  it('停在这条连接的标签上时不动', () => {
+    expect(keepsActiveTabOnConnect([sqlTab, other], 'query-5', 'p1')).toBe(true);
+  });
+
+  it('连接自己的查询标签还没有时要建（并切过去）', () => {
+    expect(keepsActiveTabOnConnect([other], 'query-5', 'p1')).toBe(false);
+  });
+
+  it('当前标签属于别的连接时切过去', () => {
+    expect(keepsActiveTabOnConnect([sqlTab, elsewhere], 'p2-query', 'p1')).toBe(false);
   });
 });
