@@ -958,7 +958,7 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
                 ? t('editor.cancelling')
                 : statement.isExecuting
                   ? t('editor.stop')
-                  : execution?.status === 'cancelled'
+                  : outcome === 'cancelled'
                     ? t('editor.rerun')
                     : t('editor.run')}
             </span>
