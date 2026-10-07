@@ -1193,7 +1193,7 @@ export const en: Translations = {
   'error.backend.csvTransactionLost': 'SQL Server rolled back the whole import transaction because of this error: {detail}. The import has stopped; with per-batch commits, the batches before this one are already in the table.',
   'error.backend.rowCountMismatch': 'This statement affected an unexpected number of rows (expected · actual): {detail}. The whole batch was rolled back — that row may have been changed or deleted by someone else.',
   'error.backend.fileTooLarge': 'The file is larger than the read limit (path · size · limit): {detail}',
-  'error.backend.credentialStoreRejected': 'The system keychain refused access: {detail}. The usual cause is that the entry was written by a different build of this app (unsigned development builds change signing identity on every rebuild). Re-enter and save the password in the connection settings to recreate it.',
+  'error.backend.credentialStoreRejected': 'The system keychain refused access: {detail}. The usual cause is that the entry was written by a different version of this app (after an upgrade, or a rebuilt development build) and access was denied when macOS asked. Re-enter and save the password in the connection settings to recreate it.',
   'error.backend.connectionLost': 'The connection to the database was lost before this operation returned a result. Reconnect and try again; for a write, first check whether it already took effect. Details: {detail}',
   'error.backend.poolTimedOut': 'No database connection became available within 30 seconds: the server may be unreachable, or every connection is busy with another query. Details: {detail}',
   'error.backend.dbSessionNotConnected':

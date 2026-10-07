@@ -389,7 +389,8 @@ Linux 包要求 glibc 2.34 以上（Ubuntu 22.04、Debian 12、Fedora 35、RHEL 
 都没有签名，第一次打开要放行一次：
 
 - **macOS**：双击会被拦下。到「系统设置 → 隐私与安全性」底部点「仍要打开」；或者装好后在终端执行
-  `xattr -dr com.apple.quarantine /Applications/DataOmni.app`。macOS 15 起「右键 → 打开」不再能绕过
+  `xattr -dr com.apple.quarantine /Applications/DataOmni.app`。macOS 15 起「右键 → 打开」不再能绕过。
+  升级之后第一次用到保存过的密码，系统会逐条问一次能否读钥匙串：输入开机登录密码、点「始终允许」
 - **Windows**：SmartScreen 提示「Windows 已保护你的电脑」时点「更多信息 → 仍要运行」
 - **Linux**：`sudo apt install ./DataOmni_*.deb` 或 `sudo dnf install ./DataOmni-*.rpm`，依赖（含 Oracle 要的 libaio）自动带上
 

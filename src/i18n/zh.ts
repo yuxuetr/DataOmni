@@ -1208,7 +1208,7 @@ export const zh = {
   'error.backend.csvTransactionLost': 'SQL Server 因为这条错误把导入的事务整个回滚了：{detail}。导入已停止；按批提交时，这一批之前的批次已经写进表里。',
   'error.backend.rowCountMismatch': '这条语句影响的行数和预期不一致（预期 · 实际）：{detail}。整批已回滚——那一行可能已被别人改过或删掉。',
   'error.backend.fileTooLarge': '文件太大，超过了读取上限（路径 · 大小 · 上限）：{detail}',
-  'error.backend.credentialStoreRejected': '系统钥匙串拒绝了访问：{detail}。最常见的原因是这条密码由另一个版本的应用写入（未签名的开发构建每次重建都会更换签名身份）；在连接配置里重新输入并保存密码即可重建条目。',
+  'error.backend.credentialStoreRejected': '系统钥匙串拒绝了访问：{detail}。最常见的原因是这条密码由另一个版本的应用写入（升级之后，或开发构建重建之后），而系统询问时点了「拒绝」；在连接配置里重新输入并保存密码即可重建条目。',
   'error.backend.connectionLost': '与数据库的连接已经断开，这次操作没有拿到结果。请重新连接后再试；如果是写操作，先确认它是否已经生效。技术细节：{detail}',
   'error.backend.poolTimedOut': '等了 30 秒也没拿到数据库连接：服务器可能连不上了，也可能连接都被别的查询占着。详情：{detail}',
   'error.backend.dbSessionNotConnected': '数据库会话未连接。先连接这个数据库再执行；如果界面上显示已连接，说明会话已经失效，断开后重连一次。',
