@@ -209,6 +209,12 @@ export function isSessionPasswordRequired(cause: unknown): boolean {
   return raw.trim().startsWith('SESSION_PASSWORD_REQUIRED');
 }
 
+/** 配置说存了口令，钥匙串里却没有这一条：换了签名的包、或者在「钥匙串访问」里删过 */
+export function isCredentialMissing(cause: unknown): boolean {
+  const raw = cause instanceof Error ? cause.message : String(cause);
+  return raw.trim().startsWith('DATAOMNI_CREDENTIAL_MISSING');
+}
+
 /**
  * 认出一个后端错误码。认不出就是 `null`，由调用方把原串照原样显示。
  *

@@ -16,6 +16,7 @@ vi.mock('../utils/stateSync', () => ({ useSessionManager: () => ({ switchConnect
 const { useProfileConnector } = await import('./useProfileConnector');
 const { useAppStore } = await import('../stores/appStore');
 const { useConnectionStore } = await import('../stores/connectionStore');
+const { describeError } = await import('../utils/describeError');
 
 const profile = { id: 'p1', name: 'mss', db_type: 'sqlserver', save_password: false } as unknown as ConnectionProfile;
 
@@ -67,5 +68,20 @@ describe('没存口令的连接', () => {
     });
     expect(switchConnection).toHaveBeenCalledTimes(1);
     expect(connector.error).toBeNull();
+  });
+});
+
+/**
+ * R7-mac 看到的：钥匙串里这一条没了（换了签名的包、或在钥匙串访问里删过），提示写着「请重新输入」，
+ * 却没有地方输入——得自己去找这条连接、点编辑。和没存口令走同一条路：直接打开表单
+ */
+describe('钥匙串里没有这条口令', () => {
+  it('打开编辑表单，提示照旧说明原因', async () => {
+    invoke.mockRejectedValueOnce('DATAOMNI_CREDENTIAL_MISSING');
+    await act(async () => {
+      expect(await connector.connect(profile)).toBe('password-required');
+    });
+    expect(connector.error).toBe(describeError('DATAOMNI_CREDENTIAL_MISSING'));
+    expect(useAppStore.getState().connectionForm?.mode).toBe('edit');
   });
 });

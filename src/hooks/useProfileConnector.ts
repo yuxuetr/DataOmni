@@ -9,7 +9,7 @@ import { useSessionManager } from '../utils/stateSync';
 import { recordConnectionUse } from '../utils/connectionRecency';
 import { withTimeout } from '../utils/withTimeout';
 import { describeError } from '../utils/describeError';
-import { isSessionPasswordRequired } from '../utils/backendError';
+import { isCredentialMissing, isSessionPasswordRequired } from '../utils/backendError';
 import {
   connectionNameFromFile,
   databaseFileExtensions,
@@ -82,8 +82,10 @@ export function useProfileConnector(): ProfileConnector {
     } catch (cause) {
       const message = describeError(cause);
 
-      if (isSessionPasswordRequired(cause)) {
-        setError(t('connect.passwordRequired'));
+      // 钥匙串里那一条没了也走这里：提示说「请重新输入」，就得给出输入的地方
+      const credentialMissing = isCredentialMissing(cause);
+      if (credentialMissing || isSessionPasswordRequired(cause)) {
+        setError(credentialMissing ? message : t('connect.passwordRequired'));
         // 在表单里填好口令、点了保存，就是要连上去：接着连（提示随之清掉），不让人再点一次。
         // 连的是保存后的那份，表单里可能顺手改了主机。取消则停在这里，提示照旧成立
         openConnectionForm(profile, async () => {
