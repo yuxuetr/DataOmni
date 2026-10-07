@@ -151,7 +151,14 @@
         （f2085ec）；后台任务按钮盖住翻页栏（d578f97）；⇧⌘T 只拿回带草稿的标签写进手册（59dc08a）。
       - 没修：不带别名时列补全只给关键字（lang-sql 只在有 defaultTable 时补裸列；手册写的是 `o.` 的用法，
         与实现一致）。重估：有人报「补不出列」时，按光标所在语句的 FROM 推 defaultTable。
-      - 待新包复验上面八处修复；方言项（第九节其余各库）随后。
+      - run 37577230988（9b0fd5e）上复验：上面八处都过（钥匙串缺口令直接开表单、保存后自动连上；断线红字留着；
+        重连停在原标签；右键无 WebKit 菜单；主机不回应的提示；任务按钮让开翻页栏）。
+    - 方言项：MySQL（要求 TLS 连上、会话 Ssl_cipher 为 TLS_AES_256_GCM_SHA384；`_bin` 列大小写区分、改一格只动这一行；
+      执行计划树；mysqldump 备份含 utf8mb4_bin 与改后的值）、SQLite（打开文件、无类型列混存、VACUUM INTO 备份）、
+      DuckDB（打开文件、导入跳过坏行只能每批一个事务并说明原因，读 3 写 2 败 1）、ClickHouse（经 ssh -L 连 HTTP 口、
+      浏览、聚合查询、改一行提交）都过。
+      - 修了：SQLite 无类型列里改一个数存成了文本（8196625，未进 9b0fd5e 的包，待下一包复验）。
+      - 还没走：SQL Server、Oracle、MongoDB、Redis、Neo4j、Elasticsearch。
   - [ ] R7-linux：同一次 CI 的 rpm / deb
   - [ ] R7-windows：后放
 
