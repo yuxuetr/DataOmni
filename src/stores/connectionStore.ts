@@ -7,6 +7,7 @@ import {
   type TlsMode
 } from '../contracts/connection';
 import { isUsablePort } from '../utils/connectionPort';
+import { openDatabase } from '../utils/databaseHandle';
 import { describeError } from '../utils/describeError';
 import { translateNow } from './languageStore';
 import { useAppStore } from './appStore';
@@ -323,7 +324,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       
       // 然后尝试实际连接数据库
       try {
-        const { openDatabase } = await import('../utils/databaseHandle');
         const db = await openDatabase(connectionString);
         // 池子按连接串登记：测的若正是连着的那一条，这里关掉的就是它正在用的池子。
         // 刚开的这个已经顶替了旧的，照常能用，留着即可。动态导入：queryStore 引用了本模块
