@@ -2,6 +2,7 @@
  * 数据库会话管理工具
  */
 
+import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../stores/appStore';
 import { useQueryStore } from '../stores/queryStore';
 import { useWorkspaceStore } from '../stores/workspaceStore';
@@ -16,6 +17,11 @@ import {
 import { alreadyConnectedTo } from './connectionHealth';
 import { describeError } from './describeError';
 import { translateNow } from '../stores/languageStore';
+
+/** 后端按当前配置重新算连接串；配了隧道而隧道已死时，这一步会把它重建起来 */
+function freshConnectionString(connection: ConnectionConfig): Promise<string> {
+  return invoke<string>('test_connection', { config: connection });
+}
 
 /**
  * 数据库会话管理器
@@ -34,10 +40,11 @@ export class SessionManager {
    * 出来的那天。
    */
   private lifecycle = createConnectionLifecycleState();
-  private reconnectTarget: {
-    connection: ConnectionConfig;
-    connectionString: string;
-  } | null = null;
+  /**
+   * 只记连接配置，不记连接串：走 SSH 隧道时串里是本地转发端口，隧道一断它就作废了。
+   * 重连时由后端重新算（`test_connection` 会把隧道重建起来）
+   */
+  private reconnectTarget: { connection: ConnectionConfig } | null = null;
 
   /**
    * 断开之前问一句：这条连接上还有没有没结束的事务。
@@ -76,22 +83,22 @@ export class SessionManager {
       return;
     }
     this.assertCanConnect();
-    this.reconnectTarget = { connection, connectionString };
+    this.reconnectTarget = { connection };
     this.transition({
       type: 'connect-requested',
       profileId: connection.id
     });
-    await this.connect(connection, connectionString);
+    await this.connect(connection, async () => connectionString);
   }
 
-  async manualReconnect(connection: ConnectionConfig, connectionString: string): Promise<void> {
+  async manualReconnect(connection: ConnectionConfig): Promise<void> {
     this.assertCanConnect();
-    this.reconnectTarget = { connection, connectionString };
+    this.reconnectTarget = { connection };
     this.transition({
       type: 'manual-reconnect-requested',
       profileId: connection.id
     });
-    await this.connect(connection, connectionString);
+    await this.connect(connection, () => freshConnectionString(connection));
   }
 
   async handleNetworkRestored(): Promise<void> {
@@ -106,10 +113,8 @@ export class SessionManager {
     }
 
     this.transition({ type: 'network-restored' });
-    await this.connect(
-      this.reconnectTarget.connection,
-      this.reconnectTarget.connectionString
-    );
+    const { connection } = this.reconnectTarget;
+    await this.connect(connection, () => freshConnectionString(connection));
   }
 
   reportConnectionLost(kind: ConnectionFailureKind, error: string): void {
@@ -132,7 +137,11 @@ export class SessionManager {
     useQueryStore.getState().reportConnectionLost();
   }
 
-  private async connect(connection: ConnectionConfig, connectionString: string): Promise<void> {
+  /** `connectionString` 在连接流程里才求值：算它这一步失败（跳板机连不上）也记成一次连接失败 */
+  private async connect(
+    connection: ConnectionConfig,
+    connectionString: () => Promise<string>
+  ): Promise<void> {
     const connectionId = connection.id;
     console.log('🔄 SessionManager: 开始切换连接:', connectionId);
 
@@ -256,7 +265,10 @@ export class SessionManager {
   /**
    * 执行实际的连接切换
    */
-  private async performConnectionSwitch(connection: ConnectionConfig, connectionString: string): Promise<void> {
+  private async performConnectionSwitch(
+    connection: ConnectionConfig,
+    resolveConnectionString: () => Promise<string>
+  ): Promise<void> {
     const appStore = useAppStore.getState();
     const queryStore = useQueryStore.getState();
 
@@ -282,6 +294,23 @@ export class SessionManager {
 
     // 3. 设置连接中状态
     appStore.setConnectionReady(false);
+    let connectionString: string;
+    try {
+      connectionString = await resolveConnectionString();
+    } catch (error) {
+      // 和握手失败落在同一处：「连不上」的横幅与重连按钮读的是 queryStore.error
+      const message = describeError(error, translateNow('error.connectFailed'));
+      useQueryStore.setState({
+        error: message,
+        isConnecting: false,
+        connectionLost: false,
+        database: null,
+        connectionString: null,
+        connectionId: null,
+        session: null
+      });
+      throw new Error(message);
+    }
 
     // 4. 建立新连接
     await queryStore.connectToDatabase(

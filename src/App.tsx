@@ -876,10 +876,7 @@ function App() {
         <SqlWorkbench
           connection={activeConnection.config}
           onDisconnect={() => sessionManager.disconnect()}
-          onReconnect={() => sessionManager.manualReconnect(
-            activeConnection.config,
-            activeConnection.connectionString
-          )}
+          onReconnect={() => sessionManager.manualReconnect(activeConnection.config)}
           selectedTable={selectedTable || undefined}
           documentTitle={tabTitle(activeTab, t)}
         />
