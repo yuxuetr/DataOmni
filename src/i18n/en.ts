@@ -1198,6 +1198,7 @@ export const en: Translations = {
   'error.backend.credentialStoreRejected': 'The system keychain refused access: {detail}. The usual cause is that the entry was written by a different version of this app (after an upgrade, or a rebuilt development build) and access was denied when macOS asked. Re-enter and save the password in the connection settings to recreate it.',
   'error.backend.connectionLost': 'The connection to the database was lost before this operation returned a result. Reconnect and try again; for a write, first check whether it already took effect. Details: {detail}',
   'error.backend.poolTimedOut': 'No database connection became available within 30 seconds: the server may be unreachable, or every connection is busy with another query. Details: {detail}',
+  'error.backend.connectTimedOut': 'Could not reach the server within 30 seconds: the host did not respond. Check the host and port, and any firewall, VPN or security group in between. Details: {detail}',
   'error.backend.dbSessionNotConnected':
     'No database session. Connect to this database before running statements; if the UI still shows it as connected, the session has gone stale — disconnect and connect again.',
   'error.backend.sshAuthRejected':

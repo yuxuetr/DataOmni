@@ -122,6 +122,7 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_CREDENTIAL_STORE_REJECTED: 'error.backend.credentialStoreRejected',
   DATAOMNI_CONNECTION_LOST: 'error.backend.connectionLost',
   DATAOMNI_POOL_TIMED_OUT: 'error.backend.poolTimedOut',
+  DATAOMNI_CONNECT_TIMED_OUT: 'error.backend.connectTimedOut',
   DATAOMNI_MONGO_SYNTAX: 'error.backend.mongoSyntax',
   DATAOMNI_MONGO_UNKNOWN_FUNCTION: 'error.backend.mongoUnknownFunction',
   DATAOMNI_MONGO_BAD_ARGUMENT: 'error.backend.mongoBadArgument',

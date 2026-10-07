@@ -34,6 +34,17 @@ pub fn handles(connection_string: &str) -> bool {
     .any(|scheme| connection_string.starts_with(scheme))
 }
 
+/// 开池子时在 acquire 超时内一条连接也没建起来。和查询时的 `POOL_TIMED_OUT` 分开：
+/// 那时可能只是连接都被占着，而新开的池子里没有别人——就是主机没回应
+pub const CONNECT_TIMED_OUT: &str = "DATAOMNI_CONNECT_TIMED_OUT";
+
+fn describe_open_error(error: &sqlx::Error) -> String {
+  match error {
+    sqlx::Error::PoolTimedOut => format!("{CONNECT_TIMED_OUT}: {error}"),
+    _ => error.to_string(),
+  }
+}
+
 pub async fn open(connection_string: &str) -> Result<DbPool, String> {
   if connection_string.starts_with("postgres://") || connection_string.starts_with("postgresql://")
   {
@@ -43,7 +54,7 @@ pub async fn open(connection_string: &str) -> Result<DbPool, String> {
       .idle_timeout(IDLE_TIMEOUT)
       .connect_with(options)
       .await
-      .map_err(|error| error.to_string())?;
+      .map_err(|error| describe_open_error(&error))?;
     return Ok(DbPool::Postgres(pool));
   }
   if handles(connection_string) {
@@ -79,7 +90,7 @@ pub async fn open(connection_string: &str) -> Result<DbPool, String> {
       })
       .connect_with(options)
       .await
-      .map_err(|error| error.to_string())?;
+      .map_err(|error| describe_open_error(&error))?;
     return Ok(DbPool::MySql(pool));
   }
   Err(format!("unsupported connection string scheme: {}", scheme_of(connection_string)))
@@ -201,6 +212,16 @@ mod tests {
     // SQLite 仍归插件：它要做路径映射
     assert!(!handles("sqlite:/tmp/a.db"));
     assert!(!handles("sqlserver://h"));
+  }
+
+  /// R7-mac：主机不回应时，「测试连接」等 30 秒之后印的是驱动原话
+  /// 「pool timed out while waiting for an open connection」，读的人不知道是主机的事
+  #[test]
+  fn opening_names_a_silent_host_as_a_connect_timeout() {
+    assert!(describe_open_error(&sqlx::Error::PoolTimedOut).starts_with(CONNECT_TIMED_OUT));
+    // 其余的照驱动原话：拒绝连接、认证失败这些它自己说得清
+    let refused = sqlx::Error::Io(std::io::Error::from(std::io::ErrorKind::ConnectionRefused));
+    assert_eq!(describe_open_error(&refused), refused.to_string());
   }
 
   #[test]
