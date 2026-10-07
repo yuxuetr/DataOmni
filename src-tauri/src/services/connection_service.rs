@@ -1203,7 +1203,7 @@ mod tests {
     assert!(saved.password.is_empty());
     assert_eq!(
       service.test_connection(saved).unwrap(),
-      "postgres://postgres:secret@localhost:5432/postgres?sslmode=disable&connect_timeout=30"
+      "postgres://postgres:secret@localhost:5432/postgres?sslmode=disable"
     );
 
     fs::remove_file(config_path).unwrap();
@@ -1224,7 +1224,7 @@ mod tests {
     assert!(!content.contains("\"password\""));
     assert_eq!(
       service.test_connection(service.get_connection("profile-1").unwrap()).unwrap(),
-      "postgres://postgres:legacy-secret@localhost:5432/postgres?sslmode=disable&connect_timeout=30"
+      "postgres://postgres:legacy-secret@localhost:5432/postgres?sslmode=disable"
     );
 
     fs::remove_file(config_path).unwrap();

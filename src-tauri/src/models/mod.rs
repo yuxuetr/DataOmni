@@ -235,14 +235,9 @@ impl DatabaseType {
           push_parameter(&mut params, "sslkey", config.client_key_path.as_deref());
         }
 
-        // Add connection timeout
-        params.push("connect_timeout=30".to_string());
-
-        if !params.is_empty() {
-          format!("{}?{}", base_url, params.join("&"))
-        } else {
-          base_url
-        }
+        // 不带 connect_timeout：sqlx 的 PostgreSQL 驱动不认它，每次连接只在日志里留一条
+        // 「ignoring unrecognized connect parameter」。等待上限在池子的 acquire_timeout 与前端的连接超时上
+        format!("{}?{}", base_url, params.join("&"))
       }
       DatabaseType::SQLite => {
         format!("sqlite:{}", config.database.as_ref().unwrap_or(&":memory:".to_string()))
