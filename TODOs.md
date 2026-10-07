@@ -24,7 +24,7 @@
 | P5 | 统一桌面 UI 与交互 | [ ]（只差 5.4 的 Windows 安装验证） |
 | P6 | AI 设计、导出与备份 | [x] A0–A6c、A9 完成（A2b / A7 / A8 当前版本不做） |
 | P7 | 更多数据库：国产库与云库 | [-] OceanBase、openGauss 完成；KingbaseES 缺安装包；B3 不做；B4 按触发条件 |
-| v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [-] v0.6.0 已打 tag（草稿 Release 待发布）；R5 的 CI 部分完成，人工部分待一台干净的 Windows |
+| v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [-] v0.6.0 已打 tag（草稿 Release 待发布）；R5 的 CI 部分与 R6 完成；R5 人工部分待一台干净的 Windows，然后 R7 |
 
 ---
 
@@ -102,7 +102,7 @@
     - 升级那一步只在新包版本高于已发布版本时跑，这次两边都是 0.5.1 所以跳过；推 `v0.6.0` 时第一次真跑（run 37489377113）：先装 0.5.1 的 MSI、新版直接装在上面，「应用」里仍只有一条且版本是 0.6.0，其余各项全部通过。
   - [ ] 人工走一遍 SmartScreen、界面与 Oracle，按 `docs/windows-checklist.md`。
   - 需要一台干净的 Windows。本机 Parallels 的虚拟机开着交易软件，不在上面做自动化。
-- [ ] R6 兼容库与 SSH 隧道的打包版回归
+- [x] R6 兼容库与 SSH 隧道的打包版回归
   - [x] SSH 隧道（CI 打的 rpm 0.6.0，GNOME 容器；修复在本地 rpm 0.6.1–0.6.3 上复验）
     - 环境：本地一次性跳板机（alpine + openssh，只认一把现生成的带口令 ed25519 钥匙），MySQL 8.4 放在只有跳板机够得着的内网（`--internal`），应用所在的容器直连不到它。以前写的「经 SSH 隧道」是在 Mac 上 `ssh -L`，应用自己的隧道这是第一次连真跳板机。
     - 过：known_hosts 里没有时拒连并报出指纹（与服务端 `ssh-keygen -l` 一致），补上后测试连接通过；私钥路径写 `~/.ssh/om_key` 能展开；口令只进钥匙串（`{id}#ssh`），`connections.json` 里搜不到；查询结果 `@@hostname` 是内网那台；表格改一格提交，服务端是新值；重启应用后不输口令连上，标签与草稿都在。
@@ -110,7 +110,19 @@
       - 跳板机重启后执行查询，报「没有隧道在运行，请重新连接」，头部却仍是「已连接」、没有重连按钮（`47854d1`）：这个错不带 `CONNECTION_LOST`。
       - 「重新连接」拿第一次连接时的连接串去连，串里是旧的本地端口，隧道重建后永远连不上（`05d9640`）：驱动报 `expected to read 4 bytes, got 0 bytes at EOF`；网络恢复后的自动重连同一个毛病。现在先让后端重算（会重建隧道）；跳板机还没起来时，错误显示在「连不上」横幅里（原先只进日志）。
     - 没改：只有 SQL 编辑器的执行会把状态切成「已断开」，表格提交、导出遇到断线只报错——普通断线也是这样，不是隧道特有的。重估条件：有人报在表格里遇到断线不知道该重连。
-  - 兼容库：OceanBase、openGauss、MariaDB、TiDB、CockroachDB。
+  - [x] 兼容库：OceanBase、openGauss、MariaDB、TiDB、CockroachDB（同一套环境，2026-10-07；英文界面）
+    - 每个库都走了：从各自的入口新建（MariaDB / TiDB / CockroachDB 有入口且填好默认端口，OceanBase、openGauss 走 MySQL / PostgreSQL 入口）、测试连接、保存、连上，对象树，查询，表格或结果里改一格提交（都在服务端读回核对），结构页与 DDL，执行计划。
+    - CockroachDB 25.2（本地）：数组与 JSONB 显示，结果里直接改；「真的执行一遍」；结构页触发器一段单独说明读不到（已写明的缺口）；改结构加一列，预览后执行。
+    - MariaDB 11.4（cu）：JSON 列在表格页是 `longtext`，按文本改，提交后 `JSON_VALID` 为 1；结构页列出隐含的 `json_valid` 检查约束。
+    - TiDB 8.5（cu）：在编辑器里建表写入；DROP 的确认框单独说「TiDB 上 DROP 不受事务保护」；执行计划树，「真的执行一遍」按文档灰掉；JSON 列有 JSON 编辑器。
+    - openGauss 5.0.3（cu）：数组改成 `{b,c,d}` 提交，服务端一致。
+    - OceanBase 4.4.2（本地）：MySQL 入口默认「要求 TLS」，对着不带 TLS 的服务端报「server does not support TLS」，说得清；改成「优先」即可。执行计划树、结构页与 DDL。
+    - **修了一处**：openGauss 自带的系统 schema（`db4ai`、`dbe_perf` 等七个）进了对象树，默认展开的是 `db4ai`（`db4ff46`）。按名字并且 OID < 16384 排（CockroachDB 的用户 schema OID 也小，只看 OID 会误排）；对象树、补全、ER 图共用一份条件。真库用例 PostgreSQL 16 41/41；CockroachDB 40/41、openGauss 39/41。
+    - 没修：
+      - MariaDB 查询结果的表头把 JSON 列标成 `BLOB`（表格页是 `longtext`），值照常显示、可改。重估条件：有人因此误以为是二进制。
+      - `postgres_exported_inserts_carry_every_value_back`（后加的导出语料）在 CockroachDB 与 openGauss 上建夹具就失败：`INT[][]`、`XML`（openGauss-lite 没带 libxml）它们不支持。是用例夹具的缺口，不是导出的缺陷；`postgres_abandoned_statement_stops_on_the_server` 在 openGauss 上并发跑时偶发超过 8 秒，单独跑两次都过。重估条件：下次动这两条用例，或 B2b 再推进时，把夹具按库裁剪。
+      - 本地新起的 CockroachDB 要先开 `sql.defaults.experimental_temporary_tables.enabled`，两条用例的夹具用了临时表；cu 上那台早就开着。
+    - 测试残留：MariaDB、TiDB（`test` 库）、openGauss、OceanBase 上各留一张 `om_r6`。
 - [ ] R7 拿 CI 产出的三平台包，按 `docs/release-regression.md` 完整回归 → 勾下面两条 → 打 `v1.0.0`
 
 ### 里程碑条目
