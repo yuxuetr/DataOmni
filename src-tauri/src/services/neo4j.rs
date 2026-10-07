@@ -159,12 +159,22 @@ async fn blocking<T: Send + 'static>(
 /// 连上并在配置的库里跑一条 `RETURN 1`：口令错、库不存在都在这一步报出来——
 /// 只做握手的话，库名写错要等展开对象树时才知道
 pub async fn connect(target: Neo4jTarget) -> Result<Neo4jPool, String> {
-  blocking(CONNECT_TIMEOUT + Duration::from_secs(2), move || {
+  let limit = CONNECT_TIMEOUT + Duration::from_secs(2);
+  let work = tokio::task::spawn_blocking(move || {
     let pool = Neo4jPool { driver: target.driver()?, database: target.database.clone() };
     pool.session(None).auto_commit("RETURN 1").run().map_err(describe_connect_error)?;
     Ok(pool)
-  })
-  .await
+  });
+  match tokio::time::timeout(limit, work).await {
+    Ok(Ok(result)) => result,
+    Ok(Err(join)) => Err(format!("{NEO4J_SERVER_ERROR}: {join}")),
+    Err(_) => Err(connect_timeout_message(limit)),
+  }
+}
+
+/// 连接这一步超时不是查询超时：工具栏上的查询时限管不到它，该查的是主机、端口与服务端是否起来了
+fn connect_timeout_message(limit: Duration) -> String {
+  format!("{}: {}ms", crate::services::sqlx_pool::CONNECT_TIMED_OUT, limit.as_millis())
 }
 
 /// 对象树的一行，形状与关系库的对象目录一致：`object_schema` 是库名，
@@ -984,6 +994,14 @@ mod tests {
       serde_json::to_value(&node).unwrap_or_default(),
       serde_json::json!({ "kind": "node", "elementId": "4:x:0", "labels": ["A"], "properties": [] })
     );
+  }
+
+  /// R7-mac：服务端还在启动时测试连接，提示是「超过了查询时限……可以在工具栏调大」——
+  /// 连接表单里没有那个工具栏，这也不是查询的时限
+  #[test]
+  fn a_connect_that_runs_out_of_time_is_a_connect_timeout() {
+    let message = connect_timeout_message(Duration::from_secs(12));
+    assert!(message.starts_with(crate::services::sqlx_pool::CONNECT_TIMED_OUT), "{message}");
   }
 
   #[test]
