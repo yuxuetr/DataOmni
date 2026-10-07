@@ -284,6 +284,26 @@ function guardConditions(
   });
 }
 
+/**
+ * SQLite 里没声明类型的列，值按绑进去的样子存；输入框给的总是文本。原来是数、新写的又是
+ * 一个数的规范写法时，经 `CAST(? AS NUMERIC)` 存回数（整数在 int64 内精确，否则成实数）。
+ * 声明了类型的列不用管：INTEGER / REAL / NUMERIC 亲和性自己会转。前导零不算：那是编号的写法
+ */
+function keepsSqliteNumber(
+  column: ColumnInfo | undefined,
+  input: CellInput,
+  original: BoundValue | undefined,
+  dialect: SqlIdentifierDialect
+): boolean {
+  return dialect === 'sqlite'
+    && column !== undefined
+    && column.data_type.trim() === ''
+    && typeof original === 'number'
+    && input.kind === 'value'
+    && typeof input.value === 'string'
+    && /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$/.test(input.value);
+}
+
 export function buildUpdateStatement(
   target: TableTarget,
   key: RowKey,
@@ -303,10 +323,14 @@ export function buildUpdateStatement(
   const byName = new Map(target.columns.map((column) => [column.name, column]));
   const setClause = columns
     .map((name) => {
+      const keepsNumber = keepsSqliteNumber(byName.get(name), assignments[name], guard?.values[name], target.dialect);
       const right = assignmentTerm(
         assignments[name],
         target.dialect,
-        () => typedParameter(placeholder(byName.get(name)), byName.get(name), target.dialect),
+        () => {
+          const parameter = typedParameter(placeholder(byName.get(name)), byName.get(name), target.dialect);
+          return keepsNumber ? `CAST(${parameter} AS NUMERIC)` : parameter;
+        },
         params
       );
       return `${quoteSqlIdentifier(name, target.dialect)} = ${right}`;

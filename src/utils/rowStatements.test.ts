@@ -512,3 +512,33 @@ describe('二进制键列', () => {
     expect(statement.params).toEqual(["x' OR 1=1"]);
   });
 });
+
+/**
+ * R7-mac：SQLite 里没声明类型的列，值按写进去的样子存。原来是整数 42，改成 43 之后存成了
+ * 文本 '43'——`anything = 43` 从此匹配不上，排序也换了次序，界面上看不出任何不同
+ */
+describe('SQLite 没声明类型的列', () => {
+  const untyped: TableTarget = {
+    schema: null,
+    table: 't',
+    columns: [{ ...column('id', 'INTEGER'), is_primary_key: true }, column('anything', '')],
+    dialect: 'sqlite'
+  };
+  const key: RowKey = { columns: ['id'], values: { id: 2 } };
+
+  it('原来是数、新写的也是数：照数存', () => {
+    const statement = buildUpdateStatement(untyped, key, { anything: value('43') }, { values: { anything: 42 } });
+    expect(statement.sql).toContain('"anything" = CAST(? AS NUMERIC)');
+    expect(statement.params[0]).toBe('43');
+  });
+
+  it('原来是文本，或新写的不是数：照文本存', () => {
+    expect(buildUpdateStatement(untyped, key, { anything: value('43') }, { values: { anything: 'x' } }).sql)
+      .toContain('"anything" = ?');
+    expect(buildUpdateStatement(untyped, key, { anything: value('abc') }, { values: { anything: 42 } }).sql)
+      .toContain('"anything" = ?');
+    // 前导零是文本的写法（编号、邮编），按数存就丢了
+    expect(buildUpdateStatement(untyped, key, { anything: value('007') }, { values: { anything: 7 } }).sql)
+      .toContain('"anything" = ?');
+  });
+});
