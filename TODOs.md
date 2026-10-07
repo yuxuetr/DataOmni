@@ -125,7 +125,7 @@
     - 测试残留：MariaDB、TiDB（`test` 库）、openGauss、OceanBase 上各留一张 `om_r6`。
 - [ ] R7 拿 CI 产出的三平台包，按 `docs/release-regression.md` 完整回归 → 勾下面两条 → 打 `v1.0.0`
   - 2026-10-07 定：先把 macOS 做完整，Windows 之后再说（R5 人工部分与 R7 的 Windows 部分都后放）。
-  - [ ] R7-mac：CI 从 `main` 手动打的 macOS 包（含 v0.6.0 之后的三处修复），PostgreSQL 走满第一到第八节，其余各库走方言项；
+  - [x] R7-mac：CI 从 `main` 手动打的 macOS 包（含 v0.6.0 之后的三处修复），PostgreSQL 走满第一到第八节，其余各库走方言项；
     另补 macOS 上没验过的：日志路径与「在访达中显示」、新版本提示、从 0.5.1 升上来连接 / 标签 / 历史 / 设置都在。
     - 过：0.5.1 → CI 0.6.0（run 37564801937）升级后连接、两个标签与草稿、深色主题、查询历史都在；
       日志在 `~/Library/Logs/com.dataomni.app/dataomni.log`，「在访达中显示」打开该目录并选中文件；
@@ -157,7 +157,9 @@
       执行计划树；mysqldump 备份含 utf8mb4_bin 与改后的值）、SQLite（打开文件、无类型列混存、VACUUM INTO 备份）、
       DuckDB（打开文件、导入跳过坏行只能每批一个事务并说明原因，读 3 写 2 败 1）、ClickHouse（经 ssh -L 连 HTTP 口、
       浏览、聚合查询、改一行提交）都过。
-      - 修了：SQLite 无类型列里改一个数存成了文本（8196625，未进 9b0fd5e 的包，待下一包复验）。
+      - 修了：SQLite 无类型列里改一个数存成了文本。8196625 按「原值是数」判断，包上复验仍是文本（原值拆包后是字符串，
+        单测拿数字当原值、没照真实数据的形状）；35ac374 改为看新值，新增行同样。run 37582872763 上复验存成 integer。
+      - Neo4j 连接超时的措辞（0a36fb7）只有单测：要在服务端「接了 TCP 但还没起好」时才走到，打包版上没再造出来。
       - MongoDB（命令台 insert、浏览、整篇替换保存且 ISODate 存成日期、聚合、删文档走确认）、Redis（只列非空逻辑库、
         六种类型、hash 加字段、命令行）、Neo4j（Cypher、图视图、改属性保持 INTEGER）、Elasticsearch（自签 HTTPS：
         失败提示指明选「要求 TLS」，改后连上；索引浏览、查询台、改文档）、SQL Server（经 ssh -L；nvarchar 改中文、
@@ -167,6 +169,9 @@
       - Oracle：cu 上起 Oracle 把机器压到 load 114、SSH 连不上（8 GB 里别的项目已占 5 GB），立刻停掉；改在本机 Docker
         起 gvenzl/oracle-free:23-slim（arm64），连接、浏览、改 VARCHAR2 与 DATE 并提交、执行计划都过，用完删掉容器。
         以后 Oracle 在本机起，不在 cu 上起。
+    - 收尾（2026-10-07）：测试连接的钥匙串条目已删，cu 上的 om_r7* 表已删、各测试容器已停，本机 Oracle 容器已删；
+      用户自己的 DataOmni 数据（21 个连接、偏好）已从备份放回。
+    - 遗留：Redis 危险命令确认要人工点一次；v0.6.0 的草稿发布怎么处理还等决定（照发 / 重打 tag / 出 0.6.1）。
   - [ ] R7-linux：同一次 CI 的 rpm / deb
   - [ ] R7-windows：后放
 
