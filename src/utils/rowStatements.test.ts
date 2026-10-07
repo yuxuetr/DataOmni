@@ -526,19 +526,31 @@ describe('SQLite 没声明类型的列', () => {
   };
   const key: RowKey = { columns: ['id'], values: { id: 2 } };
 
-  it('原来是数、新写的也是数：照数存', () => {
-    const statement = buildUpdateStatement(untyped, key, { anything: value('43') }, { values: { anything: 42 } });
+  // 网格送来的原值是拆了包的：SQLite 的整数是 tagged bigint，拆开后是字符串 '42'，与文本 '42' 分不出。
+  // 所以只看新写的值：数的规范写法照数存，和在 SQL 里写字面量 43 一样
+  it('新写的是数的规范写法：照数存', () => {
+    const statement = buildUpdateStatement(untyped, key, { anything: value('43') }, { values: { anything: '42' } });
     expect(statement.sql).toContain('"anything" = CAST(? AS NUMERIC)');
     expect(statement.params[0]).toBe('43');
+    expect(buildUpdateStatement(untyped, key, { anything: value('-1.5e3') }, { values: { anything: 'x' } }).sql)
+      .toContain('CAST(? AS NUMERIC)');
   });
 
-  it('原来是文本，或新写的不是数：照文本存', () => {
-    expect(buildUpdateStatement(untyped, key, { anything: value('43') }, { values: { anything: 'x' } }).sql)
-      .toContain('"anything" = ?');
-    expect(buildUpdateStatement(untyped, key, { anything: value('abc') }, { values: { anything: 42 } }).sql)
+  it('不是数，或带前导零：照文本存', () => {
+    expect(buildUpdateStatement(untyped, key, { anything: value('abc') }, { values: { anything: '42' } }).sql)
       .toContain('"anything" = ?');
     // 前导零是文本的写法（编号、邮编），按数存就丢了
-    expect(buildUpdateStatement(untyped, key, { anything: value('007') }, { values: { anything: 7 } }).sql)
+    expect(buildUpdateStatement(untyped, key, { anything: value('007') }, { values: { anything: '7' } }).sql)
       .toContain('"anything" = ?');
+  });
+
+  it('新增一行时同样', () => {
+    expect(buildInsertStatement(untyped, { id: value('3'), anything: value('43') }).sql)
+      .toContain('CAST(? AS NUMERIC)');
+  });
+
+  it('声明了类型的列交给亲和性，不加 CAST', () => {
+    const typed: TableTarget = { ...untyped, columns: [untyped.columns[0], column('anything', 'TEXT')] };
+    expect(buildUpdateStatement(typed, key, { anything: value('43') }).sql).toContain('"anything" = ?');
   });
 });
