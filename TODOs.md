@@ -164,7 +164,9 @@
         执行计划 Clustered Index Seek）都过。
       - 修了：Neo4j 服务端还在启动时测试连接，提示「超过了查询时限……可以在工具栏调大」（0a36fb7）。
       - 没测：Redis 危险命令确认（FLUSHDB 这类命令本机的自动执行权限拦下了，留给人工点一次）。
-      - 还没走：Oracle（cu 起 Oracle 时 SSH 一度连不上，待恢复）。
+      - Oracle：cu 上起 Oracle 把机器压到 load 114、SSH 连不上（8 GB 里别的项目已占 5 GB），立刻停掉；改在本机 Docker
+        起 gvenzl/oracle-free:23-slim（arm64），连接、浏览、改 VARCHAR2 与 DATE 并提交、执行计划都过，用完删掉容器。
+        以后 Oracle 在本机起，不在 cu 上起。
   - [ ] R7-linux：同一次 CI 的 rpm / deb
   - [ ] R7-windows：后放
 
