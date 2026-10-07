@@ -25,6 +25,9 @@ import { useLanguageStore } from '../stores/languageStore';
  *
  * 浮在右下角而不是挤进某个标题栏：它只在**真有任务**的时候才存在，
  * 而任务是从各处发起的（导入向导、导出对话框），不属于任何一个标签页。
+ *
+ * 离底边留出一条翻页栏的高度：任务结束后按钮还留着，贴着底边时正好盖住表数据的
+ * 「下一页」「末页」——网格的行能滚开，翻页栏是钉死的，按不到就翻不了页
  */
 export function TaskCenter() {
   const t = useLanguageStore((state) => state.t);
@@ -49,7 +52,7 @@ export function TaskCenter() {
   }
 
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2">
+    <div className="pointer-events-none fixed bottom-16 right-4 z-40 flex flex-col items-end gap-2">
       {open && (
         <div className="pointer-events-auto flex max-h-[60vh] w-[420px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-panel border border-line bg-surface-raised shadow-xl">
           <div className="flex items-center gap-2 border-b border-line px-3 py-2">
