@@ -2709,6 +2709,28 @@ async fn postgres_lists_database_objects_and_resolves_overloaded_routines() {
     })
     .collect();
 
+  // openGauss 自带的系统 schema 不进对象树：不排的话树里多出 db4ai、dbe_perf（268 个对象）
+  // 等八个 schema，默认展开的还是排第一的 db4ai 而不是 public。PostgreSQL 与 CockroachDB 上没有它们
+  let listed_schemas: std::collections::BTreeSet<String> =
+    rows.iter().map(|row| row.get::<String, _>("object_schema")).collect();
+  for builtin in [
+    "cstore",
+    "pkg_service",
+    "dbe_perf",
+    "snapshot",
+    "blockchain",
+    "db4ai",
+    "dbe_pldebugger",
+    "dbe_pldeveloper",
+    "sqladvisor",
+    "dbe_sql_util",
+  ] {
+    assert!(
+      !listed_schemas.contains(builtin),
+      "系统 schema {builtin} 不该列出: {listed_schemas:?}"
+    );
+  }
+
   let kind_of =
     |name: &str| objects.iter().find(|(n, ..)| n == name).map(|(_, kind, _)| kind.clone());
   assert_eq!(kind_of(&fixture.child).as_deref(), Some("table"));

@@ -56,7 +56,8 @@ pub fn completion_catalog_query(db_type: &DatabaseType) -> Option<CompletionCata
 ///
 /// 类型用 `format_type` 而不是 `information_schema` 的 `data_type`：补全项的
 /// 说明里写 `character varying(32)` 才有用，`character varying` 等于没说长度。
-const POSTGRES_RELATIONS: &str = r#"
+const POSTGRES_RELATIONS: &str = concat!(
+  r#"
 SELECT
   n.nspname::text AS relation_schema,
   c.relname::text AS relation_name,
@@ -67,11 +68,13 @@ FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
 WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')
-  AND n.nspname NOT LIKE 'pg\_toast%'
+"#,
+  crate::services::object_catalog::postgres_hidden_schemas!(),
+  r#"  AND n.nspname NOT LIKE 'pg\_toast%'
   AND n.nspname NOT LIKE 'pg\_temp%'
 ORDER BY n.nspname, c.relname, a.attnum
-"#;
+"#
+);
 
 /// `CAST(... AS CHAR)`：`information_schema` 的标识符列是 VARBINARY，
 /// 插件的解码器不认。`relation_kind` 也要 CAST——CASE 的结果会跟着

@@ -77,7 +77,8 @@ pub fn er_diagram_queries(db_type: &DatabaseType) -> Option<ErDiagramQueries> {
 /// 分区不画，只画分区表：每个分区一个框，父表的每条外键又从每个分区各连一条线，
 /// 按月分区的表一张就能把图淹掉。`relispartition` 经 `row_to_json` 读，openGauss
 /// 没有这一列（见 `schema_metadata` 列的查询）。
-const POSTGRES_COLUMNS: &str = r#"
+const POSTGRES_COLUMNS: &str = concat!(
+  r#"
 SELECT
   n.nspname::text AS table_schema,
   c.relname::text AS table_name,
@@ -94,17 +95,20 @@ JOIN pg_namespace n ON n.oid = c.relnamespace
 JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
 WHERE c.relkind IN ('r', 'p')
   AND COALESCE((row_to_json(c)->>'relispartition')::boolean, false) = false
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')
-  AND n.nspname NOT LIKE 'pg\_toast%'
+"#,
+  crate::services::object_catalog::postgres_hidden_schemas!(),
+  r#"  AND n.nspname NOT LIKE 'pg\_toast%'
   AND n.nspname NOT LIKE 'pg\_temp%'
 ORDER BY n.nspname, c.relname, a.attnum
-"#;
+"#
+);
 
 /// 与单表版本同样的要点：`conkey[i]` 与 `confkey[i]` 按同一个下标把本表列
 /// 与被引用列配对，分两次 unnest 会在复合外键上错位。写法与 `schema_metadata` 的外键查询相同
 /// （不用 openGauss 不认的 `LATERAL` / `WITH ORDINALITY`）。引用分区表时服务端
 /// 给每个分区记的克隆同样排掉，分区自己的外键随分区一起不画。
-const POSTGRES_FOREIGN_KEYS: &str = r#"
+const POSTGRES_FOREIGN_KEYS: &str = concat!(
+  r#"
 SELECT
   n.nspname::text AS table_schema,
   t.relname::text AS table_name,
@@ -130,9 +134,11 @@ JOIN pg_namespace fn ON fn.oid = ft.relnamespace
 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = c.conkey[c.ord]
 JOIN pg_attribute fa ON fa.attrelid = ft.oid AND fa.attnum = c.confkey[c.ord]
 WHERE COALESCE((row_to_json(t)->>'relispartition')::boolean, false) = false
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')
-ORDER BY n.nspname, t.relname, c.conname, c.ord
-"#;
+"#,
+  crate::services::object_catalog::postgres_hidden_schemas!(),
+  r#"ORDER BY n.nspname, t.relname, c.conname, c.ord
+"#
+);
 
 /// 取 `COLUMN_TYPE` 而不是 `DATA_TYPE`：前者是 `varchar(32)`、`int unsigned`，
 /// 后者只有 `varchar`、`int`。

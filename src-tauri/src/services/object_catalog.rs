@@ -81,6 +81,26 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
     _ => None,
   }
 }
+/// PostgreSQL 系的库里，不进对象树、补全目录与 ER 图的系统 schema（`AND` 接在 `WHERE` 的条件后面，
+/// schema 的别名必须是 `n`）。
+///
+/// 除了 PostgreSQL 自己的两个，还排掉 CockroachDB 的 `crdb_internal` 与 `pg_extension`：不排的话
+/// 对象树里多出 91 张系统表、20 个视图和 133 个内建函数，内建函数的参数签名还是 NULL，整行名字跟着
+/// 成了 NULL。这两个名字在 PostgreSQL 上不存在（`pg_` 前缀是保留的），排了等于没排。
+///
+/// openGauss 自带的十个 schema（`db4ai`、`dbe_perf` 等）按名字**并且** OID 小于 16384 排：
+/// 名字是普通的词，PostgreSQL 上用户完全可能建一个叫 `snapshot` 的 schema，而用户建的对象
+/// OID 从 16384（FirstNormalObjectId）起。不能只看 OID：CockroachDB 的用户 schema OID 是
+/// 一百出头的小数。
+macro_rules! postgres_hidden_schemas {
+  () => {
+    "  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')
+  AND NOT (n.oid < 16384 AND n.nspname IN ('cstore', 'pkg_service', 'dbe_perf', 'snapshot', 'blockchain',
+    'db4ai', 'dbe_pldebugger', 'dbe_pldeveloper', 'sqladvisor', 'dbe_sql_util'))
+"
+  };
+}
+pub(crate) use postgres_hidden_schemas;
 
 /// `object_id` 用 oid：**函数是可以重载的**，`proname` 不唯一，
 /// 拿名字去取定义会取到同名的另一个重载。显示名带上参数签名，
@@ -89,12 +109,9 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
 /// 序列这里不过滤 serial / identity 列自动建的那些——它们是真实存在的对象，
 /// 用户按名字（`users_id_seq`）找得到才有意义。
 ///
-/// 系统 schema 除了 PostgreSQL 自己的两个，还排掉 CockroachDB 的
-/// `crdb_internal` 与 `pg_extension`：不排的话对象树里多出 91 张系统表、
-/// 20 个视图和 133 个内建函数，内建函数的参数签名还是 NULL，整行名字跟着
-/// 成了 NULL。这两个名字在 PostgreSQL 上不存在（`pg_` 前缀是保留的），
-/// 排了等于没排。补全目录与 ER 图用的是同一份清单。
-const POSTGRES_OBJECTS: &str = r#"
+/// 系统 schema 的排法见 `postgres_hidden_schemas`。
+const POSTGRES_OBJECTS: &str = concat!(
+  r#"
 SELECT
   n.nspname::text AS object_schema,
   c.relname::text AS object_name,
@@ -108,8 +125,9 @@ SELECT
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')
-  AND n.nspname NOT LIKE 'pg\_toast%'
+"#,
+  postgres_hidden_schemas!(),
+  r#"  AND n.nspname NOT LIKE 'pg\_toast%'
   AND n.nspname NOT LIKE 'pg\_temp%'
 UNION ALL
 SELECT
@@ -120,9 +138,11 @@ SELECT
 FROM pg_proc p
 JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE p.prokind IN ('f', 'p')
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'crdb_internal', 'pg_extension')
-ORDER BY 1, 3, 2
-"#;
+"#,
+  postgres_hidden_schemas!(),
+  r#"ORDER BY 1, 3, 2
+"#
+);
 
 const POSTGRES_ROUTINE_DEFINITION: &str = "SELECT pg_get_functiondef($1::oid)::text AS definition";
 
