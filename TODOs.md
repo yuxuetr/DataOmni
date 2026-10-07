@@ -24,7 +24,7 @@
 | P5 | 统一桌面 UI 与交互 | [ ]（只差 5.4 的 Windows 安装验证） |
 | P6 | AI 设计、导出与备份 | [x] A0–A6c、A9 完成（A2b / A7 / A8 当前版本不做） |
 | P7 | 更多数据库：国产库与云库 | [-] OceanBase、openGauss 完成；KingbaseES 缺安装包；B3 不做；B4 按触发条件 |
-| v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [-] v0.6.0 已打 tag（草稿 Release 待发布）；R5 的 CI 部分与 R6 完成；先做 R7 的 macOS 部分，Windows（R5 人工、R7 Windows）后放 |
+| v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [-] v0.6.0 已发布（2026-10-07，tag 重打在 2b62b5f，含 R6、R7-mac 的修正）；R5 的 CI 部分与 R6 完成；先做 R7 的 macOS 部分，Windows（R5 人工、R7 Windows）后放 |
 
 ---
 
@@ -171,7 +171,7 @@
         以后 Oracle 在本机起，不在 cu 上起。
     - 收尾（2026-10-07）：测试连接的钥匙串条目已删，cu 上的 om_r7* 表已删、各测试容器已停，本机 Oracle 容器已删；
       用户自己的 DataOmni 数据（21 个连接、偏好）已从备份放回。
-    - 遗留：Redis 危险命令确认要人工点一次；v0.6.0 的草稿发布怎么处理还等决定（照发 / 重打 tag / 出 0.6.1）。
+    - 遗留：Redis 危险命令确认要人工点一次；v0.6.0 按决定删掉旧草稿与 tag，重打在 2b62b5f（run 37586095917 全绿，Windows 安装冒烟过），2026-10-07 发布为 Latest。
   - [ ] R7-linux：同一次 CI 的 rpm / deb
   - [ ] R7-windows：后放
 
