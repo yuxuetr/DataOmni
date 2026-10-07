@@ -6,10 +6,10 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libaio1 | libaio1t64"]
+        "depends": ["libaio1 | libaio1t64", "ca-certificates"]
       },
       "rpm": {
-        "depends": ["libaio"],
+        "depends": ["libaio", "ca-certificates"],
         "postRemoveScript": "linux/rpm-postun.sh"
       }
     }
