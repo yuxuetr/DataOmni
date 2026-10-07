@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseType, type ConnectionProfile } from '../contracts/connection';
 import { useLanguageStore } from '../stores/languageStore';
 import { useQueryStore } from '../stores/queryStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import { useTableEditStore } from '../stores/tableEditStore';
 
 const invoke = vi.fn();
@@ -131,6 +132,25 @@ describe('TableDataViewer（ClickHouse）', () => {
 
     const labels = [...container.querySelectorAll('button[aria-label]')].map((button) => button.getAttribute('aria-label'));
     expect(labels).toEqual(expect.arrayContaining(['First page', 'Previous page', 'Next page', 'Last page']));
+  });
+
+  // 打包版上看到的：设成「紧凑」后表数据页的行高纹丝不动——操作列那一格写死了 py-1，
+  // 里面的图标按钮把整行撑住了。结果网格的操作列跟着设置走，这里也要
+  it('行高设置也管操作列', async () => {
+    useSettingsStore.setState({ gridDensity: 'compact' });
+    readQuery.mockImplementation(async (sql: string) => (
+      sql.startsWith('SELECT COUNT(*)') ? [{ total: 1 }] : [{ id: 1, fs: 'a', note: 'x' }]
+    ));
+    try {
+      await act(async () => {
+        root.render(<TableDataViewer connection={connection} tableName="t" schema="db" initialTab="data" />);
+      });
+      const cells = [...container.querySelectorAll('tbody tr:first-child > td')];
+      expect(cells.length).toBeGreaterThan(1);
+      expect(cells.filter((cell) => cell.classList.contains('py-1'))).toEqual([]);
+    } finally {
+      useSettingsStore.setState({ gridDensity: 'default' });
+    }
   });
 
   // 打包版上撞到的：AggregateFunction 列点了排序，查询报错、行清空，表头跟着没了，

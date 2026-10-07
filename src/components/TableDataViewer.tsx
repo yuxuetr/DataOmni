@@ -1732,8 +1732,8 @@ export default function TableDataViewer({
                                 </React.Fragment>
                                 );
                               })}
-                              {/* 操作列 */}
-                              <td className="border-l border-line px-2 py-1 text-sm">
+                              {/* 操作列：跟着行高设置走，否则图标按钮会把整行撑在「标准」那么高 */}
+                              <td className={clsx('border-l border-line text-sm', densityClass)}>
                                 {editState.mode === 'view' ? (
                                   pending ? (
                                     // 已经排了队的行只给一个撤销：再编辑一次要么
