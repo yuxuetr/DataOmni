@@ -757,6 +757,30 @@ async fn oracle_catalog_queries_describe_the_fixture() {
   assert_eq!(target_rows[0]["read_only"], json!(0));
 }
 
+/// 用 SYSTEM 登录（Oracle Free 容器的默认账号）时，自己建的表也在 SYSTEM 名下，而 SYSTEM
+/// 是 Oracle 自带的 schema：只按 `oracle_maintained = 'N'` 筛，对象树是空的，也不说为什么。
+/// 拿普通用户跑这条也成立，拿 SYSTEM 跑才咬得住：
+/// `DATAOMNI_ORACLE_TEST_URL=oracle://system:…@host:port/FREEPDB1`
+#[tokio::test]
+async fn oracle_catalog_lists_the_login_schema_even_when_oracle_maintains_it() {
+  use dataomni_lib::models::DatabaseType;
+  use dataomni_lib::services::{completion_catalog_query, er_diagram_queries, object_catalog_queries};
+  let Some(pool) = pool().await else { return };
+  drop_quietly(&pool, "om_login_schema").await;
+  run_all(&pool, &["CREATE TABLE om_login_schema (id NUMBER(10) PRIMARY KEY)"]).await;
+  let objects = object_catalog_queries(&DatabaseType::Oracle).expect("objects");
+  let listed = pool.select(objects.objects, &[]).await.expect("object list");
+  let completion = completion_catalog_query(&DatabaseType::Oracle).expect("completion");
+  let relations = pool.select(completion.relations, &[]).await.expect("relations");
+  let er = er_diagram_queries(&DatabaseType::Oracle).expect("er");
+  let er_columns = pool.select(er.columns, &[]).await.expect("er columns");
+  drop_quietly(&pool, "om_login_schema").await;
+  assert_eq!(find(&listed, "object_name", "OM_LOGIN_SCHEMA").len(), 1, "对象树");
+  assert!(!find(&relations, "relation_name", "OM_LOGIN_SCHEMA").is_empty(), "补全");
+  assert!(!find(&er_columns, "table_name", "OM_LOGIN_SCHEMA").is_empty(), "ER 图");
+  assert!(find(&listed, "object_schema", "SYS").is_empty(), "别的系统 schema 照样不列");
+}
+
 /// 结构页一次发五段目录查询，全部回来才显示。量一下每段多久——`DBMS_METADATA`
 /// 在小内存的 Oracle Free 上慢得出奇，要知道慢的是哪一段
 #[tokio::test]

@@ -63,10 +63,11 @@ macro_rules! oracle_type_name {
 pub(crate) use oracle_type_name;
 
 /// 不是 Oracle 自带的 schema。`ALL_OBJECTS` 里 SYS 一家就有几万个对象，
-/// 不筛掉的话对象树与补全目录全被它们占满。别名固定是 `u`
+/// 不筛掉的话对象树与补全目录全被它们占满。当前登录的那个照样列：用 SYSTEM 登录
+/// （Oracle Free 容器的默认账号）时自己建的表就在 SYSTEM 名下，它只有几十个对象。别名固定是 `u`
 macro_rules! oracle_user_schemas {
   () => {
-    "u.oracle_maintained = 'N'"
+    "(u.oracle_maintained = 'N' OR u.username = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA'))"
   };
 }
 pub(crate) use oracle_user_schemas;
