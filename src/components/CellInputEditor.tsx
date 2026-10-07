@@ -298,6 +298,7 @@ function ValueField({ value, onChange, editor, dialect, autoFocus, onKeyDown }: 
             // 而数据库自己会拒。这里只说一声，不挡路
             invalid ? 'border-danger-line bg-danger-soft text-fg' : 'border-line-strong bg-surface text-fg'
           )}
+          {...PLAIN_TEXT_INPUT}
         />
         <div className="flex items-center gap-2">
           <button

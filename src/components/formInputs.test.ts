@@ -10,6 +10,9 @@ import { describe, expect, it } from 'vitest';
  * 筛选框被改掉，一条都匹配不上；而表格里那一格是**要写回数据库的值**，
  * 改掉之后不报任何错——存进去的和敲进去的不是一个东西。
  *
+ * `<textarea>` 同样算：macOS 会把里面敲的直引号换成弯引号、`--` 换成破折号。打包版上
+ * 撞到过——JSON 那一格敲 `{"n": 1}`，存进去的是 `{“n”: 1}`，于是 JSON 无效。
+ *
  * 这道门存在的理由是：这三个属性此前零散写在四五个格子上，有人踩过一次只修了
  * 当时那一处，新加的 SSH 那几格又漏了。不靠记性，靠它。
  */
@@ -26,17 +29,17 @@ interface InputTag {
 }
 
 /**
- * 揪出每一个 `<input …>`。
+ * 揪出每一个 `<input …>` 与 `<textarea …>`。
  *
  * 自己扫而不是用正则一把梭：属性值里有 `{}` 和 `>`（三元式、箭头函数），
  * `/<input[^>]*>/` 会在第一个箭头处截断，于是后半截属性看不见——那种门会
  * 把带 `onChange={(e) => …}` 的输入框全部漏掉，而那是所有输入框。
  */
-function inputTags(): InputTag[] {
+function tagsNamed(element: '<input' | '<textarea'): InputTag[] {
   const tags: InputTag[] = [];
   for (const name of readdirSync(COMPONENTS).filter(file => file.endsWith('.tsx'))) {
     const source = readFileSync(join(COMPONENTS, name), 'utf8');
-    for (let at = source.indexOf('<input'); at >= 0; at = source.indexOf('<input', at + 1)) {
+    for (let at = source.indexOf(element); at >= 0; at = source.indexOf(element, at + 1)) {
       let depth = 0;
       let end = at;
       while (end < source.length) {
@@ -55,6 +58,9 @@ function inputTags(): InputTag[] {
   }
   return tags;
 }
+
+const inputTags = (): InputTag[] => tagsNamed('<input');
+const textareaTags = (): InputTag[] => tagsNamed('<textarea');
 
 function inputType(tag: InputTag): string {
   const quoted = tag.source.match(/type="([^"]+)"/);
@@ -79,6 +85,16 @@ describe('文本框不被系统改写', () => {
       .map(tag => `${tag.file}:${tag.line}`);
 
     expect(missing, '这些文本框会被 macOS 自动大写/自动更正，填进去的和敲进去的不是一个东西').toEqual([]);
+  });
+
+  it('每个多行文本框都带上 PLAIN_TEXT_INPUT', () => {
+    const tags = textareaTags();
+    expect(tags.length).toBeGreaterThan(5);
+    const missing = tags
+      .filter(tag => !tag.source.includes('PLAIN_TEXT_INPUT'))
+      .map(tag => `${tag.file}:${tag.line}`);
+
+    expect(missing, '这些多行文本框会被 macOS 换成弯引号与破折号').toEqual([]);
   });
 
   it('同一件事不再写第二份字面量', () => {
