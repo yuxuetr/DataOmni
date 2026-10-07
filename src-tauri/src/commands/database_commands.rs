@@ -199,7 +199,7 @@ pub async fn execute_query(
       connection_service_guard.as_ref().ok_or_else(|| QueryError::message(SERVICE_NOT_READY))?;
     service
       .resolve_connection_string(&request.connection_id, tunnel_port)
-      .map_err(QueryError::message)?
+      .map_err(QueryError::from_connection_service)?
   };
 
   let resolved = ResolvedPool::resolve(
@@ -267,7 +267,9 @@ pub async fn execute_write_batch(
       .map_err(|e| batch_error(format!("{SERVICE_STATE_UNAVAILABLE}: {e}")))?;
     let service =
       connection_service_guard.as_ref().ok_or_else(|| batch_error(SERVICE_NOT_READY))?;
-    service.resolve_connection_string(&connection_id, tunnel_port).map_err(batch_error)?
+    service.resolve_connection_string(&connection_id, tunnel_port).map_err(|message| {
+      WriteBatchError { statement_index: 0, error: QueryError::from_connection_service(message) }
+    })?
   };
   if query_session_state.transaction_open_on(&connection_string).await {
     return Err(batch_error(SESSION_TRANSACTION_OPEN));
@@ -333,7 +335,7 @@ pub async fn export_query_to_file(
       connection_service_guard.as_ref().ok_or_else(|| QueryError::message(SERVICE_NOT_READY))?;
     service
       .resolve_connection_string(&request.connection_id, tunnel_port)
-      .map_err(QueryError::message)?
+      .map_err(QueryError::from_connection_service)?
   };
 
   let resolved = ResolvedPool::resolve(
@@ -412,7 +414,7 @@ pub async fn backup_database(
     };
     let connection_string = service
       .resolve_connection_string(&connection_id, tunnel_port)
-      .map_err(QueryError::message)?;
+      .map_err(QueryError::from_connection_service)?;
     (connection_string, tool_profile)
   };
   if let Some(profile) = tool_profile {
@@ -544,7 +546,7 @@ pub async fn import_csv_file(
       connection_service_guard.as_ref().ok_or_else(|| QueryError::message(SERVICE_NOT_READY))?;
     service
       .resolve_connection_string(&request.connection_id, tunnel_port)
-      .map_err(QueryError::message)?
+      .map_err(QueryError::from_connection_service)?
   };
   // 导入与网格提交一样另开连接，事务开着时同样写在它外面
   if query_session_state.transaction_open_on(&connection_string).await {
@@ -695,7 +697,7 @@ pub async fn explain_query(
     (
       service
         .resolve_connection_string(&request.connection_id, tunnel_port)
-        .map_err(QueryError::message)?,
+        .map_err(QueryError::from_connection_service)?,
       db_type,
     )
   };

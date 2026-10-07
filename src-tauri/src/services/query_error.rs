@@ -63,6 +63,18 @@ impl QueryError {
     Self { message: message.into(), code: Some(code.to_string()), ..Default::default() }
   }
 
+  /// 执行前从连接服务拿连接串时的错误。
+  ///
+  /// 配了隧道而隧道已经死了（跳板机重启、网络断过）是断线：连接池指着的本地端口
+  /// 已经没人转发。带上 CONNECTION_LOST，界面才会改成「已断开」并给出重连
+  pub fn from_connection_service(message: String) -> Self {
+    if message == crate::services::connection_service::SSH_TUNNEL_NOT_ESTABLISHED {
+      Self::with_code(CONNECTION_LOST_CODE, message)
+    } else {
+      Self::message(message)
+    }
+  }
+
   pub fn position(&self) -> Option<u32> {
     self.details.as_ref().and_then(|details| details.position)
   }
@@ -188,6 +200,7 @@ impl std::error::Error for QueryError {}
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::services::connection_service::{CONNECTION_NOT_FOUND, SSH_TUNNEL_NOT_ESTABLISHED};
 
   #[test]
   fn a_plain_message_carries_no_structure() {
@@ -227,6 +240,20 @@ mod tests {
     for error in [sqlx::Error::PoolClosed, sqlx::Error::WorkerCrashed] {
       assert_eq!(QueryError::from(error).code.as_deref(), Some(CONNECTION_LOST_CODE));
     }
+  }
+
+  /// 跳板机重启或网络断了，SSH 会话就没了，连接池跟着失效。对用户来说这就是断线：
+  /// 不带 CONNECTION_LOST，工作台头部会一直写着「已连接」，也不给「重新连接」按钮
+  #[test]
+  fn a_dead_ssh_tunnel_is_a_lost_connection() {
+    let error = QueryError::from_connection_service(SSH_TUNNEL_NOT_ESTABLISHED.to_string());
+    assert_eq!(error.code.as_deref(), Some(CONNECTION_LOST_CODE));
+    // 消息照旧，前端按它翻译成「隧道没在运行，请重新连接」
+    assert_eq!(error.message, SSH_TUNNEL_NOT_ESTABLISHED);
+
+    // 连接服务的其余错误（找不到连接、钥匙串打不开）不是断线，重连也没用
+    let other = QueryError::from_connection_service(CONNECTION_NOT_FOUND.to_string());
+    assert_eq!(other.code, None);
   }
 
   /// 读不懂回包要换连接，但不是断线：说「请重连」会让人去查网络
