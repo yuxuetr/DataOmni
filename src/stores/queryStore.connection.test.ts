@@ -70,6 +70,14 @@ describe('断线之后', () => {
     expect(useQueryStore.getState().connectionLost).toBe(true);
   });
 
+  // R7-mac 看到的：服务端结束了会话，下一条语句在结果区只剩一行 SQL——没有红字，
+  // 也没有失败的图标；错误只进了日志
+  it('出错的那条语句上说得出连接断了', async () => {
+    await runFailing({ code: 'CONNECTION_LOST', message: 'DATAOMNI_CONNECTION_LOST: terminating connection due to administrator command' });
+    const [statement] = selectActiveSqlDocument(useQueryStore.getState()).statements;
+    expect(statement.error).toBeTruthy();
+  });
+
   // 反过来：语句自己写错了不是断线。判错这一侧的代价是让人去重连一条好好的
   // 连接，而真正该做的是改那条语句
   it('数据库报的普通错误不算断线', async () => {

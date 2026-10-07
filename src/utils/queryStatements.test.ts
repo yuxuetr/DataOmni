@@ -41,6 +41,22 @@ describe('query statement lifecycle', () => {
     });
   });
 
+  // R7-mac：敲完立刻 ⌘↵，语句在防抖解析之前就跑完、失败了；半秒后的解析把红字抹掉，
+  // 结果区只剩一行 SQL。SQL 没变，报错就还是这一条的
+  it('keeps the error of a statement whose SQL did not change', () => {
+    const failed = failSqlStatement({ id: 'statement-1', sql: 'SELECT 1;', isExecuting: false }, 'connection lost');
+    const [statement] = reconcileSqlStatements('SELECT 1;', [failed], () => 'new-id');
+
+    expect(statement.error).toBe('connection lost');
+  });
+
+  it('drops the error once the SQL is edited', () => {
+    const failed = failSqlStatement({ id: 'statement-1', sql: 'SELCT 1;', isExecuting: false }, 'syntax error');
+    const [statement] = reconcileSqlStatements('SELECT 1;', [failed], () => 'new-id');
+
+    expect(statement.error).toBeUndefined();
+  });
+
   it('does not cancel an in-flight execution when its SQL is edited', () => {
     const [statement] = reconcileSqlStatements(
       'SELECT 2;',

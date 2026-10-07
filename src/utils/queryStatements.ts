@@ -44,10 +44,14 @@ export function reconcileSqlStatements(
       };
     }
 
+    // 报错只对写出它的那段 SQL 成立：改过就收起。没改过就留着——敲完立刻 ⌘↵ 时，
+    // 语句在防抖解析之前就跑完、失败了，半秒后的这次解析不能把红字抹掉
+    const unchanged = previous.sql === sql;
     return {
       ...previous,
       sql,
-      error: undefined,
+      error: unchanged ? previous.error : undefined,
+      errorDetails: unchanged ? previous.errorDetails : undefined,
       resultSql: previous.result
         ? previous.resultSql ?? previous.sql
         : undefined
