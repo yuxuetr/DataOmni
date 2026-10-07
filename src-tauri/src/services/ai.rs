@@ -7,6 +7,7 @@
 //! 这里只管「把一段系统提示和一段用户输入发出去、拿回文本」。发什么由前端的
 //! `utils/aiDesign.ts` 决定，并原样展示给人看。
 
+use crate::services::http_endpoint::error_chain;
 use crate::services::QueryError;
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
@@ -43,10 +44,9 @@ pub struct AiRequest {
 
 pub async fn complete(request: &AiRequest, api_key: &str) -> Result<String, QueryError> {
   // 生产环境不关代理：模型服务在公网上，很多人正是靠代理才连得上
-  let client = reqwest::Client::builder()
-    .timeout(REQUEST_TIMEOUT)
-    .build()
-    .map_err(|error| QueryError::message(format!("{AI_REQUEST_FAILED}: {error}")))?;
+  let client = reqwest::Client::builder().timeout(REQUEST_TIMEOUT).build().map_err(|error| {
+    QueryError::message(format!("{AI_REQUEST_FAILED}: {}", error_chain(&error)))
+  })?;
   complete_with(&client, request, api_key).await
 }
 
@@ -89,12 +89,13 @@ pub async fn complete_with(
     .body(body.to_string())
     .send()
     .await
-    .map_err(|error| QueryError::message(format!("{AI_REQUEST_FAILED}: {error}")))?;
+    .map_err(|error| {
+      QueryError::message(format!("{AI_REQUEST_FAILED}: {}", error_chain(&error)))
+    })?;
   let status = response.status();
-  let body = response
-    .text()
-    .await
-    .map_err(|error| QueryError::message(format!("{AI_REQUEST_FAILED}: {error}")))?;
+  let body = response.text().await.map_err(|error| {
+    QueryError::message(format!("{AI_REQUEST_FAILED}: {}", error_chain(&error)))
+  })?;
   if !status.is_success() {
     // 服务端的原话最有用（Key 错、模型名错、余额不足），截一段带上
     return Err(QueryError::message(format!(
@@ -186,6 +187,19 @@ mod tests {
       system: "只输出 JSON".into(),
       user: "博客".into(),
     }
+  }
+
+  /// reqwest 的 Display 只有「error sending request」，看不出是拒连、证书还是 DNS
+  #[tokio::test]
+  async fn unreachable_service_names_the_cause() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    drop(listener);
+    let error = complete_with(&client(), &request(AiProtocol::Openai, base), "sk-test")
+      .await
+      .expect_err("nothing listens there");
+    assert!(error.message.contains(AI_REQUEST_FAILED), "{}", error.message);
+    assert!(error.message.to_lowercase().contains("refused"), "{}", error.message);
   }
 
   #[tokio::test]

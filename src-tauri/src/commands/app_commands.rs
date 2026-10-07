@@ -1,5 +1,6 @@
 //! 应用自身的信息：报缺陷时要带上的诊断信息，和日志文件在哪。
 
+use crate::services::http_endpoint::error_chain;
 use tauri::{AppHandle, Manager};
 
 /// 日志文件名（不带扩展名）。`tauri-plugin-log` 写到系统的应用日志目录下，加上 `.log`
@@ -76,15 +77,15 @@ pub async fn latest_release() -> Result<String, String> {
     // GitHub API 不带 User-Agent 直接 403
     .user_agent(concat!("DataOmni/", env!("CARGO_PKG_VERSION")))
     .build()
-    .map_err(|error| failed(&error))?;
+    .map_err(|error| failed(&error_chain(&error)))?;
   let response = client
     .get(LATEST_RELEASE_API)
     .header("Accept", "application/vnd.github+json")
     .send()
     .await
-    .map_err(|error| failed(&error))?;
+    .map_err(|error| failed(&error_chain(&error)))?;
   let status = response.status();
-  let body = response.text().await.map_err(|error| failed(&error))?;
+  let body = response.text().await.map_err(|error| failed(&error_chain(&error)))?;
   if !status.is_success() {
     return Err(failed(&status));
   }
