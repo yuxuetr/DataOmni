@@ -24,7 +24,7 @@
 | P5 | 统一桌面 UI 与交互 | [ ]（只差 5.4 的 Windows 安装验证） |
 | P6 | AI 设计、导出与备份 | [x] A0–A6c、A9 完成（A2b / A7 / A8 当前版本不做） |
 | P7 | 更多数据库：国产库与云库 | [-] OceanBase、openGauss 完成；KingbaseES 缺安装包；B3 不做；B4 按触发条件 |
-| v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [-] v0.6.0 已发布（2026-10-07，tag 重打在 2b62b5f，含 R6、R7-mac 的修正）；R5 的 CI 部分与 R6 完成；先做 R7 的 macOS 部分，Windows（R5 人工、R7 Windows）后放 |
+| v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [-] v0.6.0 已发布（2026-10-07，tag 重打在 2b62b5f，含 R6、R7-mac 的修正）；R5 的 CI 部分与 R6 完成；R7 的 macOS 与 Linux 部分完成，Windows（R5 人工、R7 Windows）后放 |
 
 ---
 
@@ -172,7 +172,32 @@
     - 收尾（2026-10-07）：测试连接的钥匙串条目已删，cu 上的 om_r7* 表已删、各测试容器已停，本机 Oracle 容器已删；
       用户自己的 DataOmni 数据（21 个连接、偏好）已从备份放回。
     - 遗留：Redis 危险命令确认要人工点一次；v0.6.0 按决定删掉旧草稿与 tag，重打在 2b62b5f（run 37586095917 全绿，Windows 安装冒烟过），2026-10-07 发布为 Latest。
-  - [ ] R7-linux：同一次 CI 的 rpm / deb
+  - [x] R7-linux：v0.6.0 发布的 rpm / deb，外加 v0.6.0 之后的 CI 包（run 37593477681、37599923690、37602025075）复验修复。
+    - 装包：Ubuntu 22.04、Ubuntu 24.04（deb）与 Fedora 42（rpm）各一个干净容器：装 0.5.1 → 放一份用户数据 → 升到 0.6.0 →
+      依赖齐全（ldd 无缺）、desktop 文件与图标在、Xvfb 下起得来 → 卸载，用户数据都还在。
+    - 图形回归在本机 Docker 的 Fedora 42 + GNOME Shell（Wayland，x86_64 经 Rosetta）里，PostgreSQL 走满第一到第八节：
+      - 过：新建 / 改名 / 删除（应用内确认，Secret Service 里的条目一并删掉）；口令进 gnome-keyring、`connections.json` 里搜不到，
+        重启后免输入连上；错主机、错口令、错库名各一次；右键菜单只出应用自己的（没有 WebKitGTK 的系统菜单）；执行全部、
+        报错跳到第 3 行、DROP 先确认、`pg_sleep` 停下后服务端也结束；补全（表名、`别名.` 补列）、格式化、查找替换；
+        GTK 文件对话框存 / 开 .sql；Ctrl+W 问草稿、Ctrl+Shift+T 找回、Ctrl+1、重启后标签与草稿都在、历史搜索；
+        TSV 复制（中文完整）、图表、导出 CSV / INSERT；表数据翻页、筛选、改数组 / jsonb（带转义引号）/ 时间戳 / numeric、
+        新增、删行、撤销单条、别处改过时整批回滚、无主键说明原因；看结构、加列、ER 图（PNG 导出是 2 倍分辨率）、数据字典；
+        事务回滚（另一会话看不到）、关窗口时问事务、CSV 导入跳过坏行（读 3 写 2 败 1）、pg_dump 备份在新库还原逐行一致、
+        执行计划；深色 / 中文、命令面板（快捷键显示为 Ctrl）、设置、诊断信息、日志在 `~/.local/share/com.dataomni.app/logs/`。
+      - 修了：Ubuntu 22.04 最小安装没有 ca-certificates，检查更新只记一句 builder error（e62dc26 声明依赖，816fbd9 报错带原因链；
+        新包上 apt 自动带上、问到了版本）；包说明还写着只支持 MySQL / PostgreSQL / SQLite（bb8fe6d）；停掉长查询后把语句整个
+        换掉，卡片仍写「已停止 / 重新执行」（ad8c81f、b7569cb）；表数据页选「紧凑」行高不变（d543a4d，操作列写死了 py-1）。
+        这几处都在新包上复验过。
+      - 清单改了一句（af32274）：事务开着时网格、结构变更与 CSV 导入的提交被拒并说明原因（9250dc2 的设计），不是「走同一会话」。
+      - 「在文件夹中显示日志」：容器里没有 FileManager1 时报 `ServiceUnknown`（说得出原因）；装上 Nautilus 后打开日志目录并选中文件。
+    - 方言项（Linux 上有平台差异的先走）：SQLite 经 GTK 对话框打开、无类型列改数存成 integer；Oracle 用包里的 Linux 版
+      Instant Client（加上系统 libaio）连上、浏览、改 VARCHAR2 与 DATE、执行计划；MySQL 要求 TLS（会话 Ssl_cipher 为
+      TLS_AES_256_GCM_SHA384）、`_bin` 列改一格只动这一行；Redis 只列非空逻辑库、六种类型、命令行。
+      - 修了：用 SYSTEM 登录 Oracle 时对象树是空的（37eb07f：当前登录的 schema 即使是 Oracle 自带的也列出；冒烟用例拿 SYSTEM
+        改前红、改后绿，拿普通用户串行跑整套 28 条全过）。新包上复验 SYSTEM 名下的表出现了。
+      - 没测：MongoDB、Neo4j、Elasticsearch、ClickHouse、SQL Server、DuckDB 在 Linux 上没再走——这几家的驱动与界面代码
+        与 macOS 同一份，没有按平台分的路径，R7-mac 已走过；Redis 危险命令确认照旧留给人工。
+    - 收尾：本机测试容器（PostgreSQL、Oracle、MySQL、Redis、GNOME）已删。
   - [ ] R7-windows：后放
 
 ### 里程碑条目
