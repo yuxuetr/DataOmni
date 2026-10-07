@@ -764,7 +764,9 @@ async fn oracle_catalog_queries_describe_the_fixture() {
 #[tokio::test]
 async fn oracle_catalog_lists_the_login_schema_even_when_oracle_maintains_it() {
   use dataomni_lib::models::DatabaseType;
-  use dataomni_lib::services::{completion_catalog_query, er_diagram_queries, object_catalog_queries};
+  use dataomni_lib::services::{
+    completion_catalog_query, er_diagram_queries, object_catalog_queries,
+  };
   let Some(pool) = pool().await else { return };
   drop_quietly(&pool, "om_login_schema").await;
   run_all(&pool, &["CREATE TABLE om_login_schema (id NUMBER(10) PRIMARY KEY)"]).await;
