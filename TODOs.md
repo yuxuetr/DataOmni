@@ -158,7 +158,13 @@
       DuckDB（打开文件、导入跳过坏行只能每批一个事务并说明原因，读 3 写 2 败 1）、ClickHouse（经 ssh -L 连 HTTP 口、
       浏览、聚合查询、改一行提交）都过。
       - 修了：SQLite 无类型列里改一个数存成了文本（8196625，未进 9b0fd5e 的包，待下一包复验）。
-      - 还没走：SQL Server、Oracle、MongoDB、Redis、Neo4j、Elasticsearch。
+      - MongoDB（命令台 insert、浏览、整篇替换保存且 ISODate 存成日期、聚合、删文档走确认）、Redis（只列非空逻辑库、
+        六种类型、hash 加字段、命令行）、Neo4j（Cypher、图视图、改属性保持 INTEGER）、Elasticsearch（自签 HTTPS：
+        失败提示指明选「要求 TLS」，改后连上；索引浏览、查询台、改文档）、SQL Server（经 ssh -L；nvarchar 改中文、
+        执行计划 Clustered Index Seek）都过。
+      - 修了：Neo4j 服务端还在启动时测试连接，提示「超过了查询时限……可以在工具栏调大」（0a36fb7）。
+      - 没测：Redis 危险命令确认（FLUSHDB 这类命令本机的自动执行权限拦下了，留给人工点一次）。
+      - 还没走：Oracle（cu 起 Oracle 时 SSH 一度连不上，待恢复）。
   - [ ] R7-linux：同一次 CI 的 rpm / deb
   - [ ] R7-windows：后放
 
