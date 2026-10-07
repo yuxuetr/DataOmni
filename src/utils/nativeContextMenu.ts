@@ -15,10 +15,24 @@ export function keepsNativeContextMenu(target: EventTarget | null, selectedText:
   return target.closest('input, textarea, [contenteditable]:not([contenteditable="false"])') !== null;
 }
 
-/** 只装在打包版上：开发时右键还要留给「检查元素」 */
+/**
+ * 只装在打包版上：开发时右键还要留给「检查元素」。
+ *
+ * 选区要取**按下右键之前**的：macOS 上右键会先把指针下那个词选中，contextmenu 到的时候
+ * 总是「选中了文字」，于是列表行上弹出「查询」「翻译」「用必应搜索」。捕获阶段的 mousedown
+ * 先于 WebKit 选词。键盘唤出的菜单没有 mousedown，取当时的选区
+ */
 export function installNativeContextMenuGuard(): void {
+  let selectionBeforePress: string | null = null;
+  window.addEventListener('mousedown', (event) => {
+    if (event.button === 2) {
+      selectionBeforePress = window.getSelection()?.toString() ?? '';
+    }
+  }, true);
   window.addEventListener('contextmenu', (event) => {
-    if (!keepsNativeContextMenu(event.target, window.getSelection()?.toString() ?? '')) {
+    const selectedText = selectionBeforePress ?? window.getSelection()?.toString() ?? '';
+    selectionBeforePress = null;
+    if (!keepsNativeContextMenu(event.target, selectedText)) {
       event.preventDefault();
     }
   });
