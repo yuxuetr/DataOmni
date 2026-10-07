@@ -33,7 +33,7 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   invoke.mockReset();
   switchConnection.mockClear();
-  useAppStore.setState({ connectionForm: null });
+  useAppStore.setState({ connectionForm: null, activeConnection: null, connectionReady: false });
   useConnectionStore.setState({ connections: [profile] });
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -83,5 +83,27 @@ describe('钥匙串里没有这条口令', () => {
     });
     expect(connector.error).toBe(describeError('DATAOMNI_CREDENTIAL_MISSING'));
     expect(useAppStore.getState().connectionForm?.mode).toBe('edit');
+  });
+});
+
+/**
+ * R7-mac 看到的：⌘K 连失败留下的那条红字，换从侧边栏连上之后还一直挂在标签栏下面——
+ * 两处各有一份 connector，连上的那一份清了自己的，另一份不知道
+ */
+describe('别处连上之后', () => {
+  it('上一次连失败的提示收起', async () => {
+    invoke.mockRejectedValueOnce('connection refused');
+    await act(async () => {
+      expect(await connector.connect(profile)).toBe('failed');
+    });
+    expect(connector.error).not.toBeNull();
+
+    await act(async () => {
+      useAppStore.setState({
+        activeConnection: { config: profile, connectionString: 'mssql://…' },
+        connectionReady: true
+      });
+    });
+    expect(connector.error).toBeNull();
   });
 });

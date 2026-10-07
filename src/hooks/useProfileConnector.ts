@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import type { ConnectionProfile } from '../contracts';
@@ -60,6 +60,15 @@ export function useProfileConnector(): ProfileConnector {
   const openConnectionForm = useAppStore((state) => state.openConnectionForm);
   const [connectingProfileId, setConnectingProfileId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 侧边栏、欢迎页、⌘K 各有一份 connector：从别处连上了，这一份上次失败的提示也就过时了
+  const connectedProfileId = useAppStore((state) => (
+    state.connectionReady ? state.activeConnection?.config.id ?? null : null
+  ));
+  useEffect(() => {
+    if (connectedProfileId) {
+      setError(null);
+    }
+  }, [connectedProfileId]);
 
   const connect = useCallback(async (profile: ConnectionProfile): Promise<ConnectResult> => {
     setError(null);
