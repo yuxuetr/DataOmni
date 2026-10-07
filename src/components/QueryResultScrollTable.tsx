@@ -395,6 +395,8 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   }, [result]);
 
   const copyHint = t('result.copyHint', { shortcut: formatShortcut(SHORTCUTS.copySelection) });
+  // DDL / DML 没有格子：复制提示、图表、导出都无从说起
+  const returnsRows = result.columns.length > 0;
 
   return (
     <div className="border rounded-panel overflow-hidden bg-surface relative">
@@ -405,7 +407,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
         <div className="mr-4 flex min-w-0 flex-1 items-center gap-4 text-sm text-fg-muted">
           {/* 返回行的语句说行数，不返回的说影响了几行——此前两句一起印，SELECT 上
               「影响行数」就是行数本身（前端拿 rows.length 填的），DML 上「0 行」是噪音 */}
-          {result.columns.length > 0
+          {returnsRows
             ? <span className="shrink-0 whitespace-nowrap">{t('result.rowCount', { count: totalRows })}</span>
             : <span className="shrink-0 whitespace-nowrap">{t('result.affectedRows', { count: result.affected_rows })}</span>}
           {result.truncated && (
@@ -433,7 +435,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
               <span className="max-w-[28rem] truncate">{readOnlyReason}</span>
             </span>
           )}
-          <span className="min-w-0 truncate text-fg-subtle" title={copyHint}>{copyHint}</span>
+          {returnsRows && <span className="min-w-0 truncate text-fg-subtle" title={copyHint}>{copyHint}</span>}
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
@@ -446,24 +448,28 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
               <span>{t('result.addRow')}</span>
             </button>
           )}
-          <button
-            onClick={() => setShowChart(true)}
-            disabled={totalRows === 0}
-            className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover disabled:opacity-50"
-            title={t('result.chartTitle')}
-          >
-            <BarChart3 size={14} />
-            <span>{t('result.chart')}</span>
-          </button>
-          <button
-            onClick={() => setShowExport(true)}
-            disabled={totalRows === 0}
-            className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover disabled:opacity-50"
-            title={t('result.exportCurrent')}
-          >
-            <Download size={14} />
-            <span>{t('result.export')}</span>
-          </button>
+          {returnsRows && (
+            <>
+              <button
+                onClick={() => setShowChart(true)}
+                disabled={totalRows === 0}
+                className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover disabled:opacity-50"
+                title={t('result.chartTitle')}
+              >
+                <BarChart3 size={14} />
+                <span>{t('result.chart')}</span>
+              </button>
+              <button
+                onClick={() => setShowExport(true)}
+                disabled={totalRows === 0}
+                className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1.5 text-sm text-fg hover:bg-surface-hover disabled:opacity-50"
+                title={t('result.exportCurrent')}
+              >
+                <Download size={14} />
+                <span>{t('result.export')}</span>
+              </button>
+            </>
+          )}
         </div>
       </div>
 
