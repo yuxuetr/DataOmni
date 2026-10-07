@@ -24,7 +24,7 @@
 | P5 | 统一桌面 UI 与交互 | [ ]（只差 5.4 的 Windows 安装验证） |
 | P6 | AI 设计、导出与备份 | [x] A0–A6c、A9 完成（A2b / A7 / A8 当前版本不做） |
 | P7 | 更多数据库：国产库与云库 | [-] OceanBase、openGauss 完成；KingbaseES 缺安装包；B3 不做；B4 按触发条件 |
-| v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [-] v0.6.0 已打 tag（草稿 Release 待发布）；R5 的 CI 部分与 R6 完成；R5 人工部分待一台干净的 Windows，然后 R7 |
+| v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [-] v0.6.0 已打 tag（草稿 Release 待发布）；R5 的 CI 部分与 R6 完成；先做 R7 的 macOS 部分，Windows（R5 人工、R7 Windows）后放 |
 
 ---
 
@@ -124,6 +124,11 @@
       - 本地新起的 CockroachDB 要先开 `sql.defaults.experimental_temporary_tables.enabled`，两条用例的夹具用了临时表；cu 上那台早就开着。
     - 测试残留：MariaDB、TiDB（`test` 库）、openGauss、OceanBase 上各留一张 `om_r6`。
 - [ ] R7 拿 CI 产出的三平台包，按 `docs/release-regression.md` 完整回归 → 勾下面两条 → 打 `v1.0.0`
+  - 2026-10-07 定：先把 macOS 做完整，Windows 之后再说（R5 人工部分与 R7 的 Windows 部分都后放）。
+  - [ ] R7-mac：CI 从 `main` 手动打的 macOS 包（含 v0.6.0 之后的三处修复），PostgreSQL 走满第一到第八节，其余各库走方言项；
+    另补 macOS 上没验过的：日志路径与「在访达中显示」、新版本提示、从 0.5.1 升上来连接 / 标签 / 历史 / 设置都在。
+  - [ ] R7-linux：同一次 CI 的 rpm / deb
+  - [ ] R7-windows：后放
 
 ### 里程碑条目
 
