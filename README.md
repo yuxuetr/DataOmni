@@ -535,6 +535,17 @@ bun install
 
 （暂无）
 
+### v0.6.1（2026-10-07）
+
+Linux 打包版完整回归（`rfcs/roadmap-1.0.md` 的 R7-linux）修的几处：
+
+- 📦 deb / rpm 声明依赖 `ca-certificates`：最小安装的 Ubuntu 22.04 上原先检查更新失败，连 HTTPS 的 Elasticsearch、ClickHouse 与 AI 请求同样会失败；
+  检查更新与 AI 请求失败时报错写出底层原因，不再只有一句 `builder error`
+- 📦 软件包说明列出现在支持的库
+- 🐛 Oracle：用 SYSTEM 这类 Oracle 自带的账号登录时，对象树列出当前登录的 schema
+- 🐛 停掉一条长查询后改写语句，新语句的卡片不再写「已停止 / 重新执行」
+- 🐛 表数据页「紧凑」行高生效（操作列原先把每行撑在原来的高度）
+
 ### v0.6.0（2026-10-07）
 
 不加功能，为 1.0 打底（`rfcs/roadmap-1.0.md` 的 R0–R7-mac）：
