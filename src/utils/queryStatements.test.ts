@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { QueryResult, SqlStatement } from '../contracts/query';
+import type { QueryExecutionStatus } from '../contracts/queryExecution';
 import {
   clearSqlStatementResult,
   completeSqlStatement,
@@ -133,18 +134,27 @@ describe('query statement lifecycle', () => {
 });
 
 describe('statementOutcome', () => {
+  const ran = (status: QueryExecutionStatus, sqlSnapshot = 'SELECT 1;') => ({ status, sqlSnapshot });
+
   it('停下的那次不算成功，哪怕卡片上还留着上一次的结果', () => {
     // 打包版上看到的：同一条语句再跑一遍、中途停下，卡片照样打绿勾、摊着上一次的行数，
     // 看上去就是这一次跑完了
-    expect(statementOutcome(executedStatement, 'cancelled')).toBe('cancelled');
-    expect(statementOutcome({ ...executedStatement, result: undefined }, 'cancelled')).toBe('cancelled');
+    expect(statementOutcome(executedStatement, ran('cancelled'))).toBe('cancelled');
+    expect(statementOutcome({ ...executedStatement, result: undefined }, ran('cancelled'))).toBe('cancelled');
+  });
+
+  it('停下的是改写之前的那段 SQL，改写之后的这段没跑过', () => {
+    // 打包版上看到的：停掉 pg_sleep 之后把编辑器里的语句整个换掉，新语句的卡片上还写着「已停止」
+    const rewritten = { id: 's', sql: 'SELECT 2;', isExecuting: false };
+    expect(statementOutcome(rewritten, ran('cancelled', 'SELECT pg_sleep(25);'))).toBe('idle');
+    expect(statementOutcome({ ...executedStatement, sql: 'SELECT 2;' }, ran('cancelled'))).toBe('succeeded');
   });
 
   it('其余照卡片上的状态', () => {
-    expect(statementOutcome(executedStatement, 'succeeded')).toBe('succeeded');
+    expect(statementOutcome(executedStatement, ran('succeeded'))).toBe('succeeded');
     expect(statementOutcome(executedStatement, undefined)).toBe('succeeded');
-    expect(statementOutcome({ ...executedStatement, isExecuting: true }, 'running')).toBe('running');
-    expect(statementOutcome({ ...executedStatement, error: 'boom' }, 'failed')).toBe('failed');
+    expect(statementOutcome({ ...executedStatement, isExecuting: true }, ran('running'))).toBe('running');
+    expect(statementOutcome({ ...executedStatement, error: 'boom' }, ran('failed'))).toBe('failed');
     expect(statementOutcome({ id: 's', sql: 'SELECT 1;', isExecuting: false }, undefined)).toBe('idle');
   });
 });

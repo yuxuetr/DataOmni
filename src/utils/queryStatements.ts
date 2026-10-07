@@ -1,4 +1,4 @@
-import type { QueryExecutionError, QueryExecutionStatus } from '../contracts/queryExecution';
+import type { QueryExecution, QueryExecutionError } from '../contracts/queryExecution';
 import type { QueryResult, SqlStatement } from '../contracts/query';
 import type { SqlDialect } from '../contracts/queryExecution';
 import { splitSqlStatements } from './sqlStatements';
@@ -92,15 +92,18 @@ export type StatementOutcome = 'idle' | 'running' | 'succeeded' | 'failed' | 'ca
 
 /**
  * 卡片该画成什么样。停下的那次没有错误、却可能留着上一次的结果（失败时也留，那边有红色的
- * 错误面板说明）：只看 `result` 就会打绿勾，而这一次并没有跑完
+ * 错误面板说明）：只看 `result` 就会打绿勾，而这一次并没有跑完。
+ * 「停下了」和报错一样只对当时那段 SQL 成立：语句改写过，就不再是停下的那一条
  */
 export function statementOutcome(
   statement: SqlStatement,
-  executionStatus: QueryExecutionStatus | undefined
+  lastExecution: Pick<QueryExecution, 'status' | 'sqlSnapshot'> | undefined
 ): StatementOutcome {
   if (statement.isExecuting) return 'running';
   if (statement.error) return 'failed';
-  if (executionStatus === 'cancelled') return 'cancelled';
+  if (lastExecution?.status === 'cancelled' && lastExecution.sqlSnapshot === statement.sql) {
+    return 'cancelled';
+  }
   return statement.result ? 'succeeded' : 'idle';
 }
 

@@ -875,7 +875,7 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
   const t = useLanguageStore((state) => state.t);
   const hasOutput = Boolean(statement.result || statement.error);
   const collapsed = hasOutput && statement.collapsed === true;
-  const outcome = statementOutcome(statement, execution?.status);
+  const outcome = statementOutcome(statement, execution);
 
   return (
     <div className="border border-line rounded-panel overflow-hidden">
