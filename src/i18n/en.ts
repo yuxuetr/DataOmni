@@ -136,6 +136,7 @@ export const en: Translations = {
   'palette.noResults': 'No matches',
 
   'welcome.hint': 'Pick a connection, or create one.',
+  'welcome.editConnection': 'Edit connection: {name}',
   'welcome.openDatabaseFileEllipsis': 'Open a database file…',
   'welcome.importConnections': 'Import connections…',
   'welcome.exportConnections': 'Export connections…',

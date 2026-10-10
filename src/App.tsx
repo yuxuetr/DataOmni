@@ -841,7 +841,7 @@ function App() {
   const renderActiveTab = () => {
     if (!activeTab) {
       return (
-        <WelcomeScreen onConnect={openConnectionForm} />
+        <WelcomeScreen onConnect={openConnectionForm} onEdit={(profile) => openConnectionForm(profile)} />
       );
     }
 

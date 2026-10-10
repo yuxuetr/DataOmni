@@ -152,6 +152,7 @@ export const zh = {
   'palette.noResults': '没有匹配的结果',
 
   'welcome.hint': '选择一个连接，或新建一个。',
+  'welcome.editConnection': '编辑连接：{name}',
   'welcome.openDatabaseFileEllipsis': '打开数据库文件…',
   'welcome.importConnections': '导入连接…',
   'welcome.exportConnections': '导出连接…',

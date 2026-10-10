@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Database, FileUp, Loader2, Plus, X } from 'lucide-react';
+import { AlertCircle, ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Database, Edit, FileUp, Loader2, Plus, X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useProfileConnector } from '../hooks/useProfileConnector';
@@ -10,9 +10,11 @@ import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import { useLanguageStore } from '../stores/languageStore';
 import { exportConnections, importConnections } from '../utils/connectionTransfer';
 import { describeError } from '../utils/describeError';
+import type { ConnectionProfile } from '../contracts';
 
 interface WelcomeScreenProps {
   onConnect: () => void;
+  onEdit: (profile: ConnectionProfile) => void;
 }
 
 /**
@@ -22,7 +24,7 @@ interface WelcomeScreenProps {
  * 十几次的窗口来说，那是纯粹的噪音，而且唯一的按钮只会打开新建表单，已有的
  * 连接一个也点不到。现在它做一件事：让人尽快进到某个库里。
  */
-export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
+export function WelcomeScreen({ onConnect, onEdit }: WelcomeScreenProps) {
   const t = useLanguageStore((state) => state.t);
   const connections = useConnectionStore((state) => state.connections);
   const loadConnections = useConnectionStore((state) => state.loadConnections);
@@ -117,14 +119,15 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
               const isConnecting = connectingProfileId === profile.id;
 
               return (
-                <li key={profile.id} className="border-b border-line last:border-b-0">
+                // 编辑按钮和整行的连接按钮是兄弟，不嵌套：按钮里套按钮是非法 HTML，点编辑也会冒泡成连接
+                <li key={profile.id} className="flex items-center border-b border-line last:border-b-0 hover:bg-surface-hover">
                   <button
                     type="button"
                     onClick={() => void connect(profile)}
                     disabled={connectingProfileId !== null}
                     className={clsx(
-                      'flex w-full items-center gap-3 px-3 py-2 text-left transition-colors',
-                      'hover:bg-surface-hover disabled:cursor-wait disabled:opacity-60'
+                      'flex min-w-0 flex-1 items-center gap-3 py-2 pl-3 pr-2 text-left transition-colors',
+                      'disabled:cursor-wait disabled:opacity-60'
                     )}
                   >
                     {isConnecting
@@ -140,6 +143,16 @@ export function WelcomeScreen({ onConnect }: WelcomeScreenProps) {
                       </span>
                     </span>
                     <span className="shrink-0 text-xs text-fg-subtle">{serverLabel(profile)}</span>
+                  </button>
+                  {/* 一直显示，不等悬停：这里就是为了让人找得到编辑 */}
+                  <button
+                    type="button"
+                    onClick={() => onEdit(profile)}
+                    title={t('connection.edit')}
+                    aria-label={t('welcome.editConnection', { name: profile.name })}
+                    className="mr-2 shrink-0 rounded-control p-1.5 text-fg-subtle hover:bg-surface hover:text-accent"
+                  >
+                    <Edit size={14} />
                   </button>
                 </li>
               );
