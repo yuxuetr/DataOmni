@@ -150,6 +150,8 @@ Commands:
                      network connection fails, error.diagnosis says whether the
                      name resolved and the port answered.
   version            Print the DataOmni version
+  guide              Print a usage guide written for agents, in the format of a
+                     Claude Code skill (save it as SKILL.md)
   help               Print this help
 
 Output is JSON on stdout (dictionary prints Markdown); errors are JSON on stderr.
@@ -160,6 +162,9 @@ A connection is visible here only if \"Command line & agent access\" is set to
 read-only in its DataOmni settings. Production connections are never visible.
 Nothing on this command line can widen that.
 ";
+
+/// 给 Agent 读的说明，格式是 Claude Code 的 Skill（`SKILL.md`），存下来就能用（设计文档 §7）
+const GUIDE: &str = include_str!("guide.md");
 
 /// 命令行读写的两个目录。测试换成临时目录，不碰本机真实的配置与日志
 struct Dirs {
@@ -241,6 +246,10 @@ fn dispatch(args: &[String], dirs: &Dirs) -> Result<Output, CliError> {
   };
   match command.as_str() {
     "help" | "--help" | "-h" => Ok(Output::Text(HELP.to_string())),
+    "guide" => {
+      no_arguments(command, rest)?;
+      Ok(Output::Text(GUIDE.to_string()))
+    }
     "version" | "--version" => {
       no_arguments(command, rest)?;
       Ok(Output::Json(json!({ "schema": OUTPUT_SCHEMA, "version": env!("CARGO_PKG_VERSION") })))
@@ -2051,6 +2060,45 @@ mod tests {
     {
       assert_eq!(run_in(&dir, bad).0, Exit::Usage as i32, "{bad:?}");
     }
+  }
+
+  /// 每个命令都在 `help` 与 `guide` 里写着，dispatch 也认得它；加了命令忘了写说明，这里红
+  #[test]
+  fn every_command_is_documented_in_help_and_guide() {
+    const COMMANDS: &[&str] = &[
+      "connections",
+      "query",
+      "schema",
+      "explain",
+      "dictionary",
+      "mongo",
+      "redis",
+      "neo4j",
+      "es",
+      "export",
+      "ddl",
+      "backup",
+      "csv-preview",
+      "test",
+      "version",
+      "guide",
+      "help",
+    ];
+    let dir = ConfigDir::with(&[]);
+    for command in COMMANDS {
+      assert!(HELP.contains(&format!("\n  {command}")), "help does not list {command}");
+      let (_, _, stderr) = run_in(&dir, &[command]);
+      assert!(!stderr.contains("unknown command"), "{command}: {stderr}");
+      if !["help", "version", "guide"].contains(command) {
+        assert!(
+          GUIDE.contains(&format!("dataomni cli {command}")),
+          "guide does not show {command}"
+        );
+      }
+    }
+    let (code, stdout, _) = run_in(&dir, &["guide"]);
+    assert_eq!(code, 0);
+    assert!(stdout.starts_with("---\nname: dataomni\ndescription: \""), "{stdout:.80}");
   }
 
   #[test]

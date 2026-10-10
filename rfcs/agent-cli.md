@@ -273,7 +273,8 @@ MySQL 的 `get_lock()`；ClickHouse 的 `KILL QUERY`。
 - 被拒时的信息要说清楚改哪里：「这个连接没有开放给 Agent，请在 DataOmni 的连接设置里打开」，
   **不提示任何能绕过的参数**。
 - `dataomni cli guide` 打印一份给 Agent 读的使用说明（命令、输出格式、权限的意思），
-  可以直接存成 Claude Code 的 Skill。
+  可以直接存成 Claude Code 的 Skill。已实现：源文件是 `src-tauri/src/cli/guide.md`；
+  测试要求每个命令都在 `help` 与 `guide` 里出现。
 
 ## 8. 验收门
 

@@ -384,7 +384,10 @@
   - [x] `backup <连接> --out 路径`：同界面的 `services::backup`。SQLite 在只读打开的库上 `VACUUM INTO`（源文件逐字节不变）；
     DuckDB 被命令行的「关外部访问」挡住（实测），备份另开一条只读、不关外部访问的连接，只跑 `EXPORT DATABASE`。
     PG / MySQL / MongoDB 走外部工具，服务层已有真库冒烟；命令行这边用连不上的 PG 验了接线（pg_dump 报错、不留文件）。
-  - 第二批做完。还没做的：`guide`（给 Agent 读的说明，设计文档 §7）、README、安装脚本的软链接。
+  - 第二批做完。
+  - [x] `guide`：给 Agent 读的说明，格式是 Claude Code 的 Skill（`SKILL.md`），源文件 `src-tauri/src/cli/guide.md` 编进二进制。
+    门：每个命令都要在 `help` 与 `guide` 里出现、dispatch 认得它——写的时候就红过一次（`ddl`、`backup` 没写全调用形式）。
+  - 还没做的：README、安装脚本的软链接。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
 - [ ] B4 驱动按 Cargo feature 拆分
