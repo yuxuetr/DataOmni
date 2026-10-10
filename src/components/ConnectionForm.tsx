@@ -555,6 +555,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
               <p className="mt-1 text-xs text-fg-subtle">
                 {t(formData.environment === 'production' ? 'form.agentAccessProductionHint' : 'form.agentAccessHint')}
               </p>
+              {/* 命令行是另一个进程，只拿得到钥匙串里的口令；文件库没有口令 */}
+              {formData.environment !== 'production' && formData.agent_access === 'read'
+                && formData.save_password === false && !isFileDatabase(formData.db_type) && (
+                <p className="mt-1 text-xs text-warning">{t('form.agentAccessNeedsSavedPassword')}</p>
+              )}
             </div>
 
             {/* 数据库类型 */}

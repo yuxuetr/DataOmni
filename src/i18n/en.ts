@@ -988,6 +988,7 @@ export const en: Translations = {
   'form.agentAccess.read': 'Read-only',
   'form.agentAccessHint': 'When on, the dataomni cli command can run read-only queries on this connection, for example from an AI agent. The password is never handed to the caller.',
   'form.agentAccessProductionHint': 'Production connections are never open to the command line.',
+  'form.agentAccessNeedsSavedPassword': 'The password is not saved in the system credential store, so the command line cannot connect: it has no access to a password entered only for this session.',
   'form.db.viaProtocol': 'Connects over the {protocol} protocol',
   'form.db.gapsTag': 'Gaps',
   'form.db.gaps.cockroachdb': 'A few things do not work on CockroachDB: triggers cannot be read on the structure page, and errors carry no position or table name.',

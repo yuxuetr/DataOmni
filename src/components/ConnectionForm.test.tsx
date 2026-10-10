@@ -108,6 +108,25 @@ describe('ConnectionForm 命令行访问', () => {
   });
 });
 
+describe('ConnectionForm 命令行访问与保存口令', () => {
+  // 命令行是另一个进程，拿不到只在这次会话里输的口令。开了只读又不保存口令，
+  // 命令行就只会报 SESSION_PASSWORD_REQUIRED，而表单上什么也没说
+  it('开了只读却不保存口令时提醒，文件库不提醒', () => {
+    act(() => root.render(<ConnectionForm mode="create" onClose={() => {}} />));
+    const warned = () => container.textContent?.includes('the command line cannot connect') ?? false;
+    act(() => button('PostgreSQL').click());
+    choose(select('connection-agent-access'), 'read');
+    expect(warned()).toBe(false);
+
+    const savePassword = container.querySelector<HTMLInputElement>('#save-password');
+    act(() => savePassword?.click());
+    expect(warned()).toBe(true);
+
+    act(() => button('SQLite').click());
+    expect(warned()).toBe(false);
+  });
+});
+
 function type(input: HTMLInputElement | null, value: string) {
   if (!input) {
     throw new Error('no input');

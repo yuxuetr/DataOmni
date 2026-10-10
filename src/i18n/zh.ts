@@ -1015,6 +1015,7 @@ export const zh = {
   'form.agentAccess.read': '只读',
   'form.agentAccessHint': '打开后，命令行 dataomni cli 能用这个连接执行只读查询，比如给 AI Agent 用。口令不会交给调用方。',
   'form.agentAccessProductionHint': '生产连接不开放给命令行。',
+  'form.agentAccessNeedsSavedPassword': '口令没保存到系统凭据库：命令行拿不到只在这次会话里输入的口令，连不上这个库。',
   'form.db.viaProtocol': '按 {protocol} 协议连接',
   'form.db.gapsTag': '有缺口',
   'form.db.gaps.cockroachdb': 'CockroachDB 上有几项用不了：结构页读不到触发器；错误信息里没有出错位置和表名。',
