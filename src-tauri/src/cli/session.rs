@@ -349,6 +349,25 @@ mod tests {
     plan
   }
 
+  /// `dictionary` 用的整库目录查询经命令行的会话读得到：探针表在字典里
+  async fn assert_in_dictionary(profile: &ConnectionProfile, table: &str) {
+    let Some(queries) = crate::services::er_diagram_queries(&profile.db_type) else {
+      panic!("no catalog queries for {:?}", profile.db_type);
+    };
+    let database = JsonValue::String(profile.database.clone().unwrap_or_default());
+    let params = vec![database; usize::from(queries.parameter_count)];
+    let opened = open(profile, None).await.unwrap_or_else(|_| panic!("open"));
+    let rows = opened.select(queries.columns, params).await;
+    opened.close().await;
+    let rows = rows.unwrap_or_else(|failure| match failure {
+      Failure::Database(error) => panic!("catalog: {error}"),
+      _ => panic!("catalog failed"),
+    });
+    let tables = super::super::dictionary::tables_from_rows(&rows);
+    let text = super::super::dictionary::render("t", "d", "2026-10-10", &tables, &[]);
+    assert!(text.to_lowercase().contains(table), "{text}");
+  }
+
   fn assert_has_plan(plan: Result<QueryPlan, String>) {
     match plan {
       Ok(plan) => assert!(!plan.roots.is_empty() && !plan.analyzed, "{plan:?}"),
@@ -372,6 +391,7 @@ mod tests {
     let read = run_read_only(&profile, "SELECT count(*) AS n FROM om_cli_probe", 10, None).await;
     assert!(matches!(read, Ok(QueryExecutionResult::Rows { .. })), "reads still work");
     assert_has_plan(plan_of(&profile, "SELECT count(*) AS n FROM om_cli_probe").await);
+    assert_in_dictionary(&profile, "om_cli_probe").await;
     let write = run_read_only(&profile, "INSERT INTO om_cli_probe VALUES (1)", 10, None).await;
     assert!(matches!(write, Err(Failure::Database(_))), "the database must refuse the write");
 
@@ -416,6 +436,7 @@ mod tests {
     let read = run_read_only(&profile, "SELECT count() AS n FROM om_cli_ch", 10, None).await;
     assert!(matches!(read, Ok(QueryExecutionResult::Rows { .. })), "reads still work");
     assert_has_plan(plan_of(&profile, "SELECT count() AS n FROM om_cli_ch").await);
+    assert_in_dictionary(&profile, "om_cli_ch").await;
     for sql in [
       "INSERT INTO om_cli_ch VALUES (1)",
       "SELECT * FROM url('http://127.0.0.1:1/x', 'CSV', 'a String')",
@@ -459,6 +480,7 @@ mod tests {
     let read = run_read_only(&profile, "SELECT count(*) AS n FROM om_cli_ora", 10, None).await;
     assert!(matches!(read, Ok(QueryExecutionResult::Rows { .. })), "reads still work");
     assert_has_plan(plan_of(&profile, "SELECT count(*) AS n FROM om_cli_ora").await);
+    assert_in_dictionary(&profile, "om_cli_ora").await;
     let write = run_read_only(&profile, "INSERT INTO om_cli_ora VALUES (1)", 10, None).await;
     assert!(matches!(write, Err(Failure::Database(_))), "the database must refuse the write");
 

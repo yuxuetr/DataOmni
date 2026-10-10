@@ -234,7 +234,7 @@ MySQL 的 `get_lock()`；ClickHouse 的 `KILL QUERY`。
 | --- | --- | --- |
 | `export <连接> <SQL> --format csv\|json\|… --out 文件` | `export_writer`（和界面共用 `export-conformance.json`） | 只读查询，写的是本机文件 |
 | `backup <连接> --out 文件` | `backup.rs`（SQLite / DuckDB 内置，其余调 `pg_dump` / `mysqldump` / `mongodump`） | 对库只读 |
-| `dictionary <连接>` | 依赖第一批的 `schema` | 移植 `dataDictionary.ts`（112 行），输出 Markdown。**这对 Agent 最有用**：一次拿到整库说明 |
+| `dictionary <连接>` | `er_diagram_queries`（ER 图那两段整库查询，不是逐表调 `schema`） | 已实现（`cli/dictionary.rs`）：移植 `dataDictionary.ts`，输出 Markdown（不包 JSON：整份就是给 Agent 读的文档）。与界面导出的英文版逐字相同，由 `fixtures/dictionary-conformance.json` 钉住。**这对 Agent 最有用**：一次拿到整库说明 |
 | `ddl <连接> <表>` | — | 移植 `tableDdl.ts` 的「导出建表语句」部分；先测能不能只移植这一半，整份 787 行不值 |
 | MongoDB：`mongo collections / find / count / aggregate / explain / structure` | `services/mongodb.rs` | §5.2 的接口白名单 |
 | Redis：`redis keyspaces / scan / get / command` | `services/redis.rs` | `command` 走 `COMMAND INFO` 门 |

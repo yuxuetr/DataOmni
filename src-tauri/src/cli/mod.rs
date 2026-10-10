@@ -9,6 +9,7 @@
 //! Agent，界面的语言设置在 WebView 里，这里读不到。
 
 mod audit;
+mod dictionary;
 mod session;
 
 use crate::models::{ConnectionProfile, DatabaseType};
@@ -95,13 +96,17 @@ Commands:
                      The execution plan of one read-only statement, as a tree
                      (plan.roots) plus the database's own text (plan.raw). Never
                      ANALYZE: the statement itself does not run.
+  dictionary <connection>
+                     A Markdown data dictionary of the whole database: every
+                     table's columns, types, nullability, primary and foreign
+                     keys. Read it before writing SQL. Printed as Markdown, not JSON.
   test <connection>  Connect the way query does, run nothing, report ok. When a
                      network connection fails, error.diagnosis says whether the
                      name resolved and the port answered.
   version            Print the DataOmni version
   help               Print this help
 
-Output is JSON on stdout; errors are JSON on stderr.
+Output is JSON on stdout (dictionary prints Markdown); errors are JSON on stderr.
 Exit codes: 0 ok, 1 database error, 2 usage error, 3 refused by the access rules,
 4 unavailable (cannot connect, missing credentials, keychain waiting for approval).
 
@@ -180,16 +185,16 @@ fn run_with(args: &[String], dirs: &Dirs, out: &mut dyn Write, err: &mut dyn Wri
 
 enum Output {
   Json(Value),
-  Text(&'static str),
+  Text(String),
 }
 
 fn dispatch(args: &[String], dirs: &Dirs) -> Result<Output, CliError> {
   let config_dir = dirs.config.as_deref();
   let Some((command, rest)) = args.split_first() else {
-    return Ok(Output::Text(HELP));
+    return Ok(Output::Text(HELP.to_string()));
   };
   match command.as_str() {
-    "help" | "--help" | "-h" => Ok(Output::Text(HELP)),
+    "help" | "--help" | "-h" => Ok(Output::Text(HELP.to_string())),
     "version" | "--version" => {
       no_arguments(command, rest)?;
       Ok(Output::Json(json!({ "schema": OUTPUT_SCHEMA, "version": env!("CARGO_PKG_VERSION") })))
@@ -203,6 +208,7 @@ fn dispatch(args: &[String], dirs: &Dirs) -> Result<Output, CliError> {
     "schema" => schema(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "explain" => explain(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "test" => test(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
+    "dictionary" => dictionary(rest, config_dir, dirs.log.as_deref()).map(Output::Text),
     other => Err(CliError::usage(format!("unknown command {other}; run `dataomni cli help`"))),
   }
 }
@@ -384,6 +390,54 @@ fn run_test(
       }
     }
   })
+}
+
+fn dictionary(
+  rest: &[String],
+  config_dir: Option<&Path>,
+  log_dir: Option<&Path>,
+) -> Result<String, CliError> {
+  let [connection] = rest else {
+    return Err(CliError::usage("usage: dataomni cli dictionary <connection>"));
+  };
+  let service = open_service(config_dir)?;
+  let profile = find_open(&service, connection)?;
+  let started = Instant::now();
+  let outcome = run_dictionary(&service, &profile, config_dir);
+  audit::record(log_dir, "dictionary", &profile.name, "", &outcome, started.elapsed());
+  outcome
+}
+
+fn run_dictionary(
+  service: &ConnectionService,
+  profile: &ConnectionProfile,
+  config_dir: Option<&Path>,
+) -> Result<String, CliError> {
+  let queries = crate::services::er_diagram_queries(&profile.db_type)
+    .filter(|_| session::supports(&profile.db_type))
+    .ok_or_else(|| unsupported(&profile.db_type))?;
+  let database = profile.database.clone().unwrap_or_default();
+  // 同 `list_objects`：没有库名时 MySQL 的目录条件恒不匹配，字典会是空的，像是库里没有表
+  if queries.parameter_count > 0 && database.is_empty() {
+    return Err(CliError::usage("this connection has no database name; set one in DataOmni"));
+  }
+  let resolved = resolve_verified(service, profile)?;
+  let params = vec![Value::String(database); usize::from(queries.parameter_count)];
+  let timeout = Duration::from_secs(DEFAULT_TIMEOUT_SECONDS);
+  let (columns, foreign_keys) = block_on_within(timeout, "the catalog", async {
+    let opened = session::open(&resolved, config_dir).await.map_err(session_error)?;
+    let columns = opened.select(queries.columns, params.clone()).await;
+    let foreign_keys = match columns {
+      Ok(_) => opened.select(queries.foreign_keys, params).await,
+      Err(_) => Ok(Vec::new()),
+    };
+    opened.close().await;
+    Ok((columns.map_err(session_error)?, foreign_keys.map_err(session_error)?))
+  })?;
+  let date = chrono::Local::now().format("%Y-%m-%d").to_string();
+  let tables = dictionary::tables_from_rows(&columns);
+  let links = dictionary::links_from_rows(&foreign_keys);
+  Ok(dictionary::render(&profile.name, dictionary::dialect(profile), &date, &tables, &links))
 }
 
 /// 在一个新的运行时里跑完 `work`，到点没完就报超时。`what` 是报错里的主语
@@ -1146,6 +1200,41 @@ mod tests {
     assert_eq!(sqlite_count(&db), 1000);
   }
 
+  /// 整库一次拿到：每张表一节，外键两头都写上；输出是 Markdown 不是 JSON
+  #[test]
+  fn dictionary_describes_every_table_and_its_foreign_keys() {
+    let dir = ConfigDir::with(&[]);
+    let db = seeded_sqlite(&dir.0);
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    runtime.block_on(async {
+      let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db.display())).await.expect("open");
+      sqlx::raw_sql("CREATE TABLE orders (id INTEGER PRIMARY KEY, item_id INTEGER NOT NULL REFERENCES items(id))")
+        .execute(&pool)
+        .await
+        .expect("orders");
+      pool.close().await;
+    });
+    std::fs::write(
+      dir.0.join("connections.json"),
+      Value::from(vec![file_profile("s", "local", "sqlite", &db, "development")]).to_string(),
+    )
+    .expect("config");
+
+    let (code, stdout, stderr) = run_in(&dir, &["dictionary", "local"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+      stdout.starts_with("# local\n\nSQLite · tables: 2 · foreign-key links: 1 · "),
+      "{stdout}"
+    );
+    assert!(stdout.contains("## items\n"), "{stdout}");
+    assert!(stdout.contains("| `id` | INTEGER | no | ✓ |  |"), "{stdout}");
+    assert!(stdout.contains("| `item_id` | INTEGER | no |  | `items.id` |"), "{stdout}");
+    assert!(stdout.contains("Referenced by: `orders.item_id`"), "{stdout}");
+
+    assert_eq!(run_in(&dir, &["dictionary"]).0, Exit::Usage as i32);
+    assert_eq!(run_in(&dir, &["dictionary", "nope"]).0, Exit::Usage as i32);
+  }
+
   /// 连得上就是 `ok`；文件不在就是「连不上」，原因在报错里
   #[test]
   fn test_opens_the_connection_read_only() {
@@ -1220,6 +1309,7 @@ mod tests {
       &["explain", "x"],
       &["explain", "x", "SELECT 1", "--limit", "5"],
       &["test"],
+      &["dictionary", "x", "y"],
       &["test", "x", "extra"],
     ] {
       assert_eq!(run_in(&dir, args).0, Exit::Usage as i32, "{args:?}");

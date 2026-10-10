@@ -1,0 +1,153 @@
+{
+  "why": "数据字典有两份实现：界面导出（src/utils/dataDictionary.ts，英文界面）与命令行的 dictionary（src-tauri/src/cli/dictionary.rs）。两边对同一份输入要逐字相同",
+  "cases": [
+    {
+      "why": "带 schema 的表、外键两头、类型里的竖线、列名里的换行",
+      "title": "shop: prod",
+      "dialect": "PostgreSQL",
+      "date": "2026-09-28",
+      "tables": [
+        {
+          "schema": "app",
+          "name": "users",
+          "columns": [
+            {
+              "name": "id",
+              "dataType": "bigint",
+              "isPrimaryKey": true,
+              "isNullable": false
+            },
+            {
+              "name": "note",
+              "dataType": "text|weird",
+              "isPrimaryKey": false,
+              "isNullable": true
+            },
+            {
+              "name": "two\nlines",
+              "dataType": "text",
+              "isPrimaryKey": false,
+              "isNullable": true
+            }
+          ]
+        },
+        {
+          "schema": "app",
+          "name": "orders",
+          "columns": [
+            {
+              "name": "id",
+              "dataType": "bigint",
+              "isPrimaryKey": true,
+              "isNullable": false
+            },
+            {
+              "name": "user_id",
+              "dataType": "bigint",
+              "isPrimaryKey": false,
+              "isNullable": false
+            },
+            {
+              "name": "referrer_id",
+              "dataType": "bigint",
+              "isPrimaryKey": false,
+              "isNullable": true
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "constraintName": "fk_user",
+          "from": {
+            "table": "app.orders",
+            "column": "user_id"
+          },
+          "to": {
+            "table": "app.users",
+            "column": "id"
+          }
+        },
+        {
+          "constraintName": "fk_ref",
+          "from": {
+            "table": "app.orders",
+            "column": "referrer_id"
+          },
+          "to": {
+            "table": "app.users",
+            "column": "id"
+          }
+        }
+      ],
+      "expected": "# shop: prod\n\nPostgreSQL · tables: 2 · foreign-key links: 2 · exported from DataOmni on 2026-09-28\n\n> From the database catalog: columns, types, nullability, primary and foreign keys. Column comments, defaults, indexes and unique constraints are not included.\n\n## app.users\n\n| Column | Type | Nullable | PK | References |\n| --- | --- | --- | --- | --- |\n| `id` | bigint | no | ✓ |  |\n| `note` | text\\|weird | yes |  |  |\n| `two lines` | text | yes |  |  |\n\nReferenced by: `app.orders.user_id`, `app.orders.referrer_id`\n\n## app.orders\n\n| Column | Type | Nullable | PK | References |\n| --- | --- | --- | --- | --- |\n| `id` | bigint | no | ✓ |  |\n| `user_id` | bigint | no |  | `app.users.id` |\n| `referrer_id` | bigint | yes |  | `app.users.id` |\n"
+    },
+    {
+      "why": "SQLite：唯一的 INTEGER 主键写不可空，其余主键照目录写；没有外键",
+      "title": "local.db",
+      "dialect": "SQLite",
+      "date": "2026-10-10",
+      "tables": [
+        {
+          "schema": null,
+          "name": "t",
+          "columns": [
+            {
+              "name": "id",
+              "dataType": "INTEGER",
+              "isPrimaryKey": true,
+              "isNullable": true
+            },
+            {
+              "name": "label",
+              "dataType": "",
+              "isPrimaryKey": false,
+              "isNullable": true
+            }
+          ]
+        },
+        {
+          "schema": null,
+          "name": "a",
+          "columns": [
+            {
+              "name": "code",
+              "dataType": "TEXT",
+              "isPrimaryKey": true,
+              "isNullable": true
+            }
+          ]
+        },
+        {
+          "schema": null,
+          "name": "c",
+          "columns": [
+            {
+              "name": "x",
+              "dataType": "INTEGER",
+              "isPrimaryKey": true,
+              "isNullable": true
+            },
+            {
+              "name": "y",
+              "dataType": "integer ",
+              "isPrimaryKey": true,
+              "isNullable": true
+            }
+          ]
+        }
+      ],
+      "links": [],
+      "expected": "# local.db\n\nSQLite · tables: 3 · foreign-key links: 0 · exported from DataOmni on 2026-10-10\n\n> From the database catalog: columns, types, nullability, primary and foreign keys. Column comments, defaults, indexes and unique constraints are not included.\n\n## t\n\n| Column | Type | Nullable | PK | References |\n| --- | --- | --- | --- | --- |\n| `id` | INTEGER | no | ✓ |  |\n| `label` |  | yes |  |  |\n\n## a\n\n| Column | Type | Nullable | PK | References |\n| --- | --- | --- | --- | --- |\n| `code` | TEXT | yes | ✓ |  |\n\n## c\n\n| Column | Type | Nullable | PK | References |\n| --- | --- | --- | --- | --- |\n| `x` | INTEGER | yes | ✓ |  |\n| `y` | integer  | yes | ✓ |  |\n"
+    },
+    {
+      "why": "空库：只有开头",
+      "title": "empty",
+      "dialect": "MySQL",
+      "date": "2026-10-10",
+      "tables": [],
+      "links": [],
+      "expected": "# empty\n\nMySQL · tables: 0 · foreign-key links: 0 · exported from DataOmni on 2026-10-10\n\n> From the database catalog: columns, types, nullability, primary and foreign keys. Column comments, defaults, indexes and unique constraints are not included.\n"
+    }
+  ]
+}
