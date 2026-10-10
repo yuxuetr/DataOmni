@@ -137,6 +137,11 @@ Commands:
                      The definition the database itself gives for a table or
                      view (SHOW CREATE TABLE, sqlite_master, DBMS_METADATA, ...).
                      PostgreSQL has it for views only; use schema for its tables.
+  backup <connection> --out PATH [--database D]
+                     Back up to a new path the way DataOmni does: pg_dump (custom
+                     format), mysqldump, mongodump (--database picks the database),
+                     SQLite VACUUM INTO, DuckDB EXPORT DATABASE. All read-only on
+                     the database; the dump tools must be installed. No timeout.
   csv-preview <file> [--delimiter C] [--no-header] [--rows N]
                      A local CSV file: the delimiter and encoding it was read with
                      (sniffed unless given), the header, the first rows (50 by
@@ -257,6 +262,7 @@ fn dispatch(args: &[String], dirs: &Dirs) -> Result<Output, CliError> {
     "csv-preview" => csv_preview(rest).map(Output::Json),
     "export" => export(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "ddl" => ddl(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
+    "backup" => backup(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     other => Err(CliError::usage(format!("unknown command {other}; run `dataomni cli help`"))),
   }
 }
@@ -785,16 +791,110 @@ fn block_on_within<T>(
   what: &str,
   work: impl std::future::Future<Output = Result<T, CliError>>,
 ) -> Result<T, CliError> {
-  let runtime = tokio::runtime::Builder::new_multi_thread()
+  runtime()?.block_on(async { tokio::time::timeout(timeout, work).await }).map_err(|_| {
+    CliError {
+      exit: Exit::Database,
+      kind: "timeout",
+      message: format!("{what} did not finish within {} s", timeout.as_secs()),
+      diagnosis: None,
+    }
+  })?
+}
+
+fn runtime() -> Result<tokio::runtime::Runtime, CliError> {
+  tokio::runtime::Builder::new_multi_thread()
     .enable_all()
     .build()
-    .map_err(|error| CliError::unavailable("runtime", error.to_string()))?;
-  runtime.block_on(async { tokio::time::timeout(timeout, work).await }).map_err(|_| CliError {
-    exit: Exit::Database,
-    kind: "timeout",
-    message: format!("{what} did not finish within {} s", timeout.as_secs()),
-    diagnosis: None,
-  })?
+    .map_err(|error| CliError::unavailable("runtime", error.to_string()))
+}
+
+/// 备份：PostgreSQL、MySQL / MariaDB、MongoDB 用服务端自己的工具（`pg_dump`、`mysqldump`、
+/// `mongodump`，都只读），SQLite、DuckDB 在只读打开的库上用库自己的语句，同界面（`services::backup`）。
+/// 不设时限：外部工具跑在阻塞线程里，到点丢掉 future 也停不下它，运行时收尾时照样要等它跑完
+fn backup(
+  rest: &[String],
+  config_dir: Option<&Path>,
+  log_dir: Option<&Path>,
+) -> Result<Value, CliError> {
+  let usage = "usage: dataomni cli backup <connection> --out PATH [--database D]";
+  let mut positional = Vec::new();
+  let mut out = None;
+  let mut database = None;
+  let mut iter = rest.iter();
+  while let Some(argument) = iter.next() {
+    let mut value = |flag: &str| {
+      iter.next().cloned().ok_or_else(|| CliError::usage(format!("{flag} takes a value")))
+    };
+    match argument.as_str() {
+      "--out" => out = Some(PathBuf::from(value("--out")?)),
+      "--database" => database = Some(value("--database")?),
+      _ => positional.push(argument.clone()),
+    }
+  }
+  let [connection] = <[String; 1]>::try_from(positional).map_err(|_| CliError::usage(usage))?;
+  let out = out.ok_or_else(|| CliError::usage(usage))?;
+  if out.exists() {
+    return Err(CliError::usage(format!("{} already exists; choose another path", out.display())));
+  }
+  let service = open_service(config_dir)?;
+  let profile = find_open(&service, &connection)?;
+  if database.is_some() && profile.db_type != DatabaseType::MongoDB {
+    return Err(CliError::usage("--database is for MongoDB: the database to back up"));
+  }
+  let started = Instant::now();
+  let outcome = run_backup(&service, &profile, &out, database.as_deref(), config_dir);
+  audit::record(log_dir, "backup", &profile.name, "", &outcome, started.elapsed());
+  let kind = outcome?;
+  Ok(json!({
+    "schema": OUTPUT_SCHEMA,
+    "connection": profile.name,
+    "file": out.to_string_lossy(),
+    "kind": kind,
+    "elapsed_ms": started.elapsed().as_millis() as u64,
+  }))
+}
+
+fn run_backup(
+  service: &ConnectionService,
+  profile: &ConnectionProfile,
+  out: &Path,
+  database: Option<&str>,
+  config_dir: Option<&Path>,
+) -> Result<crate::services::backup::BackupKind, CliError> {
+  use crate::services::backup::{backup_with_tool, BACKUP_NO_DATABASE, BACKUP_TOOL_MISSING};
+  let backup_error = |error: crate::services::QueryError| {
+    let message = error.to_string();
+    if message.starts_with(BACKUP_TOOL_MISSING) {
+      CliError::unavailable("tool", message)
+    } else if message.starts_with(BACKUP_NO_DATABASE) {
+      CliError::usage(message)
+    } else {
+      CliError { exit: Exit::Database, kind: "backup", message, diagnosis: None }
+    }
+  };
+  match profile.db_type {
+    DatabaseType::PostgreSQL | DatabaseType::MySQL | DatabaseType::MongoDB => {
+      let resolved = resolve_verified(service, profile)?;
+      runtime()?.block_on(async {
+        let (_tunnels, port) = session::tunnel(&resolved)
+          .await
+          .map_err(|error| CliError::unavailable("connect", error))?;
+        backup_with_tool(&resolved, port, out, database).await.map_err(backup_error)
+      })
+    }
+    DatabaseType::SQLite | DatabaseType::DuckDB => {
+      let resolved = resolve_verified(service, profile)?;
+      runtime()?.block_on(async {
+        session::backup_embedded(&resolved, config_dir, out).await.map_err(
+          |failure| match failure {
+            session::Failure::Database(error) => backup_error(error),
+            other => session_error(other),
+          },
+        )
+      })
+    }
+    _ => Err(unsupported(&profile.db_type)),
+  }
 }
 
 struct SchemaArguments {
@@ -1529,6 +1629,13 @@ mod tests {
     let (code, stdout, stderr) = run_in(&dir, &["schema", "duck", "t"]);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(json_of(&stdout)["columns"][0]["name"], json!("x"), "{stdout}");
+
+    let backup = dir.0.join("warehouse-backup");
+    let (code, stdout, stderr) =
+      run_in(&dir, &["backup", "duck", "--out", &backup.to_string_lossy()]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(json_of(&stdout)["kind"], json!("duckdb-directory"), "{stdout}");
+    assert!(backup.join("schema.sql").exists());
   }
 
   /// 留痕里有这次调用，但没有语句原文（字面量里可能有个人数据）
@@ -1755,6 +1862,20 @@ mod tests {
     let (code, _, stderr) = run_in(&dir, &["query", "down", "SELECT 1"]);
     assert_eq!(code, Exit::Unavailable as i32, "{stderr}");
     assert_eq!(json_of(&stderr)["error"]["kind"], "connect");
+
+    // 备份交给 pg_dump：它在就报它自己的错，不在就说缺工具；两种都不留文件
+    let out = std::env::temp_dir().join(format!("dataomni-cli-backup-{port}.dump"));
+    let (code, _, stderr) = run_in(&dir, &["backup", "down", "--out", &out.to_string_lossy()]);
+    let expected = match crate::services::backup::find_tool("pg_dump") {
+      Some(_) => (Exit::Database as i32, "backup"),
+      None => (Exit::Unavailable as i32, "tool"),
+    };
+    assert_eq!(
+      (code, json_of(&stderr)["error"]["kind"].as_str().unwrap_or_default()),
+      expected,
+      "{stderr}"
+    );
+    assert!(!out.exists());
   }
 
   /// Mongo 连接走 `mongo`：SQL 命令指过去；`mongo` 用在别的连接上是参数错；连不上是 4
@@ -1901,6 +2022,35 @@ mod tests {
     assert_eq!(code, Exit::Usage as i32);
     assert_eq!(json_of(&stderr)["error"]["kind"], "not_found");
     assert_eq!(run_in(&dir, &["ddl", "local"]).0, Exit::Usage as i32);
+  }
+
+  /// SQLite 的备份在只读打开的库上做（`VACUUM INTO`），得到一份能直接打开的库；不覆盖已有的
+  #[test]
+  fn backup_copies_a_sqlite_database_without_writing_to_it() {
+    let dir = ConfigDir::with(&[]);
+    let db = seeded_sqlite(&dir.0);
+    std::fs::write(
+      dir.0.join("connections.json"),
+      Value::from(vec![file_profile("s", "local", "sqlite", &db, "development")]).to_string(),
+    )
+    .expect("config");
+    let before = std::fs::read(&db).unwrap_or_default();
+    let copy = dir.0.join("copy.db");
+    let copy_path = copy.to_string_lossy().into_owned();
+    let (code, stdout, stderr) = run_in(&dir, &["backup", "local", "--out", &copy_path]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(json_of(&stdout)["kind"], json!("sqlite-file"), "{stdout}");
+    assert_eq!(sqlite_count(&copy), 1000);
+    assert_eq!(std::fs::read(&db).unwrap_or_default(), before, "the source is untouched");
+
+    let (code, _, stderr) = run_in(&dir, &["backup", "local", "--out", &copy_path]);
+    assert_eq!(code, Exit::Usage as i32);
+    assert!(stderr.contains("already exists"), "{stderr}");
+    let other = dir.0.join("other.db").to_string_lossy().into_owned();
+    for bad in [&["backup", "local"][..], &["backup", "local", "--out", &other, "--database", "x"]]
+    {
+      assert_eq!(run_in(&dir, bad).0, Exit::Usage as i32, "{bad:?}");
+    }
   }
 
   #[test]

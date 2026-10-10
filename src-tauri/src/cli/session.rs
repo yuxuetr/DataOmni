@@ -6,6 +6,7 @@
 //! 事务第一条就改回读写的话（PostgreSQL 会放行），写进去的也会被撤掉。
 
 use crate::models::{ConnectionProfile, DatabaseType};
+use crate::services::backup::{self, BackupKind};
 use crate::services::explain::{
   explain_statement, parse_plan, PlanDialect, QueryPlan, EXPLAIN_BYTE_LIMIT, EXPLAIN_ROW_LIMIT,
   SERVER_VERSION_QUERY,
@@ -246,6 +247,26 @@ impl Opened {
 
 fn objects(rows: Vec<QueryRow>) -> Vec<JsonValue> {
   rows.into_iter().map(JsonValue::Object).collect()
+}
+
+/// 嵌入式库的备份，在只读打开的库上用库自己的语句：SQLite 的 `VACUUM INTO`，DuckDB 的
+/// `EXPORT DATABASE`。DuckDB 另开一条不关外部访问的连接（它要写 Parquet），只跑这一句
+pub(super) async fn backup_embedded(
+  profile: &ConnectionProfile,
+  config_dir: Option<&Path>,
+  target: &Path,
+) -> Result<BackupKind, Failure> {
+  if profile.db_type != DatabaseType::DuckDB {
+    let opened = open(profile, config_dir).await?;
+    let kind = backup::backup_embedded(opened.pool_ref(), target).await;
+    opened.close().await;
+    return kind.map_err(Failure::Database);
+  }
+  let path = database_file(profile, config_dir)?;
+  let pool = duckdb::open_read_only_for_export(&path.to_string_lossy())
+    .await
+    .map_err(|error| Failure::Connect(format!("{}: {}", path.display(), error.message)))?;
+  backup::backup_embedded(PoolRef::DuckDb(&pool), target).await.map_err(Failure::Database)
 }
 
 pub(super) async fn run_read_only(

@@ -356,7 +356,7 @@
     hardened runtime 的打包只在 release.yml（打 tag）里跑，CI 不打 macOS 包，要到下一次发版才在 CI 上第一次用到。
   - [x] E6（设计文档 §3.1）：经隧道连 cu 每次 4.2～4.4 秒，几乎全是网络往返（一个往返 170～250 ms），合 22～26 个单位。
     用户定了 1.0 之前**不做常驻进程**，放到 A8（MCP）一起做；判据改成按往返算，门是不超过 32（调到 15 会红）。
-  - 第一批做完（`connections`、`query`、`schema`、`explain`、`test`、`version`）。第二批进行中：
+  - 第一批做完（`connections`、`query`、`schema`、`explain`、`test`、`version`）。第二批见下：
   - [x] `dictionary <连接>`：整库的数据字典，Markdown（与界面导出的英文版逐字相同，共用语料
     `fixtures/dictionary-conformance.json`；分别改坏两边，各自的语料测试都变红）。目录用 ER 图那两段整库查询，
     PostgreSQL、MySQL（cu）、Oracle（本机 Docker）、ClickHouse（cu）真库上读到了探针表。输出是 Markdown 不是 JSON，
@@ -381,6 +381,10 @@
   - [x] `ddl <连接> <表>`：数据库自己的定义原文（同界面「对象定义」），不移植 `tableDdl.ts`。SQLite 端到端；cu 的 MySQL 上
     `SHOW CREATE TABLE` 与带反引号的表名、PG 上表没有原文时指向 `schema`。顺带：sqlx 给 MySQL 的错误码是 SQLSTATE（`42S02`），
     不是错误号，`QueryError.code` 的注释原先写错了。Oracle、ClickHouse、DuckDB 的定义查询命令行没单独跑（界面在用）。
+  - [x] `backup <连接> --out 路径`：同界面的 `services::backup`。SQLite 在只读打开的库上 `VACUUM INTO`（源文件逐字节不变）；
+    DuckDB 被命令行的「关外部访问」挡住（实测），备份另开一条只读、不关外部访问的连接，只跑 `EXPORT DATABASE`。
+    PG / MySQL / MongoDB 走外部工具，服务层已有真库冒烟；命令行这边用连不上的 PG 验了接线（pg_dump 报错、不留文件）。
+  - 第二批做完。还没做的：`guide`（给 Agent 读的说明，设计文档 §7）、README、安装脚本的软链接。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
 - [ ] B4 驱动按 Cargo feature 拆分

@@ -233,7 +233,7 @@ MySQL 的 `get_lock()`；ClickHouse 的 `KILL QUERY`。
 | 命令 | 复用 | 新写的 / 说明 |
 | --- | --- | --- |
 | `export <连接> <SQL> --out 文件 [--format csv\|json]` | `export_writer::export_in`（和界面共用 `export-conformance.json`） | 已实现：先过语句门，在只读事务里导出、以回滚结束（PG 上 `nextval()` 过得了语句门、过不了这一层，拿它验的）。只写**新**文件，已有的不覆盖。`sql` 格式没做：要知道哪些是计算列、自增列与序列，界面另查表的元数据——有人要再加。默认 300 秒 |
-| `backup <连接> --out 文件` | `backup.rs`（SQLite / DuckDB 内置，其余调 `pg_dump` / `mysqldump` / `mongodump`） | 对库只读 |
+| `backup <连接> --out 路径 [--database D]` | `backup.rs`（SQLite / DuckDB 内置，其余调 `pg_dump` / `mysqldump` / `mongodump`） | 已实现：对库只读。SQLite 在只读打开的库上 `VACUUM INTO`（实测可行，源文件逐字节不变）；DuckDB 的 `EXPORT DATABASE` 要写 Parquet，被命令行的「关外部访问」挡住（实测），所以另开一条只读、不关外部访问的连接，只跑这一句，Agent 的语句不经过它。只写新路径。不设时限：外部工具跑在阻塞线程里，到点也停不下它 |
 | `dictionary <连接>` | `er_diagram_queries`（ER 图那两段整库查询，不是逐表调 `schema`） | 已实现（`cli/dictionary.rs`）：移植 `dataDictionary.ts`，输出 Markdown（不包 JSON：整份就是给 Agent 读的文档）。与界面导出的英文版逐字相同，由 `fixtures/dictionary-conformance.json` 钉住。**这对 Agent 最有用**：一次拿到整库说明 |
 | `ddl <连接> <表>` | `schema_metadata` 的 `ddl` 查询（界面结构页「对象定义」那一条） | 已实现：给**数据库自己的**定义原文（`SHOW CREATE TABLE`、`sqlite_master` 连索引与触发器、`DBMS_METADATA`、DuckDB 与 ClickHouse 的目录），不移植 `tableDdl.ts`——从目录重建的看着权威、照着建却不等价，界面也是这么取舍的。PostgreSQL 只有视图有原文，表报「找不到」并指向 `schema`。MySQL 的表名作为引用过的标识符拼进 `SHOW CREATE TABLE`（它不收占位符） |
 | MongoDB：`mongo <连接> collections / find / count / aggregate / explain / structure` | `services/mongodb.rs` | 已实现（`cli/mongo.rs`）：§5.2 的接口白名单，管道里有 `$out` / `$merge` 解析时就拒（退出码 3，不读钥匙串）。条件与管道用 mongosh 写法（同界面），文档按 relaxed Extended JSON 输出；默认 200 个、上限 10000、合计 16 MB，同 `query`。`explain` 带 `executionStats`，即真的跑一遍查询但不取回文档——读语句跑一遍不改数据，与 SQL 的 `explain` 不带 ANALYZE 的理由（会执行写）不冲突 |

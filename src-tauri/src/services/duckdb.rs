@@ -76,6 +76,21 @@ pub async fn open_read_only(path: &str) -> Result<Arc<DuckDbPool>, QueryError> {
   .await
 }
 
+/// 命令行的备份用：只读打开，外部访问**不关**——`EXPORT DATABASE` 要写 Parquet 文件。
+/// 这条连接只跑我们自己的那一句（`backup::backup_embedded`），Agent 的语句不经过它
+pub async fn open_read_only_for_export(path: &str) -> Result<Arc<DuckDbPool>, QueryError> {
+  let path = path.to_string();
+  blocking(move || {
+    let config = duckdb::Config::default()
+      .access_mode(duckdb::AccessMode::ReadOnly)
+      .map_err(|error| query_error(&error, None))?;
+    let connection =
+      Connection::open_with_flags(&path, config).map_err(|error| query_error(&error, None))?;
+    Ok(Arc::new(DuckDbPool { root: Mutex::new(connection) }))
+  })
+  .await
+}
+
 /// 跑一段阻塞的驱动调用。线程池那一侧 panic 了也要变成一条错误——
 /// 不然这次调用永远不回来
 async fn blocking<T: Send + 'static>(
