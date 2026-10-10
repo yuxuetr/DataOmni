@@ -232,7 +232,7 @@ MySQL 的 `get_lock()`；ClickHouse 的 `KILL QUERY`。
 
 | 命令 | 复用 | 新写的 / 说明 |
 | --- | --- | --- |
-| `export <连接> <SQL> --format csv\|json\|… --out 文件` | `export_writer`（和界面共用 `export-conformance.json`） | 只读查询，写的是本机文件 |
+| `export <连接> <SQL> --out 文件 [--format csv\|json]` | `export_writer::export_in`（和界面共用 `export-conformance.json`） | 已实现：先过语句门，在只读事务里导出、以回滚结束（PG 上 `nextval()` 过得了语句门、过不了这一层，拿它验的）。只写**新**文件，已有的不覆盖。`sql` 格式没做：要知道哪些是计算列、自增列与序列，界面另查表的元数据——有人要再加。默认 300 秒 |
 | `backup <连接> --out 文件` | `backup.rs`（SQLite / DuckDB 内置，其余调 `pg_dump` / `mysqldump` / `mongodump`） | 对库只读 |
 | `dictionary <连接>` | `er_diagram_queries`（ER 图那两段整库查询，不是逐表调 `schema`） | 已实现（`cli/dictionary.rs`）：移植 `dataDictionary.ts`，输出 Markdown（不包 JSON：整份就是给 Agent 读的文档）。与界面导出的英文版逐字相同，由 `fixtures/dictionary-conformance.json` 钉住。**这对 Agent 最有用**：一次拿到整库说明 |
 | `ddl <连接> <表>` | — | 移植 `tableDdl.ts` 的「导出建表语句」部分；先测能不能只移植这一半，整份 787 行不值 |

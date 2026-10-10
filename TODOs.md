@@ -375,6 +375,9 @@
     cu 上的 ES 8.19：`_search`、`_count`、`_msearch` 读到数据，写的六种被拒、文档数不变；实测 `POST /索引/_doc/_search`
     真的写进一个 id 为 `_search` 的文档，所以不按子串判。放宽 `POST`，两条测试变红。ES 9 与 OpenSearch 没跑（门是纯函数，传输层是界面那份）。
   - [x] `csv-preview <文件>`：复用导入的预览（嗅探分隔符与编码、参差行）。
+  - [x] `export <连接> <SQL> --out 文件`（csv、json）：语句门 → 只读事务里导出 → 回滚；只写新文件。`export_query` 拆出
+    `export_in`（在给定连接上导出），界面那条路不变。去掉语句门测试红；cu 的 PG 上去掉只读事务，`nextval()` 真的跑了、测试红。
+    `sql` 格式没做（缺计算列、自增列的元数据）。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
 - [ ] B4 驱动按 Cargo feature 拆分

@@ -10,6 +10,7 @@ use crate::services::explain::{
   explain_statement, parse_plan, PlanDialect, QueryPlan, EXPLAIN_BYTE_LIMIT, EXPLAIN_ROW_LIMIT,
   SERVER_VERSION_QUERY,
 };
+use crate::services::export_writer::{self, ExportOptions, ExportSummary};
 use crate::services::query_executor::{
   PoolRef, QueryExecutionResult, QueryRow, SessionConnection, StreamOptions,
 };
@@ -213,6 +214,27 @@ impl Opened {
       let _ = session.execute_unprepared("ROLLBACK").await;
     }
     plan.map_err(Failure::Database)
+  }
+
+  /// 把一条已经过了语句门的语句的结果写进文件，同样在只读事务里、以回滚结束
+  pub(super) async fn export(
+    &self,
+    sql: &str,
+    path: &Path,
+    options: ExportOptions,
+  ) -> Result<ExportSummary, Failure> {
+    let mut session = SessionConnection::acquire(self.pool_ref())
+      .await
+      .map_err(|error| Failure::Connect(error.message))?;
+    if let Some(begin) = self.begin {
+      session.execute_unprepared(begin).await.map_err(Failure::Database)?;
+    }
+    let summary =
+      export_writer::export_in(&mut session, sql, path, options, &mut |_| {}, &mut || false).await;
+    if self.begin.is_some() {
+      let _ = session.execute_unprepared("ROLLBACK").await;
+    }
+    summary.map_err(Failure::Database)
   }
 
   pub(super) async fn close(self) {
@@ -562,7 +584,31 @@ mod tests {
       return;
     };
     let admin = std::env::var("DATAOMNI_POSTGRES_TEST_URL").unwrap_or_default();
-    check_read_only_transaction(profile, &admin).await;
+    check_read_only_transaction(profile.clone(), &admin).await;
+
+    // 导出也在只读事务里：`nextval()` 过得了语句门（是 SELECT），过不了只读事务
+    if let Ok(DbPool::Postgres(pool)) = sqlx_pool::open(&admin).await {
+      pool.execute("CREATE SEQUENCE IF NOT EXISTS om_cli_seq").await.expect("sequence");
+    }
+    let dir = std::env::temp_dir().join(format!("dataomni-cli-export-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let options: ExportOptions = serde_json::from_value(serde_json::json!({
+      "format": "csv", "delimiter": ",", "includeHeader": true, "nullText": "", "byteOrderMark": false,
+    }))
+    .expect("options");
+    let opened = open(&profile, None).await.unwrap_or_else(|_| panic!("open"));
+    let read = opened.export("SELECT 1 AS n", &dir.join("read.csv"), options.clone()).await;
+    let advanced =
+      opened.export("SELECT nextval('om_cli_seq')", &dir.join("seq.csv"), options).await;
+    opened.close().await;
+    assert!(read.is_ok(), "an export of a read works");
+    match advanced {
+      Err(Failure::Database(error)) => assert!(error.to_string().contains("read-only"), "{error}"),
+      Ok(_) => panic!("nextval ran: the export was not in a read-only transaction"),
+      Err(_) => panic!("unexpected failure"),
+    }
+    assert!(!dir.join("seq.csv").exists(), "a failed export leaves no file");
+    let _ = std::fs::remove_dir_all(&dir);
   }
 
   #[tokio::test]

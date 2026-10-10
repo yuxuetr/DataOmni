@@ -598,6 +598,18 @@ pub async fn export_query<'a>(
   }
 
   let mut connection = SessionConnection::acquire(pool).await?;
+  export_in(&mut connection, sql, path, options, progress, cancelled).await
+}
+
+/// 同 [`export_query`]，用调用方给的连接：命令行先在这条连接上开只读事务，导完回滚
+pub async fn export_in(
+  connection: &mut SessionConnection,
+  sql: &str,
+  path: &Path,
+  options: ExportOptions,
+  progress: &mut (dyn FnMut(ExportProgress) + Send),
+  cancelled: &mut (dyn FnMut() -> bool + Send),
+) -> Result<ExportSummary, QueryError> {
   // 列名要在第一批数据之前就位——CSV 表头得先写出去。空列表就是数据库在说
   // 这条语句不返回结果集，此时一行都还没有被执行。
   let columns = connection

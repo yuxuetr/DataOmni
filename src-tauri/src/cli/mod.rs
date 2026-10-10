@@ -128,6 +128,11 @@ Commands:
                      (except _refresh, _flush, _forcemerge, _cache); POST only to
                      search endpoints (_search, _count, _msearch, _mget, ...);
                      PUT and DELETE never. The body is parsed JSON when it is JSON.
+  export <connection> <sql> --out FILE [--format csv|json] [--delimiter C]
+         [--no-header] [--null TEXT] [--bom] [--timeout SECONDS]
+                     Write every row of one read-only statement to a new local
+                     file (never overwrites), the same bytes the DataOmni export
+                     writes. 300 s timeout by default.
   csv-preview <file> [--delimiter C] [--no-header] [--rows N]
                      A local CSV file: the delimiter and encoding it was read with
                      (sniffed unless given), the header, the first rows (50 by
@@ -246,6 +251,7 @@ fn dispatch(args: &[String], dirs: &Dirs) -> Result<Output, CliError> {
     "neo4j" => neo4j(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "es" => es(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "csv-preview" => csv_preview(rest).map(Output::Json),
+    "export" => export(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     other => Err(CliError::usage(format!("unknown command {other}; run `dataomni cli help`"))),
   }
 }
@@ -615,6 +621,119 @@ fn run_es(
     "the Elasticsearch request",
     elasticsearch::run(&resolved, arguments),
   )
+}
+
+/// 导出最多等多久：整表导出要几分钟，语句的默认 30 秒不够
+const DEFAULT_EXPORT_TIMEOUT_SECONDS: u64 = 300;
+
+struct ExportArguments {
+  connection: String,
+  sql: String,
+  out: PathBuf,
+  options: crate::services::export_writer::ExportOptions,
+  timeout: Duration,
+}
+
+fn parse_export_arguments(rest: &[String]) -> Result<ExportArguments, CliError> {
+  use crate::services::export_writer::{ExportFormat, ExportOptions};
+  let usage = "usage: dataomni cli export <connection> <sql> --out FILE [--format csv|json] \
+    [--delimiter C] [--no-header] [--null TEXT] [--bom] [--timeout SECONDS]";
+  let mut positional = Vec::new();
+  let mut out = None;
+  let mut options = ExportOptions {
+    format: ExportFormat::Csv,
+    delimiter: ",".to_string(),
+    include_header: true,
+    null_text: String::new(),
+    byte_order_mark: false,
+    sql_table: String::new(),
+    sql_dialect: None,
+    sql_computed_columns: Vec::new(),
+    sql_identity_columns: Vec::new(),
+    sql_sequence_columns: Vec::new(),
+  };
+  let mut timeout_seconds = DEFAULT_EXPORT_TIMEOUT_SECONDS;
+  let mut iter = rest.iter();
+  while let Some(argument) = iter.next() {
+    let mut value = |flag: &str| {
+      iter.next().cloned().ok_or_else(|| CliError::usage(format!("{flag} takes a value")))
+    };
+    match argument.as_str() {
+      "--out" => out = Some(PathBuf::from(value("--out")?)),
+      // `sql` 要知道哪些是计算列、自增列与序列（界面另查表的元数据），这一版不做
+      "--format" => {
+        options.format = match value("--format")?.as_str() {
+          "csv" => ExportFormat::Csv,
+          "json" => ExportFormat::Json,
+          other => return Err(CliError::usage(format!("--format is csv or json, got {other}"))),
+        }
+      }
+      "--delimiter" => options.delimiter = value("--delimiter")?,
+      "--null" => options.null_text = value("--null")?,
+      "--no-header" => options.include_header = false,
+      "--bom" => options.byte_order_mark = true,
+      "--timeout" => {
+        timeout_seconds = number_after("--timeout", iter.next(), 1, MAX_TIMEOUT_SECONDS)?
+      }
+      _ => positional.push(argument.clone()),
+    }
+  }
+  let [connection, sql] =
+    <[String; 2]>::try_from(positional).map_err(|_| CliError::usage(usage))?;
+  let out = out.ok_or_else(|| CliError::usage(usage))?;
+  // 不覆盖：Agent 写错一个路径就会盖掉人的文件
+  if out.exists() {
+    return Err(CliError::usage(format!("{} already exists; choose another path", out.display())));
+  }
+  Ok(ExportArguments {
+    connection,
+    sql: read_argument(&sql)?,
+    out,
+    options,
+    timeout: Duration::from_secs(timeout_seconds),
+  })
+}
+
+fn export(
+  rest: &[String],
+  config_dir: Option<&Path>,
+  log_dir: Option<&Path>,
+) -> Result<Value, CliError> {
+  let arguments = parse_export_arguments(rest)?;
+  let service = open_service(config_dir)?;
+  let profile = find_open(&service, &arguments.connection)?;
+  let started = Instant::now();
+  let outcome = run_export(&service, &profile, &arguments, config_dir);
+  audit::record(log_dir, "export", &profile.name, &arguments.sql, &outcome, started.elapsed());
+  let summary = outcome?;
+  Ok(json!({
+    "schema": OUTPUT_SCHEMA,
+    "connection": profile.name,
+    "file": summary.path,
+    "rows": summary.rows_written,
+    "bytes": summary.bytes_written,
+    "elapsed_ms": started.elapsed().as_millis() as u64,
+  }))
+}
+
+fn run_export(
+  service: &ConnectionService,
+  profile: &ConnectionProfile,
+  arguments: &ExportArguments,
+  config_dir: Option<&Path>,
+) -> Result<crate::services::export_writer::ExportSummary, CliError> {
+  read_only_gate::check(&arguments.sql)
+    .map_err(|refusal| CliError::refused(refusal.to_string()))?;
+  if !session::supports(&profile.db_type) {
+    return Err(unsupported(&profile.db_type));
+  }
+  let resolved = resolve_verified(service, profile)?;
+  block_on_within(arguments.timeout, "the export", async {
+    let opened = session::open(&resolved, config_dir).await.map_err(session_error)?;
+    let summary = opened.export(&arguments.sql, &arguments.out, arguments.options.clone()).await;
+    opened.close().await;
+    summary.map_err(session_error)
+  })
 }
 
 /// 本机的 CSV 文件：嗅探分隔符与编码（UTF-8，否则 gb18030），给表头、开头几行和字段数对不上的行。
@@ -1578,6 +1697,66 @@ mod tests {
     let missing = dir.0.join("missing.csv").to_string_lossy().into_owned();
     assert_eq!(run_in(&dir, &["csv-preview", &missing]).0, Exit::Usage as i32);
     assert_eq!(run_in(&dir, &["csv-preview", &path, "--delimiter", "ab"]).0, Exit::Usage as i32);
+  }
+
+  /// 整份结果写进新文件，字节与界面导出相同；写语句被拒、不留文件；已有的文件不覆盖
+  #[test]
+  fn export_writes_every_row_to_a_new_file() {
+    let dir = ConfigDir::with(&[]);
+    let db = seeded_sqlite(&dir.0);
+    std::fs::write(
+      dir.0.join("connections.json"),
+      Value::from(vec![file_profile("s", "local", "sqlite", &db, "development")]).to_string(),
+    )
+    .expect("config");
+    let csv = dir.0.join("items.csv");
+    let csv_path = csv.to_string_lossy().into_owned();
+    let (code, stdout, stderr) = run_in(
+      &dir,
+      &["export", "local", "SELECT id, name FROM items ORDER BY id", "--out", &csv_path],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(json_of(&stdout)["rows"], json!(1000), "{stdout}");
+    let written = std::fs::read_to_string(&csv).unwrap_or_default();
+    assert!(written.starts_with("id,name\n1,item 1\n2,item 2\n"), "{written:.40}");
+    assert_eq!(written.lines().count(), 1001);
+
+    let json_path = dir.0.join("items.json").to_string_lossy().into_owned();
+    let (code, _, stderr) = run_in(
+      &dir,
+      &[
+        "export",
+        "local",
+        "SELECT id FROM items WHERE id <= 2",
+        "--out",
+        &json_path,
+        "--format",
+        "json",
+      ],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let rows: Value =
+      serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap_or_default())
+        .unwrap_or_default();
+    // 64 位整数写成字符串，同界面导出（`export_writer::json_field`：JSON 的数到了消费方是双精度）
+    assert_eq!(rows, json!([{ "id": "1" }, { "id": "2" }]));
+
+    let refused = dir.0.join("refused.csv");
+    let refused_path = refused.to_string_lossy().into_owned();
+    let (code, _, _) =
+      run_in(&dir, &["export", "local", "DELETE FROM items", "--out", &refused_path]);
+    assert_eq!(code, Exit::Refused as i32);
+    assert!(!refused.exists());
+    assert_eq!(sqlite_count(&db), 1000);
+    let (code, _, stderr) = run_in(&dir, &["export", "local", "SELECT 1", "--out", &csv_path]);
+    assert_eq!(code, Exit::Usage as i32, "{stderr}");
+    assert!(stderr.contains("already exists"), "{stderr}");
+    for bad in [
+      &["export", "local", "SELECT 1"][..],
+      &["export", "local", "SELECT 1", "--out", "x", "--format", "sql"],
+    ] {
+      assert_eq!(run_in(&dir, bad).0, Exit::Usage as i32, "{bad:?}");
+    }
   }
 
   #[test]
