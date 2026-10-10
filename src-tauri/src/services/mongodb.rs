@@ -346,6 +346,17 @@ pub async fn find(
   collection: &str,
   request: FindRequest,
 ) -> Result<MongoFindPage, String> {
+  let (documents, has_more) = find_documents(client, database, collection, request).await?;
+  Ok(MongoFindPage { documents: documents.iter().map(document_row).collect(), has_more })
+}
+
+/// `find` 的原始文档，加上这一页之后还有没有。命令行要整个文档，不要网格的格子
+pub async fn find_documents(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  request: FindRequest,
+) -> Result<(Vec<Document>, bool), String> {
   let collection = client.database(database).collection::<Document>(collection);
   let limit = request.limit.max(1);
   let query = async {
@@ -364,7 +375,7 @@ pub async fn find(
   let mut documents = with_deadline(request.timeout, query).await?;
   let has_more = documents.len() as u64 > limit;
   documents.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
-  Ok(MongoFindPage { documents: documents.iter().map(document_row).collect(), has_more })
+  Ok((documents, has_more))
 }
 
 /// 管道里有写库的阶段（`$out` / `$merge`）。聚合在这里只读：写库有按条件改、导入这些
@@ -409,11 +420,33 @@ pub async fn aggregate(
   client: &Client,
   database: &str,
   collection: &str,
-  mut pipeline: Vec<Document>,
+  pipeline: Vec<Document>,
   skip: u64,
   limit: u64,
   timeout: Duration,
 ) -> Result<MongoAggregatePage, String> {
+  let (documents, has_more) =
+    aggregate_documents(client, database, collection, pipeline, skip, limit, timeout).await?;
+  Ok(MongoAggregatePage {
+    documents: documents.iter().map(document_row).collect(),
+    texts: documents
+      .iter()
+      .map(|document| mongo_shell::format_document(document, Layout::Indented))
+      .collect(),
+    has_more,
+  })
+}
+
+/// 聚合的原始结果，加上这一页之后还有没有（同 [`find_documents`]）
+pub async fn aggregate_documents(
+  client: &Client,
+  database: &str,
+  collection: &str,
+  mut pipeline: Vec<Document>,
+  skip: u64,
+  limit: u64,
+  timeout: Duration,
+) -> Result<(Vec<Document>, bool), String> {
   let collection = client.database(database).collection::<Document>(collection);
   let limit = limit.max(1);
   if skip > 0 {
@@ -434,17 +467,11 @@ pub async fn aggregate(
   let mut documents = with_deadline(timeout, query).await?;
   let has_more = documents.len() as u64 > limit;
   documents.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
-  Ok(MongoAggregatePage {
-    documents: documents.iter().map(document_row).collect(),
-    texts: documents
-      .iter()
-      .map(|document| mongo_shell::format_document(document, Layout::Indented))
-      .collect(),
-    has_more,
-  })
+  Ok((documents, has_more))
 }
 
 /// 要看执行计划的是哪一种查询：网格上生效的条件与排序，或者一条聚合管道
+#[derive(Clone)]
 pub enum ExplainTarget {
   Find { filter: Document, sort: Document },
   Aggregate { pipeline: Vec<Document> },

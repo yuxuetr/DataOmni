@@ -10,6 +10,7 @@
 
 mod audit;
 mod dictionary;
+mod mongo;
 mod session;
 
 use crate::models::{ConnectionProfile, DatabaseType};
@@ -100,6 +101,13 @@ Commands:
                      A Markdown data dictionary of the whole database: every
                      table's columns, types, nullability, primary and foreign
                      keys. Read it before writing SQL. Printed as Markdown, not JSON.
+  mongo <connection> <operation> ...
+                     MongoDB, read only: collections; find, count, aggregate,
+                     explain and structure on <database>.<collection>. Filters and
+                     pipelines are mongosh syntax; documents come back as relaxed
+                     Extended JSON. Pipelines with $out or $merge are refused.
+                     explain runs the query (executionStats) but returns no
+                     documents. `dataomni cli mongo` alone prints its usage.
   test <connection>  Connect the way query does, run nothing, report ok. When a
                      network connection fails, error.diagnosis says whether the
                      name resolved and the port answered.
@@ -209,6 +217,7 @@ fn dispatch(args: &[String], dirs: &Dirs) -> Result<Output, CliError> {
     "explain" => explain(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "test" => test(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "dictionary" => dictionary(rest, config_dir, dirs.log.as_deref()).map(Output::Text),
+    "mongo" => mongo(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     other => Err(CliError::usage(format!("unknown command {other}; run `dataomni cli help`"))),
   }
 }
@@ -244,16 +253,20 @@ fn parse_statement_arguments(
   }
   let [connection, sql] =
     <[String; 2]>::try_from(positional).map_err(|_| CliError::usage(usage))?;
-  let sql = if sql == "-" {
-    let mut text = String::new();
-    std::io::stdin()
-      .read_to_string(&mut text)
-      .map_err(|error| CliError::usage(format!("cannot read the statement from stdin: {error}")))?;
-    text
-  } else {
-    sql
-  };
+  let sql = read_argument(&sql)?;
   Ok(QueryArguments { connection, sql, row_limit, timeout: Duration::from_secs(timeout_seconds) })
+}
+
+/// `-` 表示从标准输入读：语句、条件、管道都可能长得不便写在命令行上
+fn read_argument(text: &str) -> Result<String, CliError> {
+  if text != "-" {
+    return Ok(text.to_string());
+  }
+  let mut read = String::new();
+  std::io::stdin()
+    .read_to_string(&mut read)
+    .map_err(|error| CliError::usage(format!("cannot read stdin: {error}")))?;
+  Ok(read)
 }
 
 fn number_after(flag: &str, value: Option<&String>, min: u64, max: u64) -> Result<u64, CliError> {
@@ -440,6 +453,39 @@ fn run_dictionary(
   Ok(dictionary::render(&profile.name, dictionary::dialect(profile), &date, &tables, &links))
 }
 
+fn mongo(
+  rest: &[String],
+  config_dir: Option<&Path>,
+  log_dir: Option<&Path>,
+) -> Result<Value, CliError> {
+  let arguments = mongo::parse(rest)?;
+  let service = open_service(config_dir)?;
+  let profile = find_open(&service, &arguments.connection)?;
+  let started = Instant::now();
+  let outcome = run_mongo(&service, &profile, &arguments);
+  let command = arguments.command();
+  audit::record(log_dir, command, &profile.name, &arguments.subject, &outcome, started.elapsed());
+  let body = outcome?;
+  let mut output = json!({ "schema": OUTPUT_SCHEMA, "connection": profile.name });
+  if let (Value::Object(output), Value::Object(body)) = (&mut output, body) {
+    output.extend(body);
+  }
+  output["elapsed_ms"] = json!(started.elapsed().as_millis() as u64);
+  Ok(output)
+}
+
+fn run_mongo(
+  service: &ConnectionService,
+  profile: &ConnectionProfile,
+  arguments: &mongo::Arguments,
+) -> Result<Value, CliError> {
+  if profile.db_type != DatabaseType::MongoDB {
+    return Err(CliError::usage(format!("{} is not a MongoDB connection", profile.name)));
+  }
+  let resolved = resolve_verified(service, profile)?;
+  block_on_within(arguments.timeout, "the MongoDB request", mongo::run(&resolved, arguments))
+}
+
 /// 在一个新的运行时里跑完 `work`，到点没完就报超时。`what` 是报错里的主语
 fn block_on_within<T>(
   timeout: Duration,
@@ -615,6 +661,9 @@ fn session_error(failure: session::Failure) -> CliError {
 }
 
 fn unsupported(db_type: &crate::models::DatabaseType) -> CliError {
+  if *db_type == DatabaseType::MongoDB {
+    return CliError::refused("MongoDB connections take `dataomni cli mongo`, not SQL");
+  }
   let name =
     serde_json::to_value(db_type).ok().and_then(|value| value.as_str().map(str::to_string));
   CliError::refused(format!(
@@ -1288,6 +1337,34 @@ mod tests {
 
     // 库没起来是「连不上」（4），不是语句超时（1）：Agent 据此决定是重试还是换语句
     let (code, _, stderr) = run_in(&dir, &["query", "down", "SELECT 1"]);
+    assert_eq!(code, Exit::Unavailable as i32, "{stderr}");
+    assert_eq!(json_of(&stderr)["error"]["kind"], "connect");
+  }
+
+  /// Mongo 连接走 `mongo`：SQL 命令指过去；`mongo` 用在别的连接上是参数错；连不上是 4
+  #[test]
+  fn mongo_connections_take_the_mongo_command() {
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+      .and_then(|listener| listener.local_addr())
+      .map(|address| address.port())
+      .expect("a free port");
+    let mut mongo = profile("m", "docs", "development", "read");
+    mongo["db_type"] = json!("mongodb");
+    mongo["host"] = json!("127.0.0.1");
+    mongo["port"] = json!(port);
+    mongo["username"] = json!("");
+    let dir = ConfigDir::with(&[mongo, profile("p", "sql", "development", "read")]);
+
+    let (code, _, stderr) = run_in(&dir, &["query", "docs", "SELECT 1"]);
+    assert_eq!(code, Exit::Refused as i32, "{stderr}");
+    assert!(stderr.contains("dataomni cli mongo"), "{stderr}");
+    let (code, _, stderr) = run_in(&dir, &["mongo", "sql", "collections"]);
+    assert_eq!(code, Exit::Usage as i32, "{stderr}");
+    let (code, _, stderr) =
+      run_in(&dir, &["mongo", "docs", "aggregate", "db.c", "[{ $out: 'x' }]"]);
+    assert_eq!(code, Exit::Refused as i32, "{stderr}");
+
+    let (code, _, stderr) = run_in(&dir, &["mongo", "docs", "collections"]);
     assert_eq!(code, Exit::Unavailable as i32, "{stderr}");
     assert_eq!(json_of(&stderr)["error"]["kind"], "connect");
   }

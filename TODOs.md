@@ -361,6 +361,9 @@
     `fixtures/dictionary-conformance.json`；分别改坏两边，各自的语料测试都变红）。目录用 ER 图那两段整库查询，
     PostgreSQL、MySQL（cu）、Oracle（本机 Docker）、ClickHouse（cu）真库上读到了探针表。输出是 Markdown 不是 JSON，
     帮助里写明了。
+  - [x] `mongo <连接> collections / find / count / aggregate / explain / structure`：只有读的接口，管道里有 `$out` / `$merge`
+    解析时就拒（拿掉这道拦截，两条测试变红）。文档按 relaxed Extended JSON 输出，数量与字节上限同 `query`。
+    SQL 命令遇到 Mongo 连接时指向 `mongo`。cu 上的 MongoDB 8.0 真库：六个操作都读到探针集合，被拒的 `$out` 没写出集合。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
 - [ ] B4 驱动按 Cargo feature 拆分

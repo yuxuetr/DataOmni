@@ -61,7 +61,7 @@ enum Pool {
 /// 建立连接最多等多久（含隧道）。和语句的超时分开算：库没起来时 sqlx 会对「连接被拒」
 /// 退避重试到池子的 `acquire_timeout`（30 秒），等满了再报成语句超时，Agent 就分不清是库
 /// 没起来还是语句太慢
-const CONNECT_DEADLINE: Duration = Duration::from_secs(10);
+pub(super) const CONNECT_DEADLINE: Duration = Duration::from_secs(10);
 
 /// `profile` 已经补上了凭据（`resolve_for_agents`）。`config_dir` 用来解析相对路径的
 /// 库文件，和界面一样相对于应用的配置目录
@@ -81,19 +81,7 @@ async fn connect(
   if !supports(&profile.db_type) {
     return Err(Failure::Unsupported(profile.db_type.clone()));
   }
-  let tunnels = TunnelRegistry::default();
-  let tunnel_port = match &profile.ssh_tunnel {
-    None => None,
-    Some(tunnel) => {
-      let known_hosts = default_known_hosts()
-        .ok_or_else(|| Failure::Connect("cannot locate ~/.ssh/known_hosts".to_string()))?;
-      let port = tunnels
-        .ensure(profile, tunnel, &known_hosts)
-        .await
-        .map_err(|error| Failure::Connect(error.to_string()))?;
-      Some(port)
-    }
-  };
+  let (tunnels, tunnel_port) = tunnel(profile).await.map_err(Failure::Connect)?;
 
   let (pool, begin) = match profile.db_type {
     DatabaseType::PostgreSQL | DatabaseType::MySQL => {
@@ -148,6 +136,21 @@ async fn connect(
     _ => return Err(Failure::Unsupported(profile.db_type.clone())),
   };
   Ok(Opened { pool, begin, _tunnels: tunnels })
+}
+
+/// 连接配了 SSH 隧道就先打开它，给出本机这一头的端口。隧道活到返回的登记表被丢掉为止
+pub(super) async fn tunnel(
+  profile: &ConnectionProfile,
+) -> Result<(TunnelRegistry, Option<u16>), String> {
+  let tunnels = TunnelRegistry::default();
+  let Some(tunnel) = &profile.ssh_tunnel else {
+    return Ok((tunnels, None));
+  };
+  let known_hosts =
+    default_known_hosts().ok_or_else(|| "cannot locate ~/.ssh/known_hosts".to_string())?;
+  let port =
+    tunnels.ensure(profile, tunnel, &known_hosts).await.map_err(|error| error.to_string())?;
+  Ok((tunnels, Some(port)))
 }
 
 impl Opened {
