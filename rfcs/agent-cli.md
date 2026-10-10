@@ -2,8 +2,8 @@
 
 > 这份文档**跟着代码走**，写法同 `rfcs/ssh-tunnel.md`：验收标准写成可执行的门。
 >
-> 立项日期：2026-10-10。当前状态：**设计，未实现**。§3 的实验还没做，
-> 其中 E1 的结果决定 §4 的进程形态，在它出结果前不写产品代码。
+> 立项日期：2026-10-10。当前状态：**设计，未实现**。§3 的 E1、E3、E4、E5 已做（2026-10-10），
+> E2、E6 要有子命令才能测，放在第一批实现时做。用户定了排在 1.0 之前。
 >
 > 它取代 `TODOs.md` 里的 A8（DataOmni 作为 MCP 服务）作为第一步：A8 要回答的问题
 > （开放哪些连接、怎么保证只读、生产库怎么挡）CLI 一样要回答，回答完了 MCP 只是外面一层协议。
@@ -46,15 +46,63 @@
 | E5 | PostgreSQL 只读事务挡不住哪些有副作用的函数（`pg_terminate_backend`、`dblink` 之类）？ | 本地库里列出来试 | 写进 §5 的「数据库挡不住的」那一栏 |
 | E6 | 每次调用都新建连接（含 SSH 隧道）要多久？ | 对 cu 上的 MySQL 经隧道连 10 次取中位数 | 要不要常驻进程。没超过 1 秒就不做 |
 
+
+### 3.1 结果（2026-10-10）
+
+**E1 钥匙串**：用和应用相同的 `keyring 4.2.0`（macOS 上是旧式钥匙串，条目带访问控制表）写了个探针，
+只用一个专门的测试条目 `DataOmni-cli-probe-E1`，测完已删。
+
+| 情形 | 结果 |
+| --- | --- |
+| 同一个程序写入后，从终端反复读 | 不弹框 |
+| 另一个程序读同一条目 | 弹框，进程卡在读口令那一步直到有人回答 |
+| 同一路径的程序重新构建（cdhash 变了）后再读 | 弹框 |
+| 弹框里点过「允许」的那个构建再读 | 不弹框 |
+
+结论：访问控制认的是**代码身份**（ad-hoc 签名下就是 cdhash），不认路径，也不管是怎么启动的。
+所以 CLI 做成**主程序的子命令**，与界面共用身份。应用升级后界面本来就要弹一次框（GUI 测试时已经见过），
+用户点「始终允许」之后 CLI 跟着能用；另编一个程序就是每次升级弹两次，而且第二次会在 Agent 调用时冒出来。
+还没验：**界面里存的口令**由终端里的子命令来读（应当同样不弹，因为是同一个二进制），第一批在打包版上验。
+
+**E3 MySQL、Oracle 的只读事务挡不住 DDL**（本地 Docker：`mysql:8.4`、`gvenzl/oracle-free:23-slim`）：
+
+- MySQL：`START TRANSACTION READ ONLY` 之后 `INSERT` 被拒（1792），但 `CREATE TABLE`、`DROP TABLE` 都执行了，
+  事后 `ROLLBACK` 也撤不回来（DDL 隐式提交）。`get_lock()` 照样能拿锁。
+- Oracle：`SET TRANSACTION READ ONLY` 之后 `INSERT` 被拒（ORA-01456），`CREATE TABLE`、`DROP TABLE` 照样执行。
+- 所以这两家**必须**加语句分类，而且是白名单（只放行读语句），不是黑名单。
+
+**E4 SQLite、DuckDB 的只读打开**：
+
+- SQLite（3.54，`-readonly` / `mode=ro`）：原库改不动，再 `ATTACH` 一次原库也还是只读；但
+  `ATTACH '新文件'` 之后能在新文件里建表写数据，`VACUUM INTO '文件'` 能复制出整个库——**能在磁盘上任意写文件**。
+  要靠语句分类拒绝 `ATTACH` 和 `VACUUM`，或者把连接的 `SQLITE_LIMIT_ATTACHED` 设成 0（实现时看哪个能做成门）。
+- DuckDB（CLI 1.5.6；应用用的 crate 是 1.10505，即 1.5.5，实现时要用它复测）：只读打开挡住改库，
+  `ATTACH` 新文件也被拒；但 `COPY … TO '文件'` 能写文件，`read_text('任意路径')` 能**读本机任意文件**。
+  加上 `SET enable_external_access = false; SET lock_configuration = true;` 后三者都被拒，且这两项之后改不回来。
+
+**E5 PostgreSQL 的只读事务**（`postgres:16-alpine`，超级用户连的，所以是最坏情况）：
+
+- 挡住：建表、删表、`INSERT`、`nextval()`、临时表；`DO` 块里 `SET TRANSACTION READ WRITE` 也被拒（「必须在任何查询之前」）。
+- 挡不住，但结尾的 `ROLLBACK` 会撤掉：事务里**第一条**就是 `SET TRANSACTION READ WRITE`，之后的写能执行。
+  CLI 每次只发一条语句并且永远 `ROLLBACK`，所以这条路写不进去。
+- 挡不住，`ROLLBACK` 也撤不掉：`pg_terminate_backend` / `pg_cancel_backend`、`COPY … TO '服务器文件'`、
+  `pg_read_file`、`set_config`（只影响本会话）、会话级的 `pg_advisory_lock`、`LOCK TABLE`（事务结束就放）。
+  前三类要超级用户或 `pg_signal_backend`、`pg_write_server_files` 之类的角色——**只读账号**能防住。
+
+**ClickHouse 的 `readonly=1`**（`clickhouse-server` 26.9，用客户端设这个设置，等同于 HTTP 参数）：
+DDL、DML、`url()` / `file()` / `s3()` 表函数、`INSERT INTO FUNCTION`、`SET`、`SETTINGS readonly=0`、`SYSTEM` 全被拒，
+只有 `KILL QUERY` 能执行。这是几家里最严的。
+
+**E2、E6**：要先有子命令，放到第一批实现里，结果补在这里。
+
 ## 4. 进程形态
 
 **倾向：主程序带一个子命令**，`dataomni cli <命令>`，在 `tauri::Builder` 之前分流，不起窗口。
 
-- **为什么不另编一个程序**：macOS 钥匙串条目的访问控制认的是程序的签名身份。我们只有 ad-hoc 签名，
-  每次构建身份都会变；另一个二进制读应用存的条目会弹框要授权，Agent 过不去。同一个二进制可能不弹——
-  **这是 E1 要证实的**，没证实前是推测。
-- **E1 不成立时的退路**：CLI 不碰钥匙串，改成连接**正在运行的应用**（本机 Unix socket，带一次性令牌），
-  凭据留在应用进程里。代价是应用不开着就用不了。
+- **为什么不另编一个程序**：E1 证实钥匙串认代码身份，另一个程序读应用存的条目会弹框（§3.1）。
+- **读口令要有时限**：弹框时读口令的调用会一直卡住。CLI 把这一步放到单独的线程里，等 10 秒没结果就退出，
+  退出码 4，提示「钥匙串在等你授权：请在弹框里点『始终允许』后重试」。框留给人点，Agent 不会卡死。
+- 退路（没用上，留着备查）：CLI 不碰钥匙串，改成连接正在运行的应用，凭据留在应用进程里；代价是应用不开着就用不了。
 - **Linux、Windows 没有这个问题**：Secret Service 与 Windows 凭据管理器不按程序区分访问权限。
   Windows 因为 GUI 子系统打印不到终端，到时要么启动时 `AttachConsole(ATTACH_PARENT_PROCESS)`，
   要么另出一个控制台程序 `dataomni-cli.exe`。Windows 按用户的安排后放。
@@ -79,20 +127,28 @@
 
 两层，**以数据库自己拒绝为主，文本分类为辅**，并且如实告诉用户哪一层都不是绝对的：
 
-| 库 | 数据库层 | 文本 / 命令层 |
-| --- | --- | --- |
-| PostgreSQL 系（含 CockroachDB、openGauss） | 每次 `BEGIN READ ONLY; <一条语句>; ROLLBACK`，扩展协议只收一条语句 | 移植后的语句分类 |
-| MySQL 系（含 MariaDB、TiDB、OceanBase） | `START TRANSACTION READ ONLY` … `ROLLBACK`；**DDL 可能隐式提交，见 E3** | 同上，E3 证明挡不住 DDL 时这一层是必须的 |
-| Oracle | `SET TRANSACTION READ ONLY`；同样待 E3 | 同上 |
-| SQLite、DuckDB | 以只读方式打开文件（待 E4） | 同上 |
-| ClickHouse | 每条查询带 `readonly=1` | 同上 |
-| SQL Server | **没有会话级只读** | 只有文本分类，第一版不开放 |
-| MongoDB | 只暴露读的接口：`find`、`count`、`aggregate`（拒绝含 `$out` / `$merge` 的管道）、`explain` | 不暴露 `runCommand` |
-| Redis | — | 用服务器的 `COMMAND INFO` 查命令旗标，只放行带 `readonly` 的 |
-| Neo4j | 读模式的会话 | 先问 `neo4j_query_type`，只放行 `r` |
-| Elasticsearch | — | 按方法加路径的白名单：`GET`，以及 `POST` 到 `_search`、`_count`、`_msearch`、`_mapping` 等 |
+每次调用**只发一条语句**（扩展协议 / 预处理语句，多条语句直接拒绝），并且**永远以 `ROLLBACK` 结束**，不提交。
 
-**数据库层挡不住的**（E5 列全后补上）：比如 PostgreSQL 只读事务里照样能调 `pg_terminate_backend`。
+| 库 | 数据库层 | 语句分类（白名单，只放行读） | 依据 |
+| --- | --- | --- | --- |
+| PostgreSQL 系（含 CockroachDB、openGauss） | `BEGIN READ ONLY` … `ROLLBACK` | 有，作为第二层 | E5：DDL、DML 都被数据库拒 |
+| MySQL 系（含 MariaDB、TiDB、OceanBase） | `START TRANSACTION READ ONLY` … `ROLLBACK`，挡 DML | **必须**：DDL 不受只读事务约束 | E3 |
+| Oracle | `SET TRANSACTION READ ONLY` … `ROLLBACK`，挡 DML | **必须**，同上 | E3 |
+| SQLite | 只读打开 | **必须**拒绝 `ATTACH`、`VACUUM` | E4 |
+| DuckDB | 只读打开，加 `enable_external_access = false` 与 `lock_configuration = true` | 有，作为第二层 | E4 |
+| ClickHouse | 每条查询带 `readonly=1` | 有，作为第二层 | §3.1 |
+| SQL Server | **没有会话级只读** | 只有这一层，第一版不开放 | — |
+| MongoDB | 只暴露读的接口：`find`、`count`、`aggregate`（拒绝含 `$out` / `$merge` 的管道）、`explain` | 不暴露 `runCommand` | — |
+| Redis | — | 用服务器的 `COMMAND INFO` 查命令旗标，只放行带 `readonly` 的 | — |
+| Neo4j | 读模式的会话 | 先问 `neo4j_query_type`，只放行 `r` | — |
+| Elasticsearch | — | 按方法加路径的白名单：`GET`，以及 `POST` 到 `_search`、`_count`、`_msearch`、`_mapping` 等 | — |
+
+语句分类要在 Rust 里重写，可以照着 `statementRisk.ts` 的词法处理（引号、注释、美元引号），
+但判据换成白名单：去掉注释后的第一个关键字是 `SELECT`、`WITH`（且没有嵌套的写）、`SHOW`、`DESCRIBE`、`EXPLAIN`（不带 `ANALYZE`）、`VALUES`、`TABLE`，
+其余一律拒绝。前后两份分类要有一份共用语料钉住，仿 `fixtures/export-conformance.json`。
+
+**数据库层挡不住的**（§3.1）：PostgreSQL 的 `pg_terminate_backend`、`COPY … TO` 服务器文件、`pg_read_file`；
+MySQL 的 `get_lock()`；ClickHouse 的 `KILL QUERY`。
 所以文档和 `--help` 都要写明：**真正的边界是给 Agent 配一个只读数据库账号**，应用的门是第二道。
 
 ### 5.3 留痕
@@ -171,24 +227,26 @@
 先写出来、确认它们是红的，再实现。
 
 1. **写语句被拒**：对开放为「只读」的 SQLite 测试库发 `DELETE`、`DROP TABLE`、`INSERT … SELECT`、
-   `WITH x AS (DELETE …) SELECT`，退出码都是 3，表里的行数不变。
-2. **生产连接不可见**：`environment = production` 且「Agent 访问」被手工改成「只读」的配置，
+   `WITH x AS (DELETE …) SELECT`、`ATTACH '新文件'`、`VACUUM INTO '文件'`，退出码都是 3，表里的行数不变，
+   目录里没有多出文件。DuckDB 另加 `COPY … TO`、`read_text()`。MySQL、Oracle 的真库用例里要有 `CREATE TABLE`、`DROP TABLE`（E3 证明只靠数据库挡不住）。
+2. **多条语句被拒**：`SELECT 1; DELETE FROM t` 退出码 3。
+3. **生产连接不可见**：`environment = production` 且「Agent 访问」被手工改成「只读」的配置，
    `connections` 里没有它，`query` 它报「找不到连接」而不是「被拒」。
-3. **没开放的连接不可见**：同上，「Agent 访问」为「关」。
-4. **行数上限**：1000 行的表，默认只回 200 行，`truncated` 为真。
-5. **不泄露凭据**：`connections` 与任何报错的输出里，扫不到测试用的口令字符串。
-6. **CLI 不写配置**：跑完全部用例，`connections.json` 的内容逐字节不变。
-7. 各家真库的只读门放在已有的 `*_smoke.rs` 里，规矩照旧：环境变量只在 shell 里传。
+4. **没开放的连接不可见**：同上，「Agent 访问」为「关」。
+5. **行数上限**：1000 行的表，默认只回 200 行，`truncated` 为真。
+6. **不泄露凭据**：`connections` 与任何报错的输出里，扫不到测试用的口令字符串。
+7. **CLI 不写配置**：跑完全部用例，`connections.json` 的内容逐字节不变。
+8. 各家真库的只读门放在已有的 `*_smoke.rs` 里，规矩照旧：环境变量只在 shell 里传。
 
 每条都要反向验证：拿掉对应的那段实现，确认它变红。
 
 ## 9. 顺序
 
-1. §3 的实验，结果填回本文。
+1. ~~§3 的实验~~（E1、E3、E4、E5 已做；E2、E6 随第一批）。
 2. 拆出 `ConnectionService` 不依赖 `AppHandle` 的构造入口；加「Agent 访问」字段与连接设置里的选项（界面改动要在打包版里看）。
 3. 第一批，连同 §8 的门。
 4. 第二批，先做 `dictionary` 和 MongoDB / Redis 的读。
 5. 有人用了一阵、提出要写，再做第三批。
 6. 有 Agent 不能跑 shell 的场景，再在外面套 MCP（A8）。
 
-和 1.0 的关系：路线图里 1.0 冻结功能。这件事排在 1.0 之前还是之后由用户定，本文不预设。
+和 1.0 的关系：路线图里 1.0 冻结功能；用户 2026-10-10 定为**排在 1.0 之前**。
