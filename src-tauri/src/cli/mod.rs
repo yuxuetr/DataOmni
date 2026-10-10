@@ -690,8 +690,11 @@ fn open_service(config_dir: Option<&Path>) -> Result<ConnectionService, CliError
   let config_dir = config_dir.ok_or_else(|| {
     CliError::unavailable("config", "cannot locate the DataOmni configuration directory")
   })?;
-  ConnectionService::open_read_only(config_dir)
-    .map_err(|error| CliError::unavailable("config", error.to_string()))
+  #[cfg(not(test))]
+  let service = ConnectionService::open_read_only(config_dir);
+  #[cfg(test)]
+  let service = ConnectionService::open_read_only_without_keychain(config_dir);
+  service.map_err(|error| CliError::unavailable("config", error.to_string()))
 }
 
 /// 开放给命令行、并且凭证对得上的连接。不带口令、钥匙串引用、私钥和证书的路径：

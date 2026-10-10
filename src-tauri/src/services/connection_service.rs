@@ -256,6 +256,14 @@ impl ConnectionService {
     Self::read_only_at(&config_dir.join(CONNECTIONS_FILE), Box::new(SystemCredentialStore))
   }
 
+  /// 同 `open_read_only`，凭据库是空的内存实现
+  #[cfg(test)]
+  pub(crate) fn open_read_only_without_keychain(
+    config_dir: &std::path::Path,
+  ) -> Result<Self, Box<dyn std::error::Error>> {
+    Self::read_only_at(&config_dir.join(CONNECTIONS_FILE), Box::<MemoryCredentialStore>::default())
+  }
+
   fn read_only_at(
     config_path: &PathBuf,
     credential_store: Box<dyn CredentialStore>,
@@ -1005,42 +1013,44 @@ fn is_sensitive_parameter(key: &str) -> bool {
   )
 }
 
+/// 测试用：不碰系统钥匙串。CI 的 Linux 上没有凭据库，读一下就报错；本机上则会去读用户的钥匙串
+#[cfg(test)]
+#[derive(Default)]
+struct MemoryCredentialStore {
+  passwords: std::sync::Mutex<HashMap<String, String>>,
+}
+
+#[cfg(test)]
+impl CredentialStore for MemoryCredentialStore {
+  fn set_password(&self, profile_id: &str, password: &str) -> Result<(), String> {
+    self
+      .passwords
+      .lock()
+      .map_err(|error| error.to_string())?
+      .insert(profile_id.to_string(), password.to_string());
+    Ok(())
+  }
+
+  fn get_password(&self, profile_id: &str) -> Result<String, String> {
+    self
+      .passwords
+      .lock()
+      .map_err(|error| error.to_string())?
+      .get(profile_id)
+      .cloned()
+      .ok_or_else(|| CREDENTIAL_MISSING.to_string())
+  }
+
+  fn delete_password(&self, profile_id: &str) -> Result<(), String> {
+    self.passwords.lock().map_err(|error| error.to_string())?.remove(profile_id);
+    Ok(())
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
   use crate::models::ConnectionEnvironment;
-  use std::sync::Mutex;
-
-  #[derive(Default)]
-  struct MemoryCredentialStore {
-    passwords: Mutex<HashMap<String, String>>,
-  }
-
-  impl CredentialStore for MemoryCredentialStore {
-    fn set_password(&self, profile_id: &str, password: &str) -> Result<(), String> {
-      self
-        .passwords
-        .lock()
-        .map_err(|error| error.to_string())?
-        .insert(profile_id.to_string(), password.to_string());
-      Ok(())
-    }
-
-    fn get_password(&self, profile_id: &str) -> Result<String, String> {
-      self
-        .passwords
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(profile_id)
-        .cloned()
-        .ok_or_else(|| CREDENTIAL_MISSING.to_string())
-    }
-
-    fn delete_password(&self, profile_id: &str) -> Result<(), String> {
-      self.passwords.lock().map_err(|error| error.to_string())?.remove(profile_id);
-      Ok(())
-    }
-  }
 
   fn profile(id: &str, password: &str) -> ConnectionProfile {
     ConnectionProfile {
