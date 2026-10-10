@@ -316,6 +316,8 @@
     - 钥匙串认代码身份，所以 CLI 做成主程序的子命令。
     - MySQL、Oracle 的只读事务挡不住 DDL；SQLite 只读打开后 `ATTACH` / `VACUUM INTO` 能写出新文件；
       DuckDB 要关掉外部访问。所以语句白名单是必须的，不是第二层。
+  - [x] 只读语句门 `services/read_only_gate.rs`：白名单加每种词法规矩各扫一遍；共用语料 `fixtures/agent-read-only.json`
+    （放行的界面也必须判成 read）。逐条拿掉一种规矩，对应的拒绝用例都变红（13 种）。
   - 下一步：第一批（`connections`、`test`、`query`、`explain`、`schema`、`version`），E2、E6 随它测。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
