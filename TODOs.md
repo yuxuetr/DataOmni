@@ -345,7 +345,13 @@
   - [x] 开了只读却不保存口令时，表单提醒命令行连不上（563a7a5）。打包版里看过：提醒显示，勾上保存口令后消失。
   - [x] `explain <连接> <SQL>`：计划树加数据库原文，永不 ANALYZE；语句先过语句门（去掉这一步测试会红）。
     PostgreSQL、MySQL、ClickHouse（cu）与 Oracle（本机 Docker）真库取到计划；Oracle 不开只读事务，理由见设计文档 §6。
-  - 下一步：第一批最后一个 `test`，E6 随它测。
+  - [x] `test <连接>`：与 `query` 同样只读地打开，连得上回 `ok`；网络库连不上时错误里带诊断（解析、TCP）。
+    同时修了：库没起来时 `query` 等满 30 秒、报成语句超时（退出码 1）——建立连接另设 10 秒上限，报「连不上」（4）。
+    反向验证：上限调到 60 秒，测试红在退出码 1。
+  - CI：从 83a1bc9 起一直红在 `logging.test.ts`「后端不往标准输出打印」（命令行的 `eprintln!`），371e3f7 修好：
+    门对 `src-tauri/src/cli/` 只放行 println!/eprintln!。教训：每次提交前跑全量 `bun run check`，不只跑单个文件。
+    hardened runtime 的打包只在 release.yml（打 tag）里跑，CI 不打 macOS 包，要到下一次发版才在 CI 上第一次用到。
+  - 第一批做完（`connections`、`query`、`schema`、`explain`、`test`、`version`）。下一步：E6（隧道连接的耗时），然后第二批。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
 - [ ] B4 驱动按 Cargo feature 拆分

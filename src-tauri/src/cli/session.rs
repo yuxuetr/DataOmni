@@ -19,6 +19,7 @@ use crate::services::{clickhouse, duckdb, oracle, sqlx_pool, QueryError};
 use serde_json::Value as JsonValue;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tauri_plugin_sql::DbPool;
 
 pub(super) enum Failure {
@@ -57,9 +58,23 @@ enum Pool {
   ClickHouse(Arc<clickhouse::ClickHousePool>),
 }
 
+/// 建立连接最多等多久（含隧道）。和语句的超时分开算：库没起来时 sqlx 会对「连接被拒」
+/// 退避重试到池子的 `acquire_timeout`（30 秒），等满了再报成语句超时，Agent 就分不清是库
+/// 没起来还是语句太慢
+const CONNECT_DEADLINE: Duration = Duration::from_secs(10);
+
 /// `profile` 已经补上了凭据（`resolve_for_agents`）。`config_dir` 用来解析相对路径的
 /// 库文件，和界面一样相对于应用的配置目录
 pub(super) async fn open(
+  profile: &ConnectionProfile,
+  config_dir: Option<&Path>,
+) -> Result<Opened, Failure> {
+  tokio::time::timeout(CONNECT_DEADLINE, connect(profile, config_dir)).await.map_err(|_| {
+    Failure::Connect(format!("could not connect within {} s", CONNECT_DEADLINE.as_secs()))
+  })?
+}
+
+async fn connect(
   profile: &ConnectionProfile,
   config_dir: Option<&Path>,
 ) -> Result<Opened, Failure> {

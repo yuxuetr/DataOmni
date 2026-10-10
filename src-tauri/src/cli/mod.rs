@@ -11,7 +11,7 @@
 mod audit;
 mod session;
 
-use crate::models::ConnectionProfile;
+use crate::models::{ConnectionProfile, DatabaseType};
 use crate::services::connection_service::{app_config_dir, ConnectionService, APP_IDENTIFIER};
 use crate::services::query_executor::QueryExecutionResult;
 use crate::services::read_only_gate;
@@ -49,19 +49,21 @@ pub struct CliError {
   pub exit: Exit,
   pub kind: &'static str,
   pub message: String,
+  /// `test` 连不上时断在哪一段（`connection_probe::diagnose` 的步骤）
+  pub diagnosis: Option<Value>,
 }
 
 impl CliError {
   fn usage(message: impl Into<String>) -> Self {
-    Self { exit: Exit::Usage, kind: "usage", message: message.into() }
+    Self { exit: Exit::Usage, kind: "usage", message: message.into(), diagnosis: None }
   }
 
   fn unavailable(kind: &'static str, message: impl Into<String>) -> Self {
-    Self { exit: Exit::Unavailable, kind, message: message.into() }
+    Self { exit: Exit::Unavailable, kind, message: message.into(), diagnosis: None }
   }
 
   fn refused(message: impl Into<String>) -> Self {
-    Self { exit: Exit::Refused, kind: "refused", message: message.into() }
+    Self { exit: Exit::Refused, kind: "refused", message: message.into(), diagnosis: None }
   }
 
   /// 没开放的、生产的、不存在的连接都是这一句：不让调用方分辨出「有，但不给你」
@@ -70,6 +72,7 @@ impl CliError {
       exit: Exit::Usage,
       kind: "not_found",
       message: format!("no connection named {name} is open to the command line"),
+      diagnosis: None,
     }
   }
 }
@@ -92,6 +95,9 @@ Commands:
                      The execution plan of one read-only statement, as a tree
                      (plan.roots) plus the database's own text (plan.raw). Never
                      ANALYZE: the statement itself does not run.
+  test <connection>  Connect the way query does, run nothing, report ok. When a
+                     network connection fails, error.diagnosis says whether the
+                     name resolved and the port answered.
   version            Print the DataOmni version
   help               Print this help
 
@@ -159,10 +165,13 @@ fn run_with(args: &[String], dirs: &Dirs, out: &mut dyn Write, err: &mut dyn Wri
       Exit::Ok as i32
     }
     Err(error) => {
-      let body = json!({
+      let mut body = json!({
         "schema": OUTPUT_SCHEMA,
         "error": { "kind": error.kind, "message": error.message },
       });
+      if let Some(diagnosis) = error.diagnosis {
+        body["error"]["diagnosis"] = diagnosis;
+      }
       let _ = writeln!(err, "{body}");
       error.exit as i32
     }
@@ -193,6 +202,7 @@ fn dispatch(args: &[String], dirs: &Dirs) -> Result<Output, CliError> {
     "query" => query(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "schema" => schema(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "explain" => explain(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
+    "test" => test(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     other => Err(CliError::usage(format!("unknown command {other}; run `dataomni cli help`"))),
   }
 }
@@ -323,6 +333,59 @@ fn run_explain(
   })
 }
 
+fn test(
+  rest: &[String],
+  config_dir: Option<&Path>,
+  log_dir: Option<&Path>,
+) -> Result<Value, CliError> {
+  let [connection] = rest else {
+    return Err(CliError::usage("usage: dataomni cli test <connection>"));
+  };
+  let service = open_service(config_dir)?;
+  let profile = find_open(&service, connection)?;
+  let started = Instant::now();
+  let outcome = run_test(&service, &profile, config_dir);
+  audit::record(log_dir, "test", &profile.name, "", &outcome, started.elapsed());
+  outcome?;
+  Ok(json!({
+    "schema": OUTPUT_SCHEMA,
+    "connection": profile.name,
+    "ok": true,
+    "elapsed_ms": started.elapsed().as_millis() as u64,
+  }))
+}
+
+fn run_test(
+  service: &ConnectionService,
+  profile: &ConnectionProfile,
+  config_dir: Option<&Path>,
+) -> Result<(), CliError> {
+  if !session::supports(&profile.db_type) {
+    return Err(unsupported(&profile.db_type));
+  }
+  let resolved = resolve_verified(service, profile)?;
+  let timeout = Duration::from_secs(DEFAULT_TIMEOUT_SECONDS);
+  block_on_within(timeout, "the connection", async {
+    match session::open(&resolved, config_dir).await {
+      Ok(opened) => {
+        opened.close().await;
+        Ok(())
+      }
+      Err(failure) => {
+        let mut error = session_error(failure);
+        // 只探网络库的主机与端口：文件库的报错里已经有路径与系统给的原因；经隧道的连接
+        // 探到的是隧道后面的地址，从这台机器本来就到不了，结论会是错的
+        let networked = !matches!(profile.db_type, DatabaseType::SQLite | DatabaseType::DuckDB);
+        if error.kind == "connect" && networked && profile.ssh_tunnel.is_none() {
+          let steps = crate::services::diagnose(profile).await.steps;
+          error.diagnosis = serde_json::to_value(steps).ok();
+        }
+        Err(error)
+      }
+    }
+  })
+}
+
 /// 在一个新的运行时里跑完 `work`，到点没完就报超时。`what` 是报错里的主语
 fn block_on_within<T>(
   timeout: Duration,
@@ -337,6 +400,7 @@ fn block_on_within<T>(
     exit: Exit::Database,
     kind: "timeout",
     message: format!("{what} did not finish within {} s", timeout.as_secs()),
+    diagnosis: None,
   })?
 }
 
@@ -450,6 +514,7 @@ async fn describe_table(
       exit: Exit::Usage,
       kind: "not_found",
       message: format!("no table or view named {table}"),
+      diagnosis: None,
     });
   }
   let indexes = opened.select(queries.indexes, params.clone()).await.map_err(session_error)?;
@@ -486,9 +551,12 @@ fn session_error(failure: session::Failure) -> CliError {
   match failure {
     session::Failure::Unsupported(db_type) => unsupported(&db_type),
     session::Failure::Connect(message) => CliError::unavailable("connect", message),
-    session::Failure::Database(error) => {
-      CliError { exit: Exit::Database, kind: "database", message: error.to_string() }
-    }
+    session::Failure::Database(error) => CliError {
+      exit: Exit::Database,
+      kind: "database",
+      message: error.to_string(),
+      diagnosis: None,
+    },
   }
 }
 
@@ -1075,6 +1143,63 @@ mod tests {
     assert_eq!(sqlite_count(&db), 1000);
   }
 
+  /// 连得上就是 `ok`；文件不在就是「连不上」，原因在报错里
+  #[test]
+  fn test_opens_the_connection_read_only() {
+    let dir = ConfigDir::with(&[]);
+    let db = seeded_sqlite(&dir.0);
+    let missing = dir.0.join("missing.db");
+    std::fs::write(
+      dir.0.join("connections.json"),
+      Value::from(vec![
+        file_profile("s", "local", "sqlite", &db, "development"),
+        file_profile("m", "gone", "sqlite", &missing, "development"),
+      ])
+      .to_string(),
+    )
+    .expect("config");
+
+    let (code, stdout, stderr) = run_in(&dir, &["test", "local"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(json_of(&stdout)["ok"], json!(true));
+
+    let (code, _, stderr) = run_in(&dir, &["test", "gone"]);
+    assert_eq!(code, Exit::Unavailable as i32, "{stderr}");
+    assert_eq!(json_of(&stderr)["error"]["kind"], "connect");
+    assert!(!missing.exists(), "testing must not create the database file");
+  }
+
+  /// 网络库连不上时附上诊断：断在哪一段，Agent 才知道下一步是改地址还是去看服务
+  #[test]
+  fn a_failed_test_says_where_it_broke() {
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+      .and_then(|listener| listener.local_addr())
+      .map(|address| address.port())
+      .expect("a free port");
+    let mut closed = profile("p", "down", "development", "read");
+    closed["host"] = json!("127.0.0.1");
+    closed["port"] = json!(port);
+    let dir = ConfigDir::with(&[closed]);
+
+    let (code, _, stderr) = run_in(&dir, &["test", "down"]);
+    assert_eq!(code, Exit::Unavailable as i32, "{stderr}");
+    let error = &json_of(&stderr)["error"];
+    let steps: Vec<(Value, Value)> = error["diagnosis"]
+      .as_array()
+      .map(|steps| steps.iter().map(|step| (step["name"].clone(), step["ok"].clone())).collect())
+      .unwrap_or_default();
+    assert_eq!(
+      steps,
+      vec![(json!("resolve"), json!(true)), (json!("tcp"), json!(false))],
+      "{stderr}"
+    );
+
+    // 库没起来是「连不上」（4），不是语句超时（1）：Agent 据此决定是重试还是换语句
+    let (code, _, stderr) = run_in(&dir, &["query", "down", "SELECT 1"]);
+    assert_eq!(code, Exit::Unavailable as i32, "{stderr}");
+    assert_eq!(json_of(&stderr)["error"]["kind"], "connect");
+  }
+
   #[test]
   fn query_arguments_are_checked() {
     let dir = ConfigDir::with(&[]);
@@ -1091,6 +1216,8 @@ mod tests {
       &["explain"],
       &["explain", "x"],
       &["explain", "x", "SELECT 1", "--limit", "5"],
+      &["test"],
+      &["test", "x", "extra"],
     ] {
       assert_eq!(run_in(&dir, args).0, Exit::Usage as i32, "{args:?}");
     }
