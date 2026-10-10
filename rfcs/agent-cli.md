@@ -173,6 +173,16 @@ MySQL 的 `get_lock()`；ClickHouse 的 `KILL QUERY`。
 - **挡不住的**：没有口令的连接（SQLite、DuckDB 文件，免密的库，只用无口令私钥的隧道）。这些 Agent
   不经过命令行也能直接用——文件它读得到，免密的库它连得上——命令行没有替它多开一扇门。
 - 以后有了 Developer ID，可以换成按团队标识隔离的钥匙串，到时再看这一节。
+- **还挡不住代码注入**（E7，2026-10-10 实测）：现在的包是 ad-hoc 签名、没开 hardened runtime，
+  `DYLD_INSERT_LIBRARIES` 能把任意动态库注进应用的进程（界面和命令行都是），注进去的代码就用应用的身份
+  读钥匙串。这个洞在命令行出现之前就有。用 E1 的探针验过：同一个程序 ad-hoc 签名时注入成功，
+  加上 `--options runtime` 重签之后注入被系统忽略。所以凭证把门槛从「改一个字段」抬到了「写一个动态库并注入」，
+  挡得住手滑和被诱导着改配置，挡不住存心的程序。
+  - 要堵上就要开 hardened runtime。代价是库校验：Instant Client 不是我们签的，要加
+    `com.apple.security.cs.disable-library-validation`。加了之后，`DATAOMNI_ORACLE_CLIENT_DIR` 就是一条新的注入路，
+    所以命令行已经不认它，只认安装包里那一份（`oracle::pin_client_dir`）。
+  - 这是打包上的改动，要在打包版上验：应用起得来、Oracle 能连、钥匙串照常、`DYLD_INSERT_LIBRARIES` 进不去。
+
 
 ### 5.3 留痕
 

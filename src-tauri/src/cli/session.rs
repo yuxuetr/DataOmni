@@ -8,7 +8,7 @@
 use crate::models::{ConnectionProfile, DatabaseType};
 use crate::services::query_executor::{PoolRef, QueryExecutionResult, SessionConnection};
 use crate::services::ssh_tunnel::{default_known_hosts, TunnelRegistry};
-use crate::services::{clickhouse, duckdb, sqlx_pool, QueryError};
+use crate::services::{clickhouse, duckdb, oracle, sqlx_pool, QueryError};
 use std::path::{Path, PathBuf};
 use tauri_plugin_sql::DbPool;
 
@@ -28,6 +28,7 @@ pub(super) fn supports(db_type: &DatabaseType) -> bool {
       | DatabaseType::SQLite
       | DatabaseType::DuckDB
       | DatabaseType::ClickHouse
+      | DatabaseType::Oracle
   )
 }
 
@@ -93,6 +94,18 @@ pub(super) async fn run_read_only(
         .await
         .map_err(|error| Failure::Connect(format!("{}: {}", path.display(), error.message)))?;
       execute(PoolRef::DuckDb(&pool), None, sql, row_limit).await
+    }
+    DatabaseType::Oracle => {
+      let reachable = match tunnel_port {
+        Some(port) => profile.redirected_to("127.0.0.1", port),
+        None => profile.clone(),
+      };
+      let target = oracle::OracleTarget::from_profile(&reachable);
+      let connection =
+        oracle::connect(&target).await.map_err(|error| Failure::Connect(error.message))?;
+      let pool = oracle::OraclePool::new(target, connection);
+      // DDL 在只读事务里照样执行（§3.1 E3），挡它的是语句门；这里挡的是 DML
+      execute(PoolRef::Oracle(&pool), Some("SET TRANSACTION READ ONLY"), sql, row_limit).await
     }
     DatabaseType::ClickHouse => {
       // 不换主机：经隧道的 HTTPS 仍按原来的主机名校验证书（同界面）
@@ -251,6 +264,31 @@ mod tests {
     for cleanup in ["DROP USER IF EXISTS om_cli_ro2", "DROP TABLE IF EXISTS om_cli_ch"] {
       let _ = session.execute_unprepared(cleanup).await;
     }
+  }
+
+  /// Oracle：`SET TRANSACTION READ ONLY` 挡 DML（DDL 不挡，§3.1 E3，靠语句门）
+  #[tokio::test]
+  async fn oracle_sessions_refuse_dml() {
+    let Some(profile) = profile_from_env("DATAOMNI_ORACLE_TEST_URL", "oracle") else {
+      eprintln!("skipping: DATAOMNI_ORACLE_TEST_URL is not set");
+      return;
+    };
+    let target = oracle::OracleTarget::from_profile(&profile);
+    let admin =
+      oracle::OraclePool::new(target.clone(), oracle::connect(&target).await.expect("connect"));
+    let mut session = SessionConnection::acquire(PoolRef::Oracle(&admin)).await.expect("session");
+    let _ = session.execute_unprepared("DROP TABLE om_cli_ora").await;
+    session.execute_unprepared("CREATE TABLE om_cli_ora (x NUMBER)").await.expect("create");
+    // 只读事务读的是事务开始时的快照，而 Oracle 判断「表在快照之后才建」的粒度是秒级的：
+    // 刚建好就读报 ORA-01466（23ai 上实测）。真实用法里表不会是一秒前建的
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    let read = run_read_only(&profile, "SELECT count(*) AS n FROM om_cli_ora", 10, None).await;
+    assert!(matches!(read, Ok(QueryExecutionResult::Rows { .. })), "reads still work");
+    let write = run_read_only(&profile, "INSERT INTO om_cli_ora VALUES (1)", 10, None).await;
+    assert!(matches!(write, Err(Failure::Database(_))), "the database must refuse the write");
+
+    let _ = session.execute_unprepared("DROP TABLE om_cli_ora").await;
   }
 
   #[tokio::test]

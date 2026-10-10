@@ -330,6 +330,11 @@
     关闭时删凭证，对应的测试都变红。
   - [x] `query` 支持 ClickHouse：每条请求带 `readonly=1`；账号本身已是 1 或 2 时不带（2 的账号收到 1 会报 164，本地 26.9 实测）。
     真库：本地 26.9 上不带时写能进去、一律带时 `readonly=2` 账号读不了，两个方向都变红。
+  - [x] `query` 支持 Oracle：`SET TRANSACTION READ ONLY` 挡 DML，DDL 靠语句门。命令行只认安装包里的 Instant Client，
+    不认 `DATAOMNI_ORACLE_CLIENT_DIR`（调用方给的环境变量能让进程加载它的库）。真库：本地 23ai 上去掉只读事务时写能进去。
+  - [ ] **发布前必须做**：开 hardened runtime（设计文档 §5.4 E7）。现在 `DYLD_INSERT_LIBRARIES` 能注进应用进程，
+    借应用的身份读钥匙串；ad-hoc 加 `--options runtime` 后注入被忽略（探针实测）。要加放宽库校验的 entitlement 给 Instant Client，
+    在打包版上验：起得来、Oracle 能连、钥匙串照常、注入进不去。
   - 下一步：第一批其余的（`connections`、`test`、`query`、`explain`、`schema`、`version`），E2、E6 随它测。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）

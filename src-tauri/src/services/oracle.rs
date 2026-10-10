@@ -113,7 +113,19 @@ pub fn set_client_dir(dir: PathBuf) {
   let _ = CLIENT_DIR.set(dir);
 }
 
+static PINNED_CLIENT_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// 命令行用：只认安装包里的这一份，不认 [`CLIENT_DIR_ENV`]。命令行的环境变量是调用方给的，
+/// 指向别处的目录会让这个进程加载调用方的动态库，借应用的身份读钥匙串
+/// （`rfcs/agent-cli.md` §5.4）。界面由 launchd 启动，不继承调用方的环境
+pub fn pin_client_dir(dir: PathBuf) {
+  let _ = PINNED_CLIENT_DIR.set(dir);
+}
+
 fn client_dir() -> Option<PathBuf> {
+  if let Some(pinned) = PINNED_CLIENT_DIR.get() {
+    return Some(pinned.clone());
+  }
   std::env::var_os(CLIENT_DIR_ENV).map(PathBuf::from).or_else(|| CLIENT_DIR.get().cloned())
 }
 

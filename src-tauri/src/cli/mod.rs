@@ -112,8 +112,27 @@ fn app_log_dir() -> Option<PathBuf> {
   dir
 }
 
+/// 安装包里的 Instant Client。和 Tauri 的 `resource_dir` 同一个算法，只是不起 Tauri
+fn bundled_oracle_client() -> Option<PathBuf> {
+  let exe = std::env::current_exe().ok()?;
+  let exe_dir = exe.parent()?;
+  #[cfg(target_os = "macos")]
+  let resources = exe_dir.join("../Resources");
+  #[cfg(target_os = "linux")]
+  let resources = exe_dir
+    .join("../lib/DataOmni")
+    .canonicalize()
+    .unwrap_or_else(|_| PathBuf::from("/usr/lib/DataOmni"));
+  #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+  let resources = exe_dir.to_path_buf();
+  Some(resources.join("instantclient"))
+}
+
 /// 入口：`args` 是 `cli` 之后的参数。返回进程退出码
 pub fn run(args: &[String]) -> i32 {
+  if let Some(dir) = bundled_oracle_client() {
+    crate::services::oracle::pin_client_dir(dir);
+  }
   let stdout = std::io::stdout();
   let stderr = std::io::stderr();
   let dirs = Dirs { config: app_config_dir(), log: app_log_dir() };
