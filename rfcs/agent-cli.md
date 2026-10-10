@@ -205,7 +205,7 @@ MySQL 的 `get_lock()`；ClickHouse 的 `KILL QUERY`。
 | `connections` | `ConnectionService::from_path` | 按 §5.1 过滤；不输出口令、私钥路径 |
 | `test <连接>` / `diagnose <连接>` | `test_connection`、`connection_probe` | 无 |
 | `query <连接> <SQL>` | `query_executor::execute_query_with_limits` | §5.2 的只读包装；默认最多 200 行、30 秒，`--limit` 上限 10000；输出里带 `truncated` |
-| `explain <连接> <SQL>` | `explain::explain_statement`、`parse_plan` | 不带 `ANALYZE`（它会真的执行语句） |
+| `explain <连接> <SQL>` | `explain::explain_statement`、`parse_plan` | 不带 `ANALYZE`（它会真的执行语句）；语句先过语句门再包进 EXPLAIN，同样在只读事务里、以回滚结束。例外是 Oracle：`EXPLAIN PLAN` 要写会话的 `PLAN_TABLE`，只读事务里报 ORA-01456（23ai 实测），所以不开只读事务——它只编译不执行，计划行读完即回滚 |
 | `schema <连接> [--table T]` | `schema_metadata`、`object_catalog` 生成的 SQL | 把 `tableMetadata.ts` 的解析移植到 Rust：表、列、索引、外键 |
 | `version` | `diagnostics` | 无 |
 

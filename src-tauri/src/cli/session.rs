@@ -6,8 +6,15 @@
 //! 事务第一条就改回读写的话（PostgreSQL 会放行），写进去的也会被撤掉。
 
 use crate::models::{ConnectionProfile, DatabaseType};
-use crate::services::query_executor::{PoolRef, QueryExecutionResult, QueryRow, SessionConnection};
+use crate::services::explain::{
+  explain_statement, parse_plan, PlanDialect, QueryPlan, EXPLAIN_BYTE_LIMIT, EXPLAIN_ROW_LIMIT,
+  SERVER_VERSION_QUERY,
+};
+use crate::services::query_executor::{
+  PoolRef, QueryExecutionResult, QueryRow, SessionConnection, StreamOptions,
+};
 use crate::services::ssh_tunnel::{default_known_hosts, TunnelRegistry};
+use crate::services::DEFAULT_QUERY_BATCH_SIZE;
 use crate::services::{clickhouse, duckdb, oracle, sqlx_pool, QueryError};
 use serde_json::Value as JsonValue;
 use std::path::{Path, PathBuf};
@@ -164,6 +171,32 @@ impl Opened {
     rows.map_err(Failure::Database)
   }
 
+  /// 一条已经过了语句门的语句的执行计划。不带 ANALYZE，语句本身不执行；EXPLAIN 同样在
+  /// 只读事务里、以回滚结束
+  pub(super) async fn explain(
+    &self,
+    db_type: &DatabaseType,
+    sql: &str,
+  ) -> Result<QueryPlan, Failure> {
+    // Oracle 的 `EXPLAIN PLAN` 要往会话的 PLAN_TABLE 写计划行，只读事务里报 ORA-01456（23ai 实测）。
+    // 它只编译不执行语句，写进去的计划行由 `oracle::explain_plan` 读完就回滚，所以不开只读事务
+    let begin = match self.pool {
+      Pool::Oracle(_) => None,
+      _ => self.begin,
+    };
+    let mut session = SessionConnection::acquire(self.pool_ref())
+      .await
+      .map_err(|error| Failure::Connect(error.message))?;
+    if let Some(begin) = begin {
+      session.execute_unprepared(begin).await.map_err(Failure::Database)?;
+    }
+    let plan = plan_in(&mut session, db_type, sql).await;
+    if begin.is_some() {
+      let _ = session.execute_unprepared("ROLLBACK").await;
+    }
+    plan.map_err(Failure::Database)
+  }
+
   pub(super) async fn close(self) {
     if let Pool::Sqlx(pool) = self.pool {
       close(pool).await;
@@ -204,6 +237,40 @@ async fn execute(
     let _ = session.execute_unprepared("ROLLBACK").await;
   }
   result.map_err(Failure::Database)
+}
+
+/// 同界面的 `explain_query`：TiDB、OceanBase、CockroachDB 走 MySQL / PostgreSQL 的连接类型，
+/// EXPLAIN 却各说各的，先问一句 `VERSION()`
+async fn plan_in(
+  session: &mut SessionConnection,
+  db_type: &DatabaseType,
+  sql: &str,
+) -> Result<QueryPlan, QueryError> {
+  let dialect = if PlanDialect::needs_server_version(db_type) {
+    let version = match session.execute(SERVER_VERSION_QUERY, 1).await? {
+      QueryExecutionResult::Rows { rows, .. } => rows
+        .first()
+        .and_then(|row| row.values().next())
+        .map(|cell| cell.as_str().map(str::to_string).unwrap_or_else(|| cell.to_string()))
+        .unwrap_or_default(),
+      QueryExecutionResult::Affected { .. } => String::new(),
+    };
+    PlanDialect::detect(db_type, &version)
+  } else {
+    PlanDialect::from(db_type)
+  };
+  let statement = explain_statement(dialect.clone(), sql, false)?;
+  let options =
+    StreamOptions::limited(EXPLAIN_ROW_LIMIT, EXPLAIN_BYTE_LIMIT, DEFAULT_QUERY_BATCH_SIZE)
+      .for_explain();
+  let mut rows = Vec::new();
+  session
+    .execute_streaming(&statement, options, &mut |batch| {
+      rows.extend(batch.rows);
+      Ok(())
+    })
+    .await?;
+  parse_plan(dialect, &rows, false)
 }
 
 async fn close(pool: DbPool) {
@@ -254,6 +321,26 @@ mod tests {
     Some(serde_json::from_value(profile).expect("a profile"))
   }
 
+  /// 在只读会话里取计划。`Failure` 没有 `Debug`，断言失败时要看得到数据库的原话
+  async fn plan_of(profile: &ConnectionProfile, sql: &str) -> Result<QueryPlan, String> {
+    let describe = |failure: Failure| match failure {
+      Failure::Connect(message) => message,
+      Failure::Database(error) => error.to_string(),
+      Failure::Unsupported(db_type) => format!("{db_type:?}"),
+    };
+    let opened = open(profile, None).await.map_err(describe)?;
+    let plan = opened.explain(&profile.db_type, sql).await.map_err(describe);
+    opened.close().await;
+    plan
+  }
+
+  fn assert_has_plan(plan: Result<QueryPlan, String>) {
+    match plan {
+      Ok(plan) => assert!(!plan.roots.is_empty() && !plan.analyzed, "{plan:?}"),
+      Err(error) => panic!("explain failed: {error}"),
+    }
+  }
+
   /// 只读事务确实开了：读照常，写被**数据库**拒绝（这一层不经过语句门），回滚后表里还是空的
   async fn check_read_only_transaction(profile: ConnectionProfile, admin_url: &str) {
     let admin = sqlx_pool::open(admin_url).await.expect("admin pool");
@@ -269,6 +356,7 @@ mod tests {
 
     let read = run_read_only(&profile, "SELECT count(*) AS n FROM om_cli_probe", 10, None).await;
     assert!(matches!(read, Ok(QueryExecutionResult::Rows { .. })), "reads still work");
+    assert_has_plan(plan_of(&profile, "SELECT count(*) AS n FROM om_cli_probe").await);
     let write = run_read_only(&profile, "INSERT INTO om_cli_probe VALUES (1)", 10, None).await;
     assert!(matches!(write, Err(Failure::Database(_))), "the database must refuse the write");
 
@@ -312,6 +400,7 @@ mod tests {
 
     let read = run_read_only(&profile, "SELECT count() AS n FROM om_cli_ch", 10, None).await;
     assert!(matches!(read, Ok(QueryExecutionResult::Rows { .. })), "reads still work");
+    assert_has_plan(plan_of(&profile, "SELECT count() AS n FROM om_cli_ch").await);
     for sql in [
       "INSERT INTO om_cli_ch VALUES (1)",
       "SELECT * FROM url('http://127.0.0.1:1/x', 'CSV', 'a String')",
@@ -354,6 +443,7 @@ mod tests {
 
     let read = run_read_only(&profile, "SELECT count(*) AS n FROM om_cli_ora", 10, None).await;
     assert!(matches!(read, Ok(QueryExecutionResult::Rows { .. })), "reads still work");
+    assert_has_plan(plan_of(&profile, "SELECT count(*) AS n FROM om_cli_ora").await);
     let write = run_read_only(&profile, "INSERT INTO om_cli_ora VALUES (1)", 10, None).await;
     assert!(matches!(write, Err(Failure::Database(_))), "the database must refuse the write");
 

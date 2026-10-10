@@ -727,7 +727,7 @@ pub async fn explain_query(
           autocommit: request.autocommit,
           explain_plan: false,
           row_limit: 1,
-          byte_limit: EXPLAIN_BYTE_LIMIT,
+          byte_limit: crate::services::explain::EXPLAIN_BYTE_LIMIT,
           batch_size: DEFAULT_QUERY_BATCH_SIZE,
           timeout_duration: Duration::from_secs(10),
         },
@@ -759,8 +759,8 @@ pub async fn explain_query(
         sql: &statement,
         autocommit: request.autocommit,
         explain_plan: true,
-        row_limit: EXPLAIN_ROW_LIMIT,
-        byte_limit: EXPLAIN_BYTE_LIMIT,
+        row_limit: crate::services::explain::EXPLAIN_ROW_LIMIT,
+        byte_limit: crate::services::explain::EXPLAIN_BYTE_LIMIT,
         batch_size: DEFAULT_QUERY_BATCH_SIZE,
         timeout_duration: Duration::from_secs(60),
       },
@@ -772,14 +772,6 @@ pub async fn explain_query(
     .await?;
   crate::services::explain::parse_plan(dialect, &rows, request.analyze)
 }
-
-/// 计划的行数上限。SQLite 的 `EXPLAIN QUERY PLAN` 一行一步，复杂查询几十行；
-/// 一万行足够，而不设上限意味着一条畸形语句能把内存吃光。
-const EXPLAIN_ROW_LIMIT: usize = 10_000;
-
-/// 计划本身的内存上限。PostgreSQL 的 VERBOSE JSON 在几十张表的查询上能到
-/// 几 MB，16 MiB 留足余量，同时挡住失控的情况。
-const EXPLAIN_BYTE_LIMIT: usize = 16 * 1024 * 1024;
 
 /// 这条 session 现在在不在事务里。
 ///

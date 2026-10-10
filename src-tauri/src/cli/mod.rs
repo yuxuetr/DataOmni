@@ -88,6 +88,10 @@ Commands:
   schema <connection> [<table> [--schema S]]
                      Without a table: the tables and views. With a table: its
                      columns, indexes (one row per index column) and foreign keys.
+  explain <connection> <sql> [--timeout SECONDS]
+                     The execution plan of one read-only statement, as a tree
+                     (plan.roots) plus the database's own text (plan.raw). Never
+                     ANALYZE: the statement itself does not run.
   version            Print the DataOmni version
   help               Print this help
 
@@ -188,6 +192,7 @@ fn dispatch(args: &[String], dirs: &Dirs) -> Result<Output, CliError> {
     }
     "query" => query(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "schema" => schema(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
+    "explain" => explain(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     other => Err(CliError::usage(format!("unknown command {other}; run `dataomni cli help`"))),
   }
 }
@@ -199,14 +204,20 @@ struct QueryArguments {
   timeout: Duration,
 }
 
-fn parse_query_arguments(rest: &[String]) -> Result<QueryArguments, CliError> {
+/// `query` 与 `explain` 的参数。`usage` 是那条命令的用法；没有 `--limit` 的命令传
+/// `accepts_limit = false`，给了就报错，而不是悄悄不理
+fn parse_statement_arguments(
+  rest: &[String],
+  usage: &str,
+  accepts_limit: bool,
+) -> Result<QueryArguments, CliError> {
   let mut positional = Vec::new();
   let mut row_limit = DEFAULT_ROW_LIMIT;
   let mut timeout_seconds = DEFAULT_TIMEOUT_SECONDS;
   let mut iter = rest.iter();
   while let Some(argument) = iter.next() {
     match argument.as_str() {
-      "--limit" => {
+      "--limit" if accepts_limit => {
         row_limit = number_after("--limit", iter.next(), 1, MAX_ROW_LIMIT as u64)? as usize
       }
       "--timeout" => {
@@ -215,9 +226,8 @@ fn parse_query_arguments(rest: &[String]) -> Result<QueryArguments, CliError> {
       _ => positional.push(argument.clone()),
     }
   }
-  let [connection, sql] = <[String; 2]>::try_from(positional).map_err(|_| {
-    CliError::usage("usage: dataomni cli query <connection> <sql> [--limit N] [--timeout SECONDS]")
-  })?;
+  let [connection, sql] =
+    <[String; 2]>::try_from(positional).map_err(|_| CliError::usage(usage))?;
   let sql = if sql == "-" {
     let mut text = String::new();
     std::io::stdin()
@@ -242,7 +252,8 @@ fn query(
   config_dir: Option<&Path>,
   log_dir: Option<&Path>,
 ) -> Result<Value, CliError> {
-  let arguments = parse_query_arguments(rest)?;
+  let usage = "usage: dataomni cli query <connection> <sql> [--limit N] [--timeout SECONDS]";
+  let arguments = parse_statement_arguments(rest, usage, true)?;
   let service = open_service(config_dir)?;
   let profile = find_open(&service, &arguments.connection)?;
   let started = Instant::now();
@@ -265,20 +276,68 @@ fn run_query(
     return Err(unsupported(&profile.db_type));
   }
   let resolved = resolve_verified(service, profile)?;
+  let run = session::run_read_only(&resolved, &arguments.sql, arguments.row_limit, config_dir);
+  block_on_within(arguments.timeout, "the statement", async { run.await.map_err(session_error) })
+}
 
+fn explain(
+  rest: &[String],
+  config_dir: Option<&Path>,
+  log_dir: Option<&Path>,
+) -> Result<Value, CliError> {
+  let usage = "usage: dataomni cli explain <connection> <sql> [--timeout SECONDS]";
+  let arguments = parse_statement_arguments(rest, usage, false)?;
+  let service = open_service(config_dir)?;
+  let profile = find_open(&service, &arguments.connection)?;
+  let started = Instant::now();
+  let outcome = run_explain(&service, &profile, &arguments, config_dir);
+  audit::record(log_dir, "explain", &profile.name, &arguments.sql, &outcome, started.elapsed());
+  let plan = outcome?;
+  Ok(json!({
+    "schema": OUTPUT_SCHEMA,
+    "connection": profile.name,
+    "plan": plan,
+    "elapsed_ms": started.elapsed().as_millis() as u64,
+  }))
+}
+
+fn run_explain(
+  service: &ConnectionService,
+  profile: &ConnectionProfile,
+  arguments: &QueryArguments,
+  config_dir: Option<&Path>,
+) -> Result<crate::services::explain::QueryPlan, CliError> {
+  // 包进 EXPLAIN 之前先过语句门：门只放读语句，EXPLAIN 永远不带 ANALYZE
+  read_only_gate::check(&arguments.sql)
+    .map_err(|refusal| CliError::refused(refusal.to_string()))?;
+
+  if !session::supports(&profile.db_type) {
+    return Err(unsupported(&profile.db_type));
+  }
+  let resolved = resolve_verified(service, profile)?;
+  block_on_within(arguments.timeout, "the plan", async {
+    let opened = session::open(&resolved, config_dir).await.map_err(session_error)?;
+    let plan = opened.explain(&resolved.db_type, &arguments.sql).await;
+    opened.close().await;
+    plan.map_err(session_error)
+  })
+}
+
+/// 在一个新的运行时里跑完 `work`，到点没完就报超时。`what` 是报错里的主语
+fn block_on_within<T>(
+  timeout: Duration,
+  what: &str,
+  work: impl std::future::Future<Output = Result<T, CliError>>,
+) -> Result<T, CliError> {
   let runtime = tokio::runtime::Builder::new_multi_thread()
     .enable_all()
     .build()
     .map_err(|error| CliError::unavailable("runtime", error.to_string()))?;
-  let run = session::run_read_only(&resolved, &arguments.sql, arguments.row_limit, config_dir);
-  match runtime.block_on(async { tokio::time::timeout(arguments.timeout, run).await }) {
-    Err(_) => Err(CliError {
-      exit: Exit::Database,
-      kind: "timeout",
-      message: format!("the statement did not finish within {} s", arguments.timeout.as_secs()),
-    }),
-    Ok(result) => result.map_err(session_error),
-  }
+  runtime.block_on(async { tokio::time::timeout(timeout, work).await }).map_err(|_| CliError {
+    exit: Exit::Database,
+    kind: "timeout",
+    message: format!("{what} did not finish within {} s", timeout.as_secs()),
+  })?
 }
 
 struct SchemaArguments {
@@ -334,12 +393,8 @@ fn run_schema(
     return Err(unsupported(&profile.db_type));
   }
   let resolved = resolve_verified(service, profile)?;
-  let runtime = tokio::runtime::Builder::new_multi_thread()
-    .enable_all()
-    .build()
-    .map_err(|error| CliError::unavailable("runtime", error.to_string()))?;
   let timeout = Duration::from_secs(DEFAULT_TIMEOUT_SECONDS);
-  let work = async {
+  let body = block_on_within(timeout, "the catalog", async {
     let opened = session::open(&resolved, config_dir).await.map_err(session_error)?;
     let result = match &arguments.table {
       None => list_objects(&opened, &resolved).await,
@@ -347,15 +402,7 @@ fn run_schema(
     };
     opened.close().await;
     result
-  };
-  let body =
-    runtime.block_on(async { tokio::time::timeout(timeout, work).await }).map_err(|_| {
-      CliError {
-        exit: Exit::Database,
-        kind: "timeout",
-        message: format!("the catalog did not answer within {} s", timeout.as_secs()),
-      }
-    })??;
+  })?;
   let mut output = json!({ "schema": OUTPUT_SCHEMA, "connection": profile.name });
   if let (Value::Object(output), Value::Object(body)) = (&mut output, body) {
     output.extend(body);
@@ -1002,6 +1049,32 @@ mod tests {
     );
   }
 
+  /// 只取计划不执行：SQLite 给的是「按主键查」这一步；写语句照样被语句门拒掉，不会被包进 EXPLAIN
+  #[test]
+  fn explain_returns_the_plan_without_running_the_statement() {
+    let dir = ConfigDir::with(&[]);
+    let db = seeded_sqlite(&dir.0);
+    std::fs::write(
+      dir.0.join("connections.json"),
+      Value::from(vec![file_profile("s", "local", "sqlite", &db, "development")]).to_string(),
+    )
+    .expect("config");
+
+    let (code, stdout, stderr) =
+      run_in(&dir, &["explain", "local", "SELECT name FROM items WHERE id = 3"]);
+    assert_eq!(code, 0, "{stderr}");
+    let output = json_of(&stdout);
+    assert_eq!(output["plan"]["analyzed"], json!(false));
+    let operation = output["plan"]["roots"][0]["operation"].as_str().unwrap_or_default();
+    assert!(operation.contains("items"), "{stdout}");
+
+    for sql in ["DELETE FROM items", "EXPLAIN ANALYZE SELECT 1", "SELECT 1; DELETE FROM items"] {
+      let (code, _, stderr) = run_in(&dir, &["explain", "local", sql]);
+      assert_eq!(code, Exit::Refused as i32, "{sql}: {stderr}");
+    }
+    assert_eq!(sqlite_count(&db), 1000);
+  }
+
   #[test]
   fn query_arguments_are_checked() {
     let dir = ConfigDir::with(&[]);
@@ -1015,6 +1088,9 @@ mod tests {
       &["schema"],
       &["schema", "x", "t", "extra"],
       &["schema", "x", "--schema", "public"],
+      &["explain"],
+      &["explain", "x"],
+      &["explain", "x", "SELECT 1", "--limit", "5"],
     ] {
       assert_eq!(run_in(&dir, args).0, Exit::Usage as i32, "{args:?}");
     }

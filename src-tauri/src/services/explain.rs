@@ -14,6 +14,14 @@ use crate::services::query_error::QueryError;
 use serde::Serialize;
 use serde_json::{Map, Value as JsonValue};
 
+/// 计划的行数上限。SQLite 的 `EXPLAIN QUERY PLAN` 一行一步，复杂查询几十行；
+/// 一万行足够，而不设上限意味着一条畸形语句能把内存吃光。
+pub const EXPLAIN_ROW_LIMIT: usize = 10_000;
+
+/// 计划本身的内存上限。PostgreSQL 的 VERBOSE JSON 在几十张表的查询上能到
+/// 几 MB，16 MiB 留足余量，同时挡住失控的情况。
+pub const EXPLAIN_BYTE_LIMIT: usize = 16 * 1024 * 1024;
+
 /// 数据里带的都是数据库类型名
 pub const EXPLAIN_UNSUPPORTED: &str = "DATAOMNI_EXPLAIN_UNSUPPORTED";
 pub const EXPLAIN_ANALYZE_UNSUPPORTED: &str = "DATAOMNI_EXPLAIN_ANALYZE_UNSUPPORTED";
