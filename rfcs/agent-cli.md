@@ -99,7 +99,24 @@ DDL、DML、`url()` / `file()` / `s3()` 表函数、`INSERT INTO FUNCTION`、`SE
 **E2**（2026-10-10，debug 构建）：带着 `LD_LIBRARY_PATH=/opt/homebrew/lib` 从终端跑 `dataomni cli connections` 3 次，
 3 次都正常退出。子命令不起窗口，碰不到 ImageIO。打包版上再验一次。
 
-**E6**：随 `query` 测，结果补在这里。
+**E6**（2026-10-10，经 SSH 隧道连 cu 上只监听 127.0.0.1 的 MySQL，`cli::session::tests::e6_*`）：
+每次调用（建隧道、开连接、只读执行 `SELECT 1`、回滚、关掉）中位数 **4.2～4.4 秒**，超过了原定的 1 秒。
+拆开看几乎全是网络往返：这台机器到 cu 经本机代理，一个往返 170～250 ms（ping 只有 0.3 ms，是代理在本地回的，不能信）。
+
+| 阶段 | 耗时 | 约合往返 |
+| --- | --- | --- |
+| SSH 握手与公钥认证 | 1.6～1.7 s | 8～9 |
+| 开连接（通道、MySQL 握手与认证、sqlx 与我们各一句 `SET`） | 1.3～1.7 s | 7～9 |
+| 取连接（sqlx 取连接前 ping） | 0.18～0.27 s | 1 |
+| `START TRANSACTION READ ONLY` | 0.18 s | 1 |
+| 查询（预处理、执行） | 0.54～0.65 s | 3 |
+| `ROLLBACK` | 0.18 s | 1 |
+
+便宜能省的只有取连接前的 ping 与末尾的 `ROLLBACK`，约 10%，前者要改界面共用的 `sqlx_pool::open`，后者要拿掉一道保险，
+没做。查询那 3 个往返要换文本协议、另写一套解码，也没做。真正的杠杆是复用：常驻进程把每次降到 5 个往返左右。
+**用户定了 1.0 之前不做常驻**，判据从「1 秒」改成按往返算（毫秒跟网络走：同地域的跳板机一个往返 20～50 ms，
+同样的调用是 0.4～1.2 秒）。门是每次调用不超过 32 个「已连上之后的查询」，实测 22～26，几次运行之间差 15%，
+门调到 15 会红。常驻放到 MCP（A8）一起做：那里本来就是一个长驻的进程。
 
 ## 4. 进程形态
 
@@ -113,7 +130,7 @@ DDL、DML、`url()` / `file()` / `s3()` 表函数、`INSERT INTO FUNCTION`、`SE
   Windows 因为 GUI 子系统打印不到终端，到时要么启动时 `AttachConsole(ATTACH_PARENT_PROCESS)`，
   要么另出一个控制台程序 `dataomni-cli.exe`。Windows 按用户的安排后放。
 - **每次调用一个进程**：读 `connections.json`（只读，CLI 从不写它）、取口令、开连接或隧道、执行、关掉。
-  E6 证明太慢才考虑常驻。
+  E6：经隧道到远处的跳板机每次要几秒（§3.1），用户定了 1.0 之前不做常驻，放到 MCP（A8）一起做。
 - **找得到它**：macOS 上是 `/Applications/DataOmni.app/Contents/MacOS/dataomni`。
   `scripts/install-macos.sh` 顺手建一个 `~/.local/bin/dataomni` 的软链；应用内不加「安装命令行工具」按钮，
   有人要再加。

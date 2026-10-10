@@ -465,6 +465,71 @@ mod tests {
     let _ = session.execute_unprepared("DROP TABLE om_cli_ora").await;
   }
 
+  /// §3 E6：每次调用都新建隧道与连接，折合几句「已经连上之后的查询」。按这个单位而不是毫秒判：
+  /// 毫秒跟网络走，单位数是一次调用来回了多少趟，是代码决定的。实测（经代理到 cu，一趟约
+  /// 170～250 ms）每次 4.2～4.4 秒、合 22～26 个单位：SSH 握手与认证、开连接、取连接前的 ping、
+  /// BEGIN、预处理加执行、ROLLBACK。常驻进程能降到 5 个左右，用户定了 1.0 之前不做（§4）。
+  /// 门留 25% 余量：同一台机器上几次运行之间就差 15%。它拦的是「每次调用明显变重了」，
+  /// 比如多开了一次连接（8 个单位以上）。和 `tests/ssh_tunnel_smoke.rs` 同一套环境变量，只在 shell 里传
+  #[tokio::test]
+  async fn e6_a_tunnelled_call_takes_a_bounded_number_of_round_trips() {
+    let variable = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+    let (
+      Some(host),
+      Some(username),
+      Some(key),
+      Some(target),
+      Some(db_user),
+      Some(db_password),
+      Some(db_name),
+    ) = (
+      variable("DATAOMNI_SSH_TUNNEL_HOST"),
+      variable("DATAOMNI_SSH_TUNNEL_USER"),
+      variable("DATAOMNI_SSH_TUNNEL_KEY"),
+      variable("DATAOMNI_SSH_TUNNEL_TARGET"),
+      variable("DATAOMNI_SSH_TUNNEL_DB_USER"),
+      variable("DATAOMNI_SSH_TUNNEL_DB_PASSWORD"),
+      variable("DATAOMNI_SSH_TUNNEL_DB_NAME"),
+    )
+    else {
+      eprintln!("skipping: the DATAOMNI_SSH_TUNNEL_* variables are not set");
+      return;
+    };
+    let (target_host, target_port) = target.rsplit_once(':').expect("TARGET is host:port");
+    let profile: ConnectionProfile = serde_json::from_value(serde_json::json!({
+      "id": "cli-e6", "name": "cli-e6", "db_type": "mysql",
+      "host": target_host, "port": target_port.parse::<u16>().expect("a port"),
+      "database": db_name, "username": db_user, "password": db_password,
+      "ssl": false, "tls_mode": "disabled", "options": {}, "tags": [],
+      "ssh_tunnel": { "host": host, "username": username, "private_key_path": key },
+    }))
+    .expect("a profile");
+
+    // 一个往返：一直开着的那条隧道连接上发一句简单查询协议的 `SELECT 1`。每一轮紧挨着量一次
+    // 完整调用和几次往返，按轮算比值：分开两段量的话，网络在这几十秒里一变，比值就漂（实测 17～26）
+    let held = open(&profile, None).await.ok().expect("open once");
+    let mut session = SessionConnection::acquire(held.pool_ref()).await.expect("a session");
+    let mut ratios = Vec::new();
+    for _ in 0..10 {
+      let started = std::time::Instant::now();
+      let read = run_read_only(&profile, "SELECT 1 AS one", 1, None).await;
+      assert!(matches!(read, Ok(QueryExecutionResult::Rows { .. })), "the tunnelled read works");
+      let call = started.elapsed();
+      let started = std::time::Instant::now();
+      for _ in 0..3 {
+        session.execute_unprepared("SELECT 1").await.expect("one round trip");
+      }
+      let trip = started.elapsed() / 3;
+      ratios.push(call.as_secs_f64() / trip.as_secs_f64());
+    }
+    drop(session);
+    held.close().await;
+    ratios.sort_by(f64::total_cmp);
+    let round_trips = ratios[ratios.len() / 2];
+    eprintln!("E6: {round_trips:.1} round trips per call (per round: {ratios:.1?})");
+    assert!(round_trips <= 32.0, "{round_trips:.1} round trips per call");
+  }
+
   #[tokio::test]
   async fn postgres_sessions_are_read_only() {
     let Some(profile) = profile_from_env("DATAOMNI_POSTGRES_TEST_URL", "postgresql") else {

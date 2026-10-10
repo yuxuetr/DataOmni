@@ -351,7 +351,9 @@
   - CI：从 83a1bc9 起一直红在 `logging.test.ts`「后端不往标准输出打印」（命令行的 `eprintln!`），371e3f7 修好：
     门对 `src-tauri/src/cli/` 只放行 println!/eprintln!。教训：每次提交前跑全量 `bun run check`，不只跑单个文件。
     hardened runtime 的打包只在 release.yml（打 tag）里跑，CI 不打 macOS 包，要到下一次发版才在 CI 上第一次用到。
-  - 第一批做完（`connections`、`query`、`schema`、`explain`、`test`、`version`）。下一步：E6（隧道连接的耗时），然后第二批。
+  - [x] E6（设计文档 §3.1）：经隧道连 cu 每次 4.2～4.4 秒，几乎全是网络往返（一个往返 170～250 ms），合 22～26 个单位。
+    用户定了 1.0 之前**不做常驻进程**，放到 A8（MCP）一起做；判据改成按往返算，门是不超过 32（调到 15 会红）。
+  - 第一批做完（`connections`、`query`、`schema`、`explain`、`test`、`version`）。下一步：第二批。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
 - [ ] B4 驱动按 Cargo feature 拆分
