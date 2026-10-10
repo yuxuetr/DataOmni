@@ -387,7 +387,10 @@
   - 第二批做完。
   - [x] `guide`：给 Agent 读的说明，格式是 Claude Code 的 Skill（`SKILL.md`），源文件 `src-tauri/src/cli/guide.md` 编进二进制。
     门：每个命令都要在 `help` 与 `guide` 里出现、dispatch 认得它——写的时候就红过一次（`ddl`、`backup` 没写全调用形式）。
-  - 还没做的：README、安装脚本的软链接。
+  - [x] `scripts/install-macos.sh` 装完建 `~/.local/bin/dataomni` → 应用里的二进制（同名的不是软链接就不动；不在 PATH 里时提示）。
+    三种情况在临时 HOME 里跑过。顺带修：macOS 上经软链接启动时 `current_exe` 给的是软链接自己的路径（实测），
+    命令行照它找不到安装包里的 Instant Client；先解析软链接，去掉这一步测试变红。
+  - 还没做的：README 与用户手册。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
 - [ ] B4 驱动按 Cargo feature 拆分

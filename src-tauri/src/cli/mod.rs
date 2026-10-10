@@ -183,7 +183,13 @@ fn app_log_dir() -> Option<PathBuf> {
 
 /// 安装包里的 Instant Client。和 Tauri 的 `resource_dir` 同一个算法，只是不起 Tauri
 fn bundled_oracle_client() -> Option<PathBuf> {
-  let exe = std::env::current_exe().ok()?;
+  client_dir_beside(&std::env::current_exe().ok()?)
+}
+
+/// 先解析软链接：macOS 上经 `~/.local/bin/dataomni`（安装脚本建的）启动时，`current_exe`
+/// 给的是软链接自己的路径（实测），照它找 `../Resources` 就找到了 `~/.local/Resources`
+fn client_dir_beside(exe: &Path) -> Option<PathBuf> {
+  let exe = exe.canonicalize().ok()?;
   let exe_dir = exe.parent()?;
   #[cfg(target_os = "macos")]
   let resources = exe_dir.join("../Resources");
@@ -2099,6 +2105,21 @@ mod tests {
     let (code, stdout, _) = run_in(&dir, &["guide"]);
     assert_eq!(code, 0);
     assert!(stdout.starts_with("---\nname: dataomni\ndescription: \""), "{stdout:.80}");
+  }
+
+  /// 经软链接启动也找得到安装包里的 Instant Client
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn the_bundled_client_is_found_through_a_symlink() {
+    let dir = ConfigDir::with(&[]);
+    let macos = dir.0.join("DataOmni.app/Contents/MacOS");
+    std::fs::create_dir_all(&macos).expect("bundle");
+    std::fs::write(macos.join("dataomni"), "").expect("binary");
+    let link = dir.0.join("dataomni");
+    std::os::unix::fs::symlink(macos.join("dataomni"), &link).expect("symlink");
+    let found = client_dir_beside(&link).unwrap_or_default();
+    let real = macos.canonicalize().unwrap_or_default();
+    assert_eq!(found, real.join("../Resources/instantclient"));
   }
 
   #[test]

@@ -62,6 +62,24 @@ rm -rf "$destination"
 mv "$staging" "$destination"
 echo "已安装：${destination}（$(defaults read "$destination/Contents/Info" CFBundleShortVersionString)）"
 
+# 命令行（dataomni cli）就是应用自己的二进制：软链接过去，钥匙串认的还是它的代码身份。
+# 同名的不是软链接（别的程序装的）就不动它
+link_cli() {
+  local link="$HOME/.local/bin/dataomni" target="$destination/Contents/MacOS/dataomni"
+  if [ -e "$link" ] && [ ! -L "$link" ]; then
+    echo "没建命令行的软链接：$link 已经是别的文件"
+    return
+  fi
+  mkdir -p "$HOME/.local/bin"
+  ln -sfn "$target" "$link"
+  echo "命令行：$link → $target"
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) echo "  ~/.local/bin 不在 PATH 里，加上它才能直接敲 dataomni cli" ;;
+  esac
+}
+link_cli
+
 # 用 open 启动，别直接跑二进制：shell 里的 LD_LIBRARY_PATH 会让它启动就崩（见 CLAUDE.md）
 [ "$open_after" = 1 ] && open "$destination"
 exit 0
