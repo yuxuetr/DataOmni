@@ -162,7 +162,7 @@ fn dispatch(args: &[String], dirs: &Dirs) -> Result<Output, CliError> {
     "connections" => {
       no_arguments(command, rest)?;
       let service = open_service(config_dir)?;
-      Ok(Output::Json(json!({ "schema": OUTPUT_SCHEMA, "connections": list_open(&service) })))
+      Ok(Output::Json(list_open(&service)))
     }
     "query" => query(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     other => Err(CliError::usage(format!("unknown command {other}; run `dataomni cli help`"))),
@@ -241,8 +241,7 @@ fn run_query(
   if !session::supports(&profile.db_type) {
     return Err(unsupported(&profile.db_type));
   }
-  let resolved = with_keychain_deadline(|| service.resolve_for_connection(profile))
-    .map_err(|error| CliError::unavailable("credentials", error))?;
+  let resolved = resolve_verified(service, profile)?;
 
   let runtime = tokio::runtime::Builder::new_multi_thread()
     .enable_all()
@@ -297,6 +296,7 @@ fn with_keychain_deadline<T>(work: impl FnOnce() -> T) -> T {
   result
 }
 
+/// 按 id 或名字找文件里标着开放的连接。还没验凭证：那一步要读钥匙串，放在语句门之后
 fn find_open(service: &ConnectionService, name: &str) -> Result<ConnectionProfile, CliError> {
   let open: Vec<ConnectionProfile> =
     service.get_connections().into_iter().filter(ConnectionProfile::open_to_agents).collect();
@@ -310,6 +310,18 @@ fn find_open(service: &ConnectionService, name: &str) -> Result<ConnectionProfil
       Err(CliError::usage(format!("several connections are named {name}; use the id instead")))
     }
     (None, _) => Err(CliError::not_found(name)),
+  }
+}
+
+/// 验过开放凭证、补好凭据的连接。凭证对不上的和不存在的一样，报「找不到」
+fn resolve_verified(
+  service: &ConnectionService,
+  profile: &ConnectionProfile,
+) -> Result<ConnectionProfile, CliError> {
+  match with_keychain_deadline(|| service.resolve_for_agents(profile)) {
+    Ok(Some(resolved)) => Ok(resolved),
+    Ok(None) => Err(CliError::not_found(&profile.name)),
+    Err(error) => Err(CliError::unavailable("credentials", error)),
   }
 }
 
@@ -385,13 +397,25 @@ fn open_service(config_dir: Option<&Path>) -> Result<ConnectionService, CliError
     .map_err(|error| CliError::unavailable("config", error.to_string()))
 }
 
-/// 开放给命令行的连接。不带口令、钥匙串引用、私钥和证书的路径：Agent 要的只是
-/// 「有哪些库、叫什么、是什么类型」
-fn list_open(service: &ConnectionService) -> Vec<Value> {
+/// 开放给命令行、并且凭证对得上的连接。不带口令、钥匙串引用、私钥和证书的路径：
+/// Agent 要的只是「有哪些库、叫什么、是什么类型」。开放了却用不了的（比如口令只在会话里输）
+/// 单独列在 `unavailable` 里，说明原因，而不是悄悄少一个
+fn list_open(service: &ConnectionService) -> Value {
   let mut open: Vec<ConnectionProfile> =
     service.get_connections().into_iter().filter(ConnectionProfile::open_to_agents).collect();
   open.sort_by(|left, right| left.name.cmp(&right.name));
-  open
+  let mut usable = Vec::new();
+  let mut unavailable = Vec::new();
+  with_keychain_deadline(|| {
+    for connection in open {
+      match service.resolve_for_agents(&connection) {
+        Ok(Some(_)) => usable.push(connection),
+        Ok(None) => {}
+        Err(error) => unavailable.push(json!({ "name": connection.name, "reason": error })),
+      }
+    }
+  });
+  let connections: Vec<Value> = usable
     .into_iter()
     .map(|connection| {
       json!({
@@ -405,7 +429,8 @@ fn list_open(service: &ConnectionService) -> Vec<Value> {
         "ssh_tunnel": connection.ssh_tunnel.is_some(),
       })
     })
-    .collect()
+    .collect();
+  json!({ "schema": OUTPUT_SCHEMA, "connections": connections, "unavailable": unavailable })
 }
 
 #[cfg(test)]
@@ -415,12 +440,20 @@ mod tests {
 
   const SECRET: &str = "cli-test-secret-7f3a";
 
+  /// 免密的库：不需要开放凭证（`ConnectionService::resolve_for_agents`），测试碰不到钥匙串
   fn profile(id: &str, name: &str, environment: &str, agent_access: &str) -> Value {
     json!({
       "id": id, "name": name, "db_type": "postgresql", "host": "db.internal", "port": 5432,
-      "database": "app", "username": "reader", "password": SECRET, "ssl": false,
+      "database": "app", "username": "reader", "password": "", "ssl": false,
       "options": {}, "tags": [], "environment": environment, "agent_access": agent_access,
     })
+  }
+
+  /// 旧版留在文件里的明文口令：有口令，就要凭证
+  fn profile_with_secret(id: &str, name: &str) -> Value {
+    let mut value = profile(id, name, "development", "read");
+    value["password"] = json!(SECRET);
+    value
   }
 
   struct ConfigDir(PathBuf);
@@ -483,10 +516,25 @@ mod tests {
     assert_eq!(names(&stdout), vec!["open-dev", "open-staging"]);
   }
 
+  /// §8 第 8 条：手写进文件的「开放」，没有凭证就不算——有口令的连接这里看不见
+  #[test]
+  fn a_connection_marked_open_only_in_the_file_is_hidden() {
+    let dir = ConfigDir::with(&[
+      profile_with_secret("a", "forged"),
+      profile("b", "open", "development", "read"),
+    ]);
+    let (code, stdout, stderr) = run_in(&dir, &["connections"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(names(&stdout), vec!["open"]);
+    let (code, _, stderr) = run_in(&dir, &["query", "forged", "SELECT 1"]);
+    assert_eq!(code, Exit::Usage as i32);
+    assert_eq!(json_of(&stderr)["error"]["kind"], "not_found");
+  }
+
   /// §8 第 6、7 条：输出里没有口令；跑完配置文件一个字节都不变（旧版的明文口令也不迁移）
   #[test]
   fn never_prints_secrets_or_rewrites_the_config() {
-    let dir = ConfigDir::with(&[profile("a", "open-dev", "development", "read")]);
+    let dir = ConfigDir::with(&[profile_with_secret("a", "open-dev")]);
     let before = dir.config_file();
     for args in [&["connections"][..], &["version"], &["help"], &["nope"]] {
       let (_, stdout, stderr) = run_in(&dir, args);

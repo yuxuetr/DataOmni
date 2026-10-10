@@ -163,7 +163,7 @@ MySQL 的 `get_lock()`；ClickHouse 的 `KILL QUERY`。
 这是读代码推出来的（`open_to_agents` 只看文件里的两个字段，`resolve_for_connection` 按 id 取口令），
 没有拿真实连接演示。
 
-修法：**开放凭证绑在连接自己的口令上**。界面保存「只读」时，用这个连接的口令对它的指纹
+修法（已实现，`ConnectionService::resolve_for_agents`）：**开放凭证绑在连接自己的口令上**。界面保存「只读」时，用这个连接的口令对它的指纹
 （id、类型、主机、端口、库、用户名、环境、隧道的主机端口与用户）算 HMAC-SHA256，存进钥匙串
 （`<id>#agent`）；命令行读出口令后重算比对，对不上就当作没开放。
 

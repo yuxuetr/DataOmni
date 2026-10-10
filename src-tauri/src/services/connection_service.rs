@@ -1,7 +1,9 @@
 use crate::models::{ConnectionProfile, DatabaseType, TlsMode};
+use hmac::{Hmac, Mac};
 use keyring::Entry;
 use serde::Deserialize;
 use serde_json;
+use sha2::Sha256;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -17,6 +19,55 @@ pub const APP_IDENTIFIER: &str = "com.dataomni.app";
 /// 和 Tauri 的 `PathResolver::app_config_dir` 同一个算法
 pub fn app_config_dir() -> Option<PathBuf> {
   dirs::config_dir().map(|dir| dir.join(APP_IDENTIFIER))
+}
+
+/// 开放凭证在钥匙串里的账号名（`rfcs/agent-cli.md` §5.4）
+fn agent_grant_id(profile_id: &str) -> String {
+  format!("{profile_id}#agent")
+}
+
+/// 凭证覆盖的那些字段：改了其中任何一项（比如把开发连接的主机换成生产库），旧凭证作废
+fn agent_fingerprint(profile: &ConnectionProfile) -> String {
+  let tunnel = profile.ssh_tunnel.as_ref();
+  serde_json::json!([
+    "dataomni-agent-read-v1",
+    profile.id,
+    profile.db_type,
+    profile.host,
+    profile.port,
+    profile.database,
+    profile.username,
+    profile.environment,
+    profile.agent_access,
+    tunnel.map(|tunnel| (&tunnel.host, tunnel.port, &tunnel.username)),
+  ])
+  .to_string()
+}
+
+fn agent_mac(secret: &str) -> Hmac<Sha256> {
+  // HMAC 收任意长度的键，`new_from_slice` 不会失败
+  match Hmac::<Sha256>::new_from_slice(secret.as_bytes()) {
+    Ok(mac) => mac,
+    Err(_) => unreachable!("HMAC accepts keys of any length"),
+  }
+}
+
+/// 用这个连接自己的口令签它的指纹。Agent 不知道口令，就造不出凭证
+fn agent_grant(profile: &ConnectionProfile, secret: &str) -> String {
+  let mut mac = agent_mac(secret);
+  mac.update(agent_fingerprint(profile).as_bytes());
+  mac.finalize().into_bytes().iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn agent_grant_matches(profile: &ConnectionProfile, secret: &str, grant: &str) -> bool {
+  let bytes: Option<Vec<u8>> = (0..grant.len())
+    .step_by(2)
+    .map(|index| grant.get(index..index + 2).and_then(|pair| u8::from_str_radix(pair, 16).ok()))
+    .collect();
+  let Some(bytes) = bytes else { return false };
+  let mut mac = agent_mac(secret);
+  mac.update(agent_fingerprint(profile).as_bytes());
+  mac.verify_slice(&bytes).is_ok()
 }
 const CREDENTIAL_REF_PREFIX: &str = "system-keyring://connection/";
 const SESSION_PASSWORD_REQUIRED: &str = "SESSION_PASSWORD_REQUIRED";
@@ -337,6 +388,7 @@ impl ConnectionService {
     self.connections.insert(id.clone(), config);
 
     self.save_connections().map_err(|e| format!("{CONFIG_SAVE_FAILED}: {e}"))?;
+    self.refresh_agent_grant(&id)?;
 
     Ok(id)
   }
@@ -363,8 +415,67 @@ impl ConnectionService {
     self.connections.insert(id.to_string(), config);
 
     self.save_connections().map_err(|e| format!("{CONFIG_SAVE_FAILED}: {e}"))?;
+    self.refresh_agent_grant(id)?;
 
     Ok(())
+  }
+
+  /// 按这个连接现在的样子重写开放凭证；不开放、或者没有要保护的口令，就删掉。
+  /// 在配置写盘之后做：凭证写不进去时，命令行看不见这个连接（往关的方向错）
+  fn refresh_agent_grant(&self, id: &str) -> Result<(), String> {
+    let grant_id = agent_grant_id(id);
+    let Some(connection) = self.connections.get(id) else {
+      return self.credential_store.delete_password(&grant_id);
+    };
+    if connection.open_to_agents() {
+      if let Some(secret) = self.stored_secret(connection)? {
+        return self.credential_store.set_password(&grant_id, &agent_grant(connection, &secret));
+      }
+    }
+    self.credential_store.delete_password(&grant_id)
+  }
+
+  /// 命令行会替调用方用上、而调用方自己拿不到的口令：库口令与隧道口令。
+  /// 只算存下来的（钥匙串里的，或者旧版留在文件里的明文）；只在会话里输的命令行本来就用不了
+  fn stored_secret(&self, connection: &ConnectionProfile) -> Result<Option<String>, String> {
+    let password = if connection.credential_ref.is_some() {
+      self.credential_store.get_password(&connection.id)?
+    } else {
+      connection.password.clone()
+    };
+    let tunnel = match connection.ssh_tunnel.as_ref() {
+      Some(tunnel) if tunnel.secret_ref.is_some() => {
+        self.credential_store.get_password(&ssh_credential_id(&connection.id))?
+      }
+      Some(tunnel) => tunnel.secret.clone(),
+      None => String::new(),
+    };
+    if password.is_empty() && tunnel.is_empty() {
+      return Ok(None);
+    }
+    Ok(Some(format!("{password}\u{0}{tunnel}")))
+  }
+
+  /// 命令行用：这个连接开放了、而且开放凭证对得上，才交出补好凭据的连接；否则 `None`，
+  /// 调用方当作没有这个连接。只改配置文件开不了门（`rfcs/agent-cli.md` §5.4）
+  pub fn resolve_for_agents(
+    &self,
+    connection: &ConnectionProfile,
+  ) -> Result<Option<ConnectionProfile>, String> {
+    if !connection.open_to_agents() {
+      return Ok(None);
+    }
+    if let Some(secret) = self.stored_secret(connection)? {
+      let grant = match self.credential_store.get_password(&agent_grant_id(&connection.id)) {
+        Ok(grant) => grant,
+        Err(error) if error == CREDENTIAL_MISSING => return Ok(None),
+        Err(error) => return Err(error),
+      };
+      if !agent_grant_matches(connection, &secret, &grant) {
+        return Ok(None);
+      }
+    }
+    self.resolve_for_connection(connection).map(Some)
   }
 
   /// 删除数据库连接配置
@@ -393,6 +504,8 @@ impl ConnectionService {
       self.connections.insert(id.to_string(), connection);
       return Err(format!("{CONFIG_SAVE_FAILED}: {error}"));
     }
+    // 连接已经没了，留下的凭证什么也证明不了；删不掉也不必让删除失败
+    let _ = self.credential_store.delete_password(&agent_grant_id(id));
 
     Ok(())
   }
@@ -1620,6 +1733,136 @@ mod tests {
         Err(error) => panic!("{error}"),
       };
     assert_eq!(config["identifier"].as_str(), Some(APP_IDENTIFIER));
+  }
+
+  fn open_profile(id: &str, password: &str) -> ConnectionProfile {
+    let mut config = profile(id, password);
+    config.agent_access = crate::models::AgentAccess::Read;
+    config
+  }
+
+  fn agent_view(service: &ConnectionService, id: &str) -> Option<ConnectionProfile> {
+    let Some(connection) = service.get_connection(id) else { panic!("连接应当在: {id}") };
+    match service.resolve_for_agents(connection) {
+      Ok(resolved) => resolved,
+      Err(error) => panic!("不该出错: {error}"),
+    }
+  }
+
+  /// 界面里开放的、存了口令的连接，命令行拿得到，而且拿到的带着口令
+  #[test]
+  fn a_connection_opened_in_the_app_is_visible_to_agents() {
+    let mut service = service_at(&temporary_config_path());
+    if let Err(error) = service.create_connection(open_profile("p1", "s3cret")) {
+      panic!("{error}");
+    }
+    let resolved = agent_view(&service, "p1");
+    assert_eq!(resolved.map(|resolved| resolved.password), Some("s3cret".to_string()));
+  }
+
+  /// `rfcs/agent-cli.md` §5.4：只改文件开不了门。生产连接被改成开发环境并开放，
+  /// 没有凭证，看不见
+  #[test]
+  fn editing_the_config_file_does_not_open_a_connection() {
+    let mut service = service_at(&temporary_config_path());
+    let mut production = profile("p1", "prod-secret");
+    production.environment = ConnectionEnvironment::Production;
+    if let Err(error) = service.create_connection(production) {
+      panic!("{error}");
+    }
+    let Some(stored) = service.connections.get_mut("p1") else { panic!("连接应当在") };
+    stored.environment = ConnectionEnvironment::Development;
+    stored.agent_access = crate::models::AgentAccess::Read;
+    assert!(service.connections["p1"].open_to_agents(), "文件里看起来是开放的");
+    assert!(agent_view(&service, "p1").is_none());
+  }
+
+  /// 开放之后再改主机（比如指向另一台用同一套口令的库），凭证作废
+  #[test]
+  fn changing_what_the_grant_covers_voids_it() {
+    let mut service = service_at(&temporary_config_path());
+    if let Err(error) = service.create_connection(open_profile("p1", "s3cret")) {
+      panic!("{error}");
+    }
+    let Some(stored) = service.connections.get_mut("p1") else { panic!("连接应当在") };
+    stored.host = "prod.internal".to_string();
+    assert!(agent_view(&service, "p1").is_none());
+  }
+
+  /// 凭证本身不保密（钥匙串条目能被删了重建），保密的是算它的口令：不知道口令就造不出来
+  #[test]
+  fn a_grant_forged_without_the_password_is_rejected() {
+    let mut service = service_at(&temporary_config_path());
+    let mut closed = profile("p1", "s3cret");
+    closed.agent_access = crate::models::AgentAccess::Off;
+    if let Err(error) = service.create_connection(closed) {
+      panic!("{error}");
+    }
+    let Some(stored) = service.connections.get_mut("p1") else { panic!("连接应当在") };
+    stored.agent_access = crate::models::AgentAccess::Read;
+    let forged = agent_grant(&service.connections["p1"], "guessed-password");
+    if let Err(error) = service.credential_store.set_password(&agent_grant_id("p1"), &forged) {
+      panic!("{error}");
+    }
+    assert!(agent_view(&service, "p1").is_none());
+  }
+
+  /// 改成生产、改回关、删掉连接，凭证都跟着没了；改口令后凭证跟着换
+  #[test]
+  fn the_grant_follows_the_connection() {
+    let mut service = service_at(&temporary_config_path());
+    let grant = |service: &ConnectionService| {
+      service.credential_store.get_password(&agent_grant_id("p1")).ok()
+    };
+    if let Err(error) = service.create_connection(open_profile("p1", "s3cret")) {
+      panic!("{error}");
+    }
+    assert!(grant(&service).is_some());
+
+    let mut renamed = open_profile("p1", "n3w-secret");
+    renamed.name = "renamed".to_string();
+    if let Err(error) = service.update_connection("p1", renamed) {
+      panic!("{error}");
+    }
+    assert_eq!(
+      agent_view(&service, "p1").map(|resolved| resolved.password),
+      Some("n3w-secret".to_string())
+    );
+
+    // 编辑表单不回显口令，空着提交是「不改」：凭证照样要按钥匙串里的口令重算
+    let mut untouched = open_profile("p1", "");
+    untouched.port = 6543;
+    if let Err(error) = service.update_connection("p1", untouched) {
+      panic!("{error}");
+    }
+    assert!(agent_view(&service, "p1").is_some());
+
+    let mut production = open_profile("p1", "");
+    production.environment = ConnectionEnvironment::Production;
+    if let Err(error) = service.update_connection("p1", production) {
+      panic!("{error}");
+    }
+    assert_eq!(grant(&service), None);
+
+    if let Err(error) = service.update_connection("p1", open_profile("p1", "")) {
+      panic!("{error}");
+    }
+    assert!(grant(&service).is_some());
+    if let Err(error) = service.delete_connection("p1") {
+      panic!("{error}");
+    }
+    assert_eq!(grant(&service), None);
+  }
+
+  /// 没有口令的连接（SQLite 文件、免密的库）不需要凭证：Agent 不经过命令行也能直接用它们
+  #[test]
+  fn connections_without_secrets_need_no_grant() {
+    let mut service = service_at(&temporary_config_path());
+    if let Err(error) = service.create_connection(open_profile("p1", "")) {
+      panic!("{error}");
+    }
+    assert!(agent_view(&service, "p1").is_some());
+    assert_eq!(service.credential_store.get_password(&agent_grant_id("p1")).ok(), None);
   }
 
   /// 文件是别人给的：里面写着「开放给 Agent」也不认，导进来一律是关

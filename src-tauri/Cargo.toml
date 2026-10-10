@@ -55,6 +55,8 @@ keyring = "4.2.0"
 dirs = "6"
 # 命令行的留痕记语句的摘要，不记原文。已经是依赖树里的一项
 sha2 = "0.10"
+# 命令行的开放凭证（`rfcs/agent-cli.md` §5.4）。已经是依赖树里的一项
+hmac = "0.12"
 # `net` 是连接诊断要的：解析主机与试连端口（`services/connection_probe.rs`）
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
 # SQL Server（`services/sql_server.rs`）。sqlx 0.7 起不再带 MSSQL 驱动，插件也就没有；

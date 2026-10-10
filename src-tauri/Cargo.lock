@@ -1545,6 +1545,7 @@ dependencies = [
  "duckdb",
  "encoding_rs",
  "futures-util",
+ "hmac 0.12.1",
  "indexmap 2.14.2",
  "keyring",
  "libsqlite3-sys",
