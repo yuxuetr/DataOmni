@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -18,11 +18,14 @@ function rustSources(): { file: string; source: string }[] {
 
 describe('后端的日志', () => {
   // 打包版没有控制台：macOS 从 Finder 打开、Windows 双击图标，标准输出谁也看不到。
-  // 要留下来给人看的走 `log::`，进日志文件
+  // 要留下来给人看的走 `log::`，进日志文件。
+  // 命令行（`src-tauri/src/cli/`）例外：它是从终端或 Agent 调起的，stdout 与 stderr 就是它的输出
+  // （`rfcs/agent-cli.md` §7）。`dbg!` 哪里都不行
   it('不往标准输出打印', () => {
-    const offenders = rustSources().flatMap(({ file, source }) =>
-      [...source.matchAll(/\b(?:println|eprintln|dbg)!\(/g)].map(() => file)
-    );
+    const offenders = rustSources().flatMap(({ file, source }) => {
+      const printing = file.startsWith(`cli${sep}`) ? /\bdbg!\(/g : /\b(?:println|eprintln|dbg)!\(/g;
+      return [...source.matchAll(printing)].map(() => file);
+    });
     expect(offenders).toEqual([]);
   });
 
