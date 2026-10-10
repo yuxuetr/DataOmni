@@ -10,6 +10,7 @@
 
 mod audit;
 mod dictionary;
+mod elasticsearch;
 mod mongo;
 mod neo4j;
 mod redis;
@@ -121,6 +122,12 @@ Commands:
                      Cypher query, run only if the server classifies it as a read
                      (asked with EXPLAIN) and then in a read-mode transaction.
                      --db picks the database.
+  es <connection> indices | request <METHOD> <path> [<body>]
+                     Elasticsearch / OpenSearch, read only: the indices, aliases
+                     and data streams; or one REST request. GET and HEAD pass
+                     (except _refresh, _flush, _forcemerge, _cache); POST only to
+                     search endpoints (_search, _count, _msearch, _mget, ...);
+                     PUT and DELETE never. The body is parsed JSON when it is JSON.
   test <connection>  Connect the way query does, run nothing, report ok. When a
                      network connection fails, error.diagnosis says whether the
                      name resolved and the port answered.
@@ -233,6 +240,7 @@ fn dispatch(args: &[String], dirs: &Dirs) -> Result<Output, CliError> {
     "mongo" => mongo(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "redis" => redis(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "neo4j" => neo4j(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
+    "es" => es(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     other => Err(CliError::usage(format!("unknown command {other}; run `dataomni cli help`"))),
   }
 }
@@ -567,6 +575,43 @@ fn run_neo4j(
   block_on_within(arguments.timeout, "the Neo4j request", neo4j::run(&resolved, arguments))
 }
 
+fn es(
+  rest: &[String],
+  config_dir: Option<&Path>,
+  log_dir: Option<&Path>,
+) -> Result<Value, CliError> {
+  let arguments = elasticsearch::parse(rest)?;
+  let service = open_service(config_dir)?;
+  let profile = find_open(&service, &arguments.connection)?;
+  let started = Instant::now();
+  let outcome = run_es(&service, &profile, &arguments);
+  let command = arguments.command();
+  audit::record(log_dir, command, &profile.name, &arguments.subject, &outcome, started.elapsed());
+  let body = outcome?;
+  let mut output = json!({ "schema": OUTPUT_SCHEMA, "connection": profile.name });
+  if let (Value::Object(output), Value::Object(body)) = (&mut output, body) {
+    output.extend(body);
+  }
+  output["elapsed_ms"] = json!(started.elapsed().as_millis() as u64);
+  Ok(output)
+}
+
+fn run_es(
+  service: &ConnectionService,
+  profile: &ConnectionProfile,
+  arguments: &elasticsearch::Arguments,
+) -> Result<Value, CliError> {
+  if profile.db_type != DatabaseType::Elasticsearch {
+    return Err(CliError::usage(format!("{} is not an Elasticsearch connection", profile.name)));
+  }
+  let resolved = resolve_verified(service, profile)?;
+  block_on_within(
+    arguments.timeout,
+    "the Elasticsearch request",
+    elasticsearch::run(&resolved, arguments),
+  )
+}
+
 /// 在一个新的运行时里跑完 `work`，到点没完就报超时。`what` 是报错里的主语
 fn block_on_within<T>(
   timeout: Duration,
@@ -751,6 +796,9 @@ fn unsupported(db_type: &crate::models::DatabaseType) -> CliError {
     }
     DatabaseType::Neo4j => {
       return CliError::refused("Neo4j connections take `dataomni cli neo4j`, not SQL")
+    }
+    DatabaseType::Elasticsearch => {
+      return CliError::refused("Elasticsearch connections take `dataomni cli es`, not SQL")
     }
     _ => {}
   }

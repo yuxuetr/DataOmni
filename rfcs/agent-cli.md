@@ -164,7 +164,7 @@ DDL、DML、`url()` / `file()` / `s3()` 表函数、`INSERT INTO FUNCTION`、`SE
 | MongoDB | 只暴露读的接口：`find`、`count`、`aggregate`（拒绝含 `$out` / `$merge` 的管道）、`explain` | 不暴露 `runCommand` | — |
 | Redis | — | 用服务器的 `COMMAND INFO` 查命令旗标，只放行带 `readonly` 的 | — |
 | Neo4j | 读模式的会话 | 先问 `neo4j_query_type`，只放行 `r` | — |
-| Elasticsearch | — | 按方法加路径的白名单：`GET`，以及 `POST` 到 `_search`、`_count`、`_msearch`、`_mapping` 等 | — |
+| Elasticsearch | — | 按方法加路径的白名单：`GET`，以及 `POST` 到 `_search`、`_count`、`_msearch` 等（不含 `_mapping`：`POST` 到它是改映射，见 §6） | — |
 
 语句分类要在 Rust 里重写，可以照着 `statementRisk.ts` 的词法处理（引号、注释、美元引号），
 但判据换成白名单：去掉注释后的第一个关键字是 `SELECT`、`WITH`（且没有嵌套的写）、`SHOW`、`DESCRIBE`、`EXPLAIN`（不带 `ANALYZE`）、`VALUES`、`TABLE`，
@@ -239,7 +239,7 @@ MySQL 的 `get_lock()`；ClickHouse 的 `KILL QUERY`。
 | MongoDB：`mongo <连接> collections / find / count / aggregate / explain / structure` | `services/mongodb.rs` | 已实现（`cli/mongo.rs`）：§5.2 的接口白名单，管道里有 `$out` / `$merge` 解析时就拒（退出码 3，不读钥匙串）。条件与管道用 mongosh 写法（同界面），文档按 relaxed Extended JSON 输出；默认 200 个、上限 10000、合计 16 MB，同 `query`。`explain` 带 `executionStats`，即真的跑一遍查询但不取回文档——读语句跑一遍不改数据，与 SQL 的 `explain` 不带 ANALYZE 的理由（会执行写）不冲突 |
 | Redis：`redis <连接> keyspaces / scan / get / command` | `services/redis.rs` | 已实现（`cli/redis.rs`）：`command` 先问服务器 `COMMAND INFO`，有子命令的按 `名字\|子命令` 查（Redis 7 起各有旗标），只放行带 `readonly` 的；名单不写在应用里，服务器的版本与模块决定有哪些命令。会阻塞的、改连接状态的照界面的规矩另拒。`INFO`、`PING` 这类不带 `readonly` 旗标，也被拒——宁可严 |
 | Neo4j：`neo4j <连接> labels / run` | `services/neo4j.rs` | 已实现（`cli/neo4j.rs`）：`run` 先 `EXPLAIN` 问查询类型，只放行 `r`；再在读模式的事务里跑（驱动的 `RoutingControl::Read`，协议里是 `mode: r`），服务端拒绝其中的写（`Neo.ClientError.Statement.AccessMode`，2026.09 与 5.26 实测）。两层各自单独验过。挡不住的：`TERMINATE TRANSACTIONS` 这类管理命令不是对图的写，同 §5.2 末尾——真正的边界是只读账号 |
-| Elasticsearch：`es indices / request` | `services/elasticsearch.rs` | 方法加路径白名单 |
+| Elasticsearch：`es <连接> indices / request` | `services/elasticsearch.rs` | 已实现（`cli/elasticsearch.rs`）：方法加路径白名单，按段比对。`GET` / `HEAD` 放行，但 `_refresh`、`_flush`、`_forcemerge`、`_cache` 除外（不改文档，但让集群干活）；`POST` 只放行查询类端点，路径从第一个 `_` 段起要整段等于名单里的一项；`PUT` / `DELETE` 一律拒。**更正 §5.2**：那里列了 `POST … _mapping`，而 `POST /索引/_mapping` 是改映射，不放行，读映射用 `GET`。按段比对而不是按子串的理由，ES 8.19 实测：`POST /索引/_doc/_search` 建了索引，还写进一个 id 为 `_search` 的文档 |
 | `csv-preview <文件>` | `preview_csv_file` | 只读本机文件 |
 
 ### 第三批：写，只给「读写」档的非生产连接
