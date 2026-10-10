@@ -367,6 +367,9 @@
   - [x] `redis <连接> keyspaces / scan / get / command`：`command` 只放行服务器 `COMMAND INFO` 里带 `readonly` 旗标的
     （子命令按 `名字|子命令` 查）。cu 上的 Redis 7.4 真库：`SET`、`DEL`、`FLUSHDB`、`CONFIG SET`、会写的 `EVAL`、`SELECT`、
     `BLPOP` 都被拒、值不变；`GET`、`OBJECT ENCODING` 照常。拿掉旗标检查，`SET` 真的写了进去，测试变红。
+  - [x] `neo4j <连接> labels / run`：先 `EXPLAIN` 问查询类型只放行 `r`，再在读模式的事务里跑。cu 上的 Neo4j 2026.09 与 5.26：
+    `CREATE`、`SET`、`DETACH DELETE`、建索引都被拒，节点不变；绕过第一层直接在读模式里写，服务端报 AccessMode。
+    去掉第一层，测试红在退出码（读模式仍挡住了写）。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
 - [ ] B4 驱动按 Cargo feature 拆分

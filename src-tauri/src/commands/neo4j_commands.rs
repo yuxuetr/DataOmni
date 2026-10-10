@@ -54,6 +54,7 @@ pub async fn neo4j_run(
     limit: usize::try_from(limit.clamp(1, MAX_ROW_LIMIT)).unwrap_or(1),
     timeout: timeout(timeout_ms)?,
     read_all: read_all.unwrap_or(false),
+    read_only: false,
   };
   let pool = pool(&registry, &connection_string)?;
   neo4j::run(pool, request).await

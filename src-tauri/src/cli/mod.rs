@@ -11,6 +11,7 @@
 mod audit;
 mod dictionary;
 mod mongo;
+mod neo4j;
 mod redis;
 mod session;
 
@@ -115,6 +116,11 @@ Commands:
                      server itself flags readonly (asked with COMMAND INFO).
                      --db N picks the logical database. `dataomni cli redis` alone
                      shows its usage.
+  neo4j <connection> labels | run <cypher> [--limit N]
+                     Neo4j, read only: the labels and relationship types; or one
+                     Cypher query, run only if the server classifies it as a read
+                     (asked with EXPLAIN) and then in a read-mode transaction.
+                     --db picks the database.
   test <connection>  Connect the way query does, run nothing, report ok. When a
                      network connection fails, error.diagnosis says whether the
                      name resolved and the port answered.
@@ -226,6 +232,7 @@ fn dispatch(args: &[String], dirs: &Dirs) -> Result<Output, CliError> {
     "dictionary" => dictionary(rest, config_dir, dirs.log.as_deref()).map(Output::Text),
     "mongo" => mongo(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "redis" => redis(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
+    "neo4j" => neo4j(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     other => Err(CliError::usage(format!("unknown command {other}; run `dataomni cli help`"))),
   }
 }
@@ -527,6 +534,39 @@ fn run_redis(
   block_on_within(arguments.timeout, "the Redis request", redis::run(&resolved, arguments))
 }
 
+fn neo4j(
+  rest: &[String],
+  config_dir: Option<&Path>,
+  log_dir: Option<&Path>,
+) -> Result<Value, CliError> {
+  let arguments = neo4j::parse(rest)?;
+  let service = open_service(config_dir)?;
+  let profile = find_open(&service, &arguments.connection)?;
+  let started = Instant::now();
+  let outcome = run_neo4j(&service, &profile, &arguments);
+  let command = arguments.command();
+  audit::record(log_dir, command, &profile.name, &arguments.subject, &outcome, started.elapsed());
+  let body = outcome?;
+  let mut output = json!({ "schema": OUTPUT_SCHEMA, "connection": profile.name });
+  if let (Value::Object(output), Value::Object(body)) = (&mut output, body) {
+    output.extend(body);
+  }
+  output["elapsed_ms"] = json!(started.elapsed().as_millis() as u64);
+  Ok(output)
+}
+
+fn run_neo4j(
+  service: &ConnectionService,
+  profile: &ConnectionProfile,
+  arguments: &neo4j::Arguments,
+) -> Result<Value, CliError> {
+  if profile.db_type != DatabaseType::Neo4j {
+    return Err(CliError::usage(format!("{} is not a Neo4j connection", profile.name)));
+  }
+  let resolved = resolve_verified(service, profile)?;
+  block_on_within(arguments.timeout, "the Neo4j request", neo4j::run(&resolved, arguments))
+}
+
 /// 在一个新的运行时里跑完 `work`，到点没完就报超时。`what` 是报错里的主语
 fn block_on_within<T>(
   timeout: Duration,
@@ -708,6 +748,9 @@ fn unsupported(db_type: &crate::models::DatabaseType) -> CliError {
     }
     DatabaseType::Redis => {
       return CliError::refused("Redis connections take `dataomni cli redis`, not SQL")
+    }
+    DatabaseType::Neo4j => {
+      return CliError::refused("Neo4j connections take `dataomni cli neo4j`, not SQL")
     }
     _ => {}
   }

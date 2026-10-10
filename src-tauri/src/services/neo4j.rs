@@ -17,7 +17,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use neo4j::address::Address;
 use neo4j::driver::auth::AuthToken;
-use neo4j::driver::{ConnectionConfig, Driver, DriverConfig, Record};
+use neo4j::driver::{ConnectionConfig, Driver, DriverConfig, Record, RoutingControl};
 use neo4j::session::SessionConfig;
 use neo4j::summary::{Plan, Profile, Summary, SummaryQueryType};
 use neo4j::transaction::TransactionTimeout;
@@ -282,6 +282,8 @@ pub struct CypherRequest {
   /// 到了上限也把其余的行读完（丢掉），而不是让服务端丢弃。`PROFILE` 要这样：没读完的结果
   /// 服务端不给统计，报 `This result has not been materialised yet`（打包版上撞见的）
   pub read_all: bool,
+  /// 以读模式开事务：服务端拒绝其中的写（命令行用；界面要能写）
+  pub read_only: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -329,8 +331,10 @@ pub async fn run(pool: Arc<Neo4jPool>, request: CypherRequest) -> Result<CypherR
     let mut session = pool.session(request.database.as_deref());
     let limit = request.limit;
     let read_all = request.read_all;
+    let mode = if request.read_only { RoutingControl::Read } else { RoutingControl::Write };
     session
       .auto_commit(&request.query)
+      .with_routing_control(mode)
       .with_transaction_timeout(transaction_timeout(timeout)?)
       .with_receiver(|stream| {
         let columns = stream.keys().iter().map(|key| key.to_string()).collect();

@@ -68,7 +68,14 @@ async fn run(
 ) -> Result<CypherResult, String> {
   graph::run(
     Arc::clone(pool),
-    CypherRequest { database: None, query: query.to_string(), limit, timeout, read_all: false },
+    CypherRequest {
+      database: None,
+      query: query.to_string(),
+      limit,
+      timeout,
+      read_all: false,
+      read_only: false,
+    },
   )
   .await
 }
@@ -328,6 +335,7 @@ async fn explain_and_profile_bring_back_the_plan_tree() {
     limit: 10,
     timeout: TIMEOUT,
     read_all,
+    read_only: false,
   };
   let early = graph::run(Arc::clone(&pool), request(false)).await;
   assert!(early.is_err_and(|error| error.contains("materialised")), "早停时服务端不给统计");

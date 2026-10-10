@@ -238,7 +238,7 @@ MySQL 的 `get_lock()`；ClickHouse 的 `KILL QUERY`。
 | `ddl <连接> <表>` | — | 移植 `tableDdl.ts` 的「导出建表语句」部分；先测能不能只移植这一半，整份 787 行不值 |
 | MongoDB：`mongo <连接> collections / find / count / aggregate / explain / structure` | `services/mongodb.rs` | 已实现（`cli/mongo.rs`）：§5.2 的接口白名单，管道里有 `$out` / `$merge` 解析时就拒（退出码 3，不读钥匙串）。条件与管道用 mongosh 写法（同界面），文档按 relaxed Extended JSON 输出；默认 200 个、上限 10000、合计 16 MB，同 `query`。`explain` 带 `executionStats`，即真的跑一遍查询但不取回文档——读语句跑一遍不改数据，与 SQL 的 `explain` 不带 ANALYZE 的理由（会执行写）不冲突 |
 | Redis：`redis <连接> keyspaces / scan / get / command` | `services/redis.rs` | 已实现（`cli/redis.rs`）：`command` 先问服务器 `COMMAND INFO`，有子命令的按 `名字\|子命令` 查（Redis 7 起各有旗标），只放行带 `readonly` 的；名单不写在应用里，服务器的版本与模块决定有哪些命令。会阻塞的、改连接状态的照界面的规矩另拒。`INFO`、`PING` 这类不带 `readonly` 旗标，也被拒——宁可严 |
-| Neo4j：`neo4j labels / run` | `services/neo4j.rs` | `run` 先问查询类型 |
+| Neo4j：`neo4j <连接> labels / run` | `services/neo4j.rs` | 已实现（`cli/neo4j.rs`）：`run` 先 `EXPLAIN` 问查询类型，只放行 `r`；再在读模式的事务里跑（驱动的 `RoutingControl::Read`，协议里是 `mode: r`），服务端拒绝其中的写（`Neo.ClientError.Statement.AccessMode`，2026.09 与 5.26 实测）。两层各自单独验过。挡不住的：`TERMINATE TRANSACTIONS` 这类管理命令不是对图的写，同 §5.2 末尾——真正的边界是只读账号 |
 | Elasticsearch：`es indices / request` | `services/elasticsearch.rs` | 方法加路径白名单 |
 | `csv-preview <文件>` | `preview_csv_file` | 只读本机文件 |
 
