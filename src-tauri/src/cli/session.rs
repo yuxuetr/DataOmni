@@ -8,7 +8,7 @@
 use crate::models::{ConnectionProfile, DatabaseType};
 use crate::services::query_executor::{PoolRef, QueryExecutionResult, SessionConnection};
 use crate::services::ssh_tunnel::{default_known_hosts, TunnelRegistry};
-use crate::services::{duckdb, sqlx_pool, QueryError};
+use crate::services::{clickhouse, duckdb, sqlx_pool, QueryError};
 use std::path::{Path, PathBuf};
 use tauri_plugin_sql::DbPool;
 
@@ -23,7 +23,11 @@ pub(super) enum Failure {
 pub(super) fn supports(db_type: &DatabaseType) -> bool {
   matches!(
     db_type,
-    DatabaseType::PostgreSQL | DatabaseType::MySQL | DatabaseType::SQLite | DatabaseType::DuckDB
+    DatabaseType::PostgreSQL
+      | DatabaseType::MySQL
+      | DatabaseType::SQLite
+      | DatabaseType::DuckDB
+      | DatabaseType::ClickHouse
   )
 }
 
@@ -89,6 +93,13 @@ pub(super) async fn run_read_only(
         .await
         .map_err(|error| Failure::Connect(format!("{}: {}", path.display(), error.message)))?;
       execute(PoolRef::DuckDb(&pool), None, sql, row_limit).await
+    }
+    DatabaseType::ClickHouse => {
+      // 不换主机：经隧道的 HTTPS 仍按原来的主机名校验证书（同界面）
+      let target = clickhouse::ClickHouseTarget::from_profile(profile, tunnel_port);
+      let pool = clickhouse::connect(target).await.map_err(Failure::Connect)?;
+      pool.enforce_read_only().await.map_err(Failure::Database)?;
+      execute(PoolRef::ClickHouse(&pool), None, sql, row_limit).await
     }
     _ => Err(Failure::Unsupported(profile.db_type.clone())),
   }
@@ -193,6 +204,53 @@ mod tests {
       DbPool::Sqlite(_) => Ok(()),
     };
     close(admin).await;
+  }
+
+  /// ClickHouse：每条请求带 `readonly = 1`，写和表函数被服务端拒绝；账号本身是 `readonly = 2`
+  /// 时不带（带了会报 164），读照常
+  #[tokio::test]
+  async fn clickhouse_sessions_are_read_only() {
+    let Some(profile) = profile_from_env("DATAOMNI_CLICKHOUSE_TEST_URL", "clickhouse") else {
+      eprintln!("skipping: DATAOMNI_CLICKHOUSE_TEST_URL is not set");
+      return;
+    };
+    let admin = clickhouse::connect(clickhouse::ClickHouseTarget::from_profile(&profile, None))
+      .await
+      .expect("admin connection");
+    let mut session =
+      SessionConnection::acquire(PoolRef::ClickHouse(&admin)).await.expect("session");
+    for setup in [
+      "CREATE TABLE IF NOT EXISTS om_cli_ch (x Int32) ENGINE = Memory",
+      "TRUNCATE TABLE om_cli_ch",
+      "CREATE USER IF NOT EXISTS om_cli_ro2 IDENTIFIED WITH no_password SETTINGS readonly = 2",
+      "GRANT SELECT ON *.* TO om_cli_ro2",
+    ] {
+      session.execute_unprepared(setup).await.expect(setup);
+    }
+
+    let read = run_read_only(&profile, "SELECT count() AS n FROM om_cli_ch", 10, None).await;
+    assert!(matches!(read, Ok(QueryExecutionResult::Rows { .. })), "reads still work");
+    for sql in [
+      "INSERT INTO om_cli_ch VALUES (1)",
+      "SELECT * FROM url('http://127.0.0.1:1/x', 'CSV', 'a String')",
+      "CREATE TABLE om_cli_ch2 (x Int32) ENGINE = Memory",
+    ] {
+      let refused = run_read_only(&profile, sql, 10, None).await;
+      assert!(matches!(refused, Err(Failure::Database(_))), "the server must refuse: {sql}");
+    }
+
+    let mut read_only_account = profile.clone();
+    read_only_account.username = "om_cli_ro2".to_string();
+    read_only_account.password = String::new();
+    let read = run_read_only(&read_only_account, "SELECT 1 AS one", 10, None).await;
+    assert!(
+      matches!(read, Ok(QueryExecutionResult::Rows { .. })),
+      "a readonly = 2 account can read"
+    );
+
+    for cleanup in ["DROP USER IF EXISTS om_cli_ro2", "DROP TABLE IF EXISTS om_cli_ch"] {
+      let _ = session.execute_unprepared(cleanup).await;
+    }
   }
 
   #[tokio::test]

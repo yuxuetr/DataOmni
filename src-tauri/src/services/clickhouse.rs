@@ -116,6 +116,8 @@ pub struct ClickHousePool {
   username: String,
   password: String,
   database: Option<String>,
+  /// 每条请求带 `readonly = 1`。只有命令行打开（[`ClickHousePool::enforce_read_only`]）
+  read_only: std::sync::atomic::AtomicBool,
 }
 
 /// 一次请求要带的东西
@@ -141,6 +143,7 @@ pub async fn connect(target: ClickHouseTarget) -> Result<Arc<ClickHousePool>, St
     username: target.username,
     password: target.password,
     database: target.database,
+    read_only: std::sync::atomic::AtomicBool::new(false),
   });
   let rows = tokio::time::timeout(CONNECT_TIMEOUT, pool.select("SELECT version() AS version", &[]))
     .await
@@ -169,6 +172,24 @@ fn endpoint_error(error: EndpointError) -> String {
 }
 
 impl ClickHousePool {
+  /// 命令行用：之后的每条请求都带 `readonly = 1`，DDL、写、表函数、改设置都由服务端拒绝
+  /// （`rfcs/agent-cli.md` §3.1）。账号本身已经只读（1 或 2）就不带：`readonly = 2` 的账号
+  /// 收到 `readonly = 1` 会报 164「Cannot modify 'readonly'」，而它本来就写不了
+  pub async fn enforce_read_only(self: &Arc<Self>) -> Result<(), QueryError> {
+    let rows = self.select("SELECT toString(getSetting('readonly')) AS level", &[]).await?;
+    let level = rows.first().and_then(|row| row.get("level")).map(|value| match value {
+      JsonValue::String(text) => text.clone(),
+      JsonValue::Object(tagged) => {
+        tagged.get("value").and_then(JsonValue::as_str).unwrap_or_default().to_string()
+      }
+      other => other.to_string(),
+    });
+    if level.as_deref() == Some("0") {
+      self.read_only.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(())
+  }
+
   fn request(&self, sql: &str, request: RequestParams<'_>) -> reqwest::RequestBuilder {
     let mut url = self.base.clone();
     {
@@ -190,6 +211,9 @@ impl ClickHousePool {
       }
       if request.wait_for_mutation {
         query.append_pair("mutations_sync", "2");
+      }
+      if self.read_only.load(std::sync::atomic::Ordering::Relaxed) {
+        query.append_pair("readonly", "1");
       }
     }
     let mut builder = self.client.post(url).body(sql.to_string());
