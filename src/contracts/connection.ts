@@ -13,6 +13,8 @@ export enum DatabaseType {
 }
 
 export type ConnectionEnvironment = 'development' | 'testing' | 'staging' | 'production';
+/** 命令行（给 Agent）能不能用这个连接，见 `rfcs/agent-cli.md` §5.1。没有这个字段就是关 */
+export type AgentAccess = 'off' | 'read';
 export type TlsMode = 'disabled' | 'preferred' | 'required' | 'verify-ca' | 'verify-full';
 
 /**
@@ -60,6 +62,7 @@ export interface ConnectionProfile {
   options: Record<string, string>;
   tags: string[];
   environment: ConnectionEnvironment;
+  agent_access?: AgentAccess;
   credential_ref?: string;
   /** 没有隧道时是 null / undefined，那时后端整条隧道代码都不会被碰到 */
   ssh_tunnel?: SshTunnelConfig | null;

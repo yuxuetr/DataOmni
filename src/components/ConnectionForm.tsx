@@ -62,7 +62,7 @@ import {
   serverPresetOf,
   type ServerPreset
 } from '../utils/serverPresets';
-import type { ConnectionEnvironment } from '../contracts';
+import type { AgentAccess, ConnectionEnvironment } from '../contracts';
 import type { TranslationKey } from '../i18n/translate';
 
 interface ConnectionFormProps {
@@ -513,10 +513,15 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
               <select
                 id="connection-environment"
                 value={formData.environment ?? 'development'}
-                onChange={(event) => setFormData((previous) => ({
-                  ...previous,
-                  environment: event.target.value as ConnectionEnvironment
-                }))}
+                onChange={(event) => {
+                  const environment = event.target.value as ConnectionEnvironment;
+                  setFormData((previous) => ({
+                    ...previous,
+                    environment,
+                    // 生产连接命令行看不见。显示成「只读」是假话，改回别的环境也不该悄悄恢复开放
+                    agent_access: environment === 'production' ? 'off' : previous.agent_access
+                  }));
+                }}
                 className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 {ENVIRONMENTS.map((environment) => (
@@ -526,6 +531,28 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                 ))}
               </select>
               <p className="mt-1 text-xs text-fg-subtle">{t('form.environmentHint')}</p>
+            </div>
+
+            <div>
+              <label htmlFor="connection-agent-access" className="block text-sm font-medium text-fg mb-1">
+                {t('form.agentAccess')}
+              </label>
+              <select
+                id="connection-agent-access"
+                value={formData.environment === 'production' ? 'off' : formData.agent_access ?? 'off'}
+                disabled={formData.environment === 'production'}
+                onChange={(event) => setFormData((previous) => ({
+                  ...previous,
+                  agent_access: event.target.value as AgentAccess
+                }))}
+                className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-60"
+              >
+                <option value="off">{t('form.agentAccess.off')}</option>
+                <option value="read">{t('form.agentAccess.read')}</option>
+              </select>
+              <p className="mt-1 text-xs text-fg-subtle">
+                {t(formData.environment === 'production' ? 'form.agentAccessProductionHint' : 'form.agentAccessHint')}
+              </p>
             </div>
 
             {/* 数据库类型 */}

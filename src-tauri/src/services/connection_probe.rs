@@ -292,6 +292,7 @@ mod tests {
       options: HashMap::new(),
       tags: Vec::new(),
       environment: ConnectionEnvironment::Development,
+      agent_access: crate::models::AgentAccess::Off,
       credential_ref: None,
       ssh_tunnel: None,
       created_at: "2026-09-22T00:00:00Z".to_string(),

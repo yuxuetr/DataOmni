@@ -39,6 +39,9 @@ pub struct ConnectionProfile {
   pub tags: Vec<String>,
   #[serde(default)]
   pub environment: ConnectionEnvironment,
+  /// 命令行能不能用这个连接（`rfcs/agent-cli.md` §5.1）。只在界面里改，命令行没有参数能放宽它
+  #[serde(default)]
+  pub agent_access: AgentAccess,
   #[serde(default)]
   pub credential_ref: Option<String>,
   /// 没有隧道就是 `None`，那时整条隧道代码都不会被碰到，
@@ -49,6 +52,16 @@ pub struct ConnectionProfile {
   pub created_at: String,
   #[serde(default)]
   pub updated_at: String,
+}
+
+/// 给命令行（也就是给 Agent）开放到什么程度。默认关：开放是一次有意的决定。
+/// 「读写」还没做（§6 第三批），有了实现再加这一档
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentAccess {
+  #[default]
+  Off,
+  Read,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -334,6 +347,12 @@ impl DatabaseType {
 }
 
 impl ConnectionProfile {
+  /// 命令行看不看得见这个连接。生产连接不管字段写的是什么都看不见：字段可能是
+  /// 改成生产之前留下的，也可能是手改了配置文件
+  pub fn open_to_agents(&self) -> bool {
+    self.agent_access == AgentAccess::Read && self.environment != ConnectionEnvironment::Production
+  }
+
   pub fn effective_tls_mode(&self) -> TlsMode {
     self.tls_mode.unwrap_or(if self.ssl { TlsMode::Required } else { TlsMode::Disabled })
   }
@@ -489,6 +508,7 @@ impl Default for ConnectionProfile {
       options: HashMap::new(),
       tags: Vec::new(),
       environment: ConnectionEnvironment::Development,
+      agent_access: AgentAccess::Off,
       credential_ref: None,
       ssh_tunnel: None,
       created_at: chrono::Utc::now().to_rfc3339(),
@@ -850,5 +870,32 @@ mod tests {
     assert_eq!(profile.client_key_path, None);
     assert!(profile.save_password);
     assert_eq!(profile.effective_tls_mode(), TlsMode::Disabled);
+    // 升级上来的旧连接一个都不开放给命令行
+    assert_eq!(profile.agent_access, AgentAccess::Off);
+    assert!(!profile.open_to_agents());
+  }
+
+  /// 生产连接不管字段写的是什么，命令行都看不见（`rfcs/agent-cli.md` §8 第 3 条）
+  #[test]
+  fn only_non_production_connections_marked_read_are_open_to_agents() {
+    let mut profile: ConnectionProfile = serde_json::from_value(serde_json::json!({
+      "name": "x", "db_type": "sqlite", "host": "", "port": 0, "database": "/tmp/x.db",
+      "username": "", "ssl": false, "options": {}, "tags": [], "agent_access": "read"
+    }))
+    .expect("profile should load");
+    assert_eq!(profile.agent_access, AgentAccess::Read);
+    for (environment, open) in [
+      (ConnectionEnvironment::Development, true),
+      (ConnectionEnvironment::Testing, true),
+      (ConnectionEnvironment::Staging, true),
+      (ConnectionEnvironment::Production, false),
+    ] {
+      profile.environment = environment.clone();
+      assert_eq!(profile.open_to_agents(), open, "{environment:?}");
+    }
+    profile.environment = ConnectionEnvironment::Development;
+    profile.agent_access = AgentAccess::Off;
+    assert!(!profile.open_to_agents());
+    assert_eq!(serde_json::to_value(AgentAccess::Read).ok(), Some(serde_json::json!("read")));
   }
 }

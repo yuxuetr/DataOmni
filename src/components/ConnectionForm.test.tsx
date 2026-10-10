@@ -48,3 +48,41 @@ describe('ConnectionForm 校验没过', () => {
     expect(testConnection).not.toHaveBeenCalled();
   });
 });
+
+function choose(select: HTMLSelectElement, value: string) {
+  act(() => {
+    select.value = value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
+function select(id: string): HTMLSelectElement {
+  const found = container.querySelector<HTMLSelectElement>(`#${id}`);
+  if (!found) {
+    throw new Error(`no select ${id}`);
+  }
+  return found;
+}
+
+describe('ConnectionForm 命令行访问', () => {
+  it('新连接默认不开放', () => {
+    act(() => root.render(<ConnectionForm mode="create" onClose={() => {}} />));
+    expect(select('connection-agent-access').value).toBe('off');
+  });
+
+  // 生产连接命令行本来就看不见（后端 `open_to_agents`）。界面上还显示「只读」就是在说假话，
+  // 改回开发环境时也不该悄悄恢复成开放
+  it('选了生产环境就关掉并置灰', () => {
+    act(() => root.render(<ConnectionForm mode="create" onClose={() => {}} />));
+    choose(select('connection-agent-access'), 'read');
+    expect(select('connection-agent-access').value).toBe('read');
+
+    choose(select('connection-environment'), 'production');
+    expect(select('connection-agent-access').value).toBe('off');
+    expect(select('connection-agent-access').disabled).toBe(true);
+
+    choose(select('connection-environment'), 'development');
+    expect(select('connection-agent-access').value).toBe('off');
+    expect(select('connection-agent-access').disabled).toBe(false);
+  });
+});

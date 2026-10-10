@@ -450,6 +450,7 @@ impl ConnectionService {
       // 文件是别人给的：就算里面写了口令或钥匙串引用，也不认
       connection.password.clear();
       connection.credential_ref = None;
+      connection.agent_access = crate::models::AgentAccess::Off;
       if let Some(tunnel) = connection.ssh_tunnel.as_mut() {
         tunnel.secret.clear();
         tunnel.secret_ref = None;
@@ -915,6 +916,7 @@ mod tests {
       options: HashMap::new(),
       tags: Vec::new(),
       environment: ConnectionEnvironment::Development,
+      agent_access: crate::models::AgentAccess::Off,
       credential_ref: None,
       ssh_tunnel: None,
       created_at: "2026-09-17T00:00:00Z".to_string(),
@@ -1547,6 +1549,29 @@ mod tests {
       target.resolve_for_connection(open).map(|resolved| resolved.password),
       Ok(String::new())
     );
+  }
+
+  /// 文件是别人给的：里面写着「开放给 Agent」也不认，导进来一律是关
+  #[test]
+  fn imported_connections_are_never_open_to_agents() {
+    let mut source = service_at(&temporary_config_path());
+    let mut open = profile("profile-1", "");
+    open.agent_access = crate::models::AgentAccess::Read;
+    if let Err(error) = source.create_connection(open) {
+      panic!("保存不该失败: {error}");
+    }
+    assert!(source.get_connections().iter().all(|config| config.open_to_agents()));
+    let document = match source.export_document() {
+      Ok(document) => document,
+      Err(error) => panic!("导出不该失败: {error}"),
+    };
+    let mut target = service_at(&temporary_config_path());
+    if let Err(error) = target.import_document(&document) {
+      panic!("导入不该失败: {error}");
+    }
+    let imported = target.get_connections();
+    assert_eq!(imported.len(), 1);
+    assert!(imported.iter().all(|config| !config.open_to_agents()), "{imported:?}");
   }
 
   /// 同一个文件导两次，或导回原来那台机器：已经有的不再多出一份

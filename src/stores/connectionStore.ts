@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import {
   DatabaseType,
+  type AgentAccess,
   type ConnectionConfig,
   type ConnectionEnvironment,
   type TlsMode
@@ -80,6 +81,7 @@ export const createDefaultConfig = (
     options: {},
     tags: [],
     environment: 'development' as ConnectionEnvironment,
+    agent_access: 'off' as AgentAccess,
     credential_ref: undefined,
   };
 
