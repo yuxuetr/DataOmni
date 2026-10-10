@@ -6,10 +6,12 @@
 //! 事务第一条就改回读写的话（PostgreSQL 会放行），写进去的也会被撤掉。
 
 use crate::models::{ConnectionProfile, DatabaseType};
-use crate::services::query_executor::{PoolRef, QueryExecutionResult, SessionConnection};
+use crate::services::query_executor::{PoolRef, QueryExecutionResult, QueryRow, SessionConnection};
 use crate::services::ssh_tunnel::{default_known_hosts, TunnelRegistry};
 use crate::services::{clickhouse, duckdb, oracle, sqlx_pool, QueryError};
+use serde_json::Value as JsonValue;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tauri_plugin_sql::DbPool;
 
 pub(super) enum Failure {
@@ -32,18 +34,31 @@ pub(super) fn supports(db_type: &DatabaseType) -> bool {
   )
 }
 
-/// `profile` 已经补上了凭据（`resolve_for_connection`）。`config_dir` 用来解析相对路径的
+/// 一次调用里打开的库。隧道随它一起活到这次调用结束
+pub(super) struct Opened {
+  pool: Pool,
+  /// 开只读事务的那一句。SQLite、DuckDB 以只读方式打开文件，ClickHouse 每条请求带
+  /// `readonly = 1`，都不需要
+  begin: Option<&'static str>,
+  _tunnels: TunnelRegistry,
+}
+
+enum Pool {
+  Sqlx(DbPool),
+  DuckDb(Arc<duckdb::DuckDbPool>),
+  Oracle(Arc<oracle::OraclePool>),
+  ClickHouse(Arc<clickhouse::ClickHousePool>),
+}
+
+/// `profile` 已经补上了凭据（`resolve_for_agents`）。`config_dir` 用来解析相对路径的
 /// 库文件，和界面一样相对于应用的配置目录
-pub(super) async fn run_read_only(
+pub(super) async fn open(
   profile: &ConnectionProfile,
-  sql: &str,
-  row_limit: usize,
   config_dir: Option<&Path>,
-) -> Result<QueryExecutionResult, Failure> {
+) -> Result<Opened, Failure> {
   if !supports(&profile.db_type) {
     return Err(Failure::Unsupported(profile.db_type.clone()));
   }
-  // 活到这次调用结束：隧道随它一起拆
   let tunnels = TunnelRegistry::default();
   let tunnel_port = match &profile.ssh_tunnel {
     None => None,
@@ -58,7 +73,7 @@ pub(super) async fn run_read_only(
     }
   };
 
-  match profile.db_type {
+  let (pool, begin) = match profile.db_type {
     DatabaseType::PostgreSQL | DatabaseType::MySQL => {
       let begin = if profile.db_type == DatabaseType::PostgreSQL {
         "BEGIN READ ONLY"
@@ -68,9 +83,7 @@ pub(super) async fn run_read_only(
       let pool = sqlx_pool::open(&profile.connection_string_via(tunnel_port))
         .await
         .map_err(Failure::Connect)?;
-      let result = execute(PoolRef::Sqlx(&pool), Some(begin), sql, row_limit).await;
-      close(pool).await;
-      result
+      (Pool::Sqlx(pool), Some(begin))
     }
     DatabaseType::SQLite => {
       let path = database_file(profile, config_dir)?;
@@ -83,17 +96,14 @@ pub(super) async fn run_read_only(
         .connect_with(options)
         .await
         .map_err(|error| Failure::Connect(format!("{}: {error}", path.display())))?;
-      let pool = DbPool::Sqlite(pool);
-      let result = execute(PoolRef::Sqlx(&pool), None, sql, row_limit).await;
-      close(pool).await;
-      result
+      (Pool::Sqlx(DbPool::Sqlite(pool)), None)
     }
     DatabaseType::DuckDB => {
       let path = database_file(profile, config_dir)?;
       let pool = duckdb::open_read_only(&path.to_string_lossy())
         .await
         .map_err(|error| Failure::Connect(format!("{}: {}", path.display(), error.message)))?;
-      execute(PoolRef::DuckDb(&pool), None, sql, row_limit).await
+      (Pool::DuckDb(pool), None)
     }
     DatabaseType::Oracle => {
       let reachable = match tunnel_port {
@@ -103,19 +113,78 @@ pub(super) async fn run_read_only(
       let target = oracle::OracleTarget::from_profile(&reachable);
       let connection =
         oracle::connect(&target).await.map_err(|error| Failure::Connect(error.message))?;
-      let pool = oracle::OraclePool::new(target, connection);
       // DDL 在只读事务里照样执行（§3.1 E3），挡它的是语句门；这里挡的是 DML
-      execute(PoolRef::Oracle(&pool), Some("SET TRANSACTION READ ONLY"), sql, row_limit).await
+      (Pool::Oracle(oracle::OraclePool::new(target, connection)), Some("SET TRANSACTION READ ONLY"))
     }
     DatabaseType::ClickHouse => {
       // 不换主机：经隧道的 HTTPS 仍按原来的主机名校验证书（同界面）
       let target = clickhouse::ClickHouseTarget::from_profile(profile, tunnel_port);
       let pool = clickhouse::connect(target).await.map_err(Failure::Connect)?;
       pool.enforce_read_only().await.map_err(Failure::Database)?;
-      execute(PoolRef::ClickHouse(&pool), None, sql, row_limit).await
+      (Pool::ClickHouse(pool), None)
     }
-    _ => Err(Failure::Unsupported(profile.db_type.clone())),
+    _ => return Err(Failure::Unsupported(profile.db_type.clone())),
+  };
+  Ok(Opened { pool, begin, _tunnels: tunnels })
+}
+
+impl Opened {
+  fn pool_ref(&self) -> PoolRef<'_> {
+    match &self.pool {
+      Pool::Sqlx(pool) => PoolRef::Sqlx(pool),
+      Pool::DuckDb(pool) => PoolRef::DuckDb(pool),
+      Pool::Oracle(pool) => PoolRef::Oracle(pool),
+      Pool::ClickHouse(pool) => PoolRef::ClickHouse(pool),
+    }
   }
+
+  /// 执行一条已经过了语句门的语句
+  pub(super) async fn run_read_only(
+    &self,
+    sql: &str,
+    row_limit: usize,
+  ) -> Result<QueryExecutionResult, Failure> {
+    execute(self.pool_ref(), self.begin, sql, row_limit).await
+  }
+
+  /// 跑我们自己的目录查询（`schema_metadata`、`object_catalog`），表名与 schema 走绑定参数
+  pub(super) async fn select(
+    &self,
+    sql: &str,
+    params: Vec<JsonValue>,
+  ) -> Result<Vec<JsonValue>, Failure> {
+    let rows = match &self.pool {
+      Pool::Sqlx(pool) => sqlx_pool::select(pool, sql, params).await.map(|rows| {
+        rows.into_iter().map(|row| JsonValue::Object(row.into_iter().collect())).collect()
+      }),
+      Pool::DuckDb(pool) => pool.select(sql, &params).await.map(objects),
+      Pool::Oracle(pool) => pool.select(sql, &params).await.map(objects),
+      Pool::ClickHouse(pool) => pool.select(sql, &params).await.map(objects),
+    };
+    rows.map_err(Failure::Database)
+  }
+
+  pub(super) async fn close(self) {
+    if let Pool::Sqlx(pool) = self.pool {
+      close(pool).await;
+    }
+  }
+}
+
+fn objects(rows: Vec<QueryRow>) -> Vec<JsonValue> {
+  rows.into_iter().map(JsonValue::Object).collect()
+}
+
+pub(super) async fn run_read_only(
+  profile: &ConnectionProfile,
+  sql: &str,
+  row_limit: usize,
+  config_dir: Option<&Path>,
+) -> Result<QueryExecutionResult, Failure> {
+  let opened = open(profile, config_dir).await?;
+  let result = opened.run_read_only(sql, row_limit).await;
+  opened.close().await;
+  result
 }
 
 async fn execute(

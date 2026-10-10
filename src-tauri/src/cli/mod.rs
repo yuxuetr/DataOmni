@@ -85,6 +85,9 @@ Commands:
                      Run one read-only statement. <connection> is a name or id
                      from `connections`; <sql> may be - to read it from stdin.
                      At most 200 rows by default (--limit up to 10000), 30 s timeout.
+  schema <connection> [<table> [--schema S]]
+                     Without a table: the tables and views. With a table: its
+                     columns, indexes (one row per index column) and foreign keys.
   version            Print the DataOmni version
   help               Print this help
 
@@ -184,6 +187,7 @@ fn dispatch(args: &[String], dirs: &Dirs) -> Result<Output, CliError> {
       Ok(Output::Json(list_open(&service)))
     }
     "query" => query(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
+    "schema" => schema(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     other => Err(CliError::usage(format!("unknown command {other}; run `dataomni cli help`"))),
   }
 }
@@ -273,11 +277,170 @@ fn run_query(
       kind: "timeout",
       message: format!("the statement did not finish within {} s", arguments.timeout.as_secs()),
     }),
-    Ok(Ok(result)) => Ok(result),
-    Ok(Err(session::Failure::Unsupported(db_type))) => Err(unsupported(&db_type)),
-    Ok(Err(session::Failure::Connect(message))) => Err(CliError::unavailable("connect", message)),
-    Ok(Err(session::Failure::Database(error))) => {
-      Err(CliError { exit: Exit::Database, kind: "database", message: error.to_string() })
+    Ok(result) => result.map_err(session_error),
+  }
+}
+
+struct SchemaArguments {
+  connection: String,
+  table: Option<String>,
+  schema: Option<String>,
+}
+
+fn parse_schema_arguments(rest: &[String]) -> Result<SchemaArguments, CliError> {
+  let mut positional = Vec::new();
+  let mut schema = None;
+  let mut iter = rest.iter();
+  while let Some(argument) = iter.next() {
+    match argument.as_str() {
+      "--schema" => {
+        schema = Some(iter.next().cloned().ok_or_else(|| CliError::usage("--schema takes a name"))?)
+      }
+      _ => positional.push(argument.clone()),
+    }
+  }
+  let usage = || CliError::usage("usage: dataomni cli schema <connection> [<table> [--schema S]]");
+  let mut positional = positional.into_iter();
+  let connection = positional.next().ok_or_else(usage)?;
+  let table = positional.next();
+  if positional.next().is_some() || (schema.is_some() && table.is_none()) {
+    return Err(usage());
+  }
+  Ok(SchemaArguments { connection, table, schema })
+}
+
+fn schema(
+  rest: &[String],
+  config_dir: Option<&Path>,
+  log_dir: Option<&Path>,
+) -> Result<Value, CliError> {
+  let arguments = parse_schema_arguments(rest)?;
+  let service = open_service(config_dir)?;
+  let profile = find_open(&service, &arguments.connection)?;
+  let started = Instant::now();
+  let outcome = run_schema(&service, &profile, &arguments, config_dir);
+  let subject = arguments.table.as_deref().unwrap_or("");
+  audit::record(log_dir, "schema", &profile.name, subject, &outcome, started.elapsed());
+  outcome
+}
+
+fn run_schema(
+  service: &ConnectionService,
+  profile: &ConnectionProfile,
+  arguments: &SchemaArguments,
+  config_dir: Option<&Path>,
+) -> Result<Value, CliError> {
+  if !session::supports(&profile.db_type) {
+    return Err(unsupported(&profile.db_type));
+  }
+  let resolved = resolve_verified(service, profile)?;
+  let runtime = tokio::runtime::Builder::new_multi_thread()
+    .enable_all()
+    .build()
+    .map_err(|error| CliError::unavailable("runtime", error.to_string()))?;
+  let timeout = Duration::from_secs(DEFAULT_TIMEOUT_SECONDS);
+  let work = async {
+    let opened = session::open(&resolved, config_dir).await.map_err(session_error)?;
+    let result = match &arguments.table {
+      None => list_objects(&opened, &resolved).await,
+      Some(table) => describe_table(&opened, &resolved, table, arguments.schema.as_deref()).await,
+    };
+    opened.close().await;
+    result
+  };
+  let body =
+    runtime.block_on(async { tokio::time::timeout(timeout, work).await }).map_err(|_| {
+      CliError {
+        exit: Exit::Database,
+        kind: "timeout",
+        message: format!("the catalog did not answer within {} s", timeout.as_secs()),
+      }
+    })??;
+  let mut output = json!({ "schema": OUTPUT_SCHEMA, "connection": profile.name });
+  if let (Value::Object(output), Value::Object(body)) = (&mut output, body) {
+    output.extend(body);
+  }
+  Ok(output)
+}
+
+async fn list_objects(
+  opened: &session::Opened,
+  profile: &ConnectionProfile,
+) -> Result<Value, CliError> {
+  let queries = crate::services::object_catalog::object_catalog_queries(&profile.db_type)
+    .ok_or_else(|| unsupported(&profile.db_type))?;
+  let database = profile.database.clone().unwrap_or_default();
+  // 没有库名时 MySQL 的目录条件恒不匹配，会安静地查出 0 行，像是库是空的（同界面）
+  if queries.object_parameter_count > 0 && database.is_empty() {
+    return Err(CliError::usage("this connection has no database name; set one in DataOmni"));
+  }
+  let params = vec![Value::String(database); usize::from(queries.object_parameter_count)];
+  let rows = opened.select(queries.objects, params).await.map_err(session_error)?;
+  let objects: Vec<Value> = rows
+    .into_iter()
+    .map(|row| json!({ "schema": row["object_schema"], "name": row["object_name"], "kind": row["object_kind"] }))
+    .collect();
+  Ok(json!({ "objects": objects }))
+}
+
+async fn describe_table(
+  opened: &session::Opened,
+  profile: &ConnectionProfile,
+  table: &str,
+  schema: Option<&str>,
+) -> Result<Value, CliError> {
+  let queries = crate::services::schema_metadata::schema_metadata_queries(&profile.db_type)
+    .ok_or_else(|| unsupported(&profile.db_type))?;
+  // 同 `catalogQueries.ts` 的 `catalogQueryParams`：一个参数是表名，两个是表名与 schema
+  let params = if queries.parameter_count == 1 {
+    vec![Value::from(table)]
+  } else {
+    vec![Value::from(table), schema.map_or(Value::Null, Value::from)]
+  };
+  let columns = opened.select(queries.columns, params.clone()).await.map_err(session_error)?;
+  if columns.is_empty() {
+    return Err(CliError {
+      exit: Exit::Usage,
+      kind: "not_found",
+      message: format!("no table or view named {table}"),
+    });
+  }
+  let indexes = opened.select(queries.indexes, params.clone()).await.map_err(session_error)?;
+  let foreign_keys = opened.select(queries.foreign_keys, params).await.map_err(session_error)?;
+  let columns: Vec<Value> = columns
+    .into_iter()
+    .map(|row| {
+      json!({
+        "name": row["column_name"],
+        "type": row["data_type"],
+        "nullable": truthy(&row["is_nullable"]),
+        "primary_key": truthy(&row["is_primary_key"]),
+        "default": row["column_default"],
+        "comment": row["comment"],
+      })
+    })
+    .collect();
+  Ok(
+    json!({ "table": table, "columns": columns, "indexes": indexes, "foreign_keys": foreign_keys }),
+  )
+}
+
+/// 目录里的布尔：PostgreSQL 给真布尔，MySQL 与 SQLite 给 1/0（同 `tableMetadata.ts`）
+fn truthy(value: &Value) -> bool {
+  match value {
+    Value::Bool(flag) => *flag,
+    Value::Number(number) => number.as_f64().is_some_and(|number| number != 0.0),
+    Value::String(text) => matches!(text.as_str(), "1" | "t" | "true" | "YES" | "Y"),
+    _ => false,
+  }
+}
+
+fn session_error(failure: session::Failure) -> CliError {
+  match failure {
+    session::Failure::Unsupported(db_type) => unsupported(&db_type),
+    session::Failure::Connect(message) => CliError::unavailable("connect", message),
+    session::Failure::Database(error) => {
+      CliError { exit: Exit::Database, kind: "database", message: error.to_string() }
     }
   }
 }
@@ -726,6 +889,9 @@ mod tests {
     assert_eq!(json_of(&stdout)["columns"], json!(["total"]));
     let (code, _, _) = run_in(&dir, &["query", "duck", "COPY t TO 'out.csv'"]);
     assert_eq!(code, Exit::Refused as i32);
+    let (code, stdout, stderr) = run_in(&dir, &["schema", "duck", "t"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(json_of(&stdout)["columns"][0]["name"], json!("x"), "{stdout}");
   }
 
   /// 留痕里有这次调用，但没有语句原文（字面量里可能有个人数据）
@@ -766,6 +932,77 @@ mod tests {
   }
 
   #[test]
+  fn schema_lists_objects_and_describes_a_table() {
+    let dir = ConfigDir::with(&[]);
+    let db = seeded_sqlite(&dir.0);
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    runtime.block_on(async {
+      let pool = sqlx::SqlitePool::connect(&format!("sqlite:{}", db.display())).await.expect("open");
+      sqlx::raw_sql(
+        "CREATE TABLE orders (id INTEGER PRIMARY KEY, item_id INTEGER NOT NULL REFERENCES items(id), note TEXT);
+         CREATE INDEX orders_item ON orders(item_id);
+         CREATE VIEW recent AS SELECT * FROM orders;",
+      )
+      .execute(&pool)
+      .await
+      .expect("schema");
+      pool.close().await;
+    });
+    std::fs::write(
+      dir.0.join("connections.json"),
+      Value::from(vec![file_profile("s", "local", "sqlite", &db, "development")]).to_string(),
+    )
+    .expect("config");
+
+    let (code, stdout, stderr) = run_in(&dir, &["schema", "local"]);
+    assert_eq!(code, 0, "{stderr}");
+    let objects = json_of(&stdout)["objects"].clone();
+    assert_eq!(
+      objects,
+      json!([
+        { "schema": null, "name": "items", "kind": "table" },
+        { "schema": null, "name": "orders", "kind": "table" },
+        { "schema": null, "name": "recent", "kind": "view" },
+      ])
+    );
+
+    let (code, stdout, stderr) = run_in(&dir, &["schema", "local", "orders"]);
+    assert_eq!(code, 0, "{stderr}");
+    let table = json_of(&stdout);
+    let columns: Vec<(Value, bool, bool)> = table["columns"]
+      .as_array()
+      .map(|columns| {
+        columns
+          .iter()
+          .map(|column| {
+            (
+              column["name"].clone(),
+              column["nullable"].as_bool().unwrap_or(true),
+              column["primary_key"].as_bool().unwrap_or(false),
+            )
+          })
+          .collect()
+      })
+      .unwrap_or_default();
+    assert_eq!(
+      columns,
+      vec![
+        (json!("id"), true, true),
+        (json!("item_id"), false, false),
+        (json!("note"), true, false)
+      ]
+    );
+    assert_eq!(table["foreign_keys"][0]["referenced_table"], json!("items"), "{stdout}");
+    assert!(stdout.contains("orders_item"), "{stdout}");
+
+    let (code, _, stderr) = run_in(&dir, &["schema", "local", "missing"]);
+    assert_eq!(
+      (code, json_of(&stderr)["error"]["kind"].clone()),
+      (Exit::Usage as i32, json!("not_found"))
+    );
+  }
+
+  #[test]
   fn query_arguments_are_checked() {
     let dir = ConfigDir::with(&[]);
     for args in [
@@ -775,6 +1012,9 @@ mod tests {
       &["query", "x", "SELECT 1", "--limit", "0"],
       &["query", "x", "SELECT 1", "--limit", "10001"],
       &["query", "x", "SELECT 1", "--timeout"],
+      &["schema"],
+      &["schema", "x", "t", "extra"],
+      &["schema", "x", "--schema", "public"],
     ] {
       assert_eq!(run_in(&dir, args).0, Exit::Usage as i32, "{args:?}");
     }

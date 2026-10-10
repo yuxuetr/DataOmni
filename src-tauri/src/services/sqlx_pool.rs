@@ -191,8 +191,31 @@ pub async fn select(
       let rows = query.fetch_all(pool).await.map_err(QueryError::from)?;
       decode_rows!(rows, postgres_to_json)
     }
-    DbPool::Sqlite(_) => Err(QueryError::message("sqlite catalog queries go through the plugin")),
+    // 界面的 SQLite 目录查询走插件；命令行不起插件，走这里（`cli::session`）
+    DbPool::Sqlite(pool) => {
+      let mut query = sqlx::query(sql);
+      bind_like_plugin!(query);
+      let rows = query.fetch_all(pool).await.map_err(QueryError::from)?;
+      decode_rows!(rows, sqlite_to_json)
+    }
   }
+}
+
+/// SQLite 的值只有五种存储类：目录查询里出现的是名字、类型名、序号与 0/1
+fn sqlite_to_json(value: sqlx::sqlite::SqliteValueRef<'_>) -> Result<JsonValue, String> {
+  use sqlx::{Decode, Sqlite, TypeInfo, ValueRef};
+  if value.is_null() {
+    return Ok(JsonValue::Null);
+  }
+  let kind = value.type_info().name().to_string();
+  let decoded = match kind.as_str() {
+    "INTEGER" => <i64 as Decode<Sqlite>>::decode(value).map(JsonValue::from),
+    "REAL" => <f64 as Decode<Sqlite>>::decode(value).map(JsonValue::from),
+    "BLOB" => <Vec<u8> as Decode<Sqlite>>::decode(value)
+      .map(|bytes| JsonValue::String(bytes.iter().map(|byte| format!("{byte:02x}")).collect())),
+    _ => <String as Decode<Sqlite>>::decode(value).map(JsonValue::String),
+  };
+  decoded.map_err(|error| format!("{kind}: {error}"))
 }
 
 /// 报错时只说 scheme：连接串里有口令
