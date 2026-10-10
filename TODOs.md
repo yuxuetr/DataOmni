@@ -390,7 +390,9 @@
   - [x] `scripts/install-macos.sh` 装完建 `~/.local/bin/dataomni` → 应用里的二进制（同名的不是软链接就不动；不在 PATH 里时提示）。
     三种情况在临时 HOME 里跑过。顺带修：macOS 上经软链接启动时 `current_exe` 给的是软链接自己的路径（实测），
     命令行照它找不到安装包里的 Instant Client；先解析软链接，去掉这一步测试变红。
-  - 还没做的：README 与用户手册。
+  - [x] README（特性一节、安装后的软链接、更新日志）与用户手册（「命令行与 Agent」一章）。
+  - A8a 的 1.0 范围做完（第一、二批 + guide + 安装）。第三批（写）按设计文档 §6 等有人要再做；MCP 见 A8。
+    还没在 CI 上跑过的：打 tag 时 release.yml 的 hardened runtime 打包（要用户批准打 tag）。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
 - [ ] B4 驱动按 Cargo feature 拆分

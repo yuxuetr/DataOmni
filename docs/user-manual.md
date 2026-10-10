@@ -25,6 +25,7 @@
 - [查询历史](#查询历史)
 - [设置](#设置)
 - [快捷键](#快捷键)
+- [命令行与 Agent](#命令行与-agent)
 - [数据存在哪里](#数据存在哪里)
 - [常见问题](#常见问题)
 
@@ -1038,6 +1039,44 @@ TiDB 与 OceanBase 上同时改列和改表名会拆成两条语句（它们不�
 
 界面上的按钮提示会按你的平台显示对应的写法。
 
+## 命令行与 Agent
+
+`dataomni cli` 是应用自带的命令行：终端里、或者 AI Agent（Claude Code 之类）能用你在这里配好的连接做只读查询，
+口令留在系统钥匙串里，不交给调用方。
+
+**开放一个连接**：编辑连接，把「命令行与 Agent 访问」设成「只读」，保存。
+
+- 生产环境的连接这一项固定为关、置灰；命令行里看不到它。
+- 口令要存进系统钥匙串（勾上「保存密码」）：命令行是另一个进程，拿不到只在这次会话里输入的口令。没勾时表单会提醒。
+- 第一次从命令行读某个连接的口令时，系统可能问一次能否读钥匙串，点「始终允许」。
+
+**装到 PATH 上**：`scripts/install-macos.sh` 会建 `~/.local/bin/dataomni`。用安装包装的，自己链一下：
+`ln -s /Applications/DataOmni.app/Contents/MacOS/dataomni ~/.local/bin/dataomni`。
+
+**常用命令**（`dataomni cli help` 有全部）：
+
+| 命令 | 做什么 |
+| --- | --- |
+| `connections` | 列出开放了的连接 |
+| `dictionary <连接>` | 整库的数据字典（Markdown），写 SQL 之前先读 |
+| `query <连接> "<SQL>"` | 跑一条只读语句，默认最多 200 行（`--limit` 到 10000） |
+| `explain <连接> "<SQL>"` | 执行计划，不带 ANALYZE，语句本身不执行 |
+| `schema <连接> [<表>]`、`ddl <连接> <表>` | 表与视图；一张表的列、索引、外键；数据库自己给的定义原文 |
+| `export <连接> "<SQL>" --out 文件` | 整份结果写进新文件（CSV / JSON），不覆盖已有的 |
+| `backup <连接> --out 路径` | 和应用里的备份一样（pg_dump、mysqldump、mongodump、SQLite、DuckDB） |
+| `mongo`、`redis`、`neo4j`、`es` | 这几种库各自的只读命令 |
+| `test <连接>` | 试连；连不上时说断在解析还是端口 |
+| `guide` | 给 Agent 读的说明，存成 `SKILL.md` 放进 Agent 的 skills 目录就能用 |
+
+**只读是怎么保证的**：每次只放行一条读语句（`SELECT`、`WITH`、`SHOW`、`EXPLAIN` 等），并在数据库自己的
+只读事务或只读打开里执行、以回滚结束。MongoDB 只有读的接口，聚合里的 `$out` / `$merge` 被拒；Redis 只跑服务器
+标了 `readonly` 的命令；Neo4j 只跑服务器判为读的查询；Elasticsearch 只放行读的方法与路径。被拒时退出码是 3，
+命令行上没有绕过它的参数。挡不住的是不改数据的管理操作（比如 PostgreSQL 的 `pg_terminate_backend`）——
+真正的边界是给 Agent 用一个只读的数据库账号。
+
+**留痕**：每次调用写一行进 `dataomni-cli.log`（和 `dataomni.log` 同一个目录）：时间、连接、命令、语句的第一个
+关键字、长度与摘要、结果、行数、耗时，不记语句原文。
+
 ## 数据存在哪里
 
 | 什么 | 存在哪里 |
@@ -1046,7 +1085,7 @@ TiDB 与 OceanBase 上同时改列和改表名会拆成两条语句（它们不�
 | 数据库密码、SSH 口令 | 系统钥匙串 |
 | 标签、SQL 草稿、查询历史、设置 | 应用自己的本地存储，只在这台机器上 |
 | 查询结果 | 不保存 |
-| 日志 | `dataomni.log`，满 2 MB 换一份，留最近两份：macOS 在 `~/Library/Logs/com.dataomni.app/`，Linux 在 `~/.local/share/com.dataomni.app/logs/`，Windows 在 `%LOCALAPPDATA%\com.dataomni.app\logs\` |
+| 日志 | `dataomni.log`（命令行的留痕另记在同目录的 `dataomni-cli.log`），满 2 MB 换一份，留最近两份：macOS 在 `~/Library/Logs/com.dataomni.app/`，Linux 在 `~/.local/share/com.dataomni.app/logs/`，Windows 在 `%LOCALAPPDATA%\com.dataomni.app\logs\` |
 
 应用只在两种情况下访问你的数据库以外的地址：检查新版本（每天最多一次，只问 GitHub，设置里可关），
 以及你启用了 AI 设计后按「生成设计」（发给你填的地址，发什么见上文）。不上传数据、连接配置和使用情况。

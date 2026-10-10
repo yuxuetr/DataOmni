@@ -17,7 +17,7 @@ Rust 后端在 `src-tauri/`，前端在 `src/`。
 | 对外的能力说明 | `README.md` |
 | Tauri 命令清单 | `src-tauri/src/lib.rs` 的 `invoke_handler` |
 | 立项时的设计意图 | `rfcs/design.md`（2025-06，**已不跟代码走**，开头有说明） |
-| 单项的设计说明与评估 | `rfcs/ssh-tunnel.md`（跟代码走）；`rfcs/ai-design-and-export.md`（AI 设计新表已实现，§2.5 是实验数据；备份已实现；导出代码等其余部分仍只有评估）；`rfcs/editions-and-branching.md`（`ai` feature 已落地，其余只有评估）；`rfcs/agent-cli.md`（命令行接口 `dataomni cli`，跟代码走：第一批已实现，第二批进行中） |
+| 单项的设计说明与评估 | `rfcs/ssh-tunnel.md`（跟代码走）；`rfcs/ai-design-and-export.md`（AI 设计新表已实现，§2.5 是实验数据；备份已实现；导出代码等其余部分仍只有评估）；`rfcs/editions-and-branching.md`（`ai` feature 已落地，其余只有评估）；`rfcs/agent-cli.md`（命令行接口 `dataomni cli`，跟代码走：第一、二批已实现，第三批（写）未做） |
 | 1.0 做什么、不做什么，之后的路线 | `rfcs/roadmap-1.0.md`（2026-10-06；任务状态在 `TODOs.md`「v1.0」） |
 | 版本怎么分 | **一条 `main`，不开长期版本分支**；差异用 Cargo feature 控制，AI 整块在 `ai` feature 后面（见 `rfcs/editions-and-branching.md`） |
 

@@ -347,6 +347,24 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
 
 > 尚未实现：权限层面的写保护。
 
+### 🤖 命令行与 Agent
+
+`dataomni cli` 让终端和 AI Agent（Claude Code 之类）只读地用你在应用里配好的连接，口令不交给调用方：
+
+- 哪个连接能用由你在连接设置里定（「命令行与 Agent 访问」：关 / 只读，默认关）；生产连接一律看不见，
+  命令行上没有任何参数能放宽。只改 `connections.json` 开不了门：开放凭证绑在连接自己的口令上
+- 关系库（PostgreSQL 系、MySQL 系、SQLite、DuckDB、ClickHouse、Oracle）：`query`、`explain`（不带 ANALYZE）、
+  `schema`、`ddl`、整库的数据字典 `dictionary`、`export`（CSV / JSON）、`backup`、`test`（连不上时带诊断）。
+  只放行一条读语句，并在数据库自己的只读事务 / 只读打开里执行、以回滚结束
+- MongoDB、Redis、Neo4j、Elasticsearch 各有只读的命令：Redis 只跑服务器标了 `readonly` 的命令，
+  Neo4j 只跑服务器判为读的查询并在读模式事务里执行，ES 按方法加路径的白名单
+- 输出是 JSON，退出码区分「数据库报错 / 参数错 / 被拒 / 连不上」；`dataomni cli guide` 打印一份
+  给 Agent 读的说明，存成 `SKILL.md` 就能当 Claude Code 的 Skill 用
+- 每次调用留痕（`dataomni-cli.log`），记语句的摘要，不记原文
+
+真正的边界仍是给 Agent 用一个只读的数据库账号：应用的门挡得住写，挡不住 `pg_terminate_backend` 这类
+不改数据的管理函数。SQL Server 还没有会话级只读，暂不开放。
+
 ### 🎨 界面
 
 - 基于 Tauri 构建，原生性能
@@ -429,8 +447,12 @@ bun tauri build -- --no-default-features
 
 # macOS：构建（带 Oracle Instant Client）并装进 /Applications，装完启动
 # --skip-build 只装上次的产物，--no-open 装完不启动，-y 正开着时不问直接结束它
+# 顺带建 ~/.local/bin/dataomni，指向应用里的二进制（命令行 dataomni cli 就是它）
 scripts/install-macos.sh
 ```
+
+用安装包装的，命令行要自己链一下（macOS）：
+`ln -s /Applications/DataOmni.app/Contents/MacOS/dataomni ~/.local/bin/dataomni`
 
 ### 示例数据
 
@@ -533,7 +555,7 @@ bun install
 
 ### 未发布
 
-（暂无）
+- 命令行 `dataomni cli`：给终端与 AI Agent 只读地用应用里配好的连接，见上文「命令行与 Agent」与用户手册
 
 ### v0.6.1（2026-10-07）
 
