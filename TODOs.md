@@ -320,7 +320,9 @@
     （放行的界面也必须判成 read）。逐条拿掉一种规矩，对应的拒绝用例都变红（13 种）。
   - [x] 连接的「命令行与 Agent 访问」（关 / 只读，默认关）：生产连接一律看不见、表单里置灰；导入的连接一律是关。
     界面还没在打包版里看，随第一批一起验。
-  - 下一步：第一批（`connections`、`test`、`query`、`explain`、`schema`、`version`），E2、E6 随它测。
+  - [x] 入口 `dataomni cli`（主程序的子命令）与 `connections`、`version`、`help`：只读打开配置，不迁移明文口令、不回写；
+    输出 JSON，错误走 stderr 加退出码。E2 在 debug 构建上过了。
+  - 下一步：第一批其余的（`connections`、`test`、`query`、`explain`、`schema`、`version`），E2、E6 随它测。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
 - [ ] B4 驱动按 Cargo feature 拆分

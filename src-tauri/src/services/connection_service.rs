@@ -8,6 +8,16 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 pub(crate) const CREDENTIAL_SERVICE: &str = "DataOmni";
+/// 连接配置的文件名，放在应用的配置目录下（见 [`app_config_dir`]）
+const CONNECTIONS_FILE: &str = "connections.json";
+/// `tauri.conf.json` 的 `identifier`。Tauri 的 `app_config_dir` 就是系统配置目录下的这一层；
+/// 命令行不起 Tauri，自己算同一个目录。两边一致由测试钉住
+pub const APP_IDENTIFIER: &str = "com.dataomni.app";
+
+/// 和 Tauri 的 `PathResolver::app_config_dir` 同一个算法
+pub fn app_config_dir() -> Option<PathBuf> {
+  dirs::config_dir().map(|dir| dir.join(APP_IDENTIFIER))
+}
 const CREDENTIAL_REF_PREFIX: &str = "system-keyring://connection/";
 const SESSION_PASSWORD_REQUIRED: &str = "SESSION_PASSWORD_REQUIRED";
 
@@ -185,8 +195,29 @@ impl ConnectionService {
       fs::create_dir_all(&app_dir)?;
     }
 
-    let config_path = app_dir.join("connections.json");
+    let config_path = app_dir.join(CONNECTIONS_FILE);
     Self::from_path(&config_path, Box::new(SystemCredentialStore))
+  }
+
+  /// 命令行用：只读打开。旧版留下的明文口令不迁进钥匙串、文件不回写——命令行不改配置
+  /// （`rfcs/agent-cli.md` §8 第 7 条）。明文口令就留在内存里照常用
+  pub fn open_read_only(config_dir: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
+    Self::read_only_at(&config_dir.join(CONNECTIONS_FILE), Box::new(SystemCredentialStore))
+  }
+
+  fn read_only_at(
+    config_path: &PathBuf,
+    credential_store: Box<dyn CredentialStore>,
+  ) -> Result<Self, Box<dyn std::error::Error>> {
+    let loaded = Self::load_connections(config_path, credential_store.as_ref(), false)?;
+    Ok(Self {
+      config_path: config_path.clone(),
+      connections: loaded.connections,
+      newer_entries: loaded.newer_entries,
+      unknown_fields: loaded.unknown_fields,
+      credential_store,
+      session_passwords: HashMap::new(),
+    })
   }
 
   /// 加载已保存的连接配置
@@ -194,7 +225,7 @@ impl ConnectionService {
     config_path: &PathBuf,
     credential_store: Box<dyn CredentialStore>,
   ) -> Result<Self, Box<dyn std::error::Error>> {
-    let loaded = Self::load_connections(config_path, credential_store.as_ref())?;
+    let loaded = Self::load_connections(config_path, credential_store.as_ref(), true)?;
     let migrated = loaded.migrated;
     let service = Self {
       config_path: config_path.clone(),
@@ -215,6 +246,7 @@ impl ConnectionService {
   fn load_connections(
     config_path: &PathBuf,
     credential_store: &dyn CredentialStore,
+    migrate_passwords: bool,
   ) -> Result<LoadedConnections, Box<dyn std::error::Error>> {
     let mut loaded = LoadedConnections::default();
     if !config_path.exists() {
@@ -241,7 +273,7 @@ impl ConnectionService {
       if !unknown.is_empty() {
         loaded.unknown_fields.insert(conn.id.clone(), unknown);
       }
-      if !conn.password.is_empty() {
+      if migrate_passwords && !conn.password.is_empty() {
         credential_store
           .set_password(&conn.id, &conn.password)
           .map_err(|error| format!("{CREDENTIAL_MIGRATION_FAILED}: {} · {error}", conn.name))?;
@@ -1549,6 +1581,45 @@ mod tests {
       target.resolve_for_connection(open).map(|resolved| resolved.password),
       Ok(String::new())
     );
+  }
+
+  /// 命令行只读打开：旧版留下的明文口令照常能用，但不迁进钥匙串，文件一个字节都不变
+  #[test]
+  fn read_only_open_neither_migrates_nor_rewrites() {
+    let path = temporary_config_path();
+    let mut legacy = profile("profile-1", "plain-secret");
+    legacy.credential_ref = None;
+    let content = match serde_json::to_string(&vec![legacy]) {
+      Ok(content) => content,
+      Err(error) => panic!("{error}"),
+    };
+    if let Err(error) = std::fs::write(&path, &content) {
+      panic!("{error}");
+    }
+    let store = Box::<MemoryCredentialStore>::default();
+    let service = match ConnectionService::read_only_at(&path, store) {
+      Ok(service) => service,
+      Err(error) => panic!("只读打开不该失败: {error}"),
+    };
+    let Some(connection) = service.get_connection("profile-1") else { panic!("连接应当在") };
+    assert_eq!(
+      service.resolve_for_connection(connection).map(|resolved| resolved.password),
+      Ok("plain-secret".to_string())
+    );
+    assert_eq!(service.credential_store.get_password("profile-1").ok(), None, "不该写进钥匙串");
+    assert_eq!(std::fs::read_to_string(&path).ok(), Some(content), "文件不该被改");
+    let _ = std::fs::remove_file(&path);
+  }
+
+  /// 命令行自己算配置目录，用的标识必须和打包配置里的一致，否则读到的是一个空目录
+  #[test]
+  fn the_identifier_matches_the_tauri_config() {
+    let config: serde_json::Value =
+      match serde_json::from_str(include_str!("../../tauri.conf.json")) {
+        Ok(config) => config,
+        Err(error) => panic!("{error}"),
+      };
+    assert_eq!(config["identifier"].as_str(), Some(APP_IDENTIFIER));
   }
 
   /// 文件是别人给的：里面写着「开放给 Agent」也不认，导进来一律是关

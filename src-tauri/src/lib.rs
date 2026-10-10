@@ -3,6 +3,7 @@
 // 模块导入
 #[cfg(target_os = "macos")]
 mod app_menu;
+pub mod cli;
 mod commands;
 // 集成测试要按 DatabaseType 取目录查询，枚举得公开；
 // 用字符串代替会丢掉穷尽匹配，新增方言时编译器不再提醒。

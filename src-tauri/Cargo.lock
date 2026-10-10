@@ -1541,6 +1541,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "csv",
+ "dirs",
  "duckdb",
  "encoding_rs",
  "futures-util",

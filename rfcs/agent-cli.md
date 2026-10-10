@@ -93,7 +93,10 @@
 DDL、DML、`url()` / `file()` / `s3()` 表函数、`INSERT INTO FUNCTION`、`SET`、`SETTINGS readonly=0`、`SYSTEM` 全被拒，
 只有 `KILL QUERY` 能执行。这是几家里最严的。
 
-**E2、E6**：要先有子命令，放到第一批实现里，结果补在这里。
+**E2**（2026-10-10，debug 构建）：带着 `LD_LIBRARY_PATH=/opt/homebrew/lib` 从终端跑 `dataomni cli connections` 3 次，
+3 次都正常退出。子命令不起窗口，碰不到 ImageIO。打包版上再验一次。
+
+**E6**：随 `query` 测，结果补在这里。
 
 ## 4. 进程形态
 
