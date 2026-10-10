@@ -427,6 +427,30 @@ mod tests {
       DbPool::Sqlite(_) => unreachable!("only network databases here"),
     };
     assert_eq!(rows, 0);
+
+    // `ddl`：MySQL 的 `SHOW CREATE TABLE` 不收占位符，表名作为引用过的标识符拼进去；
+    // PostgreSQL 的表没有原文，说明之后指向 `schema`
+    let opened = open(&profile, None).await.unwrap_or_else(|_| panic!("open"));
+    let ddl = super::super::ddl_statements(&opened, &profile.db_type, "om_cli_probe", None).await;
+    let missing =
+      super::super::ddl_statements(&opened, &profile.db_type, "om_cli_no`such", None).await;
+    opened.close().await;
+    match (&profile.db_type, ddl) {
+      (DatabaseType::MySQL, Ok(statements)) => {
+        assert!(statements[0].starts_with("CREATE TABLE `om_cli_probe`"), "{statements:?}")
+      }
+      (DatabaseType::PostgreSQL, Err(error)) => {
+        assert!(error.message.contains("schema"), "{}", error.message)
+      }
+      (_, Ok(statements)) => panic!("unexpected definition {statements:?}"),
+      (_, Err(error)) => panic!("{}", error.message),
+    }
+    assert!(
+      matches!(&missing, Err(error) if error.kind == "not_found"),
+      "{:?}",
+      missing.as_ref().err()
+    );
+
     let drop = "DROP TABLE om_cli_probe";
     let _ = match &admin {
       DbPool::Postgres(pool) => pool.execute(drop).await.map(|_| ()),

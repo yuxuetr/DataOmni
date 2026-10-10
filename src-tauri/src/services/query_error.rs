@@ -26,7 +26,8 @@ pub const POOL_TIMED_OUT: &str = "DATAOMNI_POOL_TIMED_OUT";
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct QueryError {
   pub message: String,
-  /// PostgreSQL 的 SQLSTATE、MySQL 的错误号、SQLite 的扩展结果码；
+  /// PostgreSQL 与 MySQL 的 SQLSTATE（sqlx 给 MySQL 的也是 SQLSTATE，如表不存在是 `42S02`
+  /// 而不是错误号 1146）、SQLite 的扩展结果码；
   /// 超时这类我们自己造的错用上面那个常量。
   pub code: Option<String>,
   /// 数据库额外给的那几项。

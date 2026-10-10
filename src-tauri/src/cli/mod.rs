@@ -133,6 +133,10 @@ Commands:
                      Write every row of one read-only statement to a new local
                      file (never overwrites), the same bytes the DataOmni export
                      writes. 300 s timeout by default.
+  ddl <connection> <table> [--schema S]
+                     The definition the database itself gives for a table or
+                     view (SHOW CREATE TABLE, sqlite_master, DBMS_METADATA, ...).
+                     PostgreSQL has it for views only; use schema for its tables.
   csv-preview <file> [--delimiter C] [--no-header] [--rows N]
                      A local CSV file: the delimiter and encoding it was read with
                      (sniffed unless given), the header, the first rows (50 by
@@ -252,6 +256,7 @@ fn dispatch(args: &[String], dirs: &Dirs) -> Result<Output, CliError> {
     "es" => es(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "csv-preview" => csv_preview(rest).map(Output::Json),
     "export" => export(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
+    "ddl" => ddl(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     other => Err(CliError::usage(format!("unknown command {other}; run `dataomni cli help`"))),
   }
 }
@@ -818,6 +823,117 @@ fn parse_schema_arguments(rest: &[String]) -> Result<SchemaArguments, CliError> 
     return Err(usage());
   }
   Ok(SchemaArguments { connection, table, schema })
+}
+
+/// 表或视图的定义原文，同界面结构页的「对象定义」：**数据库自己给的**（`SHOW CREATE TABLE`、
+/// `sqlite_master`、`DBMS_METADATA`……），不从目录重建——重建出来的看着权威、照着建却不等价
+fn ddl(
+  rest: &[String],
+  config_dir: Option<&Path>,
+  log_dir: Option<&Path>,
+) -> Result<Value, CliError> {
+  let arguments = parse_schema_arguments(rest)?;
+  let Some(table) = arguments.table.clone() else {
+    return Err(CliError::usage("usage: dataomni cli ddl <connection> <table> [--schema S]"));
+  };
+  let service = open_service(config_dir)?;
+  let profile = find_open(&service, &arguments.connection)?;
+  let started = Instant::now();
+  let outcome = run_ddl(&service, &profile, &table, arguments.schema.as_deref(), config_dir);
+  audit::record(log_dir, "ddl", &profile.name, &table, &outcome, started.elapsed());
+  let statements = outcome?;
+  let ddl: Vec<String> = statements
+    .iter()
+    .map(
+      |statement| {
+        if statement.ends_with(';') {
+          statement.clone()
+        } else {
+          format!("{statement};")
+        }
+      },
+    )
+    .collect();
+  Ok(
+    json!({ "schema": OUTPUT_SCHEMA, "connection": profile.name, "table": table, "ddl": ddl.join("\n\n") }),
+  )
+}
+
+fn run_ddl(
+  service: &ConnectionService,
+  profile: &ConnectionProfile,
+  table: &str,
+  schema: Option<&str>,
+  config_dir: Option<&Path>,
+) -> Result<Vec<String>, CliError> {
+  if !session::supports(&profile.db_type) {
+    return Err(unsupported(&profile.db_type));
+  }
+  let resolved = resolve_verified(service, profile)?;
+  let timeout = Duration::from_secs(DEFAULT_TIMEOUT_SECONDS);
+  block_on_within(timeout, "the definition", async {
+    let opened = session::open(&resolved, config_dir).await.map_err(session_error)?;
+    let statements = ddl_statements(&opened, &resolved.db_type, table, schema).await;
+    opened.close().await;
+    statements
+  })
+}
+
+/// 定义原文的每一条（SQLite 连着索引与触发器）。查不到就是没有这张表或视图；PostgreSQL 的表
+/// 本来就没有原文（它没有 `SHOW CREATE TABLE`），单独说
+async fn ddl_statements(
+  opened: &session::Opened,
+  db_type: &DatabaseType,
+  table: &str,
+  schema: Option<&str>,
+) -> Result<Vec<String>, CliError> {
+  use crate::services::schema_metadata::{schema_metadata_queries, DdlQuery};
+  let queries = schema_metadata_queries(db_type).ok_or_else(|| unsupported(db_type))?;
+  let ddl = queries.ddl.ok_or_else(|| unsupported(db_type))?;
+  let rows = match ddl {
+    DdlQuery::Bound { sql } => {
+      let params = if queries.parameter_count == 1 {
+        vec![Value::from(table)]
+      } else {
+        vec![Value::from(table), schema.map_or(Value::Null, Value::from)]
+      };
+      opened.select(sql, params).await
+    }
+    // 只有 MySQL 走这一种：`SHOW CREATE TABLE` 不收占位符，表名作为引用过的标识符拼进去
+    DdlQuery::Interpolated { sql } => {
+      let quote = |name: &str| format!("`{}`", name.replace('`', "``"));
+      let target = match schema {
+        Some(schema) => format!("{}.{}", quote(schema), quote(table)),
+        None => quote(table),
+      };
+      opened.select(&sql.replace("{table}", &target), Vec::new()).await
+    }
+  };
+  // MySQL 对不存在的表报 1146，当作「没有」而不是数据库错误。sqlx 给的码是 SQLSTATE（42S02），不是错误号
+  let rows = match rows {
+    Ok(rows) => rows,
+    Err(session::Failure::Database(error)) if error.code.as_deref() == Some("42S02") => Vec::new(),
+    Err(failure) => return Err(session_error(failure)),
+  };
+  // 同 `schemaObjects.ts` 的 `extractDdlStatements`：几家把原文放在不同的列里
+  let statements: Vec<String> = rows
+    .iter()
+    .filter_map(|row| {
+      ["Create Table", "Create View", "sql"]
+        .iter()
+        .find_map(|column| row[*column].as_str().map(str::trim).filter(|text| !text.is_empty()))
+        .map(str::to_string)
+    })
+    .collect();
+  if statements.is_empty() {
+    let message = if *db_type == DatabaseType::PostgreSQL {
+      format!("no view named {table}: PostgreSQL keeps no CREATE TABLE text for tables; `schema <connection> {table}` gives the columns, indexes and foreign keys")
+    } else {
+      format!("no table or view named {table}")
+    };
+    return Err(CliError { exit: Exit::Usage, kind: "not_found", message, diagnosis: None });
+  }
+  Ok(statements)
 }
 
 fn schema(
@@ -1757,6 +1873,34 @@ mod tests {
     ] {
       assert_eq!(run_in(&dir, bad).0, Exit::Usage as i32, "{bad:?}");
     }
+  }
+
+  /// 数据库自己的原文：SQLite 连着索引一起给；不存在的表是「找不到」
+  #[test]
+  fn ddl_gives_the_definition_the_database_keeps() {
+    let dir = ConfigDir::with(&[]);
+    let db = seeded_sqlite(&dir.0);
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    runtime.block_on(async {
+      let pool =
+        sqlx::SqlitePool::connect(&format!("sqlite:{}", db.display())).await.expect("open");
+      sqlx::raw_sql("CREATE INDEX items_name ON items(name)").execute(&pool).await.expect("index");
+      pool.close().await;
+    });
+    std::fs::write(
+      dir.0.join("connections.json"),
+      Value::from(vec![file_profile("s", "local", "sqlite", &db, "development")]).to_string(),
+    )
+    .expect("config");
+    let (code, stdout, stderr) = run_in(&dir, &["ddl", "local", "items"]);
+    assert_eq!(code, 0, "{stderr}");
+    let ddl = json_of(&stdout)["ddl"].as_str().unwrap_or_default().to_string();
+    assert!(ddl.starts_with("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT);"), "{ddl}");
+    assert!(ddl.ends_with("CREATE INDEX items_name ON items(name);"), "{ddl}");
+    let (code, _, stderr) = run_in(&dir, &["ddl", "local", "nope"]);
+    assert_eq!(code, Exit::Usage as i32);
+    assert_eq!(json_of(&stderr)["error"]["kind"], "not_found");
+    assert_eq!(run_in(&dir, &["ddl", "local"]).0, Exit::Usage as i32);
   }
 
   #[test]

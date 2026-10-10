@@ -378,6 +378,9 @@
   - [x] `export <连接> <SQL> --out 文件`（csv、json）：语句门 → 只读事务里导出 → 回滚；只写新文件。`export_query` 拆出
     `export_in`（在给定连接上导出），界面那条路不变。去掉语句门测试红；cu 的 PG 上去掉只读事务，`nextval()` 真的跑了、测试红。
     `sql` 格式没做（缺计算列、自增列的元数据）。
+  - [x] `ddl <连接> <表>`：数据库自己的定义原文（同界面「对象定义」），不移植 `tableDdl.ts`。SQLite 端到端；cu 的 MySQL 上
+    `SHOW CREATE TABLE` 与带反引号的表名、PG 上表没有原文时指向 `schema`。顺带：sqlx 给 MySQL 的错误码是 SQLSTATE（`42S02`），
+    不是错误号，`QueryError.code` 的注释原先写错了。Oracle、ClickHouse、DuckDB 的定义查询命令行没单独跑（界面在用）。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
 - [ ] B4 驱动按 Cargo feature 拆分
