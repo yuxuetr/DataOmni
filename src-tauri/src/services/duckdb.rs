@@ -58,6 +58,24 @@ pub async fn open(path: &str) -> Result<Arc<DuckDbPool>, QueryError> {
   .await
 }
 
+/// 命令行用：只读打开，并关掉外部访问——只读打开挡得住改库，挡不住 `COPY … TO` 写文件、
+/// `read_text()` 读本机任意文件。配置随后锁住，语句里改不回来（`rfcs/agent-cli.md` §3.1 E4）。
+/// 文件不存在就报错，不像 [`open`] 那样建一个
+pub async fn open_read_only(path: &str) -> Result<Arc<DuckDbPool>, QueryError> {
+  let path = path.to_string();
+  blocking(move || {
+    let config = duckdb::Config::default()
+      .access_mode(duckdb::AccessMode::ReadOnly)
+      .and_then(|config| config.enable_external_access(false))
+      .and_then(|config| config.with("lock_configuration", "true"))
+      .map_err(|error| query_error(&error, None))?;
+    let connection =
+      Connection::open_with_flags(&path, config).map_err(|error| query_error(&error, None))?;
+    Ok(Arc::new(DuckDbPool { root: Mutex::new(connection) }))
+  })
+  .await
+}
+
 /// 跑一段阻塞的驱动调用。线程池那一侧 panic 了也要变成一条错误——
 /// 不然这次调用永远不回来
 async fn blocking<T: Send + 'static>(
@@ -1017,6 +1035,51 @@ fn display_width(c: char) -> usize {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  /// §3.1 E4 用应用实际编进去的 DuckDB 复测：只读打开之后改库、写文件、读文件、
+  /// 改回外部访问，全都被拒；读照常
+  #[tokio::test]
+  async fn read_only_open_refuses_writes_and_file_access() {
+    let dir = std::env::temp_dir().join(format!("dataomni-duck-ro-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("ro.duckdb");
+    let outside = dir.join("outside.txt");
+    std::fs::write(&outside, "secret").expect("outside file");
+    {
+      let connection = Connection::open(&file).expect("create the file");
+      connection
+        .execute_batch("CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1);")
+        .expect("seed");
+    }
+    let path = file.to_string_lossy().into_owned();
+    let pool = open_read_only(&path).await.expect("read-only open");
+    let mut session = pool.acquire_for_session().expect("session");
+    assert_eq!(count_rows(&mut session, "SELECT * FROM t").await.ok(), Some(1));
+    let copy_target = dir.join("out.csv");
+    for sql in [
+      "INSERT INTO t VALUES (2)".to_string(),
+      format!("COPY t TO '{}'", copy_target.display()),
+      format!("SELECT * FROM read_text('{}')", outside.display()),
+      format!("ATTACH '{}' AS other", dir.join("other.duckdb").display()),
+      "SET enable_external_access = true".to_string(),
+    ] {
+      assert!(count_rows(&mut session, &sql).await.is_err(), "should be refused: {sql}");
+    }
+    assert!(!copy_target.exists());
+    assert!(open_read_only(&dir.join("missing.duckdb").to_string_lossy()).await.is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+
+  async fn count_rows(session: &mut DuckDbConnection, sql: &str) -> Result<usize, QueryError> {
+    let mut rows = 0;
+    session
+      .execute_streaming(sql, StreamOptions::limited(10, 1 << 20, 10), &mut |batch| {
+        rows += batch.rows.len();
+        Ok(())
+      })
+      .await?;
+    Ok(rows)
+  }
 
   /// 网格改值与 CSV 导回都把显示的文本交回 DuckDB，所以写法要是它认的。
   /// chrono 的 `%Y` 给五位数的年份前面加 `+`，DuckDB 不认（`invalid date field format`）；

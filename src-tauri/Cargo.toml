@@ -53,6 +53,8 @@ urlencoding = "2.1.3"
 keyring = "4.2.0"
 # 命令行不起 Tauri，自己算应用的配置目录（同 `PathResolver::app_config_dir`）。已经是 tauri 的依赖
 dirs = "6"
+# 命令行的留痕记语句的摘要，不记原文。已经是依赖树里的一项
+sha2 = "0.10"
 # `net` 是连接诊断要的：解析主机与试连端口（`services/connection_probe.rs`）
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
 # SQL Server（`services/sql_server.rs`）。sqlx 0.7 起不再带 MSSQL 驱动，插件也就没有；
@@ -90,6 +92,8 @@ tauri-plugin-log = "2"
 log = "0.4"
 
 [dev-dependencies]
+# 命令行的真库用例把 `DATAOMNI_*_TEST_URL` 拆成连接的各个字段
+url = "2"
 # 只为在测试里**造**一把带口令的私钥：russh 依赖的 ssh-key 默认不开
 # `rand_core`，没有它就没法生成密钥，于是「有口令的私钥」这条门要么依赖
 # 仓库里的密钥文件（扫描器会报），要么依赖外部的 ssh-keygen（装没装不一定）。

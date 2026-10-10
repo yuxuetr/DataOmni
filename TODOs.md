@@ -322,6 +322,11 @@
     界面还没在打包版里看，随第一批一起验。
   - [x] 入口 `dataomni cli`（主程序的子命令）与 `connections`、`version`、`help`：只读打开配置，不迁移明文口令、不回写；
     输出 JSON，错误走 stderr 加退出码。E2 在 debug 构建上过了。
+  - [x] `query`：PostgreSQL 系、MySQL 系、SQLite、DuckDB。语句门 → 只读会话（只读事务 / 只读打开）→ 永远回滚；
+    默认 200 行、30 秒；读口令最多等 10 秒（钥匙串弹框时直接退出并说明）；留痕写 `dataomni-cli.log`，不记原文。
+    真库：本地 Docker 的 PostgreSQL 16、MySQL 8.4 上，去掉只读事务时写能进去（测试变红），加上就被数据库拒绝。
+  - [ ] **发布前必须做**：开放凭证绑在连接自己的口令上（设计文档 §5.4）。现在改 `connections.json` 就能让命令行
+    用存了口令的生产连接做只读查询。
   - 下一步：第一批其余的（`connections`、`test`、`query`、`explain`、`schema`、`version`），E2、E6 随它测。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
