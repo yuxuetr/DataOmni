@@ -332,9 +332,13 @@
     真库：本地 26.9 上不带时写能进去、一律带时 `readonly=2` 账号读不了，两个方向都变红。
   - [x] `query` 支持 Oracle：`SET TRANSACTION READ ONLY` 挡 DML，DDL 靠语句门。命令行只认安装包里的 Instant Client，
     不认 `DATAOMNI_ORACLE_CLIENT_DIR`（调用方给的环境变量能让进程加载它的库）。真库：本地 23ai 上去掉只读事务时写能进去。
-  - [ ] **发布前必须做**：开 hardened runtime（设计文档 §5.4 E7）。现在 `DYLD_INSERT_LIBRARIES` 能注进应用进程，
-    借应用的身份读钥匙串；ad-hoc 加 `--options runtime` 后注入被忽略（探针实测）。要加放宽库校验的 entitlement 给 Instant Client，
-    在打包版上验：起得来、Oracle 能连、钥匙串照常、注入进不去。
+  - [x] `schema`：不带表名列表与视图，带表名给列、索引（每个索引的每一列一行）、外键。用后端现成的目录查询，
+    表名与 schema 走绑定参数；SQLite 的目录查询补了后端解码（界面仍走插件）。
+  - [x] 开 hardened runtime（设计文档 §5.4 E7）：ad-hoc 签名加 `--options runtime`，entitlement 只放宽库校验（给 Instant Client）。
+    打包版验过：签名带 runtime、`codesign --verify --deep --strict` 通过、`DYLD_INSERT_LIBRARIES` 注不进去、应用起得来、
+    Oracle 走安装包里的 Instant Client 加载成功（连空端口报 ORA-12541），`DATAOMNI_ORACLE_CLIENT_DIR` 指向别处也不认、
+    带 `LD_LIBRARY_PATH` 从终端跑命令行 3 次都正常（E2）、连接表单里「命令行与 Agent 访问」渲染正常。
+    还没验：界面存的口令由命令行读会不会弹框（E1b，要在表单里输入，当前输入法是搜狗，留给用户手动做）；Windows、Linux 不受影响但没跑 CI。
   - 下一步：第一批其余的（`connections`、`test`、`query`、`explain`、`schema`、`version`），E2、E6 随它测。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）

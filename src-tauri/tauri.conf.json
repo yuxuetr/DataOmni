@@ -45,6 +45,11 @@
       "rpm": {
         "depends": ["ca-certificates"]
       }
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "hardenedRuntime": true,
+      "entitlements": "Entitlements.plist"
     }
   }
 }

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Oracle Instant Client 是 Oracle 签的，不是我们签的；hardened runtime 默认只许加载
+       同一签名者的库。放宽的只是这一项：DYLD_* 环境变量照样不认（rfcs/agent-cli.md §5.4 E7） -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>
