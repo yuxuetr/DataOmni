@@ -1013,7 +1013,7 @@ export const zh = {
   'form.agentAccess': '命令行与 Agent 访问',
   'form.agentAccess.off': '关',
   'form.agentAccess.read': '只读',
-  'form.agentAccessHint': '打开后，`dataomni cli` 能用这个连接执行只读查询，比如给 AI Agent 用。口令不会交给调用方。',
+  'form.agentAccessHint': '打开后，命令行 dataomni cli 能用这个连接执行只读查询，比如给 AI Agent 用。口令不会交给调用方。',
   'form.agentAccessProductionHint': '生产连接不开放给命令行。',
   'form.db.viaProtocol': '按 {protocol} 协议连接',
   'form.db.gapsTag': '有缺口',

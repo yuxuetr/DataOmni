@@ -986,7 +986,7 @@ export const en: Translations = {
   'form.agentAccess': 'Command line & agent access',
   'form.agentAccess.off': 'Off',
   'form.agentAccess.read': 'Read-only',
-  'form.agentAccessHint': 'When on, `dataomni cli` can run read-only queries on this connection, for example from an AI agent. The password is never handed to the caller.',
+  'form.agentAccessHint': 'When on, the dataomni cli command can run read-only queries on this connection, for example from an AI agent. The password is never handed to the caller.',
   'form.agentAccessProductionHint': 'Production connections are never open to the command line.',
   'form.db.viaProtocol': 'Connects over the {protocol} protocol',
   'form.db.gapsTag': 'Gaps',
