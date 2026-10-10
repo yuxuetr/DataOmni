@@ -85,4 +85,36 @@ describe('ConnectionForm 命令行访问', () => {
     expect(select('connection-agent-access').value).toBe('off');
     expect(select('connection-agent-access').disabled).toBe(false);
   });
+
+  // 这一格排在类型上面，照着表单从上往下填，选完它才点类型。点类型会把表单盖回那个
+  // 类型的默认值，没保住它就悄悄存成了「关」——界面上明明选过只读
+  it('先选只读再点类型，存下来的仍是只读', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const calls = vi.mocked(invoke);
+    calls.mockClear();
+    act(() => root.render(<ConnectionForm mode="create" onClose={() => {}} />));
+    type(container.querySelector<HTMLInputElement>('input[name="connection-name"]'), 'cli-probe');
+    choose(select('connection-agent-access'), 'read');
+    act(() => button('PostgreSQL').click());
+    expect(select('connection-agent-access').value).toBe('read');
+
+    type(container.querySelector<HTMLInputElement>('input[name="username"]'), 'postgres');
+    type(container.querySelector<HTMLInputElement>('input[type="password"]'), 'secret');
+    await act(async () => button('Save connection').click());
+    const created = calls.mock.calls.find(([command]) => command === 'create_connection');
+    expect(created?.[1]).toMatchObject({
+      config: { db_type: 'postgresql', agent_access: 'read', save_password: true, password: 'secret' }
+    });
+  });
 });
+
+function type(input: HTMLInputElement | null, value: string) {
+  if (!input) {
+    throw new Error('no input');
+  }
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+  act(() => {
+    setter?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}

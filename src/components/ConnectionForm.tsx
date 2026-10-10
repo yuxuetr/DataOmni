@@ -296,10 +296,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     setFormData(prev => ({
       ...prev,
       ...defaultConfig,
-      // 名称与环境是用户先填的、和类型无关的两项；环境此前会被默认值盖回「开发」，
-      // 先选了「生产」再点类型，就悄悄变回了开发环境
+      // 名称、环境与命令行访问排在类型上面，是用户先填的、和类型无关的几项；它们此前
+      // 会被默认值盖掉：先选了「生产」或「只读」再点类型，就悄悄变回了开发环境、关
       name: prev.name,
-      environment: prev.environment ?? defaultConfig.environment
+      environment: prev.environment ?? defaultConfig.environment,
+      agent_access: prev.agent_access ?? defaultConfig.agent_access
     }));
   };
 
@@ -309,7 +310,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
       ...prev,
       ...presetConfig,
       name: prev.name,
-      environment: prev.environment ?? presetConfig.environment
+      environment: prev.environment ?? presetConfig.environment,
+      agent_access: prev.agent_access ?? presetConfig.agent_access
     }));
   };
 
