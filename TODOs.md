@@ -364,6 +364,9 @@
   - [x] `mongo <连接> collections / find / count / aggregate / explain / structure`：只有读的接口，管道里有 `$out` / `$merge`
     解析时就拒（拿掉这道拦截，两条测试变红）。文档按 relaxed Extended JSON 输出，数量与字节上限同 `query`。
     SQL 命令遇到 Mongo 连接时指向 `mongo`。cu 上的 MongoDB 8.0 真库：六个操作都读到探针集合，被拒的 `$out` 没写出集合。
+  - [x] `redis <连接> keyspaces / scan / get / command`：`command` 只放行服务器 `COMMAND INFO` 里带 `readonly` 旗标的
+    （子命令按 `名字|子命令` 查）。cu 上的 Redis 7.4 真库：`SET`、`DEL`、`FLUSHDB`、`CONFIG SET`、会写的 `EVAL`、`SELECT`、
+    `BLPOP` 都被拒、值不变；`GET`、`OBJECT ENCODING` 照常。拿掉旗标检查，`SET` 真的写了进去，测试变红。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
 - [ ] B4 驱动按 Cargo feature 拆分
