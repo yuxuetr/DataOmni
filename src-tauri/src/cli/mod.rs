@@ -128,6 +128,10 @@ Commands:
                      (except _refresh, _flush, _forcemerge, _cache); POST only to
                      search endpoints (_search, _count, _msearch, _mget, ...);
                      PUT and DELETE never. The body is parsed JSON when it is JSON.
+  csv-preview <file> [--delimiter C] [--no-header] [--rows N]
+                     A local CSV file: the delimiter and encoding it was read with
+                     (sniffed unless given), the header, the first rows (50 by
+                     default) and the rows whose field count does not match.
   test <connection>  Connect the way query does, run nothing, report ok. When a
                      network connection fails, error.diagnosis says whether the
                      name resolved and the port answered.
@@ -241,6 +245,7 @@ fn dispatch(args: &[String], dirs: &Dirs) -> Result<Output, CliError> {
     "redis" => redis(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "neo4j" => neo4j(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
     "es" => es(rest, config_dir, dirs.log.as_deref()).map(Output::Json),
+    "csv-preview" => csv_preview(rest).map(Output::Json),
     other => Err(CliError::usage(format!("unknown command {other}; run `dataomni cli help`"))),
   }
 }
@@ -610,6 +615,44 @@ fn run_es(
     "the Elasticsearch request",
     elasticsearch::run(&resolved, arguments),
   )
+}
+
+/// 本机的 CSV 文件：嗅探分隔符与编码（UTF-8，否则 gb18030），给表头、开头几行和字段数对不上的行。
+/// 不碰连接，也就不留痕
+fn csv_preview(rest: &[String]) -> Result<Value, CliError> {
+  let usage = "usage: dataomni cli csv-preview <file> [--delimiter C] [--no-header] [--rows N]";
+  let mut path = None;
+  let mut delimiter = None;
+  let mut has_header = true;
+  let mut rows = crate::services::csv_import::PREVIEW_ROWS;
+  let mut iter = rest.iter();
+  while let Some(argument) = iter.next() {
+    match argument.as_str() {
+      "--delimiter" => match iter.next().map(|text| text.as_bytes()) {
+        Some([single]) => delimiter = Some(*single),
+        _ => return Err(CliError::usage("--delimiter takes one ASCII character")),
+      },
+      "--no-header" => has_header = false,
+      "--rows" => rows = number_after("--rows", iter.next(), 1, MAX_ROW_LIMIT as u64)? as usize,
+      _ if path.is_none() => path = Some(PathBuf::from(argument)),
+      _ => return Err(CliError::usage(usage)),
+    }
+  }
+  let path = path.ok_or_else(|| CliError::usage(usage))?;
+  let preview = crate::services::csv_import::preview_csv(&path, delimiter, has_header, rows)
+    .map_err(|error| CliError {
+      exit: Exit::Usage,
+      kind: "file",
+      message: error.to_string(),
+      diagnosis: None,
+    })?;
+  let mut output = json!({ "schema": OUTPUT_SCHEMA, "file": path.to_string_lossy() });
+  if let (Value::Object(output), Ok(Value::Object(body))) =
+    (&mut output, serde_json::to_value(preview))
+  {
+    output.extend(body);
+  }
+  Ok(output)
 }
 
 /// 在一个新的运行时里跑完 `work`，到点没完就报超时。`what` 是报错里的主语
@@ -1505,6 +1548,36 @@ mod tests {
     let (code, _, stderr) = run_in(&dir, &["mongo", "docs", "collections"]);
     assert_eq!(code, Exit::Unavailable as i32, "{stderr}");
     assert_eq!(json_of(&stderr)["error"]["kind"], "connect");
+  }
+
+  /// 分隔符是嗅探出来的（要求开头几行字段数一致）；字段数不对的行单独列出；文件不在是参数错
+  #[test]
+  fn csv_preview_sniffs_the_delimiter_and_lists_ragged_rows() {
+    let dir = ConfigDir::with(&[]);
+    let file = dir.0.join("people.csv");
+    std::fs::write(&file, "id;name\n1;ada\n2;bob\n3;cy\n").expect("csv");
+    let path = file.to_string_lossy().into_owned();
+    let (code, stdout, stderr) = run_in(&dir, &["csv-preview", &path]);
+    assert_eq!(code, 0, "{stderr}");
+    let output = json_of(&stdout);
+    assert_eq!(output["delimiter"], json!(";"), "{stdout}");
+    assert_eq!(output["headers"], json!(["id", "name"]));
+    assert_eq!(output["rows"].as_array().map(Vec::len), Some(3));
+
+    let (code, stdout, _) = run_in(&dir, &["csv-preview", &path, "--no-header", "--rows", "1"]);
+    assert_eq!(code, 0);
+    assert_eq!(json_of(&stdout)["rows"], json!([["id", "name"]]));
+
+    let ragged = dir.0.join("ragged.csv");
+    std::fs::write(&ragged, "id;name\n1;ada\n2;bob;extra\n").expect("csv");
+    let ragged = ragged.to_string_lossy().into_owned();
+    let (code, stdout, _) = run_in(&dir, &["csv-preview", &ragged, "--delimiter", ";"]);
+    assert_eq!(code, 0);
+    assert_eq!(json_of(&stdout)["ragged"][0]["fields"], json!(3), "{stdout}");
+
+    let missing = dir.0.join("missing.csv").to_string_lossy().into_owned();
+    assert_eq!(run_in(&dir, &["csv-preview", &missing]).0, Exit::Usage as i32);
+    assert_eq!(run_in(&dir, &["csv-preview", &path, "--delimiter", "ab"]).0, Exit::Usage as i32);
   }
 
   #[test]

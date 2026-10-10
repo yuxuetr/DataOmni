@@ -374,6 +374,7 @@
     `POST` 只到查询类端点，`PUT` / `DELETE` 一律拒）。设计文档里 `POST … _mapping` 放行是错的（那是改映射），已更正。
     cu 上的 ES 8.19：`_search`、`_count`、`_msearch` 读到数据，写的六种被拒、文档数不变；实测 `POST /索引/_doc/_search`
     真的写进一个 id 为 `_search` 的文档，所以不按子串判。放宽 `POST`，两条测试变红。ES 9 与 OpenSearch 没跑（门是纯函数，传输层是界面那份）。
+  - [x] `csv-preview <文件>`：复用导入的预览（嗅探分隔符与编码、参差行）。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
 - [ ] ~~B3 云库认证~~ **不做**（2026-10-05 定）
 - [ ] B4 驱动按 Cargo feature 拆分
