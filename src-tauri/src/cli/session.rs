@@ -60,9 +60,9 @@ enum Pool {
   ClickHouse(Arc<clickhouse::ClickHousePool>),
 }
 
-/// 建立连接最多等多久（含隧道）。和语句的超时分开算：库没起来时 sqlx 会对「连接被拒」
-/// 退避重试到池子的 `acquire_timeout`（30 秒），等满了再报成语句超时，Agent 就分不清是库
-/// 没起来还是语句太慢
+/// 建立连接最多等多久（含隧道）。和语句的超时分开算：主机不回应时 sqlx 会等到池子的
+/// `acquire_timeout`（30 秒），等满了再报成语句超时，Agent 就分不清是库没起来还是语句太慢。
+/// 端口直接拒绝连接的那种不用等这么久，`sqlx_pool::open` 一秒后就报
 pub(super) const CONNECT_DEADLINE: Duration = Duration::from_secs(10);
 
 /// `profile` 已经补上了凭据（`resolve_for_agents`）。`config_dir` 用来解析相对路径的

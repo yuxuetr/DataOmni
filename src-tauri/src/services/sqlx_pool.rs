@@ -45,16 +45,59 @@ fn describe_open_error(error: &sqlx::Error) -> String {
   }
 }
 
+/// 开池子多久还没连上，就去探一下端口是不是在拒绝连接。健康的连接这时多半已经好了，
+/// 探测碰不到它们；探测本身会在服务器上留下一条没握手就断开的 TCP 连接，所以不一开始就探
+const REFUSAL_PROBE_DELAY: Duration = Duration::from_secs(1);
+
+/// 走 TCP 的才探；Unix 套接字没有端口可探
+fn tcp_endpoint(
+  socket: Option<&std::path::PathBuf>,
+  host: &str,
+  port: u16,
+) -> Option<(String, u16)> {
+  match socket {
+    Some(_) => None,
+    None if host.starts_with('/') => None,
+    None => Some((host.to_string(), port)),
+  }
+}
+
+/// 端口拒绝连接时 sqlx 当作「库还在启动」，退避重试到 acquire 超时（30 秒），最后报成
+/// 主机没回应（`CONNECT_TIMED_OUT`）——原因说错了，还白等。这里和开池子并行：过了
+/// [`REFUSAL_PROBE_DELAY`] 还没连上就探一次端口，确实被拒就立刻报 sqlx 自己的那句话；
+/// 探得通、探不出结论都不打断，照常等池子
+async fn unless_refused<T>(
+  endpoint: Option<(String, u16)>,
+  opening: impl std::future::Future<Output = Result<T, sqlx::Error>>,
+) -> Result<T, String> {
+  let refused = async {
+    let Some((host, port)) = endpoint else {
+      return std::future::pending().await;
+    };
+    tokio::time::sleep(REFUSAL_PROBE_DELAY).await;
+    let probe = tokio::net::TcpStream::connect((host.as_str(), port));
+    match tokio::time::timeout(REFUSAL_PROBE_DELAY, probe).await {
+      Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionRefused => error,
+      _ => std::future::pending().await,
+    }
+  };
+  tokio::select! {
+    opened = opening => opened.map_err(|error| describe_open_error(&error)),
+    error = refused => Err(describe_open_error(&sqlx::Error::Io(error))),
+  }
+}
+
 pub async fn open(connection_string: &str) -> Result<DbPool, String> {
   if connection_string.starts_with("postgres://") || connection_string.starts_with("postgresql://")
   {
     let options =
       PgConnectOptions::from_str(connection_string).map_err(|error| error.to_string())?;
-    let pool = PgPoolOptions::new()
-      .idle_timeout(IDLE_TIMEOUT)
-      .connect_with(options)
-      .await
-      .map_err(|error| describe_open_error(&error))?;
+    let endpoint = tcp_endpoint(options.get_socket(), options.get_host(), options.get_port());
+    let pool = unless_refused(
+      endpoint,
+      PgPoolOptions::new().idle_timeout(IDLE_TIMEOUT).connect_with(options),
+    )
+    .await?;
     return Ok(DbPool::Postgres(pool));
   }
   if handles(connection_string) {
@@ -68,7 +111,8 @@ pub async fn open(connection_string: &str) -> Result<DbPool, String> {
       .timezone(None)
       .pipes_as_concat(false)
       .no_engine_substitution(false);
-    let pool = MySqlPoolOptions::new()
+    let endpoint = tcp_endpoint(options.get_socket(), options.get_host(), options.get_port());
+    let opening = MySqlPoolOptions::new()
       .idle_timeout(IDLE_TIMEOUT)
       // 握手时 sqlx 写死了 `CLIENT_IGNORE_SPACE`，服务器据此往会话的 sql_mode 加 `IGNORE_SPACE`，
       // 函数名成了保留字：`CREATE TABLE position (x INT)` 报语法错。服务器本来就开着的不动。
@@ -88,9 +132,8 @@ pub async fn open(connection_string: &str) -> Result<DbPool, String> {
           .map(|_| ())
         })
       })
-      .connect_with(options)
-      .await
-      .map_err(|error| describe_open_error(&error))?;
+      .connect_with(options);
+    let pool = unless_refused(endpoint, opening).await?;
     return Ok(DbPool::MySql(pool));
   }
   Err(format!("unsupported connection string scheme: {}", scheme_of(connection_string)))
@@ -245,6 +288,31 @@ mod tests {
     // 其余的照驱动原话：拒绝连接、认证失败这些它自己说得清
     let refused = sqlx::Error::Io(std::io::Error::from(std::io::ErrorKind::ConnectionRefused));
     assert_eq!(describe_open_error(&refused), refused.to_string());
+  }
+
+  /// 端口拒绝连接时 sqlx 当作「库还在启动」退避重试到 acquire 超时（30 秒），最后报成
+  /// 主机没回应。命令行打包版抽查时发现：诊断里 TCP 0 ms 就被拒，报错却等满了上限
+  #[test]
+  fn a_refused_port_fails_fast_and_says_refused() {
+    tauri::async_runtime::block_on(async {
+      let port = match std::net::TcpListener::bind("127.0.0.1:0") {
+        Ok(listener) => listener.local_addr().map(|address| address.port()).unwrap_or(1),
+        Err(error) => panic!("bind: {error}"),
+      };
+      for url in [
+        format!("postgres://u:p@127.0.0.1:{port}/db?sslmode=disable"),
+        format!("mysql://u:p@127.0.0.1:{port}/db"),
+      ] {
+        match tokio::time::timeout(Duration::from_secs(5), open(&url)).await {
+          Err(_) => panic!("{url}: still waiting after 5 s"),
+          Ok(Ok(_)) => panic!("{url}: nothing listens there"),
+          Ok(Err(error)) => {
+            assert!(!error.starts_with(CONNECT_TIMED_OUT), "{error}");
+            assert!(error.to_lowercase().contains("refused"), "{error}");
+          }
+        }
+      }
+    });
   }
 
   #[test]
