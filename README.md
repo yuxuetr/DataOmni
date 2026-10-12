@@ -556,6 +556,8 @@ bun install
 ### 未发布
 
 - 命令行 `dataomni cli`：给终端与 AI Agent 只读地用应用里配好的连接，见上文「命令行与 Agent」与用户手册
+- 修复：导出 JSON 时 MySQL 的整数（含 `INT`）与 SQLite 的 `INTEGER` 写成了字符串（`"1"`）。现在各库一致：
+  不超过 ±(2^53−1) 的整数写成数字，超出的（如 `BIGINT UNSIGNED` 的最大值）和 `DECIMAL` 仍写成字符串，不丢精度
 
 ### v0.6.1（2026-10-07）
 

@@ -408,13 +408,24 @@ pub fn csv_escape(field: &str, delimiter: &str) -> String {
   }
 }
 
+/// JavaScript 的 `Number.MAX_SAFE_INTEGER`
+const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+
 pub fn json_field(value: &JsonValue) -> JsonValue {
   match tagged_parts(value) {
     None => value.clone(),
     Some(("binary", hex)) => JsonValue::String(format!("0x{hex}")),
     Some(("json", text)) => serde_json::from_str::<JsonValue>(text)
       .unwrap_or_else(|_| JsonValue::String(text.to_string())),
-    // bigint / decimal 写成字符串。JSON 数字在实践中就是 IEEE-754 双精度，
+    // 安全范围内的 bigint 写成数字：MySQL 的全部整数与 SQLite 的 INTEGER 都标成 bigint，
+    // 否则 INT 列的 1 也成了 "1"。比对原文，与前端 `String(number) === value` 同一判据
+    Some(("bigint", text)) => match text.parse::<i64>() {
+      Ok(number) if number.unsigned_abs() <= MAX_SAFE_INTEGER && number.to_string() == text => {
+        JsonValue::from(number)
+      }
+      _ => JsonValue::String(text.to_string()),
+    },
+    // 超出安全整数的 bigint 与所有 decimal 写成字符串。JSON 数字在实践中就是 IEEE-754 双精度，
     // 消费方 JSON.parse 一个 20 位整数必然丢位；加引号才能无损往返。
     Some((_, text)) => JsonValue::String(text.to_string()),
   }

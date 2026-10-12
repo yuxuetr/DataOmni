@@ -89,7 +89,7 @@ describe('toJson', () => {
     expect(JSON.parse(json(['a'], [[null]]))).toEqual([{ a: null }]);
   });
 
-  it('bigint 与 decimal 写成字符串', () => {
+  it('超出安全整数的 bigint 与 decimal 写成字符串', () => {
     // JSON 数字在实践中就是 IEEE-754 双精度：任何消费方 JSON.parse 一个
     // 20 位整数都会丢位。加引号才能无损往返，这也是应用内部用字符串承载它们的原因。
     const out = JSON.parse(json(['a'], [[{ type: 'bigint', value: '9223372036854775807' }]]));

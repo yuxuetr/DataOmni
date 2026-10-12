@@ -293,6 +293,64 @@
       "expected": "[\n  {\n    \"text\": \"plain\",\n    \"number\": 1.5,\n    \"flag\": false,\n    \"nothing\": null,\n    \"big\": \"9007199254740993\",\n    \"money\": \"1.10\",\n    \"when\": \"2024-01-01 12:00:00\",\n    \"doc\": {\n      \"a\": [\n        1,\n        2\n      ]\n    },\n    \"blob\": \"0xdeadbeef\"\n  }\n]"
     },
     {
+      "name": "json-bigint-within-the-safe-range-is-a-number",
+      "why": "MySQL 的全部整数与 SQLite 的 INTEGER 解码时都标成 bigint；只有超出 ±(2^53−1)、JSON.parse 会丢位的才加引号，否则同一个 1 在 PG 的 int4 下是数字、在 MySQL 的 INT 下是字符串。",
+      "columns": [
+        "small",
+        "negative",
+        "zero",
+        "largestSafe",
+        "smallestSafe",
+        "pastSafe",
+        "belowSafe",
+        "unsigned64"
+      ],
+      "rows": [
+        {
+          "small": {
+            "type": "bigint",
+            "value": "1"
+          },
+          "negative": {
+            "type": "bigint",
+            "value": "-42"
+          },
+          "zero": {
+            "type": "bigint",
+            "value": "0"
+          },
+          "largestSafe": {
+            "type": "bigint",
+            "value": "9007199254740991"
+          },
+          "smallestSafe": {
+            "type": "bigint",
+            "value": "-9007199254740991"
+          },
+          "pastSafe": {
+            "type": "bigint",
+            "value": "9007199254740992"
+          },
+          "belowSafe": {
+            "type": "bigint",
+            "value": "-9007199254740992"
+          },
+          "unsigned64": {
+            "type": "bigint",
+            "value": "18446744073709551615"
+          }
+        }
+      ],
+      "options": {
+        "format": "json",
+        "delimiter": ",",
+        "includeHeader": true,
+        "nullText": "NULL",
+        "byteOrderMark": false
+      },
+      "expected": "[\n  {\n    \"small\": 1,\n    \"negative\": -42,\n    \"zero\": 0,\n    \"largestSafe\": 9007199254740991,\n    \"smallestSafe\": -9007199254740991,\n    \"pastSafe\": \"9007199254740992\",\n    \"belowSafe\": \"-9007199254740992\",\n    \"unsigned64\": \"18446744073709551615\"\n  }\n]"
+    },
+    {
       "name": "json-two-rows-and-escaping",
       "columns": [
         "a",

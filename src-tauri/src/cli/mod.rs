@@ -1990,8 +1990,8 @@ mod tests {
     let rows: Value =
       serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap_or_default())
         .unwrap_or_default();
-    // 64 位整数写成字符串，同界面导出（`export_writer::json_field`：JSON 的数到了消费方是双精度）
-    assert_eq!(rows, json!([{ "id": "1" }, { "id": "2" }]));
+    // SQLite 的 INTEGER 标成 bigint，安全范围内照样是数，同界面导出（`export_writer::json_field`）
+    assert_eq!(rows, json!([{ "id": 1 }, { "id": 2 }]));
 
     let refused = dir.0.join("refused.csv");
     let refused_path = refused.to_string_lossy().into_owned();

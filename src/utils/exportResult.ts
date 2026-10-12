@@ -331,7 +331,14 @@ function jsonField(value: SerializedResultValue): unknown {
       return value.value;
     }
   }
-  // bigint / decimal 写成字符串。JSON 数字在实践中就是 IEEE-754 双精度，
-  // 消费方 JSON.parse 一个 20 位整数必然丢位；加引号才能无损往返。
+  // 超出安全整数的 bigint 与所有 decimal 写成字符串。JSON 数字在实践中就是 IEEE-754 双精度，
+  // 消费方 JSON.parse 一个 20 位整数必然丢位；加引号才能无损往返。安全范围内的 bigint 写成数字：
+  // MySQL 的全部整数与 SQLite 的 INTEGER 都标成 bigint，否则 INT 列的 1 也成了 "1"
+  if (value.type === 'bigint') {
+    const number = Number(value.value);
+    if (Number.isSafeInteger(number) && String(number) === value.value) {
+      return number;
+    }
+  }
   return value.value;
 }
