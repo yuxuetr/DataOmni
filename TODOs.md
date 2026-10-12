@@ -396,6 +396,15 @@
     三种情况在临时 HOME 里跑过。顺带修：macOS 上经软链接启动时 `current_exe` 给的是软链接自己的路径（实测），
     命令行照它找不到安装包里的 Instant Client；先解析软链接，去掉这一步测试变红。
   - [x] README（特性一节、安装后的软链接、更新日志）与用户手册（「命令行与 Agent」一章）。
+  - [x] 打包版抽查（2026-10-12，`/Applications` 里 10-10 构建的 0.6.1）：临时 HOME 里放免密的测试连接（不碰钥匙串，
+    不动用户的 `connections.json`），本机 Docker 的 PG 16、MySQL 8.4、Redis 7、ES 8.19、Neo4j 5，cu 上用完即删的 MongoDB 8.0，
+    加 SQLite、DuckDB 文件。全部命令都跑了：读的照常；`DELETE`、多条语句、`nextval()`、CTE 里的写、`EXPLAIN ANALYZE`、
+    `$out`、`SET` / `FLUSHDB`、Cypher `CREATE`、ES 的 `PUT` 与 `/_doc/_search` 都是退出码 3，数据不变；生产与关闭的连接看不见；
+    连不上是 4 并带诊断；留痕里没有语句原文。发现两处，没修：
+    - JSON 导出里 MySQL 的所有整数（含 32 位 `INT`）与 SQLite 的 `INTEGER` 写成字符串（`"1"`），PG 的 `int4`、DuckDB、Oracle、
+      ClickHouse 的小整数写成数字；`query` 输出两边都是数字。原因：这两家解码一律标 `bigint`，`json_field` 把 `bigint` 一律加引号。
+      界面导出同一条路径。
+    - 端口直接拒绝连接（诊断里 TCP 0 ms）时，命令行仍等满 10 秒的连接上限才报错。
   - A8a 的 1.0 范围做完（第一、二批 + guide + 安装）。第三批（写）按设计文档 §6 等有人要再做；MCP 见 A8。
     还没在 CI 上跑过的：打 tag 时 release.yml 的 hardened runtime 打包（要用户批准打 tag）。
 - [!] B1b KingbaseES：**阻塞，没有安装包**。解除条件：拿到试用安装包。
