@@ -400,10 +400,12 @@
     不动用户的 `connections.json`），本机 Docker 的 PG 16、MySQL 8.4、Redis 7、ES 8.19、Neo4j 5，cu 上用完即删的 MongoDB 8.0，
     加 SQLite、DuckDB 文件。全部命令都跑了：读的照常；`DELETE`、多条语句、`nextval()`、CTE 里的写、`EXPLAIN ANALYZE`、
     `$out`、`SET` / `FLUSHDB`、Cypher `CREATE`、ES 的 `PUT` 与 `/_doc/_search` 都是退出码 3，数据不变；生产与关闭的连接看不见；
-    连不上是 4 并带诊断；留痕里没有语句原文。发现两处，没修：
-    - JSON 导出里 MySQL 的所有整数（含 32 位 `INT`）与 SQLite 的 `INTEGER` 写成字符串（`"1"`），PG 的 `int4`、DuckDB、Oracle、
+    连不上是 4 并带诊断；留痕里没有语句原文。发现两处：
+    - [x] JSON 导出里 MySQL 的所有整数（含 32 位 `INT`）与 SQLite 的 `INTEGER` 写成字符串（`"1"`），PG 的 `int4`、DuckDB、Oracle、
       ClickHouse 的小整数写成数字；`query` 输出两边都是数字。原因：这两家解码一律标 `bigint`，`json_field` 把 `bigint` 一律加引号。
-      界面导出同一条路径。
+      界面导出同一条路径。修（`bffc111`）：不超过 ±(2^53−1) 的 bigint 写成数字，与 DuckDB / Oracle / ClickHouse 同一判据；
+      前后端同改，共用语料加边界用例（改前两边都红）。MySQL 8.4 经命令行复验。代价：同一个 bigint 列里，小值是数、
+      大值是字符串（那三家本来就这样）；PG 的 `int8` 小值也从字符串变成数。
     - 端口直接拒绝连接（诊断里 TCP 0 ms）时，命令行仍等满 10 秒的连接上限才报错。
   - A8a 的 1.0 范围做完（第一、二批 + guide + 安装）。第三批（写）按设计文档 §6 等有人要再做；MCP 见 A8。
     还没在 CI 上跑过的：打 tag 时 release.yml 的 hardened runtime 打包（要用户批准打 tag）。
