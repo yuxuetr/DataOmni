@@ -107,7 +107,7 @@ bun tauri build --config src-tauri/tauri.oracle.conf.json
 
 平台要写明 `windows-x64`：不写时脚本按 `uname` 判断，而 `bash` 若解析到 WSL 的那一个会被认成 `linux-x64`，取来的是 Linux 的库。
 `bun run package` 就是这两步，但不点名平台，所以 Windows 上不要用它。文件集按 DLL 导入表挑出（`oci.dll`、`oraociicus.dll`
-与三个加密模块，约 115 MB），**还没在 Windows 上真连过 Oracle**。
+与三个加密模块，约 115 MB）。2026-10 在 Windows 11 上用这套文件连 Docker 里的 Oracle Free 23，`oracle_smoke` 28 项全过。
 ## 构建前检查
 完整检查会运行前端静态检查、单元测试、Rust 格式检查、Clippy 和 Rust 测试：
 ```powershell
@@ -144,6 +144,10 @@ bun tauri build
 3. 若问题持续，在可访问 GitHub Release 的网络环境中预下载与当前 Tauri CLI 版本匹配的 WiX 和 NSIS 工具，校验发布方提供的哈希后放入 `%LOCALAPPDATA%\tauri` 缓存目录，或改用可直接访问 GitHub 的网络/代理。
 
 不要从不可信镜像下载 WiX、NSIS 或 DLL 插件，也不要跳过哈希校验。
+### `页面文件太小，无法完成操作。 (os error 1455)`
+原因：Rust 并行编译（尤其 `cargo test` 链接多个测试程序时）占用的提交内存超过了物理内存加页面文件。
+
+处理：限制并行数后重试，例如 `$env:CARGO_BUILD_JOBS=2; bun run rust:test`；或者在「系统 → 高级系统设置 → 性能 → 虚拟内存」里调大页面文件。
 ### Vite 的大包警告
 `Some chunks are larger than 500 kB after minification` 只是一条构建警告，不会阻止生成安装包。需要优化启动体积时，可将大型功能改为动态导入，或在 Vite 配置中设置 Rollup 的 `manualChunks`。
 ### Rust 的 future-incompatibility 警告
