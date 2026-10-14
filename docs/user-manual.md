@@ -1062,6 +1062,9 @@ TiDB 与 OceanBase 上同时改列和改表名会拆成两条语句（它们不�
 
 **装到 PATH 上**：`scripts/install-macos.sh` 会建 `~/.local/bin/dataomni`。用安装包装的，自己链一下：
 `ln -s /Applications/DataOmni.app/Contents/MacOS/dataomni ~/.local/bin/dataomni`。
+Windows 上就是安装目录里的 `dataomni.exe`（把那个目录加进 PATH）。它是窗口程序，终端里直接敲能看到输出，
+但终端不等它结束、拿不到退出码；脚本里要退出码就接管道（PowerShell `dataomni cli … | Out-String`）。
+Agent 本来就经管道调用，不受影响。
 
 **常用命令**（`dataomni cli help` 有全部）：
 

@@ -170,7 +170,9 @@ VC++ 运行库已装，账户不是管理员（MSI 要 UAC，没测）。界面�
 - 系统错误文字是本地化的（「由于目标计算机积极拒绝，无法连接。 (os error 10061)」），两条断言英文 `refused`
   的测试改成也认 `os error 10061`；前端按错误种类判断，不受影响。
 - 三个 vitest 用 `new URL(..).pathname` 拼路径，Windows 上成了 `C:\C:\...`，改用 `fileURLToPath`。
-- 发布版是 GUI 子系统，`dataomni cli` 在 Windows 终端里看不到输出（`rfcs/agent-cli.md` §4 已记，不在这份清单里）。
+- 发布版是 GUI 子系统，`dataomni cli` 在 Windows 终端里看不到输出。2026-10-14 改成启动时借用终端的控制台
+  （`rfcs/agent-cli.md` §4）：隐藏的 PowerShell 窗口里直接跑 `cli --help`，读屏幕缓冲区看到全文；管道调用的 JSON、
+  标准输入与退出码 2 都照旧。
 
 ### 2026-10-14：打包版界面回归（`release-regression.md` 的 R7-windows）
 

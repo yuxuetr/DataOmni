@@ -565,6 +565,8 @@ bun install
 - 修复：两条连接配置连的是同一台、同一个库、同一个用户（如 SQL Server 上一条主连接、一条只看某库的副本）时，
   从一条切到另一条后显示「已连接」，对象树却报未连接、重试也没用；断线后重连同一条也可能这样。
   影响 SQL Server、Oracle、DuckDB、ClickHouse、MongoDB、Redis、Neo4j、Elasticsearch
+- 修复（Windows）：在终端里直接敲 `dataomni cli …` 什么也不印（发布版是窗口程序）；现在借用终端的控制台输出。
+  经管道调用（Agent）本来就正常
 
 ### v0.6.1（2026-10-07）
 

@@ -31,7 +31,7 @@
 | DDL 生成、数据字典、改行语句、SQL 格式化都只在前端 | `tableDdl.ts`（787）、`schemaDraft.ts`（508）、`dataDictionary.ts`（112）、`rowStatements.ts`（490）、`formatSql.ts`（289） | 移植成本差别很大，按 §6 分批 |
 | 查询历史、工作区、设置都存在 WebView 的 localStorage 里 | `queryHistoryStorage.ts`、`workspacePersistence.ts` | CLI 读不到，也不打算读 |
 | Neo4j 已有「先 EXPLAIN 问查询类型」 | `neo4j_query_type` | Neo4j 的只读判断由服务器回答 |
-| Windows 发布版的主程序是 GUI 子系统 | `main.rs` 的 `windows_subsystem = "windows"` | Windows 上主程序打印不到终端，见 §4 |
+| Windows 发布版的主程序是 GUI 子系统 | `main.rs` 的 `windows_subsystem = "windows"` | 终端里直接敲时没有标准输出；`cli` 启动时借用终端的控制台，见 §4 |
 
 ## 3. 动手前要做的实验
 
@@ -127,8 +127,11 @@ DDL、DML、`url()` / `file()` / `s3()` 表函数、`INSERT INTO FUNCTION`、`SE
   退出码 4，提示「钥匙串在等你授权：请在弹框里点『始终允许』后重试」。框留给人点，Agent 不会卡死。
 - 退路（没用上，留着备查）：CLI 不碰钥匙串，改成连接正在运行的应用，凭据留在应用进程里；代价是应用不开着就用不了。
 - **Linux、Windows 没有这个问题**：Secret Service 与 Windows 凭据管理器不按程序区分访问权限。
-  Windows 因为 GUI 子系统打印不到终端，到时要么启动时 `AttachConsole(ATTACH_PARENT_PROCESS)`，
-  要么另出一个控制台程序 `dataomni-cli.exe`。Windows 按用户的安排后放。
+  Windows 发布版是 GUI 子系统：被管道或重定向调用（Agent 就是这样）时输出与退出码本来就正常；在终端里直接敲时
+  没有标准输出。2026-10-14 用户定了第一种：`cli` 启动时，标准输出或标准错误没有句柄才
+  `AttachConsole(ATTACH_PARENT_PROCESS)`，已重定向的句柄原样放回（`main.rs`）。代价是终端不等 GUI 程序结束：
+  输出可能印在下一个提示符之后，PowerShell 的 `$LASTEXITCODE` 与 cmd 的 `%errorlevel%` 拿不到退出码——要退出码时
+  用管道（`| Out-String`）或 cmd 的 `start /wait`。另出 `dataomni-cli.exe` 能根治，但它是另一个程序（见上一条），没做。
 - **每次调用一个进程**：读 `connections.json`（只读，CLI 从不写它）、取口令、开连接或隧道、执行、关掉。
   E6：经隧道到远处的跳板机每次要几秒（§3.1），用户定了 1.0 之前不做常驻，放到 MCP（A8）一起做。
 - **找得到它**：macOS 上是 `/Applications/DataOmni.app/Contents/MacOS/dataomni`。
