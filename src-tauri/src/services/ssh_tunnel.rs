@@ -212,8 +212,8 @@ fn expand_home(path: &str) -> String {
   let Some(rest) = path.strip_prefix('~') else {
     return path.to_string();
   };
-  // `~` 单独一个，或者 `~/…`；`~name` 的下一个字符不是分隔符，不动它
-  if !rest.is_empty() && !rest.starts_with('/') {
+  // `~` 单独一个，或者 `~/…` 或 `~\…`；`~name` 的下一个字符不是分隔符，不动它
+  if !rest.is_empty() && !rest.starts_with('/') && !rest.starts_with('\\') {
     return path.to_string();
   }
   let Some(home) = std::env::home_dir() else {
@@ -570,6 +570,8 @@ mod tests {
 
     assert_eq!(expand_home("~/.ssh/id_rsa"), format!("{home}/.ssh/id_rsa"));
     assert_eq!(expand_home("~"), home);
+    // Windows 用户手打的是反斜杠（清单 5.4）
+    assert_eq!(expand_home("~\\.ssh\\id_rsa"), format!("{home}\\.ssh\\id_rsa"));
 
     // 绝对路径与相对路径原样通过
     assert_eq!(expand_home("/Users/someone/.ssh/id_rsa"), "/Users/someone/.ssh/id_rsa");

@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { en } from './en';
 import { zh } from './zh';
@@ -13,7 +14,7 @@ function placeholders(text: string): string[] {
 
 /** 遍历 src 下所有 .ts / .tsx，测试文件除外（那里的键是随手编的） */
 function sourceFiles(): Array<[string, string]> {
-  const root = new URL('../..', import.meta.url).pathname;
+  const root = fileURLToPath(new URL('../..', import.meta.url));
   const found: Array<[string, string]> = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -21,7 +22,7 @@ function sourceFiles(): Array<[string, string]> {
       if (entry.isDirectory()) {
         walk(path);
       } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
-        found.push([path.slice(root.length), readFileSync(path, 'utf8')]);
+        found.push([path.slice(root.length).split('\\').join('/'), readFileSync(path, 'utf8')]);
       }
     }
   };

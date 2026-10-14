@@ -49,6 +49,10 @@ fn describe_open_error(error: &sqlx::Error) -> String {
 /// 探测碰不到它们；探测本身会在服务器上留下一条没握手就断开的 TCP 连接，所以不一开始就探
 const REFUSAL_PROBE_DELAY: Duration = Duration::from_secs(1);
 
+/// 探测本身等多久。不能跟 [`REFUSAL_PROBE_DELAY`] 一样短：Windows 收到 RST 后还会重发 SYN，
+/// 本机被拒实测 2 秒、跨公网 3 秒多才报出来，1 秒的话探测永远等不到结论，又退回等满 30 秒
+const REFUSAL_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// 走 TCP 的才探；Unix 套接字没有端口可探
 fn tcp_endpoint(
   socket: Option<&std::path::PathBuf>,
@@ -76,7 +80,7 @@ async fn unless_refused<T>(
     };
     tokio::time::sleep(REFUSAL_PROBE_DELAY).await;
     let probe = tokio::net::TcpStream::connect((host.as_str(), port));
-    match tokio::time::timeout(REFUSAL_PROBE_DELAY, probe).await {
+    match tokio::time::timeout(REFUSAL_PROBE_TIMEOUT, probe).await {
       Ok(Err(error)) if error.kind() == std::io::ErrorKind::ConnectionRefused => error,
       _ => std::future::pending().await,
     }
@@ -308,7 +312,12 @@ mod tests {
           Ok(Ok(_)) => panic!("{url}: nothing listens there"),
           Ok(Err(error)) => {
             assert!(!error.starts_with(CONNECT_TIMED_OUT), "{error}");
-            assert!(error.to_lowercase().contains("refused"), "{error}");
+            // Windows 的系统报错跟着界面语言走（中文是「积极拒绝」），只有错误码不变
+            let error_lower = error.to_lowercase();
+            assert!(
+              error_lower.contains("refused") || error_lower.contains("os error 10061"),
+              "{error}"
+            );
           }
         }
       }

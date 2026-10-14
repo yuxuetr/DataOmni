@@ -230,6 +230,9 @@ MySQL / PostgreSQL 协议，连上之后的用法和 MySQL / PostgreSQL 一样�
 也可以在表单里选 SQLite 或 DuckDB 手动填路径。路径留空或填 `:memory:` 是内存数据库，
 关掉应用内容就没了。
 
+Windows 上库文件的完整路径不要超过 260 个字符：SQLite 与 DuckDB 打不开更长的路径（中文、空格、
+`\\服务器\共享` 这类网络路径都没问题）。
+
 ### 密码存在哪里
 
 密码存进系统钥匙串（macOS 钥匙串、Windows 凭据管理器、Linux Secret Service），
@@ -290,6 +293,10 @@ TLS」处理；「校验证书颁发机构」按「校验证书和主机名」�
 跳板机的主机密钥按 `~/.ssh/known_hosts` 校验，和命令行 `ssh` 读的是同一份。
 没有记录，或者记录对不上，都会拒绝连接，而且没有「跳过校验」的开关。第一次连
 一台新跳板机前，先在终端里 `ssh` 上去一次，核对指纹后把它加进 known_hosts。
+没有记录时报错里会带上主机的 SHA256 指纹，可以和 `ssh-keygen -lf` 的输出对照。
+
+Windows 上 `~` 指 `%USERPROFILE%`：known_hosts 在 `%USERPROFILE%\.ssh\known_hosts`，私钥路径
+写 `~\.ssh\id_ed25519` 或 `~/.ssh/id_ed25519` 都行。
 
 不支持的：`~/.ssh/config`、ssh-agent、多级跳板、证书型主机密钥。
 
@@ -904,6 +911,9 @@ TiDB 与 OceanBase 上同时改列和改表名会拆成两条语句（它们不�
 
 - **PostgreSQL**：调用本机的 `pg_dump`，写成 custom 格式（`.dump`）。恢复：先建好目标库，再
   `pg_restore -d <目标库> <文件>`。要先装 PostgreSQL 客户端（macOS：`brew install libpq`）；找不到时任务里会说。
+  Windows 上先找 PATH，再找官方安装包的默认位置（`C:\Program Files\PostgreSQL\<版本>\bin`、
+  `C:\Program Files\MySQL\<产品>\bin`、`C:\Program Files\MongoDB\Tools\<版本>\bin`，几个版本并存时用新的），
+  所以装完不用改 PATH；备份时不会弹出命令行窗口。
   密码只经环境变量交给 pg_dump，不出现在命令行上；配了 SSH 隧道的连接照样能备份。
   CockroachDB 不行，请用它自己的 `BACKUP` 语句。
 - **MySQL / MariaDB**：调用本机的 `mysqldump`，备份连接上填的那一个库，写成 SQL 文本（`.sql`）；
