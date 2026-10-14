@@ -72,7 +72,7 @@ macOS 与 Linux 上验过的功能逻辑不必在这里逐项重来，这份只�
 |---|---|---|
 | 5.1 | 连 MySQL、PostgreSQL，各跑一条查询、改一格提交 | 正常 |
 | 5.2 | 第一次运行时 Windows 防火墙弹框 | 记下有没有弹（应用只出站连接，正常不该弹；用 SSH 隧道时会在本机开端口，可能弹） |
-| 5.3 | SSH 隧道，私钥用「浏览」选 `C:\Users\<你>\.ssh\id_ed25519` | 连得上；第一次连提示新主机指纹，信任后写进 `C:\Users\<你>\.ssh\known_hosts`，之后不再问 |
+| 5.3 | SSH 隧道，私钥用「浏览」选 `C:\Users\<你>\.ssh\id_ed25519` | 连得上。主机不在 `C:\Users\<你>\.ssh\known_hosts` 里时报「未知主机」并给出指纹（应用不提供「信任」按钮，要自己把主机公钥加进 known_hosts），加好后连得上 |
 | 5.4 | 同上，私钥一格手打 `~\.ssh\id_ed25519`（反斜杠） | 连得上（`~\` 与 `~/` 都展开，2026-10 修） |
 | 5.5 | 开着系统代理（Clash 之类）时连 Elasticsearch / 用 AI | 记下走没走代理、有没有报错 |
 
@@ -128,19 +128,37 @@ VC++ 运行库已装，账户不是管理员（MSI 要 UAC，没测）。界面�
 | 3.4 | 过 | | 240 个字符的密码能存进凭据管理器、读回来能连（TLS）。不加密连 MySQL 8 会报 `message too long`：`caching_sha2_password` 在明文连接上用 RSA-OAEP 加密口令，2048 位密钥最多约 214 字节——是协议的上限，与平台无关 |
 | 4.1 | 过 | | `D:\测试 数据\a.db` 建表、写中文、关掉重开都在 |
 | 4.2 | 过 | | `D:\测试 数据\b.duckdb` 同上 |
-| 4.3–4.5 | 过（单测） | | BOM / CRLF / GBK / 导出 CSV 的 BOM 由 Rust 与 vitest 单测在本机覆盖；没在记事本、Excel 里点 |
+| 4.3 | 过（打包版） | | 记事本格式（UTF-8 BOM + CRLF）的 `.sql` 经 `read_text_file` / `write_text_file` 往返，字节完全一致、BOM 与 CRLF 都在；中文空格路径、UNC、超 260 字符路径都过。「执行选中」没真点 |
+| 4.4 | 过（打包版） | | GBK 的 CSV 预览识别成 `gb18030`，中文正确；三类路径都过 |
+| 4.5 | 过（打包版，没开 Excel） | | 导出到桌面 `dataomni-导出 测试.csv`：有 EF BB BF，带换行的格子加了引号；本机没有 Excel |
 | 4.6 | 没测 | | |
 | 4.7 | 没测 | | `dragDropEnabled: false`（2026-10 加，不再让 WebView 接管拖入），没真拖 |
 | 5.1 | 过 | | `database_smoke` 103 项（MySQL、PostgreSQL）全过 |
 | 5.2 | 过 | | 跑过 SSH 隧道后没有为 `dataomni.exe` 生成防火墙规则——没弹（隧道只听 127.0.0.1） |
-| 5.3 | 没测 | | 打包版与 `ssh_tunnel_smoke`（4 项过）都只用了 `~\` 写法；完整路径、「浏览」按钮、首次指纹确认都没测 |
-| 5.4 | 过 | | 原先不认 `~\`，已修；打包版手打 `~\.ssh\id_ed25519` 连通 |
+| 5.3 | 过（完整路径）；**预期已过时** | | 完整路径 `D:\用户 测试\.ssh\id_ed25519`（中文、空格的家目录）连通并查询。应用**没有**「信任新主机」这一步：known_hosts 里没有时直接报 `DATAOMNI_SSH_HOST_KEY_UNKNOWN: SHA256:…`，指纹与 `ssh-keygen -lf` 一致；手动把那行加进 `%USERPROFILE%\.ssh\known_hosts` 后连通。「浏览」按钮没真点 |
+| 5.4 | 过 | | 原先不认 `~\`，已修；打包版手打 `~\.ssh\id_ed25519` 连通，家目录是中文带空格时也展开对 |
 | 5.5 | 没测 | | |
-| 6.1 / 6.2 | 没测 | | 没装 PG / MySQL 官方安装包 |
+| 6.1 / 6.2 | 过（工具在 PATH 上） | | 用官方 Windows 包里的 `pg_dump` 16.4、`mysqldump` 8.4.3，放在 `D:\测试 PF\…\bin`（中文空格目录）。备份成 `PGDMP` 自定义格式与 `MySQL dump` 文本，目标路径 `D:\测试 数据\pg 备份.dump` 这类；两个工具进程都没有窗口（`MainWindowHandle` 为 0），没闪黑窗。**`Program Files` 下的查找没在真位置测**：没有管理员权限写不进 `C:\Program Files`，而 Windows 会给每个子进程重置 `ProgramFiles`，改环境变量模拟不了；目录规则由单测 `tools_under_program_files_are_found_newest_first` 覆盖 |
 | 6.3 | 过（冒烟） | | 冒烟用例走到「没找到工具」那条路 |
 | 7.1 | 没测 | | 不是干净机器 |
 | 7.2 | 过 | | 本地 Docker `gvenzl/oracle-free:23-slim` + Windows Instant Client：`oracle_smoke` 28 项过（要给测试用户 `SELECT ANY DICTIONARY`、`ALTER SYSTEM`，并 `--test-threads=1`，否则 om_write 几条互相抢表） |
 | 7.3 | 过 | 没测 | NSIS 卸载后 `instantclient` 一起删掉 |
+
+路径专项（打包版 0.6.1 NSIS，直接调 Tauri 命令）：
+
+| 路径 | SQLite 建库、重开、导出、备份 | DuckDB 建库、重开、备份 | `.sql` 读写 | GBK CSV 预览 |
+| --- | --- | --- | --- | --- |
+| `D:\测试 数据\…`（中文、空格） | 过 | 过 | 过 | 过 |
+| UNC `\\localhost\D$\测试 数据\unc\…` | 过 | 过 | 过 | 过 |
+| 超 260 字符（`LongPathsEnabled` = 0） | **不过**：`(code: 14) unable to open database file` | **不过**：「系统找不到指定的路径」 | 过 | 过 |
+
+- 超长路径：Rust 标准库自己加 `\\?\`，所以读写文件没事；SQLite 与 DuckDB 的 C 库不加。sqlx 的连接串里
+  `?` 会被当成参数，直接拼 `\\?\` 也不行。记为已知限制，没修。
+- 中文用户名：把 `USERPROFILE` 指到 `D:\用户 测试` 启动（要先建好 `AppData\Local`、`AppData\Roaming`，
+  否则 log 插件取不到目录直接 panic——这是模拟手法本身的问题，真账户不会缺这两个目录）。应用数据、
+  `~` 展开、known_hosts 都跟着走，见 5.3、5.4。
+- 一次启动时进程以 0xc0000409 退出：父 shell 退出后、标准输出管道已关的情况下启动，疑是 log 插件写已关闭的
+  stdout。把 stderr 重定向到文件启动就不再出现；双击启动不受影响。没再深究。
 
 顺带在 Windows 上发现并修掉的：
 
