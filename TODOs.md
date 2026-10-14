@@ -24,7 +24,7 @@
 | P5 | 统一桌面 UI 与交互 | [ ]（只差 5.4 的 Windows 安装验证） |
 | P6 | AI 设计、导出与备份 | [x] A0–A6c、A9 完成（A2b / A7 / A8 当前版本不做） |
 | P7 | 更多数据库：国产库与云库 | [-] OceanBase、openGauss 完成；KingbaseES 缺安装包；B3 不做；B4 按触发条件 |
-| v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [-] v0.6.0 已发布（2026-10-07，tag 重打在 2b62b5f，含 R6、R7-mac 的修正）；v0.6.1 已发布（2026-10-07，2bf2499，R7-linux 的修正；CI 里 Windows 0.6.0 → 0.6.1 升级通过）；R5 的 CI 部分与 R6 完成；R7 的 macOS 与 Linux 部分完成，Windows（R5 人工、R7 Windows）后放 |
+| v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [-] v0.6.0 已发布（2026-10-07，tag 重打在 2b62b5f，含 R6、R7-mac 的修正）；v0.6.1 已发布（2026-10-07，2bf2499，R7-linux 的修正；CI 里 Windows 0.6.0 → 0.6.1 升级通过）；R5 的 CI 部分与 R6 完成；R7 的 macOS 与 Linux 部分完成；R7 Windows 2026-10-14 完成，R5 只剩要真人的项 |
 
 ---
 
@@ -133,7 +133,7 @@
       - 本地新起的 CockroachDB 要先开 `sql.defaults.experimental_temporary_tables.enabled`，两条用例的夹具用了临时表；cu 上那台早就开着。
     - 测试残留：MariaDB、TiDB（`test` 库）、openGauss、OceanBase 上各留一张 `om_r6`。
 - [ ] R7 拿 CI 产出的三平台包，按 `docs/release-regression.md` 完整回归 → 勾下面两条 → 打 `v1.0.0`
-  - 2026-10-07 定：先把 macOS 做完整，Windows 之后再说（R5 人工部分与 R7 的 Windows 部分都后放）。
+  - 2026-10-07 定：先把 macOS 做完整，Windows 之后再说（R5 人工部分与 R7 的 Windows 部分都后放）。2026-10-14 R7-windows 补完。
   - [x] R7-mac：CI 从 `main` 手动打的 macOS 包（含 v0.6.0 之后的三处修复），PostgreSQL 走满第一到第八节，其余各库走方言项；
     另补 macOS 上没验过的：日志路径与「在访达中显示」、新版本提示、从 0.5.1 升上来连接 / 标签 / 历史 / 设置都在。
     - 过：0.5.1 → CI 0.6.0（run 37564801937）升级后连接、两个标签与草稿、深色主题、查询历史都在；
@@ -207,7 +207,11 @@
       - 没测：MongoDB、Neo4j、Elasticsearch、ClickHouse、SQL Server、DuckDB 在 Linux 上没再走——这几家的驱动与界面代码
         与 macOS 同一份，没有按平台分的路径，R7-mac 已走过；Redis 危险命令确认照旧留给人工。
     - 收尾：本机测试容器（PostgreSQL、Oracle、MySQL、Redis、GNOME）已删。
-  - [ ] R7-windows：后放
+  - [x] R7-windows：2026-10-14 在 Windows 11 上用人工验过的 MSI 版走了一遍，记录在 `docs/windows-checklist.md`「记录」末节。
+    - PostgreSQL 走满第一到第八节；MySQL（TLS、SSH 隧道）、SQLite、DuckDB、ClickHouse、SQL Server、Oracle、MongoDB、Redis、
+      Neo4j、Elasticsearch 走方言项，都过。Redis 危险命令确认这次在界面上点了（取消后数据在）。
+    - 修了：两条配置算出同一个连接串时，切过去后对象树报未连接（新池子被断开旧配置时摘掉）；打包版复验过。
+    - 没测（要真人）：系统级快捷键、输入法、多屏与缩放、拖入文件、Excel 打开导出的 CSV。
 
 ### 里程碑条目
 

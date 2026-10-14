@@ -171,3 +171,30 @@ VC++ 运行库已装，账户不是管理员（MSI 要 UAC，没测）。界面�
   的测试改成也认 `os error 10061`；前端按错误种类判断，不受影响。
 - 三个 vitest 用 `new URL(..).pathname` 拼路径，Windows 上成了 `C:\C:\...`，改用 `fileURLToPath`。
 - 发布版是 GUI 子系统，`dataomni cli` 在 Windows 终端里看不到输出（`rfcs/agent-cli.md` §4 已记，不在这份清单里）。
+
+### 2026-10-14：打包版界面回归（`release-regression.md` 的 R7-windows）
+
+装的是用户人工验过的 MSI 版（`D:\software_install\DataOmni`）。清空应用数据从零开始，开 CDP 端口用 Playwright
+**点界面**（不再直接调 Tauri 命令）；原生文件对话框用 Win32 窗口消息填路径、点按钮。仍不发系统级按键（机器上开着交易软件），
+所以快捷键是否被系统抢、输入法照旧没测。库：本机 Docker（SQL Server、Oracle、MongoDB、Redis、Neo4j、Elasticsearch、
+ClickHouse），cu 上的 MySQL / PostgreSQL，以及走 SSH 隧道的 MySQL。
+
+- PostgreSQL 走满第一到第八节，都过：连接管理（新建、改名、删除连同凭据）、编辑器（执行全部、报错定位、危险语句确认、
+  停止长查询、补全、格式化）、Win32 对话框存 / 开 `.sql`、标签与草稿恢复、结果复制与导出、表数据编辑（数组、jsonb、
+  时间戳、numeric、新增、删行、冲突回滚）、结构与 ER 图、事务、CSV 导入、`pg_dump` 备份与还原、执行计划、外观与设置。
+- 方言项都过：
+  - MySQL：要求 TLS、SSH 隧道（cu）、改一格只动这一行。SQLite / DuckDB：经文件对话框打开、改数。ClickHouse：浏览、查询。
+  - SQL Server：对象树、改 `NVARCHAR`（预览 `N'…'`，服务端是正确的 UTF-16LE）、执行计划。
+  - Oracle：MSI 版不带 `oci.dll`，下 Instant Client 23 Basic Light 设 `DATAOMNI_ORACLE_CLIENT_DIR` 后连上；建表、
+    `TIMESTAMP(6)` 显示到微秒、改 `VARCHAR2` 中文（`DUMP` 核对 AL32UTF8 字节）、执行计划树。
+  - MongoDB：库列表、ISODate / Decimal128 / 数组 / 嵌套显示、筛选、新增 / 整文档替换 / 删除（有确认）、聚合、命令台。
+  - Redis：只列非空逻辑库、六种类型、改字符串、命令行中文；**`FLUSHALL` 的确认框这次点了**（取消后键都在），
+    之前一直留给人工的那一项补上。
+  - Neo4j：Cypher、图视图、点节点改属性（中文写回、`size()` 对得上）。Elasticsearch：索引浏览、控制台 `_search`、
+    `_update` 写中文后读回一致。
+- 修了：**两条配置算出同一个连接串时，切过去后对象树报未连接**。SQL Server、Oracle、DuckDB、ClickHouse、MongoDB、
+  Redis、Neo4j、Elasticsearch 的后端池子按连接串登记：切换时先测试连接（登记新池子），再断开旧配置——旧配置的串
+  与新的一样，于是把刚登记的池子摘掉。界面显示「已连接」，树报 `DATAOMNI_DB_SESSION_NOT_CONNECTED`，重试无效。
+  同一条断线重连也会这样。改成同一个池子时只释放会话、不关池子（`databaseHandle.ts` 的 `sharesRegisteredPool`）。
+  在打包版上复验：两条都指 `master` 来回切四次，树正常，查询返回 `master`。与平台无关，只是在 Windows 上先撞到。
+- 小问题（与平台无关，没修）：后台任务的标题按创建时的语言定下，切语言后不变；连接改名后已开标签的标题还是旧名。

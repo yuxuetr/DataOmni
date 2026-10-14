@@ -386,7 +386,7 @@ Tauri 本身跨平台，但**本项目只在下表记录的环境上实际验证
 | macOS (Apple Silicon / aarch64) | `DataOmni.app`、`DataOmni_0.4.0_aarch64.dmg` | ✅ 已验证 | 2026-09-25 于 macOS 27.0 / arm64 执行 `bun run package`（带 Oracle Instant Client），退出码 0；装上后逐库回归，见 TODOs「发布里程碑」 |
 | macOS (Intel / x86_64) | — | ⚠️ 未验证 | 无 x86_64 机器，也未做交叉编译 |
 | Linux (Ubuntu 22.04 / x86_64) | `DataOmni_0.4.0_amd64.deb`、`DataOmni-0.4.0-1.x86_64.rpm` | ✅ 已验证（容器内） | 2026-09-25 执行 `bun tauri build --bundles deb,rpm --config src-tauri/tauri.oracle.conf.json`，退出码 0，包里的 Instant Client 与原件逐字节相同。**不发 AppImage**：打包工具会改 Instant Client 的 .so，而它的许可只许原样分发（TODOs 5.4）。以下为 2026-09-23 的验证记录：`.deb` 在干净的 Ubuntu 22.04 容器里装、升级、卸载都验过，在 Xvfb + openbox 里跑通界面、Ctrl+W 与 gnome-keyring 存取密码；AppImage 只以 `--appimage-extract-and-run` 跑过（容器里没有 FUSE）；`.rpm` 没装过。**没有在真实桌面会话（GNOME / Wayland）里验过** |
-| Windows (x86_64) | `DataOmni_<版本>_x64_en-US.msi`、`DataOmni_<版本>_x64-setup.exe` | ⚠️ NSIS 已验证，MSI 未验证 | 2026-10-06 起由 GitHub Actions（`release.yml`，windows-latest）打包，带 Oracle Instant Client。2026-10 在 Windows 11（非管理员）上走了 `docs/windows-checklist.md`：NSIS 安装、升级、降级、卸载、重装，凭据管理器，中文与 UNC 路径，SSH 隧道，MySQL / PostgreSQL / DuckDB / Oracle 冒烟都过。**没测**：MSI（要管理员）、SmartScreen、多屏与缩放、输入法。已知限制：SQLite / DuckDB 库文件放在超过 260 字符的路径下打不开 |
+| Windows (x86_64) | `DataOmni_<版本>_x64_en-US.msi`、`DataOmni_<版本>_x64-setup.exe` | ✅ 已验证（NSIS 逐项；MSI 人工装过） | 2026-10-06 起由 GitHub Actions（`release.yml`，windows-latest）打包，带 Oracle Instant Client。2026-10 在 Windows 11（非管理员）上走了 `docs/windows-checklist.md`：NSIS 安装、升级、降级、卸载、重装，凭据管理器，中文与 UNC 路径，SSH 隧道，MySQL / PostgreSQL / DuckDB / Oracle 冒烟都过；MSI 用户人工装过。打包版界面回归（R7-windows）：PostgreSQL 走满，其余各库走方言项，都过。**没测**：SmartScreen、多屏与缩放、真键盘快捷键与输入法。已知限制：SQLite / DuckDB 库文件放在超过 260 字符的路径下打不开 |
 
 安装包由 GitHub Actions 打（`.github/workflows/release.yml`）：推 `v*` tag 时 macOS（Apple Silicon）、Linux、Windows
 各打一份，放进一个草稿 Release。都**没有签名**——没有 Apple Developer ID，也没有 Windows 代码签名证书。
@@ -562,6 +562,9 @@ bun install
   现在 macOS / Linux 约 1 秒、Windows 约 2–3 秒（系统收到拒绝后还会重试几次）就报「Connection refused」。
   命令行原先等满 10 秒，同样变快
 - 修复（Windows）：SSH 私钥路径手打 `~\.ssh\id_ed25519`（反斜杠）认不出；把文件拖进窗口时 WebView 会接管拖入
+- 修复：两条连接配置连的是同一台、同一个库、同一个用户（如 SQL Server 上一条主连接、一条只看某库的副本）时，
+  从一条切到另一条后显示「已连接」，对象树却报未连接、重试也没用；断线后重连同一条也可能这样。
+  影响 SQL Server、Oracle、DuckDB、ClickHouse、MongoDB、Redis、Neo4j、Elasticsearch
 
 ### v0.6.1（2026-10-07）
 
