@@ -144,6 +144,8 @@ VC++ 运行库已装，账户不是管理员（MSI 要 UAC，没测）。界面�
 | 7.2 | 过 | | 本地 Docker `gvenzl/oracle-free:23-slim` + Windows Instant Client：`oracle_smoke` 28 项过（要给测试用户 `SELECT ANY DICTIONARY`、`ALTER SYSTEM`，并 `--test-threads=1`，否则 om_write 几条互相抢表） |
 | 7.3 | 过 | 没测 | NSIS 卸载后 `instantclient` 一起删掉 |
 
+**MSI（2026-10-14 补）**：用户人工验过 MSI 安装，没问题。上表 MSI 一列的细项没有逐条回填，1.7 混装的结果未记录。
+
 路径专项（打包版 0.6.1 NSIS，直接调 Tauri 命令）：
 
 | 路径 | SQLite 建库、重开、导出、备份 | DuckDB 建库、重开、备份 | `.sql` 读写 | GBK CSV 预览 |
