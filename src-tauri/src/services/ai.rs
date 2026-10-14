@@ -199,7 +199,9 @@ mod tests {
       .await
       .expect_err("nothing listens there");
     assert!(error.message.contains(AI_REQUEST_FAILED), "{}", error.message);
-    assert!(error.message.to_lowercase().contains("refused"), "{}", error.message);
+    // Windows 的系统报错跟着界面语言走（中文是「积极拒绝」），只有错误码不变
+    let message = error.message.to_lowercase();
+    assert!(message.contains("refused") || message.contains("os error 10061"), "{}", error.message);
   }
 
   #[tokio::test]
