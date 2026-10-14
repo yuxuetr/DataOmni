@@ -5,6 +5,7 @@ import {
   DUCKDB_SCHEME,
   CLICKHOUSE_SCHEME,
   SQL_SERVER_SCHEME,
+  sharesRegisteredPool,
   type DatabaseHandle
 } from '../utils/databaseHandle';
 import { Channel, invoke } from '@tauri-apps/api/core';
@@ -123,7 +124,8 @@ interface QueryActions {
     connectionId: string,
     session: DatabaseSession
   ) => Promise<void>;
-  disconnect: () => Promise<void>;
+  /** `keepPoolFor`：马上要用的连接串。和旧句柄同串时池子留着，见 `sharesRegisteredPool` */
+  disconnect: (options?: { keepPoolFor?: string }) => Promise<void>;
   
   // SQL 文档（每个 SQL 标签一份）
   restoreDocuments: (drafts: Record<string, string>) => void;
@@ -411,7 +413,9 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
             sessionId: currentState.session.id
           });
         }
-        await currentState.database.close();
+        if (!sharesRegisteredPool(currentState.connectionString, connectionString)) {
+          await currentState.database.close();
+        }
         console.log('🔌 旧数据库连接已关闭');
       } catch (error) {
         console.warn('⚠️ 关闭旧连接失败:', error);
@@ -468,8 +472,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
     }
   },
 
-  disconnect: async () => {
-    // 在断开连接前保存SQL历史
+  disconnect: async (options) => {
     const currentState = get();
     if (currentState.database) {
       try {
@@ -478,7 +481,9 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
             sessionId: currentState.session.id
           });
         }
-        await currentState.database.close();
+        if (!sharesRegisteredPool(currentState.connectionString, options?.keepPoolFor)) {
+          await currentState.database.close();
+        }
       } catch (error) {
         const errorMessage = describeError(error, translateNow('error.closeConnectionFailed'));
         set({ error: errorMessage });

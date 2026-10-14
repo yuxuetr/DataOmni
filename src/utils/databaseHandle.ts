@@ -86,6 +86,28 @@ export async function openDatabase(connectionString: string): Promise<DatabaseHa
   return Database.load(connectionString);
 }
 
+/**
+ * 池子是 `test_connection` 在后端登记的那几家（与 `test_connection` 里的 `registry.insert` 一致）。
+ * 登记按连接串，关句柄会把这个串的池子整个摘掉——不管刚才是谁登记的。
+ */
+function poolRegisteredByTestConnection(connectionString: string): boolean {
+  return [
+    SQL_SERVER_SCHEME, ORACLE_SCHEME, DUCKDB_SCHEME, CLICKHOUSE_SCHEME, MONGODB_SCHEME,
+    MONGODB_SRV_SCHEME, REDIS_SCHEME, NEO4J_SCHEME, ELASTICSEARCH_SCHEME
+  ].some((scheme) => connectionString.startsWith(scheme));
+}
+
+/**
+ * 换句柄时旧的那个能不能关。
+ *
+ * 新连接的 `test_connection` 先跑，池子已经按串登记好了；两条配置算出同一个串
+ * （同主机同用户、只是名字不同），或者同一条断线重连，这时再关旧句柄就是把新池子
+ * 摘掉——界面显示「已连接」，每条命令都报会话未连接。
+ */
+export function sharesRegisteredPool(previous: string | null | undefined, next: string | null | undefined): boolean {
+  return Boolean(previous) && previous === next && poolRegisteredByTestConnection(previous as string);
+}
+
 /** 与后端 `sqlx_pool::handles` 一致：MySQL / PostgreSQL 的池子由后端开 */
 export function opensOwnPool(connectionString: string): boolean {
   return /^(mysql|mariadb|postgres|postgresql):\/\//.test(connectionString);

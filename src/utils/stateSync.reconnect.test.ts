@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseHandle } from './databaseHandle';
 
 /**
@@ -68,5 +68,34 @@ describe('重新连接', () => {
     // 界面上什么都不发生，错误只进了日志
     expect(useQueryStore.getState().error).toBe(describeError('DATAOMNI_SSH_CONNECT_TIMEOUT: 10'));
     expect(useQueryStore.getState().database).toBeNull();
+  });
+});
+
+describe('切到算出同一个串的另一条配置', () => {
+  const MSSQL = 'sqlserver://sa@127.0.0.1:21433/master';
+  const base = {
+    ...createDefaultConfig(DatabaseType.SqlServer),
+    created_at: '2026-10-07T00:00:00Z',
+    updated_at: '2026-10-07T00:00:00Z'
+  };
+  const first = { ...base, id: 'mssql-1', name: 'R7 MSSQL' };
+  const second = { ...base, id: 'mssql-2', name: 'R7 MSSQL 副本' };
+
+  it('先拿到新串再断旧连接，断的时候告诉它这个池子要留着', async () => {
+    const order: string[] = [];
+    const disconnect = vi.fn(async (options?: { keepPoolFor?: string }) => {
+      order.push(`disconnect:${options?.keepPoolFor ?? ''}`);
+      useQueryStore.setState({ database: null });
+    });
+    const connectToDatabase = vi.fn(async () => {
+      order.push('connect');
+      useQueryStore.setState({ database: {} as DatabaseHandle, error: null });
+    });
+    useAppStore.setState({ activeConnection: { config: first, connectionString: MSSQL }, connectionReady: true });
+    useQueryStore.setState({ database: {} as DatabaseHandle, connectionLost: false, error: null, disconnect, connectToDatabase });
+
+    await SessionManager.getInstance().switchConnection(second, MSSQL);
+
+    expect(order).toEqual([`disconnect:${MSSQL}`, 'connect']);
   });
 });

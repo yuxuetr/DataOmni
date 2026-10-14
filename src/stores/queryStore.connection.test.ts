@@ -146,3 +146,51 @@ describe('断线之后', () => {
     expect(useQueryStore.getState().connectionLost).toBe(true);
   });
 });
+
+/**
+ * R7-windows 看到的：两条 SQL Server 配置只差名字，从一条切到另一条，侧边栏写着
+ * 「已连接」，对象树报「数据库会话未连接」，重试也没用。新配置的 `test_connection`
+ * 先把池子按串登记好，接着断旧连接——`close_sql_server` 按同一个串把它摘了。
+ */
+describe('新旧句柄是同一个后端池子', () => {
+  const MSSQL = 'sqlserver://sa@127.0.0.1:21433/master';
+
+  function connectedTo(connectionString: string) {
+    const close = vi.fn();
+    useQueryStore.setState({ connectionString, connectionId: 'profile-a', session: SESSION, database: { close } as never });
+    return close;
+  }
+
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(undefined);
+  });
+
+  it('切到算出同一个串的另一条配置，旧句柄不关池子', async () => {
+    const close = connectedTo(MSSQL);
+    await useQueryStore.getState().disconnect({ keepPoolFor: MSSQL });
+    expect(close).not.toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith('release_database_session', { sessionId: 'session-a' });
+  });
+
+  it('串不一样照常关', async () => {
+    const close = connectedTo(MSSQL);
+    await useQueryStore.getState().disconnect({ keepPoolFor: 'sqlserver://sa@127.0.0.1:21433/r7w' });
+    expect(close).toHaveBeenCalled();
+  });
+
+  it('池子由前端打开的（MySQL / PostgreSQL）照常关：接下来 openDatabase 会重开', async () => {
+    const mysql = 'mysql://root@127.0.0.1:3306/app';
+    const close = connectedTo(mysql);
+    await useQueryStore.getState().disconnect({ keepPoolFor: mysql });
+    expect(close).toHaveBeenCalled();
+  });
+
+  it('同一条断线重连：test_connection 刚换上的新池子不能被旧句柄关掉', async () => {
+    const close = connectedTo(MSSQL);
+    useQueryStore.setState({ connectionLost: true });
+    await useQueryStore.getState().connectToDatabase(MSSQL, 'profile-a', SESSION);
+    expect(close).not.toHaveBeenCalled();
+    expect(useQueryStore.getState().database).not.toBeNull();
+  });
+});

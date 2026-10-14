@@ -284,13 +284,20 @@ export class SessionManager {
       return;
     }
 
-    // 2. 断开旧连接
+    // 2. 先算出新连接串，再断开旧连接。
+    //    顺序反过来不行：两条配置算出同一个串时（同主机同用户），SQL Server 这类池子由
+    //    `test_connection` 按串登记，断旧连接会把新池子一起摘掉。先拿到新串，断的时候才认得出来
     //    草稿不再在这里保存：文档按标签存活，由工作区快照整体持久化
-    if (appStore.activeConnection && appStore.activeConnection.config.id !== connection.id) {
-      console.log('🔌 断开旧连接:', appStore.activeConnection.config.id);
-      await queryStore.disconnect();
-      appStore.clearDatabaseMetadata(appStore.activeConnection.config.id);
-    }
+    const previous = appStore.activeConnection && appStore.activeConnection.config.id !== connection.id
+      ? appStore.activeConnection
+      : null;
+    const leavePrevious = async (keepPoolFor?: string) => {
+      if (previous) {
+        console.log('🔌 断开旧连接:', previous.config.id);
+        await queryStore.disconnect({ keepPoolFor });
+        appStore.clearDatabaseMetadata(previous.config.id);
+      }
+    };
 
     // 3. 设置连接中状态
     appStore.setConnectionReady(false);
@@ -298,6 +305,7 @@ export class SessionManager {
     try {
       connectionString = await resolveConnectionString();
     } catch (error) {
+      await leavePrevious();
       // 和握手失败落在同一处：「连不上」的横幅与重连按钮读的是 queryStore.error
       const message = describeError(error, translateNow('error.connectFailed'));
       useQueryStore.setState({
@@ -311,6 +319,7 @@ export class SessionManager {
       });
       throw new Error(message);
     }
+    await leavePrevious(connectionString);
 
     // 4. 建立新连接
     await queryStore.connectToDatabase(
