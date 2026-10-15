@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isMissingCatalogTableError,
   isUndefinedFunctionError,
   DEFAULT_EXPRESSION_COLUMN_PLACEHOLDER,
   collectSchemaObjects,
@@ -334,5 +335,23 @@ describe('服务端缺目录函数', () => {
     expect(isUndefinedFunctionError({ code: '42P01', message: 'relation does not exist' })).toBe(false);
     expect(isUndefinedFunctionError('unknown function: pg_get_triggerdef()')).toBe(false);
     expect(isUndefinedFunctionError(null)).toBe(false);
+  });
+});
+
+describe('服务端缺目录表', () => {
+  it('MySQL 5.7 没有 CHECK_CONSTRAINTS：按 SQLSTATE 42S02 认', () => {
+    // 5.7.44 实测经 sqlx_pool::select 拿到的就是这个码
+    expect(isMissingCatalogTableError({
+      code: '42S02',
+      message: "Unknown table 'CHECK_CONSTRAINTS' in information_schema"
+    })).toBe(true);
+  });
+
+  // 反向：缺函数、语法错、只有原话的字符串都不算——那些照原样报
+  it('别的错误不算', () => {
+    expect(isMissingCatalogTableError({ code: '42883', message: 'unknown function' })).toBe(false);
+    expect(isMissingCatalogTableError({ code: '42000', message: 'syntax error' })).toBe(false);
+    expect(isMissingCatalogTableError("Unknown table 'CHECK_CONSTRAINTS' in information_schema")).toBe(false);
+    expect(isMissingCatalogTableError(null)).toBe(false);
   });
 });

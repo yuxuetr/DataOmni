@@ -126,7 +126,9 @@ export function SchemaObjectSections({
           <li className="px-4 py-2 text-xs text-fg-subtle">
             {dbType === 'sqlite'
               ? t('schema.checks.noCatalogSqlite')
-              : t('schema.checks.noCatalog')}
+              : dbType === DatabaseType.MySQL
+                ? t('schema.checks.noCatalogMysql')
+                : t('schema.checks.noCatalog')}
           </li>
         </SchemaSection>
       ) : (

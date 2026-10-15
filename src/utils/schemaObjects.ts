@@ -292,3 +292,17 @@ export function isUndefinedFunctionError(reason: unknown): boolean {
     && (reason as { code?: unknown }).code === '42883';
 }
 
+/**
+ * 服务端缺一张目录查询要用的系统表（SQLSTATE 42S02）。
+ *
+ * 实际撞上的是 MySQL 5.7：`information_schema.CHECK_CONSTRAINTS` 8.0.16 起才有，
+ * 检查约束那段报「Unknown table 'CHECK_CONSTRAINTS' in information_schema」。
+ * 5.7 本来就只解析 CHECK 不执行，所以这是「没有检查约束目录」，不是读失败。
+ * 目录查询只引用系统表，这个码在那里只可能是系统表缺了
+ */
+export function isMissingCatalogTableError(reason: unknown): boolean {
+  return typeof reason === 'object'
+    && reason !== null
+    && (reason as { code?: unknown }).code === '42S02';
+}
+

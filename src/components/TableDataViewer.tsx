@@ -64,6 +64,7 @@ import {
   failAllSchemaObjects,
   groupForeignKeyRows,
   groupIndexRows,
+  isMissingCatalogTableError,
   isUndefinedFunctionError,
   joinDdlStatements,
   toCheckConstraints,
@@ -343,7 +344,14 @@ export default function TableDataViewer({
         ),
         select(queries.foreign_keys).then((rows) => groupForeignKeyRows(asRows(rows))),
         queries.check_constraints
-          ? select(queries.check_constraints).then((rows) => toCheckConstraints(asRows(rows)))
+          ? select(queries.check_constraints).then(
+            (rows) => toCheckConstraints(asRows(rows)),
+            // MySQL 5.7 没有这张目录表：与 SQLite 一样说「没有目录」
+            (reason: unknown) => {
+              if (isMissingCatalogTableError(reason)) return null;
+              throw reason;
+            }
+          )
           : Promise.resolve(null),
         // SQLite 的 pragma 之外的目录查询同样只认一个表名参数
         select(queries.triggers).then(

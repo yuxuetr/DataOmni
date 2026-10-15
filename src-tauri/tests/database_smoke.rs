@@ -126,6 +126,34 @@ async fn mysql_57_tls_failure_says_to_change_the_tls_mode() {
   assert_eq!(rows.len(), 1);
 }
 
+/// 5.7 没有 `information_schema.CHECK_CONSTRAINTS`（8.0.16 起才有）。结构页按这个码
+/// 把那一段说成「没有检查约束目录」（`isMissingCatalogTableError`），不印红字。
+/// 哪天码变了这条会红，界面上就又是原话。同样只在设了 `DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL` 时跑
+#[tokio::test]
+async fn mysql_57_check_constraint_catalog_is_missing_with_42s02() {
+  let Some(url) =
+    std::env::var("DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL").ok().filter(|url| !url.is_empty())
+  else {
+    return;
+  };
+  let separator = if url.contains('?') { '&' } else { '?' };
+  let pool = dataomni_lib::services::sqlx_pool::open(&format!("{url}{separator}ssl-mode=DISABLED"))
+    .await
+    .expect("connect with TLS disabled");
+  let queries =
+    dataomni_lib::services::schema_metadata_queries(&dataomni_lib::models::DatabaseType::MySQL)
+      .expect("supported");
+  let sql = queries.check_constraints.expect("MySQL has a check-constraint query");
+  let error = dataomni_lib::services::sqlx_pool::select(
+    &pool,
+    sql,
+    vec![serde_json::Value::String("om_any".into()), serde_json::Value::Null],
+  )
+  .await
+  .expect_err("5.7 has no CHECK_CONSTRAINTS table");
+  assert_eq!(error.code.as_deref(), Some("42S02"), "{error}");
+}
+
 #[tokio::test]
 async fn postgres_supports_basic_read_write() {
   let Some(url) = network_database_url(POSTGRES_URL_ENV) else {

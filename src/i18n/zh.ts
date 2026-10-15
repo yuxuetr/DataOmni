@@ -181,6 +181,7 @@ export const zh = {
   'schema.checks.empty': '没有检查约束',
   'schema.checks.noCatalogSqlite': 'SQLite 不提供检查约束目录，只能从建表语句原文里看',
   'schema.checks.noCatalog': '当前数据库类型不提供检查约束目录',
+  'schema.checks.noCatalogMysql': '这个服务端没有检查约束目录（MySQL 8.0.16 起才有）。5.7 会解析 CHECK 但不执行',
   'schema.triggers': '触发器',
   'schema.triggers.empty': '没有触发器',
   'schema.triggers.unsupported': '这个服务端没有读触发器定义用的函数（pg_get_triggerdef），列不出触发器。',

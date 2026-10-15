@@ -165,6 +165,7 @@ export const en: Translations = {
   'schema.checks.empty': 'No check constraints',
   'schema.checks.noCatalogSqlite': 'SQLite has no check-constraint catalog; they are only visible in the CREATE statement',
   'schema.checks.noCatalog': 'This database type has no check-constraint catalog',
+  'schema.checks.noCatalogMysql': 'This server has no check-constraint catalog (MySQL added it in 8.0.16). 5.7 parses CHECK but does not enforce it',
   'schema.triggers': 'Triggers',
   'schema.triggers.empty': 'No triggers',
   'schema.triggers.unsupported': "This server has no function for reading trigger definitions (pg_get_triggerdef), so its triggers can't be listed.",
