@@ -221,7 +221,8 @@
   - 2026-09-24 至 10-06，在 macOS 与 Linux 打包版上做了多轮回归。2026-10-06 发版前按 `docs/release-regression.md` 完整走了一遍：
     PostgreSQL 走满，其余各库走方言项。修过的每一处都在新包上复验过，记录在归档的同名条目里。
   - 还不能勾：Windows 的安装、升级、卸载，以及带 Instant Client 的 Oracle（R5）；兼容库与隧道的打包版回归（R6）。
-  - 2026-10-15 实际使用中发现并修了：经 SSH 隧道连 MySQL 5.7.44，TLS「要求」只报 `HandshakeFailure`（`8382489`）。rustls 只有 ECDHE 套件而 5.7 不开 ECDH，「优先」也一样失败；现在提示改成「禁用」或升级到 8.0。真库用例在本机 `mysql:5.7.44` 上过；界面上没点过（同一条路的 `connectTimedOut` 在打包版上验过）。
+  - 2026-10-15 实际使用中发现并修了：经 SSH 隧道连 MySQL 5.7.44，TLS「要求」只报 `HandshakeFailure`（`08b842d`）。rustls 只有 ECDHE 套件而 5.7 不开 ECDH，「优先」也一样失败；现在提示改成「禁用」或升级到 8.0。真库用例在本机 `mysql:5.7.44` 上过；用户在自己的 5.7 上看到了新提示，改「禁用」后正常使用。
+  - 同日同一台 5.7：结构页「检查约束」段印红字 `Unknown table 'CHECK_CONSTRAINTS'`（8.0.16 起才有）。现在按 SQLSTATE 42S02 当作「没有检查约束目录」，说明 5.7 不执行 CHECK（`2e5227c`）。真库用例与组件渲染测试都做过反向验证；打包版上没看过。
 - [ ] v0.3：三平台基础安装与冒烟测试
   - macOS 与 Linux（容器）已验。Windows 能构建，GitHub Actions 也出 MSI / NSIS，但还没装过、没做冒烟，与 R5 一起做。
   - Windows ARM64 原生包**当前版本不做**（2026-10-06 定）：ARM 上的 Windows 11 靠系统转译跑 x64 包；Oracle 也没有 Windows ARM64 的
