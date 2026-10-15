@@ -49,6 +49,7 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
 | 服务端 | 版本 | 连接类型 | 结论 | 用例 |
 | --- | --- | --- | --- | --- |
 | MySQL | 8.4 | MySQL | ✅ 支持 | 23 / 23 |
+| MySQL | 5.7.44 | MySQL | ⚠️ 可用，有缺口 | 27 / 42（2026-10-15 的 MySQL 一组；挂的 15 条主要是建表夹具用了 8.0 才有的语法，缺口见下）＋ 5.7 专用 2 / 2 |
 | PostgreSQL | 16 | PostgreSQL | ✅ 支持 | 23 / 23 |
 | SQLite | 随应用内置 | SQLite | ✅ 支持 | 全部 |
 | MariaDB | 11.4 | MySQL | ✅ 支持 | 23 / 23 |
@@ -66,6 +67,12 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
 | Elasticsearch | 8.19、9.5 | HTTP（reqwest） | ⚠️ 单节点直连，不含 API Key 认证 | 6 / 6（独立用例，`elasticsearch_smoke.rs`，两个版本各跑一遍） |
 | OpenSearch | 3.8 | Elasticsearch（同一个连接类型） | ⚠️ 同上；只读账号列不出对象树 | 6 / 6（同一份用例，按服务端分支） |
 
+- **MySQL 5.7**：TLS 要选「禁用」。5.7 只提供不带 ECDHE 的旧套件，应用用的 rustls 跟它没有共同套件，
+  「要求」「优先」都会握手失败，连接时会这样提示。服务器字符集要是 utf8mb4（官方镜像默认 latin1，存不了中文）。
+  缺口：结构编辑里**只改列名**会生成 `RENAME COLUMN`（8.0 语法），5.7 报语法错；同时改了类型等别的属性时
+  走 `CHANGE COLUMN`，没问题，只改名可以在 SQL 编辑器里手写 `CHANGE COLUMN`。服务端本身没有的：
+  检查约束目录（结构页那一段说明 5.7 不执行 CHECK）、函数索引、表达式默认值、空间列的 `SRID`。
+  类型照 5.7 自己报的显示成 `int(11)`。
 - **MariaDB**：JSON 列是 LONGTEXT 的别名，按文本显示与编辑，没有 JSON 专用
   编辑器；没有函数索引。
 - **TiDB**：执行计划发的是它自己的 `EXPLAIN FORMAT='tidb_json'`（不认
@@ -567,6 +574,8 @@ bun install
   影响 SQL Server、Oracle、DuckDB、ClickHouse、MongoDB、Redis、Neo4j、Elasticsearch
 - 修复（Windows）：在终端里直接敲 `dataomni cli …` 什么也不印（发布版是窗口程序）；现在借用终端的控制台输出。
   经管道调用（Agent）本来就正常
+- 修复：MySQL 5.7 上 TLS 选「要求」「优先」时只报 `HandshakeFailure`；现在说明要改成「禁用」（或升级到 8.0）。
+  结构页的「检查约束」一段不再印红字 `Unknown table 'CHECK_CONSTRAINTS'`，改为说明 5.7 没有这个目录
 
 ### v0.6.1（2026-10-07）
 
