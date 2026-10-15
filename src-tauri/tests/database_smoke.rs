@@ -96,6 +96,36 @@ async fn postgres_queries_run_through_a_transaction_pooler() {
   }
 }
 
+/// MySQL 5.7 不提供 ECDHE 套件，rustls 跟它握不了手：「要求」「优先」都失败，要说出该改 TLS 模式，
+/// 「禁用」照常连上。只在设了 `DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL`（一台 5.7，串里不带 `ssl-mode`）时跑
+#[tokio::test]
+async fn mysql_57_tls_failure_says_to_change_the_tls_mode() {
+  let Some(url) =
+    std::env::var("DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL").ok().filter(|url| !url.is_empty())
+  else {
+    return;
+  };
+  let separator = if url.contains('?') { '&' } else { '?' };
+  for mode in ["REQUIRED", "PREFERRED"] {
+    match dataomni_lib::services::sqlx_pool::open(&format!("{url}{separator}ssl-mode={mode}")).await
+    {
+      Ok(_) => panic!("{mode}: a 5.7 server should not complete a rustls handshake"),
+      Err(error) => assert!(
+        error.starts_with(dataomni_lib::services::sqlx_pool::MYSQL_TLS_HANDSHAKE_REJECTED),
+        "{mode}: {error}"
+      ),
+    }
+  }
+  let pool = dataomni_lib::services::sqlx_pool::open(&format!("{url}{separator}ssl-mode=DISABLED"))
+    .await
+    .expect("connect with TLS disabled");
+  let result = execute_query(&pool, "SELECT VERSION() AS version").await.expect("select version");
+  let QueryExecutionResult::Rows { rows, .. } = result else {
+    panic!("expected a row result");
+  };
+  assert_eq!(rows.len(), 1);
+}
+
 #[tokio::test]
 async fn postgres_supports_basic_read_write() {
   let Some(url) = network_database_url(POSTGRES_URL_ENV) else {

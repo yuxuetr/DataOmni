@@ -123,6 +123,7 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_CONNECTION_LOST: 'error.backend.connectionLost',
   DATAOMNI_POOL_TIMED_OUT: 'error.backend.poolTimedOut',
   DATAOMNI_CONNECT_TIMED_OUT: 'error.backend.connectTimedOut',
+  DATAOMNI_MYSQL_TLS_HANDSHAKE_REJECTED: 'error.backend.mysqlTlsHandshakeRejected',
   DATAOMNI_MONGO_SYNTAX: 'error.backend.mongoSyntax',
   DATAOMNI_MONGO_UNKNOWN_FUNCTION: 'error.backend.mongoUnknownFunction',
   DATAOMNI_MONGO_BAD_ARGUMENT: 'error.backend.mongoBadArgument',

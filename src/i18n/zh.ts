@@ -1221,6 +1221,7 @@ export const zh = {
   'error.backend.connectionLost': '与数据库的连接已经断开，这次操作没有拿到结果。请重新连接后再试；如果是写操作，先确认它是否已经生效。技术细节：{detail}',
   'error.backend.poolTimedOut': '等了 30 秒也没拿到数据库连接：服务器可能连不上了，也可能连接都被别的查询占着。详情：{detail}',
   'error.backend.connectTimedOut': '在时限内没连上服务器：主机没有回应，或者服务还没起来。检查主机地址与端口，以及中间的防火墙、VPN 或安全组。详情：{detail}',
+  'error.backend.mysqlTlsHandshakeRejected': '服务器拒绝了 TLS 握手：它没有本应用支持的加密套件，常见于 MySQL 5.7 及更早的版本（不提供 ECDHE 套件）。经 SSH 隧道或在内网时，可以把 TLS 模式改成「禁用」；要加密直连，需要把服务器升到 MySQL 8.0 以上。「优先使用 TLS」同样会失败。详情：{detail}',
   'error.backend.dbSessionNotConnected': '数据库会话未连接。先连接这个数据库再执行；如果界面上显示已连接，说明会话已经失效，断开后重连一次。',
   'error.backend.sshAuthRejected': '跳板机拒绝了这次登录。用私钥时确认 SSH 用户名与私钥对得上、公钥已经在服务器的 authorized_keys 里；用口令时确认服务器允许口令登录（PasswordAuthentication yes）。',
   'error.backend.sshFailed': 'SSH 连接失败: {detail}',

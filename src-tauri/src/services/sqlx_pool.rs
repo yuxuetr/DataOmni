@@ -45,6 +45,27 @@ fn describe_open_error(error: &sqlx::Error) -> String {
   }
 }
 
+/// MySQL 的服务端拒绝了 TLS 握手：rustls 只有 ECDHE 的套件，而 MySQL 5.7 不开 ECDH，
+/// 两边没有共同的套件。「优先使用 TLS」也一样——服务端声明支持 TLS，客户端就去握手，
+/// 失败不退回明文。能做的只有改 TLS 模式或升级服务端，驱动原话说不出这一层
+pub const MYSQL_TLS_HANDSHAKE_REJECTED: &str = "DATAOMNI_MYSQL_TLS_HANDSHAKE_REJECTED";
+
+fn describe_mysql_open_error(error: &sqlx::Error) -> String {
+  // sqlx 把 rustls 的错包在 `Io` 里（实测 `Io(Custom { InvalidData, AlertReceived(..) })`）
+  let handshake_rejected = match error {
+    sqlx::Error::Io(io) => {
+      io.get_ref().and_then(|inner| inner.downcast_ref()).is_some_and(|tls: &rustls::Error| {
+        matches!(tls, rustls::Error::AlertReceived(rustls::AlertDescription::HandshakeFailure))
+      })
+    }
+    _ => false,
+  };
+  match handshake_rejected {
+    true => format!("{MYSQL_TLS_HANDSHAKE_REJECTED}: {error}"),
+    false => describe_open_error(error),
+  }
+}
+
 /// 开池子多久还没连上，就去探一下端口是不是在拒绝连接。健康的连接这时多半已经好了，
 /// 探测碰不到它们；探测本身会在服务器上留下一条没握手就断开的 TCP 连接，所以不一开始就探
 const REFUSAL_PROBE_DELAY: Duration = Duration::from_secs(1);
@@ -73,7 +94,7 @@ fn tcp_endpoint(
 async fn unless_refused<T>(
   endpoint: Option<(String, u16)>,
   opening: impl std::future::Future<Output = Result<T, sqlx::Error>>,
-) -> Result<T, String> {
+) -> Result<T, sqlx::Error> {
   let refused = async {
     let Some((host, port)) = endpoint else {
       return std::future::pending().await;
@@ -86,8 +107,8 @@ async fn unless_refused<T>(
     }
   };
   tokio::select! {
-    opened = opening => opened.map_err(|error| describe_open_error(&error)),
-    error = refused => Err(describe_open_error(&sqlx::Error::Io(error))),
+    opened = opening => opened,
+    error = refused => Err(sqlx::Error::Io(error)),
   }
 }
 
@@ -101,7 +122,8 @@ pub async fn open(connection_string: &str) -> Result<DbPool, String> {
       endpoint,
       PgPoolOptions::new().idle_timeout(IDLE_TIMEOUT).connect_with(options),
     )
-    .await?;
+    .await
+    .map_err(|error| describe_open_error(&error))?;
     return Ok(DbPool::Postgres(pool));
   }
   if handles(connection_string) {
@@ -137,7 +159,8 @@ pub async fn open(connection_string: &str) -> Result<DbPool, String> {
         })
       })
       .connect_with(options);
-    let pool = unless_refused(endpoint, opening).await?;
+    let pool =
+      unless_refused(endpoint, opening).await.map_err(|error| describe_mysql_open_error(&error))?;
     return Ok(DbPool::MySql(pool));
   }
   Err(format!("unsupported connection string scheme: {}", scheme_of(connection_string)))
@@ -292,6 +315,31 @@ mod tests {
     // 其余的照驱动原话：拒绝连接、认证失败这些它自己说得清
     let refused = sqlx::Error::Io(std::io::Error::from(std::io::ErrorKind::ConnectionRefused));
     assert_eq!(describe_open_error(&refused), refused.to_string());
+  }
+
+  /// MySQL 5.7 不开 ECDHE，rustls 又只有 ECDHE 的套件，握手必然失败，而界面上只有一句
+  /// 「received fatal alert: HandshakeFailure」，看不出该把 TLS 模式改成禁用。
+  /// 错误的形状照 5.7.44 实测（「要求」「优先」都是这一个）
+  #[test]
+  fn mysql_names_a_tls_handshake_it_cannot_complete() {
+    let alert = |description| {
+      sqlx::Error::Io(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        rustls::Error::AlertReceived(description),
+      ))
+    };
+    let rejected = alert(rustls::AlertDescription::HandshakeFailure);
+    let described = describe_mysql_open_error(&rejected);
+    assert!(described.starts_with(MYSQL_TLS_HANDSHAKE_REJECTED), "{described}");
+    // 驱动原话留在后面
+    assert!(described.ends_with(&rejected.to_string()), "{described}");
+    // 别的告警（证书不认之类）不是套件的事，照驱动原话
+    let bad_certificate = alert(rustls::AlertDescription::BadCertificate);
+    assert_eq!(describe_mysql_open_error(&bad_certificate), bad_certificate.to_string());
+    // 共用的那几条照旧
+    assert!(describe_mysql_open_error(&sqlx::Error::PoolTimedOut).starts_with(CONNECT_TIMED_OUT));
+    // PostgreSQL 不套这句：说的是 MySQL 5.7
+    assert_eq!(describe_open_error(&rejected), rejected.to_string());
   }
 
   /// 端口拒绝连接时 sqlx 当作「库还在启动」退避重试到 acquire 超时（30 秒），最后报成

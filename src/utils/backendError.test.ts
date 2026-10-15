@@ -211,6 +211,18 @@ describe('驱动原话', () => {
     expect(translateBackendMessage(`prefix: ${once}`)).toBe(`prefix: ${once}`);
   });
 
+  it('MySQL 5.7 的 TLS 握手失败说出该改 TLS 模式，原话留在后面', () => {
+    // 5.7.44 实测：「要求」「优先」都是这一句，界面上原先只印它
+    const raw = 'error communicating with database: received fatal alert: HandshakeFailure';
+    const translated = translateBackendMessage(`DATAOMNI_MYSQL_TLS_HANDSHAKE_REJECTED: ${raw}`);
+    expect(translated).toBe(translateNow('error.backend.mysqlTlsHandshakeRejected', { detail: raw }));
+    expect(translated).toContain('MySQL 5.7');
+    expect(translated.endsWith(raw)).toBe(true);
+    // 说的是表单上那个选项的原名，照着能找到
+    expect(zh['error.backend.mysqlTlsHandshakeRejected']).toContain(`「${zh['form.tls.disabled']}」`);
+    expect(zh['error.backend.mysqlTlsHandshakeRejected']).toContain(`「${zh['form.tls.preferred']}」`);
+  });
+
   it('别的驱动原话照旧原样显示', () => {
     expect(translateBackendMessage(' connection refused ')).toBe('connection refused');
   });

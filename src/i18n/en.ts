@@ -1206,6 +1206,7 @@ export const en: Translations = {
   'error.backend.connectionLost': 'The connection to the database was lost before this operation returned a result. Reconnect and try again; for a write, first check whether it already took effect. Details: {detail}',
   'error.backend.poolTimedOut': 'No database connection became available within 30 seconds: the server may be unreachable, or every connection is busy with another query. Details: {detail}',
   'error.backend.connectTimedOut': 'Could not reach the server in time: the host did not respond, or the service has not started yet. Check the host and port, and any firewall, VPN or security group in between. Details: {detail}',
+  'error.backend.mysqlTlsHandshakeRejected': 'The server rejected the TLS handshake: it offers no cipher suite this app supports. This is typical of MySQL 5.7 and older, which offer no ECDHE suites. Through an SSH tunnel or on a private network, set the TLS mode to “Disabled”; for an encrypted direct connection, upgrade the server to MySQL 8.0 or later. “Prefer TLS” fails the same way. Details: {detail}',
   'error.backend.dbSessionNotConnected':
     'No database session. Connect to this database before running statements; if the UI still shows it as connected, the session has gone stale — disconnect and connect again.',
   'error.backend.sshAuthRejected':
