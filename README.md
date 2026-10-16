@@ -62,7 +62,7 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
 | DuckDB | 1.5.5（编进应用） | DuckDB（libduckdb） | ✅ 支持 | 16 / 16（独立用例，`duckdb_smoke.rs`，每次都跑，含改结构语料） |
 | ClickHouse | 25.8 | ClickHouse（HTTP 接口，reqwest） | ⚠️ 表格一次改一行，没有事务 | 14 / 14（独立用例，`clickhouse_smoke.rs` 与最重的一条 `clickhouse_mutation_smoke.rs`；经 SSH 隧道那一条另要隧道的环境变量） |
 | MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 32 / 32（独立用例，`mongodb_smoke.rs`） |
-| Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机与 Sentinel，不含集群 | 13 / 13（独立用例，`redis_smoke.rs`） |
+| Redis | 7.4 | Redis（redis-rs） | ✅ 单机、Sentinel、集群（集群与 Sentinel 的 TLS 没测过） | 14 / 14（独立用例，`redis_smoke.rs`） |
 | Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例，不含集群路由 | 8 / 8（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |
 | Elasticsearch | 8.19、9.5 | HTTP（reqwest） | ⚠️ 单节点直连 | 7 / 7（独立用例，`elasticsearch_smoke.rs`，两个版本各跑一遍） |
 | OpenSearch | 3.8 | Elasticsearch（同一个连接类型） | ⚠️ 单节点直连；只读账号列不出对象树；没有 API Key | 6 / 6（同一份用例，按服务端分支） |
@@ -175,7 +175,7 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
   写法同筛选框；删除类与无条件的批量写按「危险语句确认」先问，认不出的命令按写算，改连接登录
   状态的（`logout` 等）拒跑，`find` 只回第一批。还没有的：`db.coll.find()` 这种 JS 写法（要 JS 引擎）。
   详见 [用户手册](docs/user-manual.md#mongodb)。
-- **Redis**：连接（口令与 ACL 用户、库号、TLS 与 CA、SSH 隧道；经 Sentinel 连主节点，主从切换之后重新连接即可）、对象树列出有键的逻辑库、
+- **Redis**：连接（口令与 ACL 用户、库号、TLS 与 CA、SSH 隧道；经 Sentinel 连主节点，主从切换之后重新连接即可；集群，键浏览逐个主节点扫，只有 0 号库，Sentinel 与集群不能走隧道）、对象树列出有键的逻辑库、
   键浏览页（按模式与类型用 `SCAN` 逐页翻，每个键带类型与剩余时间；string、hash、list、set、
   zset、stream 各一种表，大的值分页读，字符串只带前 512 KiB；不是 UTF-8 的键和值按 redis-cli
   的写法转义并标出）、命令行（写法与回答都同 redis-cli；会阻塞或改连接状态的命令拒跑，
@@ -585,7 +585,7 @@ bun install
 - Oracle 可以按 SID 连接（连接表单「连接方式」选 SID），11g 及更早的库与只在监听里登记了 SID 的库也连得上
 - CockroachDB 的结构页列得出触发器了（此前那一段只显示「列不出」）
 - openGauss 的序列属性页读得出了（此前报 `pg_sequences` 不存在）
-- Redis 可以经 Sentinel 连接（连接表单「部署方式」选 Sentinel，填主节点名）
+- Redis 可以经 Sentinel 连接（连接表单「部署方式」选 Sentinel，填主节点名），也可以连集群（选「集群」，填任意一个节点）
 
 ### v0.6.1（2026-10-07）
 

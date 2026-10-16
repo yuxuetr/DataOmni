@@ -15,8 +15,10 @@ use crate::models::{ConnectionProfile, TlsMode};
 use crate::services::pool_registry::PoolRegistry;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
-use redis::aio::{ConnectionManager, ConnectionManagerConfig};
-use redis::{ConnectionAddr, IntoConnectionInfo, RedisConnectionInfo, Value};
+use redis::aio::{ConnectionLike, ConnectionManager, ConnectionManagerConfig};
+use redis::cluster_async::ClusterConnection;
+use redis::cluster_routing::{RoutingInfo, SingleNodeRoutingInfo};
+use redis::{ConnectionAddr, ConnectionInfo, IntoConnectionInfo, RedisConnectionInfo, Value};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -48,8 +50,11 @@ pub const REDIS_TLS_FILE_INVALID: &str = "DATAOMNI_REDIS_TLS_FILE_INVALID";
 pub const REDIS_SENTINEL_MASTER_MISSING: &str = "DATAOMNI_REDIS_SENTINEL_MASTER_MISSING";
 /// 哨兵不认这个主节点名（`SENTINEL get-master-addr-by-name` 回的是空）。冒号后面是那个名字
 pub const REDIS_SENTINEL_MASTER_UNKNOWN: &str = "DATAOMNI_REDIS_SENTINEL_MASTER_UNKNOWN";
-/// 经 SSH 隧道连 Sentinel：隧道只通到哨兵，它报回的主节点地址在隧道另一头，这边连不到
-pub const REDIS_SENTINEL_VIA_TUNNEL: &str = "DATAOMNI_REDIS_SENTINEL_VIA_TUNNEL";
+/// 经 SSH 隧道连 Sentinel 或集群：隧道只通到填的那一个地址，哨兵报回的主节点、集群报回的
+/// 其余节点都在隧道另一头，这边连不到
+pub const REDIS_DISCOVERY_VIA_TUNNEL: &str = "DATAOMNI_REDIS_DISCOVERY_VIA_TUNNEL";
+/// 集群只有 0 号库（`SELECT` 别的库号报错）
+pub const REDIS_CLUSTER_DATABASE: &str = "DATAOMNI_REDIS_CLUSTER_DATABASE";
 /// 连接串对应的连接不在（断开之后还有请求过来）
 pub const REDIS_NOT_CONNECTED: &str = "DATAOMNI_DB_SESSION_NOT_CONNECTED";
 
@@ -93,35 +98,45 @@ pub struct RedisTarget {
   ca_certificate_path: Option<String>,
   /// 经 Sentinel：`host` / `port` 是哨兵，主节点地址每次开连接时问它
   sentinel_master: Option<String>,
+  /// 集群：`host` / `port` 是任意一个节点，驱动从它读出槽位分布
+  cluster: bool,
 }
 
 impl RedisTarget {
   pub fn from_profile(profile: &ConnectionProfile) -> Result<Self, String> {
     let sentinel_master = match profile.redis_sentinel_master() {
       Some("") => return Err(REDIS_SENTINEL_MASTER_MISSING.to_string()),
-      Some(_) if profile.ssh_tunnel.is_some() => return Err(REDIS_SENTINEL_VIA_TUNNEL.to_string()),
       master => master.map(str::to_string),
     };
+    let cluster = profile.redis_cluster();
+    if (sentinel_master.is_some() || cluster) && profile.ssh_tunnel.is_some() {
+      return Err(REDIS_DISCOVERY_VIA_TUNNEL.to_string());
+    }
+    let database = database_index(profile.database.as_deref())?;
+    if cluster && database != 0 {
+      return Err(REDIS_CLUSTER_DATABASE.to_string());
+    }
     Ok(Self {
       host: profile.host.clone(),
       port: profile.port,
       username: profile.username.clone(),
       password: profile.password.clone(),
-      database: database_index(profile.database.as_deref())?,
+      database,
       tls: profile.effective_tls_mode(),
       ca_certificate_path: profile.ca_certificate_path.clone().filter(|path| !path.is_empty()),
       sentinel_master,
+      cluster,
     })
   }
 
   /// `credentials` 为假时不带用户名与口令：给没设口令的哨兵用
-  fn client(
+  fn connection_info(
     &self,
     host: &str,
     port: u16,
     database: i64,
     credentials: bool,
-  ) -> Result<redis::Client, String> {
+  ) -> Result<ConnectionInfo, String> {
     // `Required` 只加密不校验，与另外几家一致；`VerifyCa` 按完整校验（rustls 没有
     // 只放过主机名的开关），往严里走
     let address = match self.tls {
@@ -140,18 +155,35 @@ impl RedisTarget {
     if credentials && !self.password.is_empty() {
       settings = settings.set_password(&self.password);
     }
-    let info = address.into_connection_info().map_err(describe_error)?.set_redis_settings(settings);
+    Ok(address.into_connection_info().map_err(describe_error)?.set_redis_settings(settings))
+  }
+
+  /// 加密且给了 CA 时那份 CA 的内容
+  fn root_certificate(&self) -> Result<Option<redis::TlsCertificates>, String> {
     match (&self.ca_certificate_path, self.tls) {
       (Some(path), mode) if mode != TlsMode::Disabled => {
         let root = std::fs::read(path)
           .map_err(|error| format!("{REDIS_TLS_FILE_INVALID}: {path}: {error}"))?;
-        redis::Client::build_with_tls(
-          info,
-          redis::TlsCertificates { client_tls: None, root_cert: Some(root) },
-        )
-        .map_err(|error| format!("{REDIS_TLS_FILE_INVALID}: {path}: {error}"))
+        Ok(Some(redis::TlsCertificates { client_tls: None, root_cert: Some(root) }))
       }
-      _ => redis::Client::open(info).map_err(describe_error),
+      _ => Ok(None),
+    }
+  }
+
+  fn client(
+    &self,
+    host: &str,
+    port: u16,
+    database: i64,
+    credentials: bool,
+  ) -> Result<redis::Client, String> {
+    let info = self.connection_info(host, port, database, credentials)?;
+    match self.root_certificate()? {
+      Some(certificates) => redis::Client::build_with_tls(info, certificates).map_err(|error| {
+        let path = self.ca_certificate_path.as_deref().unwrap_or_default();
+        format!("{REDIS_TLS_FILE_INVALID}: {path}: {error}")
+      }),
+      None => redis::Client::open(info).map_err(describe_error),
     }
   }
 }
@@ -169,16 +201,54 @@ fn database_index(text: Option<&str>) -> Result<i64, String> {
   }
 }
 
+/// 单机（含经 Sentinel 找到的主节点）是一条 `ConnectionManager`；集群是驱动的集群连接，
+/// 按键的槽位把命令发到对应的主节点。两种都多路复用、克隆一份就是同一条连接
+#[derive(Clone)]
+pub enum RedisConnection {
+  Single(ConnectionManager),
+  Cluster(ClusterConnection),
+}
+
+impl ConnectionLike for RedisConnection {
+  fn req_packed_command<'a>(&'a mut self, cmd: &'a redis::Cmd) -> redis::RedisFuture<'a, Value> {
+    match self {
+      Self::Single(connection) => connection.req_packed_command(cmd),
+      Self::Cluster(connection) => connection.req_packed_command(cmd),
+    }
+  }
+
+  fn req_packed_commands<'a>(
+    &'a mut self,
+    pipeline: &'a redis::Pipeline,
+    offset: usize,
+    count: usize,
+  ) -> redis::RedisFuture<'a, Vec<Value>> {
+    match self {
+      Self::Single(connection) => connection.req_packed_commands(pipeline, offset, count),
+      Self::Cluster(connection) => connection.req_packed_commands(pipeline, offset, count),
+    }
+  }
+
+  fn get_db(&self) -> i64 {
+    match self {
+      Self::Single(connection) => connection.get_db(),
+      Self::Cluster(connection) => connection.get_db(),
+    }
+  }
+}
+
 /// 一个连接配置在后端的全部：连接参数加每个库号一条连接
 pub struct RedisPool {
   target: RedisTarget,
-  connections: tokio::sync::Mutex<HashMap<i64, ConnectionManager>>,
+  connections: tokio::sync::Mutex<HashMap<i64, RedisConnection>>,
 }
 
 impl RedisPool {
-  /// 这个库号上的连接，第一次用到时才开。`ConnectionManager` 断了自己重连，
-  /// 克隆一份就是同一条连接
-  pub async fn connection(&self, database: i64) -> Result<ConnectionManager, String> {
+  /// 这个库号上的连接，第一次用到时才开。断了自己重连
+  pub async fn connection(&self, database: i64) -> Result<RedisConnection, String> {
+    if self.target.cluster && database != 0 {
+      return Err(REDIS_CLUSTER_DATABASE.to_string());
+    }
     let mut connections = self.connections.lock().await;
     if let Some(connection) = connections.get(&database) {
       return Ok(connection.clone());
@@ -224,7 +294,10 @@ async fn master_address(target: &RedisTarget, master: &str) -> Result<(String, u
   address.ok_or_else(|| format!("{REDIS_SENTINEL_MASTER_UNKNOWN}: {master}"))
 }
 
-async fn open(target: &RedisTarget, database: i64) -> Result<ConnectionManager, String> {
+async fn open(target: &RedisTarget, database: i64) -> Result<RedisConnection, String> {
+  if target.cluster {
+    return open_cluster(target).await;
+  }
   // 不设响应时限：每条命令外面各套一层查询超时（默认的 500 毫秒对大库上的 SCAN
   // 太短）。重试只留一次：连不上时要尽快说出来，不是在后台退避六轮
   let config = ConnectionManagerConfig::new()
@@ -246,7 +319,39 @@ async fn open(target: &RedisTarget, database: i64) -> Result<ConnectionManager, 
       .query_async::<String>(&mut connection)
       .await
       .map_err(describe_connect_error)?;
-    Ok::<_, String>(connection)
+    Ok::<_, String>(RedisConnection::Single(connection))
+  };
+  match tokio::time::timeout(CONNECT_TIMEOUT + Duration::from_secs(2), attempt).await {
+    Ok(result) => result,
+    Err(_) => Err(format!("{REDIS_UNREACHABLE}: {}s", CONNECT_TIMEOUT.as_secs())),
+  }
+}
+
+/// 集群：从填的那个节点读出槽位分布，连上全部主节点（`PING` 发给每一个）。响应时限给到
+/// 查询超时的上限（一小时），与单机一样由每条命令外面那层时限管
+async fn open_cluster(target: &RedisTarget) -> Result<RedisConnection, String> {
+  let seed = target.connection_info(&target.host, target.port, 0, true)?;
+  let mut builder = redis::cluster::ClusterClientBuilder::new(vec![seed])
+    .connection_timeout(CONNECT_TIMEOUT)
+    .response_timeout(Duration::from_secs(3_600))
+    .retries(1);
+  if !target.username.is_empty() {
+    builder = builder.username(&target.username);
+  }
+  if !target.password.is_empty() {
+    builder = builder.password(&target.password);
+  }
+  if let Some(certificates) = target.root_certificate()? {
+    builder = builder.certs(certificates);
+  }
+  let client = builder.build().map_err(describe_connect_error)?;
+  let attempt = async {
+    let mut connection = client.get_async_connection().await.map_err(describe_connect_error)?;
+    redis::cmd("PING")
+      .query_async::<String>(&mut connection)
+      .await
+      .map_err(describe_connect_error)?;
+    Ok::<_, String>(RedisConnection::Cluster(connection))
   };
   match tokio::time::timeout(CONNECT_TIMEOUT + Duration::from_secs(2), attempt).await {
     Ok(result) => result,
@@ -348,6 +453,18 @@ pub struct KeyspaceEntry {
 /// 也不用 `CONFIG GET databases`：那条在 ACL 里属于危险命令，只读用户多半没有
 pub async fn list_keyspaces(pool: &RedisPool) -> Result<Vec<KeyspaceEntry>, String> {
   let mut connection = pool.connection(pool.default_database()).await?;
+  // 集群只有 0 号库；`DBSIZE` 由驱动发给每个主节点再加起来
+  if pool.target.cluster {
+    let keys: u64 =
+      redis::cmd("DBSIZE").query_async(&mut connection).await.map_err(describe_error)?;
+    return Ok(vec![KeyspaceEntry {
+      object_schema: None,
+      object_name: "db0".to_string(),
+      object_kind: "keyspace",
+      object_id: "db0".to_string(),
+      keys,
+    }]);
+  }
   let info: String = redis::cmd("INFO")
     .arg("keyspace")
     .query_async(&mut connection)
@@ -413,51 +530,149 @@ pub struct ScanPage {
   pub cursor: Option<String>,
 }
 
-/// 按模式翻一页键，顺带每个键的类型与剩余时间（一次流水线取回，不是一个键一趟）
+/// 按模式翻一页键，顺带每个键的类型与剩余时间
 pub async fn scan(pool: &RedisPool, request: ScanRequest) -> Result<ScanPage, String> {
   let mut connection = pool.connection(request.database).await?;
   let started = Instant::now();
   let work = async {
-    let mut cursor: u64 = request.cursor.parse().unwrap_or(0);
     let mut keys: Vec<Vec<u8>> = Vec::new();
     let mut scanned: u64 = 0;
-    loop {
-      let count = next_scan_count(request.page, keys.len(), scanned);
-      scanned += count;
-      let mut command = redis::cmd("SCAN");
-      command.arg(cursor).arg("MATCH").arg(&request.pattern).arg("COUNT").arg(count);
-      if let Some(kind) = &request.kind {
-        command.arg("TYPE").arg(kind);
-      }
-      let (next, batch): (u64, Vec<Vec<u8>>) =
-        command.query_async(&mut connection).await.map_err(describe_error)?;
-      keys.extend(batch);
-      cursor = next;
-      // 大库里匹配得很稀时一页可能要扫很多轮；过了一半时限就先交出已有的，
-      // 带着游标让人接着翻，而不是整页超时
-      if cursor == 0 || keys.len() >= request.page || started.elapsed() > request.timeout / 2 {
-        break;
-      }
-    }
-    let rows = describe_keys(&mut connection, keys).await?;
-    Ok(ScanPage { keys: rows, cursor: (cursor != 0).then(|| cursor.to_string()) })
+    let cursor = if pool.target.cluster {
+      scan_cluster(&mut connection, &request, started, &mut keys, &mut scanned).await?
+    } else {
+      let cursor = request.cursor.parse().unwrap_or(0);
+      let next =
+        scan_node(&mut connection, None, cursor, &request, started, &mut keys, &mut scanned)
+          .await?;
+      (next != 0).then(|| next.to_string())
+    };
+    let rows = describe_keys(&connection, keys).await?;
+    Ok(ScanPage { keys: rows, cursor })
   };
   with_deadline(request.timeout, work).await
 }
 
+/// 在一个节点上从 `cursor` 接着扫，凑够一页、这个节点扫完或过了一半时限就停，返回这个节点上的
+/// 下一个游标（0 是扫完了）。`node` 是集群里那个主节点的地址；单机是 `None`
+async fn scan_node(
+  connection: &mut RedisConnection,
+  node: Option<&(String, u16)>,
+  mut cursor: u64,
+  request: &ScanRequest,
+  started: Instant,
+  keys: &mut Vec<Vec<u8>>,
+  scanned: &mut u64,
+) -> Result<u64, String> {
+  loop {
+    let count = next_scan_count(request.page, keys.len(), *scanned);
+    *scanned += count;
+    let mut command = redis::cmd("SCAN");
+    command.arg(cursor).arg("MATCH").arg(&request.pattern).arg("COUNT").arg(count);
+    if let Some(kind) = &request.kind {
+      command.arg("TYPE").arg(kind);
+    }
+    let (next, batch): (u64, Vec<Vec<u8>>) = match (&mut *connection, node) {
+      // 集群上的 `SCAN` 没有键可以定槽位，驱动不知道发给谁：按地址点名
+      (RedisConnection::Cluster(cluster), Some((host, port))) => {
+        let routing = RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+          host: host.clone(),
+          port: *port,
+        });
+        let reply = cluster.route_command(command, routing).await.map_err(describe_error)?;
+        redis::from_redis_value(reply).map_err(|error| error.to_string())?
+      }
+      (connection, _) => command.query_async(connection).await.map_err(describe_error)?,
+    };
+    keys.extend(batch);
+    cursor = next;
+    // 大库里匹配得很稀时一页可能要扫很多轮；过了一半时限就先交出已有的，
+    // 带着游标让人接着翻，而不是整页超时
+    if cursor == 0 || keys.len() >= request.page || started.elapsed() > request.timeout / 2 {
+      return Ok(cursor);
+    }
+  }
+}
+
+/// 集群：主节点按地址排好，一个扫完接下一个。游标是「第几个主节点:那个节点上的游标」。
+/// 两页之间增删了主节点（扩缩容、切换）时序号会错开，那一轮可能漏或重——翻页本来就不是快照
+async fn scan_cluster(
+  connection: &mut RedisConnection,
+  request: &ScanRequest,
+  started: Instant,
+  keys: &mut Vec<Vec<u8>>,
+  scanned: &mut u64,
+) -> Result<Option<String>, String> {
+  let nodes: String = redis::cmd("CLUSTER")
+    .arg("NODES")
+    .query_async(&mut *connection)
+    .await
+    .map_err(describe_error)?;
+  let masters = cluster_masters(&nodes);
+  let (mut node, mut cursor) = split_cluster_cursor(&request.cursor);
+  while let Some(address) = masters.get(node) {
+    cursor = scan_node(connection, Some(address), cursor, request, started, keys, scanned).await?;
+    if cursor == 0 {
+      node += 1;
+    }
+    if keys.len() >= request.page || started.elapsed() > request.timeout / 2 {
+      break;
+    }
+  }
+  Ok((node < masters.len()).then(|| format!("{node}:{cursor}")))
+}
+
+/// `CLUSTER NODES` 里能用的主节点，按地址排序（翻页时序号要稳定）。每行是
+/// `id ip:port@cport[,hostname] flags …`；副本、失联、还在握手的不算
+fn cluster_masters(nodes: &str) -> Vec<(String, u16)> {
+  let mut masters: Vec<(String, u16)> = nodes
+    .lines()
+    .filter_map(|line| {
+      let mut fields = line.split_whitespace();
+      let address = fields.nth(1)?;
+      let flags: Vec<&str> = fields.next()?.split(',').collect();
+      let usable = flags.contains(&"master")
+        && !flags.iter().any(|flag| matches!(*flag, "fail" | "fail?" | "noaddr" | "handshake"));
+      if !usable {
+        return None;
+      }
+      let (host, port) = address.split('@').next()?.rsplit_once(':')?;
+      let host = host.trim_start_matches('[').trim_end_matches(']');
+      Some((host.to_string(), port.parse().ok()?))
+    })
+    .collect();
+  masters.sort();
+  masters
+}
+
+/// 第一页的 "0" 与认不出的都从第一个主节点的开头扫
+fn split_cluster_cursor(cursor: &str) -> (usize, u64) {
+  cursor
+    .split_once(':')
+    .and_then(|(node, cursor)| Some((node.parse().ok()?, cursor.parse().ok()?)))
+    .unwrap_or((0, 0))
+}
+
+/// 每个键的类型与剩余时间。集群上一条流水线只能落在一个槽里，所以一个键一条（`TYPE` 加
+/// `PTTL`），一起发出去——连接是多路复用的，单机上也还是差不多一个来回
 async fn describe_keys(
-  connection: &mut ConnectionManager,
+  connection: &RedisConnection,
   keys: Vec<Vec<u8>>,
 ) -> Result<Vec<RedisKeyRow>, String> {
-  if keys.is_empty() {
-    return Ok(Vec::new());
-  }
-  let mut pipe = redis::pipe();
-  for key in &keys {
-    pipe.cmd("TYPE").arg(key).cmd("PTTL").arg(key);
-  }
-  let replies: Vec<Value> = pipe.query_async(connection).await.map_err(describe_error)?;
-  let mut replies = replies.into_iter();
+  let replies = futures_util::future::try_join_all(keys.iter().map(|key| {
+    let mut connection = connection.clone();
+    async move {
+      redis::pipe()
+        .cmd("TYPE")
+        .arg(key)
+        .cmd("PTTL")
+        .arg(key)
+        .query_async::<Vec<Value>>(&mut connection)
+        .await
+    }
+  }))
+  .await
+  .map_err(describe_error)?;
+  let mut replies = replies.into_iter().flatten();
   Ok(
     keys
       .into_iter()
@@ -1229,7 +1444,76 @@ pub async fn execute(
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::models::{REDIS_MODE_OPTION, REDIS_SENTINEL, REDIS_SENTINEL_MASTER_OPTION};
+  use crate::models::{
+    REDIS_CLUSTER, REDIS_MODE_OPTION, REDIS_SENTINEL, REDIS_SENTINEL_MASTER_OPTION,
+  };
+
+  fn cluster_profile(database: &str) -> ConnectionProfile {
+    let mut profile = sentinel_profile(None);
+    profile.options.insert(REDIS_MODE_OPTION.to_string(), REDIS_CLUSTER.to_string());
+    profile.database = Some(database.to_string());
+    profile
+  }
+
+  #[test]
+  fn a_cluster_connection_has_its_own_key_and_only_database_zero() {
+    let profile = cluster_profile("0");
+    assert_eq!(
+      profile.db_type.to_connection_string(&profile),
+      "redis://@sentinel.example.com:26379/0?cluster"
+    );
+    assert!(RedisTarget::from_profile(&profile).expect("target").cluster);
+    let error = RedisTarget::from_profile(&cluster_profile("3")).err().expect("db 3");
+    assert_eq!(error, REDIS_CLUSTER_DATABASE);
+  }
+
+  #[test]
+  fn a_cluster_connection_cannot_go_through_an_ssh_tunnel() {
+    let mut profile = cluster_profile("0");
+    profile.ssh_tunnel = Some(crate::models::SshTunnelConfig {
+      host: "bastion".to_string(),
+      port: 22,
+      username: "ops".to_string(),
+      private_key_path: String::new(),
+      auth: Default::default(),
+      secret: String::new(),
+      secret_ref: None,
+      remote_host: None,
+      remote_port: None,
+    });
+    assert_eq!(
+      RedisTarget::from_profile(&profile).err().as_deref(),
+      Some(REDIS_DISCOVERY_VIA_TUNNEL)
+    );
+  }
+
+  /// 只要能用的主节点：副本、失联的、还在握手的都不扫（副本上的键与主节点重复）
+  #[test]
+  fn the_masters_are_read_from_cluster_nodes_in_a_stable_order() {
+    let nodes = "\
+b 127.0.0.1:37002@47002 master - 0 1 2 connected 5461-10922
+a 127.0.0.1:37001@47001,host-a myself,master - 0 0 1 connected 0-5460
+c 127.0.0.1:37004@47004 slave b 0 1 2 connected
+d 127.0.0.1:37005@47005 master,fail - 0 1 4 disconnected
+e [::1]:37003@47003 master - 0 1 3 connected 10923-16383
+";
+    assert_eq!(
+      cluster_masters(nodes),
+      vec![
+        ("127.0.0.1".to_string(), 37001),
+        ("127.0.0.1".to_string(), 37002),
+        ("::1".to_string(), 37003),
+      ]
+    );
+  }
+
+  /// 集群的游标是「第几个主节点:那个节点上的游标」；第一页照旧是 "0"
+  #[test]
+  fn a_cluster_cursor_names_the_node_and_its_own_cursor() {
+    assert_eq!(split_cluster_cursor("0"), (0, 0));
+    assert_eq!(split_cluster_cursor("2:1536"), (2, 1536));
+    assert_eq!(split_cluster_cursor("x"), (0, 0));
+  }
 
   fn sentinel_profile(master: Option<&str>) -> ConnectionProfile {
     let mut options = HashMap::new();
@@ -1279,7 +1563,7 @@ mod tests {
     let tunnelled =
       |master| ConnectionProfile { ssh_tunnel: Some(tunnel.clone()), ..sentinel_profile(master) };
     let error = RedisTarget::from_profile(&tunnelled(Some("mymaster"))).err().expect("refused");
-    assert_eq!(error, REDIS_SENTINEL_VIA_TUNNEL);
+    assert_eq!(error, REDIS_DISCOVERY_VIA_TUNNEL);
     assert!(RedisTarget::from_profile(&tunnelled(None)).is_ok(), "单机照常可以走隧道");
   }
 

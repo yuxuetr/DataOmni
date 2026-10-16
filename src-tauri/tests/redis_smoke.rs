@@ -12,13 +12,16 @@
 //! Sentinel 那一条另设 `DATAOMNI_REDIS_SENTINEL_TEST_URL=redis://user:password@哨兵:端口/主节点名`
 //! （口令是数据节点的；哨兵自己不设口令）。它会做一次主从切换，只对一套用完就扔的环境设。
 //!
+//! 集群那一条另设 `DATAOMNI_REDIS_CLUSTER_TEST_URL=redis://user:password@任一节点:端口`。它会
+//! `FLUSHALL`，同样只对一套用完就扔的集群设。
+//!
 //! 用例各占一个库号（5–15，并行跑时互不干扰），开头 `FLUSHDB` 清掉残留——那几个库号只给这里用。
 
 use dataomni_lib::models::ConnectionProfile;
 use dataomni_lib::models::TlsMode;
 use dataomni_lib::services::redis::{
   self as store, ElementChange, KeyChange, NewKey, RedisReply, RedisTarget, RedisValue,
-  ScanRequest, ValueRequest, REDIS_AUTH_FAILED, REDIS_AUTH_REQUIRED,
+  ScanRequest, ValueRequest, REDIS_AUTH_FAILED, REDIS_AUTH_REQUIRED, REDIS_CLUSTER_DATABASE,
   REDIS_COMMAND_CONNECTION_STATE, REDIS_ELEMENT_EXISTS, REDIS_ELEMENT_GONE, REDIS_KEY_EXISTS,
   REDIS_KEY_GONE, REDIS_SENTINEL_MASTER_UNKNOWN, REDIS_TLS_FILE_INVALID, REDIS_UNREACHABLE,
   REDIS_VALUE_CHANGED,
@@ -29,6 +32,7 @@ use std::time::{Duration, Instant};
 
 const URL_ENV: &str = "DATAOMNI_REDIS_TEST_URL";
 const SENTINEL_URL_ENV: &str = "DATAOMNI_REDIS_SENTINEL_TEST_URL";
+const CLUSTER_URL_ENV: &str = "DATAOMNI_REDIS_CLUSTER_TEST_URL";
 const REQUIRE_ENV: &str = "DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS";
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -855,4 +859,62 @@ async fn a_sentinel_hands_over_the_master_and_a_reconnect_follows_a_failover() {
     tokio::time::sleep(Duration::from_millis(500)).await;
   };
   assert_ne!(after, before);
+}
+
+/// 键分散在各个主节点上：只扫一个节点只看得到大约三分之一。翻页要每个恰好一次
+#[tokio::test]
+async fn a_cluster_pages_through_the_keys_of_every_master() {
+  let Ok(url) = std::env::var(CLUSTER_URL_ENV) else { return };
+  let mut profile = profile_from_url(&url, 0);
+  profile.options.insert("redisMode".to_string(), "cluster".to_string());
+  let pool = pool(&profile).await;
+  assert_eq!(pool.connection(1).await.err().as_deref(), Some(REDIS_CLUSTER_DATABASE));
+
+  let mut connection = pool.connection(0).await.expect("connection");
+  redis::cmd("FLUSHALL").query_async::<()>(&mut connection).await.expect("flushall");
+  let expected: HashSet<String> = (0..300).map(|index| format!("om:{index}")).collect();
+  for key in &expected {
+    redis::cmd("SET").arg(key).arg("v").query_async::<()>(&mut connection).await.expect("set");
+  }
+
+  let mut seen = Vec::new();
+  let mut cursor = "0".to_string();
+  loop {
+    let page = store::scan(
+      &pool,
+      ScanRequest {
+        database: 0,
+        pattern: "om:*".into(),
+        cursor,
+        kind: None,
+        page: 50,
+        timeout: TIMEOUT,
+      },
+    )
+    .await
+    .expect("scan");
+    for row in page.keys {
+      assert_eq!((row.kind.as_str(), row.ttl_ms), ("string", -1), "{}", row.key.text);
+      seen.push(row.key.text);
+    }
+    match page.cursor {
+      Some(next) => cursor = next,
+      None => break,
+    }
+  }
+  let unique: HashSet<String> = seen.iter().cloned().collect();
+  assert_eq!(seen.len(), unique.len(), "有键出现了不止一次");
+  assert_eq!(unique, expected);
+
+  let keyspaces = store::list_keyspaces(&pool).await.expect("keyspaces");
+  assert_eq!(keyspaces.len(), 1);
+  assert_eq!((keyspaces[0].object_name.as_str(), keyspaces[0].keys), ("db0", 300));
+
+  // 命令行与读值按键的槽位发到对应的主节点
+  let reply =
+    store::execute(&pool, 0, vec![b"GET".to_vec(), b"om:7".to_vec()], TIMEOUT).await.expect("GET");
+  assert!(matches!(&reply, RedisReply::Bulk { value } if value.text == "v"), "{reply:?}");
+  let value = store::read_value(&pool, read(0, b"om:299", None, 10)).await.expect("read");
+  assert!(matches!(value, RedisValue::String { size: 1, .. }), "{value:?}");
+  redis::cmd("FLUSHALL").query_async::<()>(&mut connection).await.expect("flushall");
 }

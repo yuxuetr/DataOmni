@@ -48,9 +48,10 @@ import { isEsApiKey, withEsApiKey } from '../utils/esConnection';
 import { ORACLE_DEFAULT_SERVICE, isOracleSid, withOracleSid } from '../utils/oracleConnection';
 import {
   REDIS_SENTINEL_MASTER_OPTION,
-  isRedisSentinel,
-  withRedisSentinel,
-  withRedisSentinelMaster
+  redisMode,
+  withRedisMode,
+  withRedisSentinelMaster,
+  type RedisMode
 } from '../utils/redisConnection';
 import { clsx } from 'clsx';
 import { PLAIN_TEXT_INPUT } from './FormControls';
@@ -354,7 +355,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   // API Key 存在口令那一格，用户名不用
   const esApiKey = isEsApiKey(formData);
   const oracleSid = isOracleSid(formData);
-  const redisSentinel = isRedisSentinel(formData);
+  const redisDeployment = redisMode(formData);
   // 一格都没填时不提示：刚勾开就红着一片，读起来像是用户做错了什么
   const tunnelGaps = tunnel && !isSshTunnelBlank(tunnel) ? sshTunnelProblems(tunnel) : [];
 
@@ -876,17 +877,21 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                     </label>
                     <select
                       id="redis-mode"
-                      value={redisSentinel ? 'sentinel' : 'standalone'}
+                      value={redisDeployment}
                       onChange={(event) => {
-                        const enabled = event.target.value === 'sentinel';
-                        setFormData((previous) => ({ ...previous, ...withRedisSentinel(previous, enabled) }));
+                        const mode = event.target.value as RedisMode;
+                        setFormData((previous) => ({ ...previous, ...withRedisMode(previous, mode) }));
                       }}
                       className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
                     >
                       <option value="standalone">{t('form.redisStandalone')}</option>
                       <option value="sentinel">Sentinel</option>
+                      <option value="cluster">{t('form.redisCluster')}</option>
                     </select>
-                    {redisSentinel && (
+                    {redisDeployment === 'cluster' && (
+                      <p className="text-xs text-fg-muted mt-1">{t('form.redisClusterHint')}</p>
+                    )}
+                    {redisDeployment === 'sentinel' && (
                       <>
                         <label htmlFor="redis-sentinel-master" className="block text-sm font-medium text-fg mb-1 mt-3">
                           {t('form.redisSentinelMaster')} *
@@ -961,8 +966,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   </div>
                 )}
 
-                {/* Redis 数据库编号 */}
-                {formData.db_type === DatabaseType.Redis && (
+                {/* Redis 数据库编号；集群只有 0 号库 */}
+                {formData.db_type === DatabaseType.Redis && redisDeployment !== 'cluster' && (
                   <div>
                     <label className="block text-sm font-medium text-fg mb-1">
                       {t('form.redisDb')}

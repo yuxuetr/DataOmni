@@ -17,10 +17,12 @@ pub const ORACLE_CONNECT_BY_OPTION: &str = "connectBy";
 /// 按 SID 连：`database` 那一格填的是 SID
 pub const ORACLE_SID: &str = "sid";
 
-/// `options` 里的键：Redis 怎么部署。只认 [`REDIS_SENTINEL`]，不设就是单机
+/// `options` 里的键：Redis 怎么部署。认 [`REDIS_SENTINEL`] 与 [`REDIS_CLUSTER`]，不设就是单机
 pub const REDIS_MODE_OPTION: &str = "redisMode";
 /// 经 Sentinel：表单上的主机与端口是哨兵的，主节点地址问它要
 pub const REDIS_SENTINEL: &str = "sentinel";
+/// 集群：表单上的主机与端口是任意一个节点，其余的由它报出来
+pub const REDIS_CLUSTER: &str = "cluster";
 /// Sentinel 里登记的主节点名（`sentinel monitor <name> …`）
 pub const REDIS_SENTINEL_MASTER_OPTION: &str = "sentinelMaster";
 
@@ -310,7 +312,7 @@ impl DatabaseType {
         config.mongo_auth_segment("admin")
       ),
       // 和 SQL Server 同一个理由：是 `RedisRegistry` 里的键，不带口令。最后一段是库号；
-      // 经 Sentinel 的再带上主节点名：同一个哨兵可以管着几组主从
+      // 经 Sentinel 的再带上主节点名（同一个哨兵可以管着几组主从），集群的带上 `?cluster`
       DatabaseType::Redis => format!(
         "{}{}@{}:{}/{}{}",
         crate::services::redis::REDIS_SCHEME,
@@ -325,9 +327,11 @@ impl DatabaseType {
             .filter(|index| !index.is_empty())
             .unwrap_or("0")
         ),
-        config
-          .redis_sentinel_master()
-          .map_or(String::new(), |name| format!("?sentinel={}", encode(name)))
+        match config.redis_sentinel_master() {
+          Some(name) => format!("?sentinel={}", encode(name)),
+          None if config.redis_cluster() => "?cluster".to_string(),
+          None => String::new(),
+        }
       ),
       // 和 SQL Server 同一个理由：是 `Neo4jRegistry` 里的键，不带口令。最后一段是库，
       // 空着就是这个用户的主库
@@ -413,6 +417,11 @@ impl ConnectionProfile {
     let sentinel = self.db_type == DatabaseType::Redis
       && self.options.get(REDIS_MODE_OPTION).is_some_and(|value| value == REDIS_SENTINEL);
     sentinel.then(|| self.options.get(REDIS_SENTINEL_MASTER_OPTION).map_or("", |name| name.trim()))
+  }
+
+  pub fn redis_cluster(&self) -> bool {
+    self.db_type == DatabaseType::Redis
+      && self.options.get(REDIS_MODE_OPTION).is_some_and(|value| value == REDIS_CLUSTER)
   }
 
   /// 登录用的用户名。X.509 的用户名是证书的主题、由服务端从证书里读，表单上那一格
