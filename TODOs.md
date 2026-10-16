@@ -223,6 +223,7 @@
   - 还不能勾：Windows 的安装、升级、卸载，以及带 Instant Client 的 Oracle（R5）；兼容库与隧道的打包版回归（R6）。
   - 2026-10-15 实际使用中发现并修了：经 SSH 隧道连 MySQL 5.7.44，TLS「要求」只报 `HandshakeFailure`（`08b842d`）。rustls 只有 ECDHE 套件而 5.7 不开 ECDH，「优先」也一样失败；现在提示改成「禁用」或升级到 8.0。真库用例在本机 `mysql:5.7.44` 上过；用户在自己的 5.7 上看到了新提示，改「禁用」后正常使用。
   - 2026-10-16 macOS：升级后删旧版本存的连接，报「没能从系统钥匙串删掉这条密码… Invalid attempt to change the owner of this item」，连接删不掉。ad-hoc 签名换了 cdhash，`SecItemDelete` 报 -25244；只在这个码上改用 `/usr/bin/security` 删（`cc22d79`）。真钥匙串单测做过反向验证；装进 /Applications 的新包上，用户删掉了一条由 `security` 写入的口令所属的连接（T1），没报错，钥匙串里那条也没了。
+  - 2026-10-16 做 G3 时撞上：PostgreSQL / MySQL 的 TLS 选「校验 CA」一连就 panic。rustls 的 ring 与 aws-lc 两个 feature 都开着（reqwest、neo4j、tiberius 带进 aws-lc），不挑进程级默认的加密实现，sqlx 的 verify-ca 校验器要它。`sqlx_pool::open` 先把 ring 装成默认（`6fbfa9c`）。单测做过反向验证；本机 openGauss 开 TLS，verify-ca 改前 panic、改后握手通过。打包版上没看过。
   - 同日同一台 5.7：结构页「检查约束」段印红字 `Unknown table 'CHECK_CONSTRAINTS'`（8.0.16 起才有）。现在按 SQLSTATE 42S02 当作「没有检查约束目录」，说明 5.7 不执行 CHECK（`2e5227c`）。真库用例与组件渲染测试都做过反向验证；打包版上没看过。
 - [ ] v0.3：三平台基础安装与冒烟测试
   - macOS 与 Linux（容器）已验。Windows 能构建，GitHub Actions 也出 MSI / NSIS，但还没装过、没做冒烟，与 R5 一起做。
