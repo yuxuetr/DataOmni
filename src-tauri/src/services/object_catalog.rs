@@ -14,6 +14,9 @@ pub struct ObjectCatalogQueries {
   pub routine_definition: &'static str,
   /// 绑定 `object_id`，取序列的属性；`None` 表示该方言没有序列
   pub sequence_properties: Option<&'static str>,
+  /// `sequence_properties` 报 42P01（没有 `pg_sequences`，openGauss）时改查序列关系本身；
+  /// 不收占位符，调用方把 `{sequence}` 换成引用过的（带 schema 的）序列名。只有 PostgreSQL 有
+  pub sequence_properties_by_relation: Option<&'static str>,
   /// `objects` 需要绑定几个参数（MySQL 的 UNION 两边各要一次库名）
   pub object_parameter_count: u8,
   /// `routine_definition` 绑几个参数：`[object_id]`，MySQL 另要库名 `[object_id, 库名]`。
@@ -30,6 +33,7 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
       objects: POSTGRES_OBJECTS,
       routine_definition: POSTGRES_ROUTINE_DEFINITION,
       sequence_properties: Some(POSTGRES_SEQUENCE_PROPERTIES),
+      sequence_properties_by_relation: Some(OPENGAUSS_SEQUENCE_PROPERTIES),
       object_parameter_count: 0,
       routine_parameter_count: 1,
     }),
@@ -38,6 +42,7 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
       routine_definition: MYSQL_ROUTINE_DEFINITION,
       // MySQL 没有序列，AUTO_INCREMENT 是列属性不是独立对象
       sequence_properties: None,
+      sequence_properties_by_relation: None,
       object_parameter_count: 2,
       routine_parameter_count: 2,
     }),
@@ -47,6 +52,7 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
       // 因为列不出任何 function / procedure 对象
       routine_definition: SQLITE_NO_ROUTINES,
       sequence_properties: None,
+      sequence_properties_by_relation: None,
       object_parameter_count: 0,
       routine_parameter_count: 0,
     }),
@@ -54,6 +60,7 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
       objects: SQL_SERVER_OBJECTS,
       routine_definition: SQL_SERVER_ROUTINE_DEFINITION,
       sequence_properties: Some(SQL_SERVER_SEQUENCE_PROPERTIES),
+      sequence_properties_by_relation: None,
       object_parameter_count: 0,
       routine_parameter_count: 1,
     }),
@@ -61,6 +68,7 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
       objects: ORACLE_OBJECTS,
       routine_definition: ORACLE_ROUTINE_DEFINITION,
       sequence_properties: Some(ORACLE_SEQUENCE_PROPERTIES),
+      sequence_properties_by_relation: None,
       object_parameter_count: 0,
       routine_parameter_count: 1,
     }),
@@ -68,6 +76,7 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
       objects: DUCKDB_OBJECTS,
       routine_definition: DUCKDB_ROUTINE_DEFINITION,
       sequence_properties: Some(DUCKDB_SEQUENCE_PROPERTIES),
+      sequence_properties_by_relation: None,
       object_parameter_count: 0,
       routine_parameter_count: 1,
     }),
@@ -75,6 +84,7 @@ pub fn object_catalog_queries(db_type: &DatabaseType) -> Option<ObjectCatalogQue
       objects: CLICKHOUSE_OBJECTS,
       routine_definition: CLICKHOUSE_ROUTINE_DEFINITION,
       sequence_properties: None,
+      sequence_properties_by_relation: None,
       object_parameter_count: 0,
       routine_parameter_count: 1,
     }),
@@ -162,6 +172,21 @@ FROM pg_sequences s
 JOIN pg_class c ON c.relname = s.sequencename
 JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = s.schemaname
 WHERE c.oid = $1::oid
+"#;
+
+/// openGauss（基于 PostgreSQL 9.2）没有 `pg_sequences`，序列的属性在序列关系自己的那一行里；
+/// 没有 `data_type`（它的序列一律是 int16）。别名与上面那条一致，属性页的键不随服务端变。
+/// `pg_sequence_parameters` 不用：没有 `last_value` 与缓存，而且三家的列各不相同
+const OPENGAUSS_SEQUENCE_PROPERTIES: &str = r#"
+SELECT
+  s.start_value::text AS start_value,
+  s.increment_by::text AS increment_by,
+  s.min_value::text AS min_value,
+  s.max_value::text AS max_value,
+  s.cache_value::text AS cache_size,
+  s.is_cycled::text AS cycles,
+  s.last_value::text AS last_value
+FROM {sequence} s
 "#;
 
 /// CAST 不是装饰：MySQL 8 的 information_schema 以 VARBINARY 返回标识符列，

@@ -88,8 +88,8 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
   `mariadb` 客户端——mysql 命令行客户端（Homebrew 的 26.7）对它的每一条非查询语句都报 `Malformed packet`。
 - **openGauss**（GaussDB 同源）：建库时要 `DBCOMPATIBILITY 'PG'`（默认的 `'A'` 是 Oracle 语义，没测过）。
   只存 sha256 口令的用户（`password_encryption_type = 2`，openGauss 的默认）也连得上：标准 PostgreSQL 驱动不认
-  它的 sha256 认证，应用在本机开一个只给这条连接用的转发口代为登录，TLS 照连接里的设置。缺口：序列的属性页读不出（没有 `pg_sequences`）；
-  违反约束时不给约束名与表名（服务端不填那两个字段）。
+  它的 sha256 认证，应用在本机开一个只给这条连接用的转发口代为登录，TLS 照连接里的设置。序列的属性页查序列关系本身（它没有 `pg_sequences`，也就没有数据类型那一项）。
+  缺口：违反约束时不给约束名与表名（服务端不填那两个字段）。
 - **CockroachDB 的缺口**：错误里没有出错位置和表名。结构页的触发器它的目录表里查不到，
   改用 `SHOW TRIGGERS` / `SHOW CREATE TRIGGER` 读（24.3 之前的版本没有触发器，那一段说「列不出」）。执行计划
   解析的是它的 `EXPLAIN (VERBOSE)` 文本树，「真的执行一遍」走 `EXPLAIN ANALYZE`。
@@ -584,6 +584,7 @@ bun install
 - Elasticsearch 可以用 API Key 登录（连接表单「认证方式」选 API Key；Kibana 给的 encoded 与 `id:api_key` 两种写法都收）
 - Oracle 可以按 SID 连接（连接表单「连接方式」选 SID），11g 及更早的库与只在监听里登记了 SID 的库也连得上
 - CockroachDB 的结构页列得出触发器了（此前那一段只显示「列不出」）
+- openGauss 的序列属性页读得出了（此前报 `pg_sequences` 不存在）
 
 ### v0.6.1（2026-10-07）
 

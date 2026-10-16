@@ -2510,10 +2510,21 @@ async fn postgres_catalog_results_are_decodable_by_the_plugin() {
       query = query.bind(param.clone());
     }
     let rows = match query.fetch_all(&pool).await {
-      // openGauss 没有 pg_sequences（PG 10+），序列属性页在它上面报错：已知缺口（TODOs B2b）。
-      // pg_sequence_parameters 不是出路——三家给的列不一样，CockroachDB 上还会崩
+      // openGauss 没有 pg_sequences（PG 10+），界面改查序列关系本身：那一条同样要解得开
       Err(error) if opengauss && request.name == "sequence_properties" => {
         assert!(error.to_string().contains("pg_sequences"), "{error}");
+        let fallback =
+          objects.sequence_properties_by_relation.expect("PostgreSQL carries the fallback");
+        let request = CatalogRequest::new(
+          "sequence_properties_by_relation",
+          &fallback
+            .replace("{sequence}", &format!("\"{}\".\"{sequence}\"", current_schema(&pool).await)),
+          Vec::new(),
+        );
+        let rows =
+          sqlx::query(&request.sql).fetch_all(&pool).await.expect("read the sequence relation");
+        assert_plugin_decodes("PostgreSQL", &request, &rows, PLUGIN_DECODES_POSTGRES);
+        assert_app_select_decodes("PostgreSQL", &request, &DbPool::Postgres(pool.clone())).await;
         continue;
       }
       Err(error) if cockroach && request.name == "triggers" => {
@@ -2948,25 +2959,22 @@ async fn postgres_lists_database_objects_and_resolves_overloaded_routines() {
     .map(|(.., id)| id.clone())
     .expect("sequence listed");
   let sequence_sql = queries.sequence_properties.expect("PostgreSQL has sequences");
-  // openGauss 没有 pg_sequences（PG 10+）：序列的属性页在它上面报错，这是已知缺口（B2b）。
-  // 钉住现状，哪天能读了这里会红，提醒回来把缺口划掉
-  if is_opengauss(&pool).await {
-    let error = sqlx::query(sequence_sql)
-      .bind(&sequence_id)
+  let row = match sqlx::query(sequence_sql).bind(&sequence_id).fetch_one(&pool).await {
+    // openGauss 没有 pg_sequences（PG 10+），界面改查序列关系本身（同 `ObjectDefinitionDialog`）
+    Err(error) if is_opengauss(&pool).await => {
+      assert!(error.to_string().contains("pg_sequences"), "{error}");
+      let fallback =
+        queries.sequence_properties_by_relation.expect("PostgreSQL carries the fallback");
+      sqlx::query(
+        &fallback
+          .replace("{sequence}", &format!("\"{}\".\"{sequence}\"", current_schema(&pool).await)),
+      )
       .fetch_one(&pool)
       .await
-      .expect_err("openGauss 没有 pg_sequences");
-    assert!(error.to_string().contains("pg_sequences"), "{error}");
-    sqlx::query(&format!("DROP MATERIALIZED VIEW IF EXISTS {matview}")).execute(&pool).await.ok();
-    sqlx::query(&format!("DROP VIEW IF EXISTS {view}")).execute(&pool).await.ok();
-    sqlx::query(&format!("DROP SEQUENCE IF EXISTS {sequence}")).execute(&pool).await.ok();
-    return;
-  }
-  let row = sqlx::query(sequence_sql)
-    .bind(&sequence_id)
-    .fetch_one(&pool)
-    .await
-    .expect("run sequence properties query");
+      .expect("read the sequence relation")
+    }
+    result => result.expect("run sequence properties query"),
+  };
   assert_eq!(row.get::<String, _>("start_value"), "7");
   assert_eq!(row.get::<String, _>("increment_by"), "3");
 
@@ -3956,6 +3964,11 @@ async fn is_cockroach(pool: &sqlx::PgPool) -> bool {
 /// openGauss（PG 9.2 系，TODOs 下一步规划 B2b）。它的差异分两种：夹具用了它没有的新语法
 /// （`EXECUTE FUNCTION`、`IDENTITY`），按它的写法换；服务端本身给得不一样的（约束名、SQLSTATE），
 /// 钉住「现在是这样」，哪天变了这些断言会红
+/// 不带 schema 建的对象落在这里。openGauss 给每个用户建一个同名 schema 排在 search_path 最前，不一定是 public
+async fn current_schema(pool: &sqlx::PgPool) -> String {
+  sqlx::query_scalar("SELECT current_schema()::text").fetch_one(pool).await.expect("current schema")
+}
+
 async fn is_opengauss(pool: &sqlx::PgPool) -> bool {
   let version: String =
     sqlx::query_scalar("SELECT version()").fetch_one(pool).await.expect("read server version");

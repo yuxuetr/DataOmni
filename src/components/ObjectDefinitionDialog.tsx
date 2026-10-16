@@ -8,7 +8,7 @@ import { useLanguageStore } from '../stores/languageStore';
 import type { ConnectionProfile } from '../contracts';
 import type { ObjectCatalogQueries } from './DatabaseExplorer';
 import { requireDatabase } from '../utils/requireDatabase';
-import { ddlRequest, type SchemaMetadataQueries } from '../utils/catalogQueries';
+import { ddlRequest, readSequenceProperties, type SchemaMetadataQueries } from '../utils/catalogQueries';
 import { extractDdlStatements, joinDdlStatements } from '../utils/schemaObjects';
 import { identifierDialectFor } from '../utils/sqlIdentifiers';
 import { HighlightedCode } from './HighlightedCode';
@@ -32,7 +32,8 @@ interface ObjectDefinitionDialogProps {
  * - 视图、物化视图与 ClickHouse 的字典：`pg_get_viewdef` / `SHOW CREATE TABLE` / `sqlite_master`，
  *   和结构页里那段「对象定义」走的是同一条查询
  * - 序列没有 `CREATE SEQUENCE` 的反解函数，但 `pg_sequences` 直接给出定义它的
- *   全部属性——如实列属性，不去拼一条可能不等价的 CREATE SEQUENCE
+ *   全部属性——如实列属性，不去拼一条可能不等价的 CREATE SEQUENCE（openGauss 没有
+ *   `pg_sequences`，查序列关系本身）
  */
 export function ObjectDefinitionDialog({
   object,
@@ -98,8 +99,12 @@ export function ObjectDefinitionDialog({
           if (!queries.sequence_properties) {
             throw new Error(t('objectDefinition.noSequences'));
           }
-          const rows = await requireDatabase(database).select(queries.sequence_properties, [object.id]);
-          const row = Array.isArray(rows) ? rows[0] : undefined;
+          const row = await readSequenceProperties(
+            queries.sequence_properties,
+            queries.sequence_properties_by_relation,
+            (sql, params) => requireDatabase(database).select(sql, params),
+            object
+          );
           if (!cancelled) {
             setProperties(row ? Object.entries(row).map(([key, value]) => [key, String(value)]) : []);
           }

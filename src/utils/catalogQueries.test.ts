@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { catalogQueryParams, ddlRequest, readTriggersByShow } from './catalogQueries';
+import { catalogQueryParams, ddlRequest, readSequenceProperties, readTriggersByShow } from './catalogQueries';
 
 describe('catalogQueryParams', () => {
   it('声明两个参数时补上 schema', () => {
@@ -132,5 +132,49 @@ describe('readTriggersByShow', () => {
       throw denied;
     };
     await expect(readTriggersByShow(show, select, 'orders', null)).rejects.toBe(denied);
+  });
+});
+
+describe('readSequenceProperties', () => {
+  const sql = 'SELECT … FROM pg_sequences s … WHERE c.oid = $1::oid';
+  const byRelation = 'SELECT s.start_value FROM {sequence} s';
+  const sequence = { id: '16390', name: 'order$&_seq', schema: 'shop' };
+
+  it('先按 oid 查 pg_sequences', async () => {
+    const sent: Array<[string, unknown[]]> = [];
+    const row = await readSequenceProperties(sql, byRelation, async (sql, params) => {
+      sent.push([sql, params]);
+      return [{ start_value: '7' }];
+    }, sequence);
+    expect(sent).toEqual([[sql, ['16390']]]);
+    expect(row).toEqual({ start_value: '7' });
+  });
+
+  // openGauss 没有 pg_sequences：改查序列关系本身，名字带 schema 按标识符引用
+  it('没有 pg_sequences（42P01）时改查序列关系', async () => {
+    const sent: Array<[string, unknown[]]> = [];
+    const row = await readSequenceProperties(sql, byRelation, async (sql, params) => {
+      sent.push([sql, params]);
+      if (sent.length === 1) {
+        throw Object.assign(new Error('relation "pg_sequences" does not exist'), { code: '42P01' });
+      }
+      return [{ start_value: '5' }];
+    }, sequence);
+    expect(sent[1]).toEqual(['SELECT s.start_value FROM "shop"."order$&_seq" s', []]);
+    expect(row).toEqual({ start_value: '5' });
+  });
+
+  it('别的错误不回退', async () => {
+    const denied = Object.assign(new Error('permission denied for relation pg_sequences'), { code: '42501' });
+    await expect(readSequenceProperties(sql, byRelation, async () => {
+      throw denied;
+    }, sequence)).rejects.toBe(denied);
+  });
+
+  it('没有回退那一条时原样抛出', async () => {
+    const missing = Object.assign(new Error('relation "pg_sequences" does not exist'), { code: '42P01' });
+    await expect(readSequenceProperties(sql, null, async () => {
+      throw missing;
+    }, sequence)).rejects.toBe(missing);
   });
 });

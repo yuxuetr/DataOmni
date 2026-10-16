@@ -117,6 +117,8 @@ export interface ObjectCatalogQueries {
   objects: string;
   routine_definition: string;
   sequence_properties: string | null;
+  /** `sequence_properties` 报 42P01 时改查序列关系本身（openGauss），只有 PostgreSQL 有 */
+  sequence_properties_by_relation: string | null;
   object_parameter_count: number;
   /** `routine_definition` 绑几个参数：1 是 `[object_id]`，2 另加库名 */
   routine_parameter_count: number;

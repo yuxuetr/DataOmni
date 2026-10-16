@@ -118,3 +118,31 @@ export async function readTriggersByShow(
   }
   return triggers;
 }
+
+/**
+ * 序列的属性那一行：`sql` 绑序列的 oid / id。
+ *
+ * openGauss 没有 `pg_sequences`，它的序列属性在序列关系自己的那一行里，名字只能
+ * 拼进语句（`FROM` 后面不收占位符）：报 42P01 时改发 `byRelation`，`{sequence}` 换成
+ * 引用过的名字。只认 42P01，别的错误（比如没有权限）照样抛出。
+ */
+export async function readSequenceProperties(
+  sql: string,
+  byRelation: string | null,
+  select: (sql: string, params: unknown[]) => Promise<unknown>,
+  sequence: { id: string; name: string; schema?: string | null }
+): Promise<Record<string, unknown> | undefined> {
+  const first = (rows: unknown) => (Array.isArray(rows) ? rows[0] as Record<string, unknown> | undefined : undefined);
+  try {
+    return first(await select(sql, [sequence.id]));
+  } catch (reason) {
+    const missingCatalog = typeof reason === 'object' && reason !== null
+      && (reason as { code?: unknown }).code === '42P01';
+    if (!byRelation || !missingCatalog) throw reason;
+    const quoted = quoteQualifiedSqlIdentifier(
+      sequence.schema ? [sequence.schema, sequence.name] : [sequence.name],
+      'postgresql'
+    );
+    return first(await select(byRelation.replace('{sequence}', () => quoted), []));
+  }
+}
