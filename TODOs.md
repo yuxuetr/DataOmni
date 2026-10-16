@@ -245,7 +245,13 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
   - 验证：单测、语料（`mysql57-renames-columns-by-restating-them`，所有 MySQL 连接上都跑）、5.7 专用真库用例
     `mysql_57_renames_columns_by_restating_them`（同时钉住 `RENAME COLUMN` 报 1064）各做过反向验证；本机 5.7.44 与 8.4 上通过。
     打包版上没看过。
-- [ ] G2 MariaDB：查询结果表头把 JSON 列标成 BLOB
+- [x] G2 MariaDB：查询结果表头把 JSON 列标成 BLOB（`3ca8469`）
+  - 根因在 sqlx：MySQL 列的类型名只凭 BINARY 标志定，`_bin` 排序规则的文本列都带这个标志，字符集在协议里有、它解析了但不公开。
+    所以不只 MariaDB 的 JSON，大小写敏感的 varchar 也是 `VARBINARY`。
+  - 做法：认得出来源表的查询（单表、裸列名）表头用目录里的声明类型，与表数据页一致；挑编辑器本来就用这一份。
+  - 剩下的：JOIN、表达式这类认不出来源表的查询，表头照旧是驱动的类型（值按内容判，显示与编辑都是文本）。
+    要彻底修得改 sqlx 把字符集带出来（`[patch]` 一份 sqlx-mysql）。重估条件：有人因为这类查询的表头误以为是二进制。
+  - 验证：组件渲染测试（happy-dom）做过反向验证；真应用里没渲染看过。
 
 ### 1.0 之后，按这个次序
 
