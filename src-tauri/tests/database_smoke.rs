@@ -6061,7 +6061,10 @@ async fn mysql_import_reads_exported_geometry() {
 
 /// MySQL 9 与 MariaDB 11.7 起的 VECTOR：网格与导出给的是 `0x` 加它存的 float32 字节。
 /// 绑成文本的 `?` 在 MySQL 上准备语句就失败（sqlx 不认服务端报的参数类型 0xf2），
-/// 要和二进制列一样经 `UNHEX(?)` 写回去
+/// 要和二进制列一样经 `UNHEX(?)` 写回去。
+///
+/// TiDB 8.4 起也有 VECTOR，但网格与导出给的是文本 `[1,2.5,-3]`，十六进制它当成坏的 UTF-8 拒掉：
+/// 在 TiDB 上验的是这串文本原样导回去
 #[tokio::test]
 async fn mysql_import_reads_exported_hex_into_vector() {
   let Some(url) = network_database_url(MYSQL_URL_ENV) else {
@@ -6072,7 +6075,7 @@ async fn mysql_import_reads_exported_hex_into_vector() {
   let db_pool = DbPool::MySql(pool.clone());
 
   sqlx::query("DROP TABLE IF EXISTS import_smoke_vector").execute(&pool).await.expect("drop");
-  // MySQL 8、TiDB 与旧的 MariaDB 没有这个类型
+  // MySQL 8、TiDB 8.4 之前与旧的 MariaDB 没有这个类型
   if sqlx::query("CREATE TABLE import_smoke_vector (n int, v vector(3))")
     .execute(&pool)
     .await
@@ -6080,7 +6083,11 @@ async fn mysql_import_reads_exported_hex_into_vector() {
   {
     return;
   }
-  let path = write_import_csv("mysql-vector", "n,v\n1,0x0000803f00002040000040c0\n");
+  let (version,): (String,) =
+    sqlx::query_as("SELECT VERSION()").fetch_one(&pool).await.expect("read the version");
+  let tidb = version.contains("TiDB");
+  let exported = if tidb { "\"[1,2.5,-3]\"" } else { "0x0000803f00002040000040c0" };
+  let path = write_import_csv("mysql-vector", &format!("n,v\n1,{exported}\n"));
   let summary = run_import(
     &db_pool,
     &import_request(
@@ -6092,11 +6099,30 @@ async fn mysql_import_reads_exported_hex_into_vector() {
   .await;
   assert_eq!(summary.rows_failed, 0, "{:?}", summary.errors);
 
-  let stored: (String,) = sqlx::query_as("SELECT LOWER(HEX(v)) FROM import_smoke_vector")
-    .fetch_one(&pool)
-    .await
-    .expect("read back");
-  assert_eq!(stored.0, "0000803f00002040000040c0");
+  if tidb {
+    let stored: (String,) = sqlx::query_as("SELECT CAST(v AS CHAR) FROM import_smoke_vector")
+      .fetch_one(&pool)
+      .await
+      .expect("read back as text");
+    assert_eq!(stored.0, "[1,2.5,-3]");
+  } else {
+    // OceanBase 的 vector 不收 `HEX()`、`CAST`、`CONCAT`（都报 5083），只能拿它跟文本字面量比
+    match sqlx::query_as::<_, (String,)>("SELECT LOWER(HEX(v)) FROM import_smoke_vector")
+      .fetch_one(&pool)
+      .await
+    {
+      Ok(stored) => assert_eq!(stored.0, "0000803f00002040000040c0"),
+      Err(_) => {
+        let matched: (String,) = sqlx::query_as(
+          "SELECT CAST(COUNT(*) AS CHAR) FROM import_smoke_vector WHERE v = '[1,2.5,-3]'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("compare as a vector literal");
+        assert_eq!(matched.0, "1");
+      }
+    }
+  }
 
   sqlx::query("DROP TABLE IF EXISTS import_smoke_vector").execute(&pool).await.expect("cleanup");
 }
