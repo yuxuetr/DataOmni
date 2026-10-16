@@ -574,6 +574,7 @@ bun install
   影响 SQL Server、Oracle、DuckDB、ClickHouse、MongoDB、Redis、Neo4j、Elasticsearch
 - 修复（Windows）：在终端里直接敲 `dataomni cli …` 什么也不印（发布版是窗口程序）；现在借用终端的控制台输出。
   经管道调用（Agent）本来就正常
+- 修复（macOS）：升级之后删除以前版本存过密码的连接会报「没能从系统钥匙串删掉这条密码」，连接删不掉
 - 修复：MySQL 5.7 上 TLS 选「要求」「优先」时只报 `HandshakeFailure`；现在说明要改成「禁用」（或升级到 8.0）。
   结构页的「检查约束」一段不再印红字 `Unknown table 'CHECK_CONSTRAINTS'`，改为说明 5.7 没有这个目录
 
