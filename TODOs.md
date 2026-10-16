@@ -275,7 +275,15 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
     池子的键末尾加 `?sid`，同名的 SID 与服务名不共用池子。切到 SID 时预填的 FREEPDB1 清掉（PDB 没有 SID）。
   - 验证：本地 Oracle Free 23ai，按 SID（`FREE`）连上、不存在的 SID 报 ORA-12505；整套 29 / 29（`--test-threads=1`：
     几条用例共用表名，并行跑会互相撞，与这次改动无关）。表单在浏览器里看过。打包版上没连过；11g 的真库没有，没连过。
-- [ ] G6 CockroachDB：结构页的触发器改用 `SHOW CREATE TRIGGER` 读
+- [x] G6 CockroachDB：结构页的触发器改用 `SHOW CREATE TRIGGER` 读（`79b75d7`）
+  - 实验（25.2）：`pg_trigger`、`information_schema.triggers` 都是空的；`SHOW TRIGGERS FROM 表` 列名字、`SHOW CREATE TRIGGER 名 ON 表`
+    给原文，对表有任一权限就能读（没有权限报 42501）。`system.descriptor` 里也有，但要管理员权限，不用。两条 SHOW 都不收占位符。
+  - 做法：目录查询报 42883 时改走这两条（SQL 在 `schema_metadata.rs` 的 `triggers_by_show`，前端 `readTriggersByShow` 插引用过的
+    标识符）；不认 `SHOW TRIGGERS`（42601，24.3 之前没有触发器）照旧说「列不出」。
+  - 验证：真库用例在 CockroachDB 25.2 与 PostgreSQL 16 上通过，去掉 `ON {table}` 变红；前端单测与结构页渲染用例（happy-dom）反向验证过。
+    真应用里没渲染看过（这段的界面没改，画的还是 PostgreSQL 那份完整原文）。
+  - 顺带看到：整套 PostgreSQL 冒烟在 CockroachDB 上 39 / 41，`postgres_exported_inserts_carry_every_value_back` 建表用了它没有的
+    多维数组（用例遗漏，见下一个提交）；`postgres_session_recovers_after_the_server_drops_it_mid_transaction` 并行跑偶发失败，单独跑通过。
 - [ ] G7 openGauss：序列属性页（没有 `pg_sequences`，直接查序列关系）
 - [ ] G8 Redis 集群与 Sentinel（redis-rs 有 `cluster-async` / `sentinel` feature；工作量在键浏览要跨节点扫）
 - [ ] G9 Neo4j 集群路由 `neo4j://`（用的 `neo4j` crate 已有 routing）
