@@ -42,26 +42,29 @@
 #### 兼容性矩阵
 
 下表每一格都来自真库上跑完的冒烟用例（`src-tauri/tests/database_smoke.rs`，
-MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断的。
+MySQL 一组 42 条、PostgreSQL 一组 39 条；只在设了专门的环境变量或特定服务端上才跑的几条另计），
+不是按协议兼容推断的。2026-10-16 全部重跑过一遍。用例里有几条按服务端版本跳过（比如服务端没有夹具要的类型），
+跳过的也计入通过。「中止的语句在服务端也停下」「事务中途被服务端断开后恢复」这两条，几个库并发跑时偶尔超时，
+单独跑都过。
 连接表单里 MariaDB、TiDB、CockroachDB 各有一个入口，填好各自的默认端口；存下来
 的就是 MySQL / PostgreSQL 连接。
 
 | 服务端 | 版本 | 连接类型 | 结论 | 用例 |
 | --- | --- | --- | --- | --- |
-| MySQL | 8.4 | MySQL | ✅ 支持 | 23 / 23 |
-| MySQL | 5.7.44 | MySQL | ⚠️ 可用，有缺口 | 27 / 42（2026-10-15 的 MySQL 一组；挂的 15 条主要是建表夹具用了 8.0 才有的语法，缺口见下）＋ 5.7 专用 3 / 3 |
-| PostgreSQL | 16 | PostgreSQL | ✅ 支持 | 23 / 23 |
+| MySQL | 8.4 | MySQL | ✅ 支持 | 42 / 42 |
+| MySQL | 5.7.44 | MySQL | ⚠️ 可用，有缺口 | 27 / 42（挂的 15 条主要是建表夹具用了 8.0 才有的语法，缺口见下）＋ 5.7 专用 3 / 3 |
+| PostgreSQL | 16 | PostgreSQL | ✅ 支持 | 39 / 39 |
 | SQLite | 随应用内置 | SQLite | ✅ 支持 | 全部 |
-| MariaDB | 11.4 | MySQL | ✅ 支持 | 23 / 23 |
-| TiDB | 8.5 | MySQL | ✅ 支持 | 23 / 23 |
-| OceanBase | 4.4.2（CE，MySQL 模式） | MySQL | ⚠️ 可用，有缺口 | 23 / 23（缺口由用例钉住） |
-| CockroachDB | 25.2 | PostgreSQL | ⚠️ 可用，有缺口 | 23 / 23（缺口由用例钉住） |
-| openGauss | 5.0.3（lite，PG 兼容库） | PostgreSQL | ⚠️ 可用，有缺口 | 23 / 23（缺口由用例钉住） |
-| SQL Server | 2022 | SQL Server | ✅ 支持 | 17 / 17（独立用例，`sql_server_smoke.rs`，含改结构语料） |
-| Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 14 / 14（独立用例，`oracle_smoke.rs`，含改结构语料） |
-| DuckDB | 1.5.5（编进应用） | DuckDB（libduckdb） | ✅ 支持 | 16 / 16（独立用例，`duckdb_smoke.rs`，每次都跑，含改结构语料） |
-| ClickHouse | 25.8 | ClickHouse（HTTP 接口，reqwest） | ⚠️ 表格一次改一行，没有事务 | 14 / 14（独立用例，`clickhouse_smoke.rs` 与最重的一条 `clickhouse_mutation_smoke.rs`；经 SSH 隧道那一条另要隧道的环境变量） |
-| MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 32 / 32（独立用例，`mongodb_smoke.rs`） |
+| MariaDB | 11.4 | MySQL | ✅ 支持 | 42 / 42 ＋ MariaDB 专用 1 / 1 |
+| TiDB | 8.5 | MySQL | ✅ 支持 | 40 / 42（挂的两条：夹具用了 TiDB 没有的 `HANDLER` 语句） |
+| OceanBase | 4.4.2（CE，MySQL 模式） | MySQL | ⚠️ 可用，有缺口 | 39 / 42（缺口由用例钉住；挂的三条是夹具：`HANDLER` 它收下却不返回行，两条；它不按 `wait_timeout` 断开连接，一条） |
+| CockroachDB | 25.2 | PostgreSQL | ⚠️ 可用，有缺口 | 39 / 39（缺口由用例钉住） |
+| openGauss | 5.0.3（lite，PG 兼容库） | PostgreSQL | ⚠️ 可用，有缺口 | 39 / 39（缺口由用例钉住） |
+| SQL Server | 2022 | SQL Server | ✅ 支持 | 31 / 31（独立用例，`sql_server_smoke.rs`，含改结构语料） |
+| Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 29 / 29（独立用例，`oracle_smoke.rs`，含改结构语料；另有一条只计时、不做断言） |
+| DuckDB | 1.5.5（编进应用） | DuckDB（libduckdb） | ✅ 支持 | 18 / 18（独立用例，`duckdb_smoke.rs`，每次都跑，含改结构语料） |
+| ClickHouse | 25.8 | ClickHouse（HTTP 接口，reqwest） | ⚠️ 表格一次改一行，没有事务 | 16 / 16 ＋ 1 / 1（独立用例，`clickhouse_smoke.rs` 与最重的一条 `clickhouse_mutation_smoke.rs`；经 SSH 隧道那一条另要隧道的环境变量） |
+| MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 34 / 34（独立用例，`mongodb_smoke.rs`，含 SRV 与客户端证书） |
 | Redis | 7.4 | Redis（redis-rs） | ✅ 单机、Sentinel、集群（集群与 Sentinel 的 TLS 没测过） | 14 / 14（独立用例，`redis_smoke.rs`） |
 | Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例；集群路由（`neo4j://`）只在单实例上跑过，成员之间的分派没测过 | 10 / 10（独立用例，`neo4j_smoke.rs`，直连与路由各跑一遍） |
 | Elasticsearch | 8.19、9.5 | HTTP（reqwest） | ⚠️ 单节点直连 | 7 / 7（独立用例，`elasticsearch_smoke.rs`，两个版本各跑一遍） |
