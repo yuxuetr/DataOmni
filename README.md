@@ -112,7 +112,7 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
   改结构与建表、CSV 导入、整表导出）。Instant Client（Basic Light，许可允许随应用分发，
   许可原文随包附上）装在应用里，用户不用自己装；Linux 上要系统的 `libaio`，deb 包声明了
   依赖。与另外几家不同、值得知道的几处：
-  - 按服务名连接（Easy Connect）；按 SID 连接与 TLS（要钱包）还不支持，需要加密就走
+  - 按服务名（Easy Connect）或 SID 连接（表单「连接方式」）；TLS（要钱包）还不支持，需要加密就走
     SSH 隧道。
   - 超时与取消会让服务端那条语句真的停下；错误带 ORA 码与出错位置。
   - 没有 BEGIN：「开始事务」发的是 `SET TRANSACTION`；DDL 会隐式提交，状态栏跟着
@@ -583,6 +583,7 @@ bun install
 - 修复：PostgreSQL / MySQL 连接的 TLS 选「校验 CA」时一连接就出错（后端 panic，rustls 挑不出默认的加密实现）
 - openGauss / GaussDB 只存 sha256 口令的用户（openGauss 的默认）现在连得上，不用再请管理员改口令的存法
 - Elasticsearch 可以用 API Key 登录（连接表单「认证方式」选 API Key；Kibana 给的 encoded 与 `id:api_key` 两种写法都收）
+- Oracle 可以按 SID 连接（连接表单「连接方式」选 SID），11g 及更早的库与只在监听里登记了 SID 的库也连得上
 
 ### v0.6.1（2026-10-07）
 

@@ -12,6 +12,10 @@ pub const MONGO_X509: &str = "MONGODB-X509";
 pub const ES_AUTH_OPTION: &str = "auth";
 /// 拿 API Key 登录：口令那一格存的是 key，用户名不用
 pub const ES_API_KEY: &str = "apiKey";
+/// `options` 里的键：Oracle 怎么找实例。只认 [`ORACLE_SID`]，不设就是服务名（Easy Connect）
+pub const ORACLE_CONNECT_BY_OPTION: &str = "connectBy";
+/// 按 SID 连：`database` 那一格填的是 SID
+pub const ORACLE_SID: &str = "sid";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionProfile {
@@ -270,14 +274,16 @@ impl DatabaseType {
         config.port,
         encode(config.database.as_deref().unwrap_or(""))
       ),
-      // 和 SQL Server 同一个理由：是 `OracleRegistry` 里的键，不带口令
+      // 和 SQL Server 同一个理由：是 `OracleRegistry` 里的键，不带口令。
+      // 同名的 SID 与服务名可以是两个实例（CDB 的 SID 与某个服务同名很常见），不共用池子
       DatabaseType::Oracle => format!(
-        "{}{}@{}:{}/{}",
+        "{}{}@{}:{}/{}{}",
         crate::services::oracle::ORACLE_SCHEME,
         encode(&config.username),
         config.host,
         config.port,
-        encode(config.database.as_deref().unwrap_or(""))
+        encode(config.database.as_deref().unwrap_or("")),
+        if config.oracle_sid() { "?sid" } else { "" }
       ),
       // 和 SQL Server 同一个理由：是 `MongoRegistry` 里的键，不带口令。最后一段是认证库。
       // SRV 没有端口：服务端地址在 DNS 里
@@ -383,6 +389,12 @@ impl ConnectionProfile {
   pub fn es_api_key(&self) -> bool {
     self.db_type == DatabaseType::Elasticsearch
       && self.options.get(ES_AUTH_OPTION).is_some_and(|value| value == ES_API_KEY)
+  }
+
+  /// Oracle 按 SID 连，不按服务名。老库（11g 及以前）与一些只登记了 SID 的监听只认这种
+  pub fn oracle_sid(&self) -> bool {
+    self.db_type == DatabaseType::Oracle
+      && self.options.get(ORACLE_CONNECT_BY_OPTION).is_some_and(|value| value == ORACLE_SID)
   }
 
   /// 登录用的用户名。X.509 的用户名是证书的主题、由服务端从证书里读，表单上那一格

@@ -12,6 +12,7 @@ import { openDatabase } from '../utils/databaseHandle';
 import { describeError } from '../utils/describeError';
 import { translateNow } from './languageStore';
 import { useAppStore } from './appStore';
+import { ORACLE_DEFAULT_SERVICE } from '../utils/oracleConnection';
 
 export {
   DatabaseType,
@@ -123,7 +124,7 @@ export const createDefaultConfig = (
       return {
         ...baseConfig,
         port: 1521,
-        database: 'FREEPDB1',
+        database: ORACLE_DEFAULT_SERVICE,
         username: 'system',
       };
     case DatabaseType.MongoDB:

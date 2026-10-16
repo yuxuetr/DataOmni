@@ -45,6 +45,7 @@ import {
 import { connectionNameFromFile, databaseFileExtensions, isFileDatabase } from '../utils/databaseFiles';
 import { isMongoSrv, isMongoX509, withMongoSrv, withMongoX509 } from '../utils/mongoConnection';
 import { isEsApiKey, withEsApiKey } from '../utils/esConnection';
+import { ORACLE_DEFAULT_SERVICE, isOracleSid, withOracleSid } from '../utils/oracleConnection';
 import { clsx } from 'clsx';
 import { PLAIN_TEXT_INPUT } from './FormControls';
 import { 
@@ -346,6 +347,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   const x509 = isMongoX509(formData);
   // API Key 存在口令那一格，用户名不用
   const esApiKey = isEsApiKey(formData);
+  const oracleSid = isOracleSid(formData);
   // 一格都没填时不提示：刚勾开就红着一片，读起来像是用户做错了什么
   const tunnelGaps = tunnel && !isSshTunnelBlank(tunnel) ? sshTunnelProblems(tunnel) : [];
 
@@ -840,6 +842,26 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   </div>
                 )}
 
+                {formData.db_type === DatabaseType.Oracle && (
+                  <div>
+                    <label htmlFor="oracle-connect-by" className="block text-sm font-medium text-fg mb-1">
+                      {t('form.oracleConnectBy')}
+                    </label>
+                    <select
+                      id="oracle-connect-by"
+                      value={oracleSid ? 'sid' : 'service'}
+                      onChange={(event) => {
+                        const enabled = event.target.value === 'sid';
+                        setFormData((previous) => ({ ...previous, ...withOracleSid(previous, enabled) }));
+                      }}
+                      className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                    >
+                      <option value="service">{t('form.oracleService')}</option>
+                      <option value="sid">SID</option>
+                    </select>
+                  </div>
+                )}
+
                 {/* 数据库名称 - 某些数据库类型不需要 */}
                 {!x509 && (formData.db_type === DatabaseType.MySQL || 
                   formData.db_type === DatabaseType.PostgreSQL || 
@@ -850,10 +872,10 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   formData.db_type === DatabaseType.ClickHouse) && (
                   <div>
                     <label className="block text-sm font-medium text-fg mb-1">
-                      {/* Oracle 按 Easy Connect 连，这一格填的是服务名，不是库名；
+                      {/* Oracle 这一格填的是服务名或 SID，不是库名；
                           MongoDB 的连接不绑库，这一格是用户所在的认证库 */}
                       {formData.db_type === DatabaseType.Oracle
-                        ? t('form.oracleService')
+                        ? (oracleSid ? 'SID' : t('form.oracleService'))
                         : formData.db_type === DatabaseType.MongoDB ? t('form.mongoAuthSource') : t('form.database')}
                     </label>
                     <input
@@ -866,14 +888,14 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         formData.db_type === DatabaseType.MySQL ? "mysql" :
                         formData.db_type === DatabaseType.PostgreSQL ? "postgres" :
                         formData.db_type === DatabaseType.SqlServer ? "master" :
-                        formData.db_type === DatabaseType.Oracle ? "FREEPDB1" :
+                        formData.db_type === DatabaseType.Oracle ? (oracleSid ? "ORCL" : ORACLE_DEFAULT_SERVICE) :
                         formData.db_type === DatabaseType.MongoDB ? (srv ? "" : "admin") :
                         formData.db_type === DatabaseType.ClickHouse ? "default" : ""
                       }
                       {...PLAIN_TEXT_INPUT}
                     />
                     {formData.db_type === DatabaseType.Oracle && (
-                      <p className="text-xs text-fg-muted mt-1">{t('form.oracleServiceHint')}</p>
+                      <p className="text-xs text-fg-muted mt-1">{t(oracleSid ? 'form.oracleSidHint' : 'form.oracleServiceHint')}</p>
                     )}
                     {formData.db_type === DatabaseType.MongoDB && (
                       <p className="text-xs text-fg-muted mt-1">

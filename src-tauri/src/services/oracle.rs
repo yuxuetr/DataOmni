@@ -212,8 +212,9 @@ fn has_client_library(dir: &Path) -> bool {
 
 /// 连上一台 Oracle 需要知道的全部。
 ///
-/// 用 Easy Connect（`//host:port/service`）：`database` 那一格填的是服务名。
-/// 按 SID 连、TLS（要钱包）这一阶段不做。
+/// 默认用 Easy Connect（`//host:port/service`），`database` 那一格填的是服务名。按 SID 连
+/// （[`ConnectionProfile::oracle_sid`]）时那一格是 SID：Easy Connect 写不了 SID，换成完整的连接描述符。
+/// TLS（要钱包）不做。
 #[derive(Clone)]
 pub struct OracleTarget {
   connect_string: String,
@@ -223,17 +224,19 @@ pub struct OracleTarget {
 
 impl OracleTarget {
   pub fn from_profile(profile: &ConnectionProfile) -> Self {
-    Self {
+    let name = profile.database.as_deref().unwrap_or("");
+    let connect_string = if profile.oracle_sid() {
+      // 描述符里的地址由括号分隔，IPv6 不加方括号
+      let host = profile.host.trim_start_matches('[').trim_end_matches(']');
+      format!(
+        "(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST={host})(PORT={}))(CONNECT_DATA=(SID={name})))",
+        profile.port
+      )
+    } else {
       // IPv6 地址不加方括号是 ORA-12262「Could not resolve hostname」
-      connect_string: format!(
-        "//{}:{}/{}",
-        crate::models::url_host(&profile.host),
-        profile.port,
-        profile.database.as_deref().unwrap_or("")
-      ),
-      username: profile.username.clone(),
-      password: profile.password.clone(),
-    }
+      format!("//{}:{}/{name}", crate::models::url_host(&profile.host), profile.port)
+    };
+    Self { connect_string, username: profile.username.clone(), password: profile.password.clone() }
   }
 }
 
@@ -1292,6 +1295,7 @@ fn query_error(error: &oracle::Error, sql: Option<&str>) -> QueryError {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::models::{ORACLE_CONNECT_BY_OPTION, ORACLE_SID};
 
   #[test]
   fn easy_connect_brackets_ipv6_hosts() {
@@ -1307,6 +1311,46 @@ mod tests {
     assert_eq!(target("::1"), "//[::1]:1521/FREEPDB1");
     assert_eq!(target("[::1]"), "//[::1]:1521/FREEPDB1");
     assert_eq!(target("db.example.com"), "//db.example.com:1521/FREEPDB1");
+  }
+
+  #[test]
+  fn a_sid_profile_connects_by_a_descriptor_naming_the_sid() {
+    let target = |host: &str| {
+      OracleTarget::from_profile(&ConnectionProfile {
+        host: host.to_string(),
+        port: 1521,
+        db_type: crate::models::DatabaseType::Oracle,
+        database: Some("ORCL".to_string()),
+        options: [(ORACLE_CONNECT_BY_OPTION.to_string(), ORACLE_SID.to_string())].into(),
+        ..ConnectionProfile::default()
+      })
+      .connect_string
+    };
+    let descriptor =
+      "(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=db.example.com)(PORT=1521))(CONNECT_DATA=(SID=ORCL)))";
+    assert_eq!(target("db.example.com"), descriptor);
+    // 描述符里的 IPv6 地址不加方括号
+    assert_eq!(target("[::1]"), descriptor.replace("db.example.com", "::1"));
+    assert_eq!(target("::1"), descriptor.replace("db.example.com", "::1"));
+  }
+
+  #[test]
+  fn a_sid_and_a_service_of_the_same_name_get_two_pools() {
+    let profile = |connect_by: Option<&str>| ConnectionProfile {
+      db_type: crate::models::DatabaseType::Oracle,
+      host: "db.example.com".to_string(),
+      port: 1521,
+      username: "scott".to_string(),
+      database: Some("ORCL".to_string()),
+      options: connect_by
+        .map(|value| (ORACLE_CONNECT_BY_OPTION.to_string(), value.to_string()))
+        .into_iter()
+        .collect(),
+      ..ConnectionProfile::default()
+    };
+    let key = |profile: ConnectionProfile| profile.db_type.to_connection_string(&profile);
+    assert_eq!(key(profile(None)), "oracle://scott@db.example.com:1521/ORCL");
+    assert_eq!(key(profile(Some(ORACLE_SID))), "oracle://scott@db.example.com:1521/ORCL?sid");
   }
 
   #[test]

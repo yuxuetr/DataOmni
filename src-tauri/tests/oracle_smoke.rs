@@ -5,6 +5,9 @@
 //! （**不要写进任何文件**），`DATAOMNI_ORACLE_CLIENT_DIR` 指向一份 Instant Client
 //! （`scripts/fetch-oracle-client.sh` 取下来的那个目录），并设
 //! `DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS=1` 让缺了连接串的时候报错而不是跳过。
+//!
+//! 可选：`DATAOMNI_ORACLE_SID_TEST_URL=oracle://user:password@host:port/SID`，设了才跑按 SID 连的那条。
+//! PDB 没有 SID，所以这是另一个用户：Oracle Free 上是 `system@…/FREE`（CDB 根）。
 
 use dataomni_lib::models::ConnectionProfile;
 use dataomni_lib::services::oracle::{self, OraclePool, OracleTarget};
@@ -18,6 +21,7 @@ use std::time::{Duration, Instant};
 
 const URL_ENV: &str = "DATAOMNI_ORACLE_TEST_URL";
 const REQUIRE_ENV: &str = "DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS";
+const SID_URL_ENV: &str = "DATAOMNI_ORACLE_SID_TEST_URL";
 
 /// `oracle://user:password@host:port/service` → 一份连接配置。口令里可能有 `@`，从右边切
 fn profile_from_env() -> Option<ConnectionProfile> {
@@ -28,6 +32,10 @@ fn profile_from_env() -> Option<ConnectionProfile> {
     }
     _ => return None,
   };
+  Some(profile_from_url(&url))
+}
+
+fn profile_from_url(url: &str) -> ConnectionProfile {
   let rest = url.strip_prefix("oracle://").expect("oracle:// URL");
   let (credentials, address) = rest.rsplit_once('@').expect("user:password@host");
   let (username, password) = credentials.split_once(':').expect("user:password");
@@ -46,7 +54,7 @@ fn profile_from_env() -> Option<ConnectionProfile> {
     "options": {},
     "tags": []
   });
-  Some(serde_json::from_value(profile).expect("profile"))
+  serde_json::from_value(profile).expect("profile")
 }
 
 async fn pool() -> Option<Arc<OraclePool>> {
@@ -98,6 +106,40 @@ async fn run_all(pool: &Arc<OraclePool>, statements: &[&str]) {
 async fn drop_quietly(pool: &Arc<OraclePool>, table: &str) {
   let mut connection = session(pool).await;
   let _ = connection.execute(&format!("DROP TABLE {table} PURGE"), 1).await;
+}
+
+#[tokio::test]
+async fn oracle_connects_by_sid_and_an_unknown_sid_is_named_by_the_listener() {
+  let Some(url) = std::env::var(SID_URL_ENV).ok().filter(|url| !url.is_empty()) else { return };
+  let sid_profile = profile_from_url(&url);
+  let sid = sid_profile.database.clone().unwrap_or_default();
+  let by_sid = |name: &str| {
+    let mut profile = sid_profile.clone();
+    profile.database = Some(name.to_string());
+    profile.options.insert(
+      dataomni_lib::models::ORACLE_CONNECT_BY_OPTION.to_string(),
+      dataomni_lib::models::ORACLE_SID.to_string(),
+    );
+    OracleTarget::from_profile(&profile)
+  };
+
+  let connection = oracle::connect(&by_sid(&sid)).await.expect("connect by SID");
+  let pool = OraclePool::new(by_sid(&sid), connection);
+  let mut session = session(&pool).await;
+  let rows = rows_of(
+    session
+      .execute("SELECT SYS_CONTEXT('USERENV', 'INSTANCE_NAME') AS instance FROM dual", 1)
+      .await
+      .expect("instance name"),
+  );
+  assert!(text(&rows[0]["INSTANCE"]).eq_ignore_ascii_case(&sid), "{rows:?}");
+
+  // 监听不认这个 SID 是 ORA-12505；要是描述符里其实写成了服务名，报的会是 ORA-12514
+  let error = match oracle::connect(&by_sid("DATAOMNI_NO_SUCH_SID")).await {
+    Ok(_) => panic!("an unknown SID connected"),
+    Err(error) => error,
+  };
+  assert_eq!(error.code.as_deref(), Some("ORA-12505"), "{}", error.message);
 }
 
 #[tokio::test]
