@@ -126,7 +126,6 @@ fn hex_decode(text: &[u8]) -> Result<Vec<u8>, String> {
 /// 这个服务端的转发口，没有就开一个。同一个服务端与口令只开一个，连接池里每条连接都连它：
 /// 转发口跟着应用走，不跟着池子走，数目以「连过几个这样的服务端」为上限。经 SSH 隧道时本机端口每次
 /// 重连都不同，旧的那个留着空等——一个监听套接字，没有连接就不占别的
-
 pub async fn local_port(upstream: Upstream) -> Result<u16, String> {
   static RELAYS: OnceLock<Mutex<HashMap<Upstream, u16>>> = OnceLock::new();
   let relays = RELAYS.get_or_init(Default::default);
