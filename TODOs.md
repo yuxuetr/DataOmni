@@ -270,7 +270,11 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
   - 表单「认证方式」选 API Key，key 存口令那一格（进钥匙串），`options.auth = apiKey`；encoded 与 `id:api_key` 都收。
   - 池子的键里用户那一段是 key 的 SHA-256 前 8 字节：同一台服务端两把 key 不共用池子。401 单独报「API Key 不对」。
   - 验证：ES 9.5.3（HTTPS）与 8.19（HTTP）整套 7 / 7；表单在浏览器里看过。OpenSearch 没有 API Key，跳过。打包版上没连过。
-- [ ] G5 Oracle：按 SID 连接（换一种连接描述符）
+- [x] G5 Oracle：按 SID 连接（换一种连接描述符）（`a3ef45e`）
+  - 表单「连接方式」选 SID，`options.connectBy = sid`；后端换成完整的连接描述符（Easy Connect 写不了 SID）。
+    池子的键末尾加 `?sid`，同名的 SID 与服务名不共用池子。切到 SID 时预填的 FREEPDB1 清掉（PDB 没有 SID）。
+  - 验证：本地 Oracle Free 23ai，按 SID（`FREE`）连上、不存在的 SID 报 ORA-12505；整套 29 / 29（`--test-threads=1`：
+    几条用例共用表名，并行跑会互相撞，与这次改动无关）。表单在浏览器里看过。打包版上没连过；11g 的真库没有，没连过。
 - [ ] G6 CockroachDB：结构页的触发器改用 `SHOW CREATE TRIGGER` 读
 - [ ] G7 openGauss：序列属性页（没有 `pg_sequences`，直接查序列关系）
 - [ ] G8 Redis 集群与 Sentinel（redis-rs 有 `cluster-async` / `sentinel` feature；工作量在键浏览要跨节点扫）
