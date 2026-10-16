@@ -199,6 +199,48 @@ describe('TableDataViewer（ClickHouse）', () => {
   });
 });
 
+describe('TableDataViewer（ClickHouse MergeTree 表按物理位置定位）', () => {
+  it('读表时带上位置、网格里不显示，删一行时键里带着它', async () => {
+    const merge = COLUMNS.map((column) => ({ ...column, table_engine: 'MergeTree' }));
+    const select = vi.fn(async (sql: string) => (sql === 'COLUMNS' ? merge : []));
+    useQueryStore.setState({ connectionId: 'ch', database: { select } as never });
+    const sent: string[] = [];
+    readQuery.mockImplementation(async (sql: string) => {
+      sent.push(sql);
+      return sql.startsWith('SELECT COUNT(*)')
+        ? [{ total: 1 }]
+        : [{ id: 1, fs: 'a', note: 'x', __dataomni_part: 'all_1_1_0', __dataomni_part_offset: { type: 'bigint', value: '3' } }];
+    });
+    await act(async () => {
+      root.render(<TableDataViewer connection={connection} tableName="tpos" schema="db" initialTab="data" />);
+    });
+
+    expect(sent.find((sql) => sql.includes('_part_offset AS `__dataomni_part_offset`'))).toBeDefined();
+    expect(container.textContent).not.toContain('__dataomni');
+    expect(container.textContent).not.toContain('all_1_1_0');
+    await act(async () => {
+      byTitle('Delete').click();
+    });
+    const [change] = Object.values(useTableEditStore.getState().changes).flat();
+    expect(change && 'key' in change ? change.key.position : null).toEqual({ part: 'all_1_1_0', offset: '3' });
+  });
+
+  it('不是 MergeTree 的表照旧只读表自己的列', async () => {
+    const memory = COLUMNS.map((column) => ({ ...column, table_engine: 'Memory' }));
+    const select = vi.fn(async (sql: string) => (sql === 'COLUMNS' ? memory : []));
+    useQueryStore.setState({ connectionId: 'ch', database: { select } as never });
+    const sent: string[] = [];
+    readQuery.mockImplementation(async (sql: string) => {
+      sent.push(sql);
+      return sql.startsWith('SELECT COUNT(*)') ? [{ total: 1 }] : [{ id: 1, fs: 'a', note: 'x' }];
+    });
+    await act(async () => {
+      root.render(<TableDataViewer connection={connection} tableName="t2" schema="db" initialTab="data" />);
+    });
+    expect(sent.some((sql) => sql.includes('_part'))).toBe(false);
+  });
+});
+
 describe('TableDataViewer（CockroachDB 的触发器）', () => {
   // CockroachDB 没有 pg_get_triggerdef()，目录查询报 42883；它的触发器只有 SHOW 看得见
   it('目录查询报缺函数时改走 SHOW，画出触发器原文', async () => {

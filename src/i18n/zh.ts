@@ -742,7 +742,7 @@ export const zh = {
   'table.readOnly.noUniqueKey': '这张表既没有主键，也没有一个非空、完整、无谓词的唯一索引，网格里不能改数据：UPDATE 和 DELETE 的条件无法锁定到唯一一行。分页也只能用数据库的回退顺序，数据变更时页边界可能移动。要改请在 SQL 编辑器里写明条件。',
   'result.readOnly.editInTable': 'ClickHouse 的查询结果里不能直接改，到表数据页改：那里一次提交一项，执行前后各核对一次。',
   'changes.oneAtATime': 'ClickHouse 一次只提交一项：先提交或撤销待提交的那一项，再改别的行。',
-  'changes.clickhouseNote': 'ClickHouse 不在事务里：提交时先按整行数一遍（恰好一行才执行），执行后再核对；改和删会重写这一行所在的整块数据，大表上要几秒。',
+  'changes.clickhouseNote': 'ClickHouse 不在事务里：提交时先按整行（MergeTree 表还按行的物理位置）数一遍（恰好一行才执行），执行后再核对；改和删会重写这一行所在的整块数据，大表上要几秒。',
   'table.readOnly.pendingFeature': '这类连接还在分阶段接入，这一版还不能在表格里改数据；要改请在 SQL 编辑器里写语句。连接表单上那一格列着还用不了的功能。',
   'table.readOnly.metadataUnavailable': '读不到这张表的索引与约束，因此无法确定靠哪几列能定位到唯一一行。在弄清楚之前网格不写入——拿一个猜出来的键拼条件会改掉别的行。可以刷新重试，或在 SQL 编辑器里写明条件。',
 

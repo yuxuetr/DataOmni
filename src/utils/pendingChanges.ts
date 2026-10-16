@@ -257,7 +257,8 @@ function clickHouseStatements(change: PendingChange, target: TableTarget): Write
   return [
     before,
     update,
-    payload(buildRowCountStatement(target, { columns: knownAfter, values: afterValues }, true), 1)
+    // 位置也带上：mutation 不挪行，改完它还在原处；不带的话，别处一行恰好长成新值也算数
+    payload(buildRowCountStatement(target, { columns: knownAfter, values: afterValues, position: change.key.position }, true), 1)
   ];
 }
 

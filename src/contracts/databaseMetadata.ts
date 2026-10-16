@@ -8,6 +8,11 @@ export type IdentityGeneration = 'ALWAYS' | 'BY DEFAULT';
 export interface ColumnInfo {
   name: string;
   data_type: string;
+  /**
+   * 表的引擎，只有 ClickHouse 给（每一列上都一样）。MergeTree 一族的表读的时候带上行的物理位置，
+   * 见 `utils/rowPosition.ts`
+   */
+  table_engine?: string | null;
   is_nullable: boolean;
   is_primary_key: boolean;
   primary_key_ordinal?: number;

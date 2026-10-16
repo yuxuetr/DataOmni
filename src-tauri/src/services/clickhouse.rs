@@ -285,7 +285,8 @@ impl ClickHousePool {
   /// - 对不上时分两种说：还没写过（什么都没变，和别家的「没有恰好影响一行」同一个码；
   ///   数到不止一行另给一个码），写过了（撤不回来，[`CLICKHOUSE_WRITE_UNVERIFIED`]）。
   ///
-  /// 仍然存在、界面上写明的：数完到执行之间别处写进来一行一模一样的，会一起被改
+  /// MergeTree 表上前端还按行的物理位置定位（`rowPosition.ts`），数完到执行之间别处写进来一模一样
+  /// 的一行不会被匹配。别的引擎没有位置，那时仍会一起被改
   pub async fn write_batch(
     self: &Arc<Self>,
     statements: &[WriteStatement],

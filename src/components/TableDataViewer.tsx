@@ -78,6 +78,7 @@ import { dropIndexSql } from '../utils/objectDdl';
 import { GRID_PAGE_SIZE_OPTIONS } from '../utils/gridPagination';
 import { requireDatabase } from '../utils/requireDatabase';
 import { toColumnInfo } from '../utils/tableMetadata';
+import { hasRowPositions, positionProjection, takeRowPositions } from '../utils/rowPosition';
 import {
   catalogQueryParams,
   ddlRequest,
@@ -522,14 +523,18 @@ export default function TableDataViewer({
       const offsetValue = Math.max(0, Math.trunc((page - 1) * requestedPageSize));
       // 用户排序列拼在前，分页排序列追加在后作决胜条件——按不唯一的列排序时，
       // 没有决胜条件翻页会重复或漏行
+      // ClickHouse 的 MergeTree 表多读每一行的物理位置，改一行时先按它定位（`rowPosition.ts`）
+      const positions = dialect === 'clickhouse' && hasRowPositions(loadedSchema.columns)
+        ? `, ${positionProjection()}`
+        : '';
       const dataQuery = (columnSort: ColumnSort | null) => (
-        `SELECT ${tableProjection(loadedSchema.columns, dialect)} FROM ${tableReference} ${whereClause} `
+        `SELECT ${tableProjection(loadedSchema.columns, dialect)}${positions} FROM ${tableReference} ${whereClause} `
           + pageClause(createSortedOrderClause(order, columnSort, dialect), limitValue, offsetValue, dialect)
       );
 
       const failedSort = sortRef.current;
       try {
-        setTableData(await runReadQuery(dataQuery(failedSort)));
+        setTableData(takeRowPositions(await runReadQuery(dataQuery(failedSort))));
       } catch (sortError) {
         // 有的列不能排序（ClickHouse 的聚合状态、PG 的 json、SQL Server 的 xml、Oracle 的 CLOB……）。
         // 报错时行清空、表头跟着没了，而排序只能在表头上取消，刷新又带着它——只能关掉标签重开。
@@ -537,7 +542,7 @@ export default function TableDataViewer({
         if (!failedSort) throw sortError;
         setSort(null);
         sortRef.current = null;
-        setTableData(await runReadQuery(dataQuery(null)));
+        setTableData(takeRowPositions(await runReadQuery(dataQuery(null))));
         setError(t('table.sortFailed', { column: failedSort.column, reason: describeReadError(sortError) }));
       }
     } catch (err) {

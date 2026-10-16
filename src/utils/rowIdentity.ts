@@ -1,4 +1,5 @@
 import type { ColumnInfo } from '../contracts';
+import { rowPositionOf } from './rowPosition';
 import type { IndexInfo } from './schemaObjects';
 import type { SerializedResultValue } from '../contracts/resultSet';
 import { isConcurrencyComparable } from './columnTypes';
@@ -165,7 +166,10 @@ export function rowKeyOf(identity: RowIdentity | null, values: Readonly<Record<s
     const value = values[name] as SerializedResultValue;
     return !(identity?.source === 'whole-row' && isTaggedResultValue(value) && value.type === 'binary');
   });
-  return rowKeyFromColumns(columns, values);
+  const key = rowKeyFromColumns(columns, values);
+  // 整行定位（ClickHouse）时，读的时候记下的物理位置一起带上（`rowPosition.ts`）
+  const position = identity?.source === 'whole-row' ? rowPositionOf(values) : undefined;
+  return position ? { ...key, position } : key;
 }
 
 /**

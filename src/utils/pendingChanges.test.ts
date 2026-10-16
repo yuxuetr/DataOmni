@@ -181,6 +181,28 @@ describe('ClickHouse：一项改动是「数一遍 → 执行 → 核对」', ()
     expect(count.params).toEqual(['-170141183460469231731687303715884105727', '-999999999999.0000000000']);
   });
 
+  // MergeTree 表读的时候带上了物理位置：三条都先按位置比。位置是 part 名去掉 mutation 版本号加 part 内偏移，
+  // 数完之后别处写进来一模一样的一行在新的 part 里，不会被一起改；中间合并过就一行也不匹配
+  it('带着物理位置时，三条都先按位置比', () => {
+    const positioned: RowKey = { ...row({ id: 1, name: 'a', note: null }), position: { part: 'all_1_1_0', offset: '7' } };
+    const changes = stageUpdate([], positioned, { id: 1, name: 'a', note: null }, { name: value('b') }, 'c1');
+    const statements = pendingStatements(changes, CH);
+    const at = "arrayStringConcat(arraySlice(splitByChar('_', _part), 1, 4), '_') = {p1:String} AND _part_offset = {p2:UInt64}";
+    expect(statements.map((statement) => statement.sql)).toEqual([
+      `SELECT count() FROM \`db\`.\`t\` WHERE ${at} AND \`id\` = {p3:UInt64} AND \`name\` = {p4:LowCardinality(String)} AND \`note\` IS NULL`,
+      `ALTER TABLE \`db\`.\`t\` UPDATE \`name\` = {p1:LowCardinality(String)} WHERE ${at.replace('{p1:String}', '{p2:String}').replace('{p2:UInt64}', '{p3:UInt64}')} AND \`id\` = {p4:UInt64} AND \`name\` = {p5:LowCardinality(String)} AND \`note\` IS NULL`,
+      `SELECT toUInt64(count() >= 1) FROM \`db\`.\`t\` WHERE ${at} AND \`id\` = {p3:UInt64} AND \`name\` = {p4:LowCardinality(String)} AND \`note\` IS NULL`
+    ]);
+    expect(statements.map((statement) => statement.params)).toEqual([
+      ['all_1_1_0', '7', 1, 'a'],
+      ['b', 'all_1_1_0', '7', 1, 'a'],
+      ['all_1_1_0', '7', 1, 'b']
+    ]);
+
+    const deletes = pendingStatements(stageDelete([], positioned, { id: 1, name: 'a', note: null }, 'd1'), CH);
+    expect(deletes.every((statement) => statement.sql.includes('_part_offset = '))).toBe(true);
+  });
+
   it('删：执行前恰好一行，DELETE，删完零行', () => {
     const changes = stageDelete([], row({ id: 2, name: 'z', note: 'n' }), { id: 2, name: 'z', note: 'n' }, 'd1');
     expect(pendingStatements(changes, CH).map((statement) => [statement.sql.split(' WHERE')[0], statement.expectRows])).toEqual([

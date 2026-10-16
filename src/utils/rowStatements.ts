@@ -9,6 +9,7 @@ import {
   type SqlIdentifierDialect
 } from './sqlIdentifiers';
 import { quoteSqlStringLiteral } from './sqlLiterals';
+import { PART_BLOCK_EXPRESSION, type RowPosition } from './rowPosition';
 
 /**
  * 由一行的键与改动拼出 UPDATE / DELETE。
@@ -47,6 +48,8 @@ export interface RowKey {
    * 按值认而不按列类型认：MySQL 的二进制列内容可打印时按原文送来，那时绑原文正好比得上
    */
   binary?: readonly string[];
+  /** ClickHouse MergeTree 表里这一行的物理位置（见 `rowPosition.ts`）；有就先按它比 */
+  position?: RowPosition;
 }
 
 /**
@@ -158,8 +161,15 @@ function keyCondition(
   }
 
   const byName = new Map(target.columns.map((column) => [column.name, column]));
+  const position = target.dialect === 'clickhouse' && key.position
+    ? [
+      `${PART_BLOCK_EXPRESSION} = ${placeholder({ name: '_part', data_type: 'String', is_nullable: false, is_primary_key: false })}`,
+      `_part_offset = ${placeholder({ name: '_part_offset', data_type: 'UInt64', is_nullable: false, is_primary_key: false })}`
+    ]
+    : [];
+  params.push(...(position.length > 0 && key.position ? [key.position.part, key.position.offset] : []));
 
-  return key.columns
+  return [...position, ...key.columns
     .map((name) => {
       const value = key.values[name];
       const quoted = quoteSqlIdentifier(name, target.dialect);
@@ -180,8 +190,7 @@ function keyCondition(
       }
       params.push(value);
       return `${quoted} = ${typedParameter(placeholder(byName.get(name)), byName.get(name), target.dialect)}`;
-    })
-    .join(' AND ');
+    })].join(' AND ');
 }
 
 /**

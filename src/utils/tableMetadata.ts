@@ -43,7 +43,8 @@ export function toColumnInfo(rows: unknown): ColumnInfo[] {
         : null,
       collation: (col.collation ?? null) as string | null,
       comment: (col.comment ?? null) as string | null,
-      column_extra: (col.column_extra ?? null) as string | null
+      column_extra: (col.column_extra ?? null) as string | null,
+      table_engine: (col.table_engine ?? null) as string | null
     };
   });
 }

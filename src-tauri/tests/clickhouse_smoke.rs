@@ -630,6 +630,114 @@ async fn values_of(pool: &Arc<ClickHousePool>, table: &str) -> Vec<(u64, String)
     .collect()
 }
 
+/// 与 `rowPosition.ts` 的 `PART_BLOCK_EXPRESSION` 同一段：part 名去掉 mutation 版本号
+const PART_BLOCK: &str = "arrayStringConcat(arraySlice(splitByChar('_', _part), 1, 4), '_')";
+
+/// 表格按物理位置定位一行（MergeTree）：语句照 `pendingChanges.ts` 带位置时的写法。
+/// 一模一样的两行能分开改；读完之后别处写进来一模一样的一行不会被一起改；中间合并过就一行也不匹配
+#[tokio::test]
+async fn clickhouse_grid_writes_by_position_leave_a_twin_alone() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool);
+  for sql in [
+    "DROP TABLE IF EXISTS smoke_pos SYNC",
+    "CREATE TABLE smoke_pos (id UInt64, v String) ENGINE = MergeTree ORDER BY id",
+    "INSERT INTO smoke_pos VALUES (2, 'b'), (2, 'b')",
+  ] {
+    run(&mut connection, sql).await;
+  }
+  let columns = pool
+    .select(
+      dataomni_lib::services::schema_metadata_queries(
+        &dataomni_lib::models::DatabaseType::ClickHouse,
+      )
+      .expect("supported")
+      .columns,
+      &[json!("smoke_pos"), JsonValue::Null],
+    )
+    .await
+    .expect("columns");
+  assert_eq!(columns[0]["table_engine"], json!("MergeTree"));
+
+  // 界面读表时多读的两列
+  let rows = pool
+    .select(
+      &format!(
+        "SELECT *, {PART_BLOCK} AS `__dataomni_part`, _part_offset AS `__dataomni_part_offset` \
+         FROM smoke_pos ORDER BY id"
+      ),
+      &[],
+    )
+    .await
+    .expect("read with positions");
+  let position = |row: &serde_json::Map<String, JsonValue>| {
+    let offset = &row["__dataomni_part_offset"];
+    let offset = offset.as_str().map(str::to_string).unwrap_or_else(|| offset.to_string());
+    (row["__dataomni_part"].as_str().unwrap_or("").to_string(), offset)
+  };
+  let (part, second) = position(&rows[1]);
+  assert_eq!(part, "all_1_1_0");
+
+  // 读完之后别处又写进来一模一样的一行（新的 part）
+  run(&mut connection, "INSERT INTO smoke_pos VALUES (2, 'b')").await;
+
+  let batch = |statements: Vec<WriteStatement>| {
+    let pool = Arc::clone(&pool);
+    async move { execute_write_batch(PoolRef::ClickHouse(&pool), &statements).await }
+  };
+  let at = format!("{PART_BLOCK} = {{p1:String}} AND _part_offset = {{p2:UInt64}} AND id = {{p3:UInt64}} AND v = {{p4:String}}");
+  let changed =
+    format!("{PART_BLOCK} = {{p2:String}} AND _part_offset = {{p3:UInt64}} AND id = {{p4:UInt64}} AND v = {{p5:String}}");
+  batch(vec![
+    write(
+      &format!("SELECT count() FROM smoke_pos WHERE {at}"),
+      vec![json!(part), json!(second), json!(2), json!("b")],
+      Some(1),
+    ),
+    write(
+      &format!("ALTER TABLE smoke_pos UPDATE v = {{p1:String}} WHERE {changed}"),
+      vec![json!("B"), json!(part), json!(second), json!(2), json!("b")],
+      None,
+    ),
+    write(
+      &format!("SELECT toUInt64(count() >= 1) FROM smoke_pos WHERE {at}"),
+      vec![json!(part), json!(second), json!(2), json!("B")],
+      Some(1),
+    ),
+  ])
+  .await
+  .expect("update one of two identical rows");
+  // 改的只是读到的那一行：另一行与后来写进来的那一行都没动
+  assert_eq!(
+    values_of(&pool, "smoke_pos").await,
+    [(2, "B".into()), (2, "b".into()), (2, "b".into())]
+  );
+
+  // 中间合并过：part 名的前四段变了，一行也不匹配，什么都不删
+  run(&mut connection, "OPTIMIZE TABLE smoke_pos FINAL").await;
+  let (first_part, first) = position(&rows[0]);
+  let error = batch(vec![
+    write(
+      &format!("SELECT count() FROM smoke_pos WHERE {at}"),
+      vec![json!(first_part), json!(first), json!(2), json!("b")],
+      Some(1),
+    ),
+    write(
+      &format!("DELETE FROM smoke_pos WHERE {at}"),
+      vec![json!(first_part), json!(first), json!(2), json!("b")],
+      None,
+    ),
+  ])
+  .await
+  .expect_err("merged away");
+  assert_eq!(
+    (error.statement_index, error.error.code.as_deref()),
+    (0, Some(ROW_COUNT_MISMATCH_CODE))
+  );
+  assert_eq!(values_of(&pool, "smoke_pos").await.len(), 3, "什么都没删");
+  run(&mut connection, "DROP TABLE IF EXISTS smoke_pos SYNC").await;
+}
+
 /// 表格的一项改动：前端展开成「数一遍 → 执行 → 核对」，这里逐条核对。
 /// 新增、改、删三种都走一遍，外加三种对不上：一模一样的两行、读完之后别处改了、写完核对不上
 #[tokio::test]

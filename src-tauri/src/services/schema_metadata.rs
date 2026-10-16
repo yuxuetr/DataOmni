@@ -1131,7 +1131,8 @@ SELECT
     if(c.default_kind IN ('MATERIALIZED', 'ALIAS', 'EPHEMERAL'),
       concat(c.default_kind, ' ', c.default_expression), ''),
     c.compression_codec
-  ]), ' '), '') AS column_extra
+  ]), ' '), '') AS column_extra,
+  t.engine AS table_engine
 FROM system.columns c
 JOIN system.tables t ON t.database = c.database AND t.name = c.table
 WHERE c.table = {p1:String}
