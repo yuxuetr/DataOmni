@@ -205,7 +205,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   })();
   
   /**
-   * 挑编辑器用的列类型。目录里的声明类型优先：驱动给的 `database_type` 对 MySQL `_bin` 排序规则的
+   * 挑编辑器用的、也是表头显示的列类型。目录里的声明类型优先：驱动给的 `database_type` 对 MySQL `_bin` 排序规则的
    * 文本列报 VARBINARY，照它挑就给 varchar 配了十六进制框。能编辑时一定认出了目标表，投影又都是
    * 裸列名，目录列按名字找得到；找不到才退回驱动的类型
    */
@@ -584,13 +584,13 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
                           // 窄列会截断，所以挂个 title 让悬停能看全
                           <span
                             className="truncate text-[10px] font-normal text-fg-subtle"
-                            title={`${result.column_metadata[index].database_type} · ${
+                            title={`${columnType(index)} · ${
                               result.column_metadata[index].nullable === null
                                 ? t('result.nullUnknown')
                                 : result.column_metadata[index].nullable ? 'NULL' : 'NOT NULL'
                             }`}
                           >
-                            {result.column_metadata[index].database_type}
+                            {columnType(index)}
                             {' · '}
                             {result.column_metadata[index].nullable === null
                               ? t('result.nullUnknown')

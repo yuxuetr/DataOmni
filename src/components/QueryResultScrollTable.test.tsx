@@ -56,3 +56,31 @@ describe('结果头部', () => {
     expect(buttonLabels()).toEqual(expect.arrayContaining(['Chart', 'Export']));
   });
 });
+
+describe('表头的列类型', () => {
+  // MariaDB 的 JSON 列是 LONGTEXT + utf8mb4_bin。sqlx 只凭 BINARY 标志起类型名，拿不到字符集，
+  // 报成 LONGBLOB；表数据页照目录显示 longtext
+  const mariadbJson: QueryResult = {
+    columns: ['doc'],
+    column_metadata: [{ name: 'doc', ordinal: 0, database_type: 'LONGBLOB', logical_type: 'binary', nullable: true }],
+    rows: [['{"a":1}']],
+    affected_rows: 1,
+    execution_time: 5
+  };
+
+  it('认出了来源表时显示目录里的声明类型', async () => {
+    await render({
+      ...mariadbJson,
+      tableColumns: [{ name: 'doc', data_type: 'longtext', is_nullable: true, is_primary_key: false }]
+    });
+
+    expect(container.textContent).toContain('longtext');
+    expect(container.textContent).not.toContain('LONGBLOB');
+  });
+
+  it('认不出来源表时照驱动给的', async () => {
+    await render(mariadbJson);
+
+    expect(container.textContent).toContain('LONGBLOB');
+  });
+});

@@ -578,6 +578,8 @@ bun install
 - 修复：MySQL 5.7 上 TLS 选「要求」「优先」时只报 `HandshakeFailure`；现在说明要改成「禁用」（或升级到 8.0）。
   结构页的「检查约束」一段不再印红字 `Unknown table 'CHECK_CONSTRAINTS'`，改为说明 5.7 没有这个目录
 - 修复：MySQL 5.7（与 MariaDB 10.5 之前）上结构编辑只改列名时报语法错；现在用 `CHANGE COLUMN` 改名
+- 修复：MySQL 系的查询结果里，`_bin` 排序规则的文本列（MariaDB 的 JSON 列、大小写敏感的 varchar）表头标成 `LONGBLOB` /
+  `VARBINARY`；认得出来源表的查询（单表、裸列名）现在照目录显示声明类型，与表数据页一致
 
 ### v0.6.1（2026-10-07）
 
