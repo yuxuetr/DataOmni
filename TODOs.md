@@ -420,6 +420,11 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
 
 ### 5.4 性能与体验验收
 
+- [x] macOS 图标在 Dock / Finder 里被套灰色底板（`d30075c`，2026-10-16）
+  - `bun tauri icon` 出的 icns 在 256、16 两档被系统套底板（64 没有）；同一源图经 sips / iconutil 每档都正常。
+    tauri 那份用 iconutil 原样重打仍有底板，所以是像素（小尺寸不透明铺到边角）。`scripts/macos-icns.sh` 重出。
+  - 验法：NSWorkspace.icon(forFile:) 在 scratchpad 的 .app 副本上按尺寸画出来看。装进 /Applications 的包上还没看（要重装）。
+
 - [-] 三平台安装、升级、卸载验证
   - 已验：Linux（rpm、deb；X11、Wayland、真实输入法、密钥环）与 macOS。Windows 见 R5。
   - macOS 的缺口：
