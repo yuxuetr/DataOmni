@@ -80,7 +80,7 @@ export function ddlRequest(
     return { sql: ddl.sql, params: catalogQueryParams(parameterCount, name, schema) };
   }
   const quoted = quoteQualifiedSqlIdentifier(schema ? [schema, name] : [name], dialect);
-  return { sql: ddl.sql.replace('{table}', quoted), params: [] };
+  return { sql: ddl.sql.replace('{table}', () => quoted), params: [] };
 }
 
 /**

@@ -52,6 +52,14 @@ describe('ddlRequest', () => {
   });
 });
 
+// MySQL 的标识符可以带 `$`；字符串形式的替换会把 `$$` 换成 `$`、`$&` 换成 `{table}`
+describe('ddlRequest 的插值', () => {
+  it('表名里的 $ 原样保留', () => {
+    expect(ddlRequest({ kind: 'interpolated', sql: 'SHOW CREATE TABLE {table}' }, 2, 'a$$b$&', 'db', 'mysql').sql)
+      .toBe('SHOW CREATE TABLE `db`.`a$$b$&`');
+  });
+});
+
 describe('readTriggersByShow', () => {
   const show = {
     list: 'SHOW TRIGGERS FROM {table}',
