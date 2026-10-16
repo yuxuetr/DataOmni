@@ -291,10 +291,15 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
   - 验证：本地 openGauss-lite 5.0.3 上两条真库用例从「钉住报错」改成核对值，改错列名变红；PostgreSQL 16 整套 40 / 41
     （pg_dump 那条并行时撞上别的用例删表，单独跑通过）；前端单测与对话框渲染用例（happy-dom）旧代码上红。真应用里没渲染看过。
   - 顺带：openGauss-lite 上导出往返那条建表报 `unsupported XML feature`（lite 版没编 libxml），同 CockroachDB 那条，下一个提交处理。
-- [ ] G8 Redis 集群与 Sentinel（redis-rs 有 `cluster-async` / `sentinel` feature；工作量在键浏览要跨节点扫）
+- [x] G8 Redis 集群与 Sentinel（redis-rs 有 `cluster-async` / `sentinel` feature；工作量在键浏览要跨节点扫）
   - Sentinel 已做（`8cd7ea1`）：每开一条连接先问哨兵主节点地址再照单机连（没用驱动的 sentinel feature）；哨兵不设口令时
     不带口令再问；经 SSH 隧道拒。主从切换后要「重新连接」（`ConnectionManager` 断线重连仍连旧地址）——重估条件：有人切换后撞上
     `READONLY`。只填一个哨兵地址：重估条件：有人要列多个哨兵。验证：本地一主一从一哨兵，含一次 `SENTINEL FAILOVER`；打包版上没连过。
+  - 集群已做（`037eab0`）：连接是单机 / 集群两种的枚举，读写照用（按键的槽位路由）；键浏览按 `CLUSTER NODES` 的主节点逐个点名
+    `SCAN`，游标「第几个主节点:游标」（两页之间扩缩容会错开，可能漏或重）；类型与 TTL 一个键一条流水线（跨槽的流水线报 CROSSSLOT）；
+    只有 0 号库；经隧道拒。改名跨槽时服务端报 CROSSSLOT，原话照报。验证：本地三主节点，300 个键翻页每个恰好一次，三处变异各自变红；
+    打包版上没连过，集群与 Sentinel 的 TLS 没测过。
+  - 顺带修了（`99c8d75`）：进程里没先连过 MySQL / PostgreSQL 时，加密的 Redis 连接一连就 panic（rustls 没有进程级默认实现）。
 - [ ] G9 Neo4j 集群路由 `neo4j://`（用的 `neo4j` crate 已有 routing）
 - [ ] G10 SQL Server「真的执行一遍」（`SET STATISTICS XML ON`）
 - [ ] G11 Neo4j：界面上建关系
