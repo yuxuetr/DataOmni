@@ -77,7 +77,7 @@ const written = () => {
 };
 
 describe('SchemaExportDialog', () => {
-  it('筛选后全选，没画出来的也算；SQL 按树的次序拼，读不到的列在开头', async () => {
+  it('筛选后全选，没画出来的也算；SQL 按树的次序拼、被引用的表提前，读不到的列在开头', async () => {
     // 250 张 t000…t249，加两张不匹配筛选的
     const tables = [
       ...Array.from({ length: 250 }, (_, index) => table(`t${String(index).padStart(3, '0')}`)),
@@ -85,6 +85,10 @@ describe('SchemaExportDialog', () => {
       table('logs')
     ];
     const select = vi.fn(async (sql: string) => {
+      // t000 引用 t249：t249 要排到最前面
+      if (sql === 'FKS') {
+        return [{ constraint_name: 'fk', table_schema: 'shop', table_name: 't000', column_name: 'x', referenced_schema: 'shop', referenced_table: 't249', referenced_column: 'id' }];
+      }
       if (sql === 'SHOW CREATE TABLE `shop`.`t007`') {
         throw new Error('Table \'shop.t007\' doesn\'t exist');
       }
@@ -95,7 +99,9 @@ describe('SchemaExportDialog', () => {
     invoke.mockImplementation(async (command: string) => (
       command === 'get_schema_metadata_queries'
         ? { ddl: { kind: 'interpolated', sql: 'SHOW CREATE TABLE {table}' }, parameter_count: 2 }
-        : null
+        : command === 'get_er_diagram_queries'
+          ? { columns: 'COLUMNS', foreign_keys: 'FKS', parameter_count: 1 }
+          : null
     ));
 
     await act(async () => {
@@ -112,14 +118,15 @@ describe('SchemaExportDialog', () => {
 
     await act(async () => button('Export').click());
 
-    expect(select).toHaveBeenCalledTimes(250);
+    expect(select).toHaveBeenCalledTimes(251);
     const file = written();
     expect(file?.path).toBe('/tmp/out');
     const contents = file?.contents ?? '';
     expect(contents.split('\n')[0]).toMatch(/^-- claw · shop · CREATE statements for 249 tables · exported from DataOmni on \d{4}-\d{2}-\d{2}$/);
     expect(contents).toContain('--   shop.t007: Table \'shop.t007\' doesn\'t exist');
     expect(contents).not.toContain('users');
-    expect(contents.indexOf('CREATE TABLE `t000`')).toBeLessThan(contents.indexOf('CREATE TABLE `t249`'));
+    expect(contents.indexOf('CREATE TABLE `t249`')).toBeLessThan(contents.indexOf('CREATE TABLE `t000`'));
+    expect(contents.indexOf('CREATE TABLE `t001`')).toBeLessThan(contents.indexOf('CREATE TABLE `t002`'));
     expect(container.textContent).toContain('Exported 249 tables: /tmp/out');
     expect(container.textContent).toContain('shop.t007:');
   });

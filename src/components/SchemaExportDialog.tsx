@@ -8,14 +8,13 @@ import { useLanguageStore } from '../stores/languageStore';
 import type { ConnectionProfile } from '../contracts';
 import { describeError } from '../utils/describeError';
 import { requireDatabase } from '../utils/requireDatabase';
-import { ddlRequest, type SchemaMetadataQueries } from '../utils/catalogQueries';
-import { extractDdlStatements, joinDdlStatements } from '../utils/schemaObjects';
+import type { SchemaMetadataQueries } from '../utils/catalogQueries';
 import { identifierDialectFor } from '../utils/sqlIdentifiers';
 import { filterObjects, MAX_RENDERED_TREE_ITEMS, type DatabaseObject } from '../utils/databaseObjects';
 import { tableKey, toErLinks, toErTables } from '../utils/erLayout';
 import { buildDataDictionary } from '../utils/dataDictionary';
 import { serverLabel } from '../utils/serverPresets';
-import { buildDdlScript, dictionarySubset, mapWithConcurrency, type TableDdl } from '../utils/schemaExport';
+import { buildDdlScript, dictionarySubset, orderByDependencies, readTableDdls } from '../utils/schemaExport';
 import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface SchemaExportDialogProps {
@@ -85,7 +84,7 @@ export function SchemaExportDialog({ connection, tables, onClose }: SchemaExport
   };
 
   const run = async () => {
-    // 次序跟着树走，不跟着点选的先后
+    // 次序跟着树走，不跟着点选的先后；SQL 再按外键调整
     const chosen = tables.filter((table) => selected.has(tableKey(table)));
     if (chosen.length === 0 || running) {
       return;
@@ -107,30 +106,28 @@ export function SchemaExportDialog({ connection, tables, onClose }: SchemaExport
     setProgress({ done: 0, total: chosen.length });
     try {
       const select = (sql: string, params: unknown[]) => requireDatabase(database).select(sql, params);
+      const erQueries = await invoke<ErDiagramQueries>('get_er_diagram_queries', { dbType: connection.db_type });
+      const erParams = Array.from({ length: erQueries.parameter_count }, () => databaseName);
       if (format === 'sql') {
-        const metadata = await invoke<SchemaMetadataQueries>('get_schema_metadata_queries', {
+        // 被引用的表排前面（见 `orderByDependencies`）。外键读不到就照树的次序，不为它让整个导出失败
+        const links = await select(erQueries.foreign_keys, erParams).then(
+          (rows) => toErLinks(Array.isArray(rows) ? rows : []),
+          () => []
+        );
+        const ordered = orderByDependencies(chosen, links, tableKey);
+        const queries = await invoke<SchemaMetadataQueries>('get_schema_metadata_queries', {
           dbType: connection.db_type
         });
-        const ddl = metadata.ddl;
-        if (!ddl) {
-          throw new Error(t('schemaExport.failed'));
-        }
-        let done = 0;
-        const read = await mapWithConcurrency(chosen, DDL_CONCURRENCY, async (table): Promise<TableDdl> => {
-          const key = tableKey(table);
-          try {
-            const request = ddlRequest(ddl, metadata.parameter_count, table.name, table.schema, identifierDialectFor(connection.db_type));
-            const rows = await select(request.sql, request.params);
-            const text = joinDdlStatements(extractDdlStatements(Array.isArray(rows) ? rows : []));
-            return text ? { key, ddl: text } : { key, error: t('objectDefinition.empty') };
-          } catch (cause) {
-            return { key, error: describeError(cause, t('objectDefinition.readFailed')) };
-          } finally {
-            done += 1;
-            setProgress({ done, total: chosen.length });
-          }
+        const { tables: read, reconstructed } = await readTableDdls({
+          tables: ordered,
+          dialect: identifierDialectFor(connection.db_type),
+          queries,
+          select,
+          t,
+          onProgress: (done) => setProgress({ done, total: chosen.length }),
+          concurrency: DDL_CONCURRENCY
         });
-        const contents = buildDdlScript({ title: connection.name, database: databaseName, date, tables: read }, t);
+        const contents = buildDdlScript({ title: connection.name, database: databaseName, date, tables: read, reconstructed }, t);
         await invoke('write_text_file', { path, contents });
         const failed = read.flatMap((entry) => ('error' in entry ? [entry] : []));
         setResult({ path, count: read.length - failed.length, failed });
@@ -138,11 +135,9 @@ export function SchemaExportDialog({ connection, tables, onClose }: SchemaExport
       }
 
       // 数据字典：整库的列与外键一次读两条，再挑出选中的表——比逐表查快得多
-      const queries = await invoke<ErDiagramQueries>('get_er_diagram_queries', { dbType: connection.db_type });
-      const params = Array.from({ length: queries.parameter_count }, () => databaseName);
       const [columnRows, linkRows] = await Promise.all([
-        select(queries.columns, params),
-        select(queries.foreign_keys, params)
+        select(erQueries.columns, erParams),
+        select(erQueries.foreign_keys, erParams)
       ]);
       const subset = dictionarySubset(
         toErTables(Array.isArray(columnRows) ? columnRows : []),

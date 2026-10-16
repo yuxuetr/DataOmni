@@ -194,7 +194,7 @@ export default function DatabaseExplorer({
   const [databaseMenu, setDatabaseMenu] = useState<
     { database: string; position: { x: number; y: number } } | null
   >(null);
-  /** MySQL 系「表」那一组上右键 */
+  /** 「表」那一组上右键 */
   const [tablesMenu, setTablesMenu] = useState<
     { tables: DatabaseObject[]; position: { x: number; y: number } } | null
   >(null);
@@ -780,8 +780,8 @@ export default function DatabaseExplorer({
                     setDatabaseMenu({ database: group.label, position });
                     return true;
                   }
-                  // MySQL 系在「表」那一组上右键：勾一批表导出结构。先只开 MySQL 系，别的方言见 TODOs
-                  if (connection.db_type === DatabaseType.MySQL && group.key === 'kind:table') {
+                  // 走 SQL 的库在「表」那一组上右键：勾一批表导出结构（有 schema 一层的方言是每个 schema 下那一组）
+                  if (speaksSql(connection.db_type) && (group.key === 'kind:table' || group.key.endsWith(':kind:table'))) {
                     setTablesMenu({ tables: group.objects, position });
                     return true;
                   }

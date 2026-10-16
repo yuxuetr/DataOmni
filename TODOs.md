@@ -421,8 +421,13 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
   - 理由：用户三百多张表要导其中一百张的结构，此前只能逐张看「对象定义」或命令行 `ddl` 逐张调。
     对象树「表」那一组右键「导出表结构…」；SQL 用 `SHOW CREATE TABLE` 原文（同时 4 条），Markdown 复用数据字典。
     组件测试两条加纯函数五条；「全选只选画出来的」「字典不筛表」「不列失败」三处改坏各自红。渲染看过中英文；打包版上用户在真实 MySQL 库上导过（2026-10-16）。
-  - 先只开 MySQL 系。其余方言要补：SQLite、Oracle、SQL Server、DuckDB、ClickHouse 走同一条 `ddl` 查询（SQL Server 表没有原文）；
-    PostgreSQL 系的表也没有原文，要用 `tableDdl.ts` 从目录重建并在文件开头说明不等价。重估条件：有人在这几种库上要它。
+  - 扩到全部走 SQL 的库（2026-10-16）：SQLite、Oracle、DuckDB、ClickHouse 用 `ddl` 那条原文查询；CockroachDB 拿第一张表试
+    `SHOW CREATE TABLE`，认就用；PostgreSQL、openGauss、SQL Server 用结构页四段目录查询重建（`reconstructTableDdl.ts`），
+    外键放文件最后，建不出来的（读不到表达式的计算列、部分索引、特殊索引、序列、identity 种子）逐表注明。表按外键依赖排序
+    （`orderByDependencies`，外键取 ER 那条整库查询）。
+  - 真库核对：cu 的 PostgreSQL 16 与 SQL Server 2022 上建一组刁钻表，重建后在另一个 schema 执行，两份目录逐条比：
+    PG 只差部分索引、唯一约束变唯一索引、serial 指原序列；SQL Server 只差计算列与筛选索引——都是文件里注明的。
+    CockroachDB 25.2 上 `SHOW CREATE TABLE` 那条路走通。有原文的几家沿用结构页已在用的查询，没另起库验。打包版上没点过。
 
 - [x] 表数据页右键菜单里「编辑这一行」（`c58190d`，2026-10-16）
   - 理由：用户问过单行怎么改——操作列在最右边，列多时在屏幕外，右键菜单只有复制。条件与操作列的编辑按钮同一份；
