@@ -90,7 +90,7 @@ pub(super) async fn run(
       Some(port) => profile.redirected_to("127.0.0.1", port),
       None => profile.clone(),
     };
-    let pool = neo4j::connect(Neo4jTarget::from_profile(&reachable)).await?;
+    let pool = neo4j::connect(Neo4jTarget::from_profile(&reachable)?).await?;
     Ok::<_, String>((tunnels, Arc::new(pool)))
   };
   let deadline = session::CONNECT_DEADLINE;
@@ -169,7 +169,9 @@ mod tests {
       "options": {}, "tags": [],
     }))
     .expect("a profile");
-    let admin = Arc::new(neo4j::connect(Neo4jTarget::from_profile(&profile)).await.expect("admin"));
+    let admin = Arc::new(
+      neo4j::connect(Neo4jTarget::from_profile(&profile).expect("target")).await.expect("admin"),
+    );
     let cypher = |query: &str, read_only: bool| {
       let request = CypherRequest {
         database: None,

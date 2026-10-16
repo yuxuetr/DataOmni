@@ -46,7 +46,7 @@ const result = (rows: CypherNodeValue[][]) => ({
   columns: ['n'],
   rows,
   truncated: false,
-  summary: { queryType: 'r', database: 'neo4j', counters: [], notifications: [], plan: null }
+  summary: { queryType: 'r', database: 'neo4j', server: null, counters: [], notifications: [], plan: null }
 });
 
 function button(label: string): HTMLButtonElement {
@@ -201,5 +201,30 @@ describe('CypherWorkbench 结果表', () => {
     await click(container.querySelector<HTMLButtonElement>('button[aria-label="Next page"]') ?? button('missing'));
     expect(cells()).toHaveLength(50);
     expect(cells()[49]).toBe('450');
+  });
+});
+
+describe('CypherWorkbench 的结果摘要', () => {
+  // 按集群路由连时，读多半落在跟随者上：摘要里写出是哪个成员跑的，直连的不写
+  it('按路由连时写出跑在哪个成员上', async () => {
+    invoke.mockImplementation(async () => ({
+      ...result([[alice('30')]]),
+      summary: { ...result([]).summary, server: '10.0.0.7:7687' }
+    }));
+    await act(async () => {
+      root.render(<CypherWorkbench connection={connection} />);
+    });
+    await click(button('Run all'));
+    expect(container.textContent).toContain('member 10.0.0.7:7687');
+  });
+
+  it('直连的不写成员', async () => {
+    invoke.mockImplementation(async () => result([[alice('30')]]));
+    await act(async () => {
+      root.render(<CypherWorkbench connection={connection} />);
+    });
+    await click(button('Run all'));
+    expect(container.textContent).toContain('database neo4j');
+    expect(container.textContent).not.toContain('member');
   });
 });

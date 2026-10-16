@@ -46,6 +46,7 @@ import { connectionNameFromFile, databaseFileExtensions, isFileDatabase } from '
 import { isMongoSrv, isMongoX509, withMongoSrv, withMongoX509 } from '../utils/mongoConnection';
 import { isEsApiKey, withEsApiKey } from '../utils/esConnection';
 import { ORACLE_DEFAULT_SERVICE, isOracleSid, withOracleSid } from '../utils/oracleConnection';
+import { isNeo4jRouting, withNeo4jRouting } from '../utils/neo4jConnection';
 import {
   REDIS_SENTINEL_MASTER_OPTION,
   redisMode,
@@ -356,6 +357,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   const esApiKey = isEsApiKey(formData);
   const oracleSid = isOracleSid(formData);
   const redisDeployment = redisMode(formData);
+  const neo4jRouting = isNeo4jRouting(formData);
   // 一格都没填时不提示：刚勾开就红着一片，读起来像是用户做错了什么
   const tunnelGaps = tunnel && !isSshTunnelBlank(tunnel) ? sshTunnelProblems(tunnel) : [];
 
@@ -914,6 +916,30 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                         <p className="text-xs text-fg-muted mt-1">{t('form.redisSentinelHint')}</p>
                       </>
                     )}
+                  </div>
+                )}
+
+                {formData.db_type === DatabaseType.Neo4j && (
+                  <div>
+                    <div className="flex items-start">
+                      <input
+                        id="neo4j-routing"
+                        type="checkbox"
+                        checked={neo4jRouting}
+                        onChange={(event) => {
+                          const enabled = event.target.checked;
+                          setFormData((previous) => ({
+                            ...previous,
+                            options: withNeo4jRouting(previous.options, enabled)
+                          }));
+                        }}
+                        className="mt-0.5 h-4 w-4 rounded-control border-line-strong text-accent focus:ring-accent"
+                      />
+                      <label htmlFor="neo4j-routing" className="ml-2 text-sm text-fg">
+                        {t('form.neo4jRouting')}
+                      </label>
+                    </div>
+                    {neo4jRouting && <p className="text-xs text-fg-muted mt-1 ml-6">{t('form.neo4jRoutingHint')}</p>}
                   </div>
                 )}
 

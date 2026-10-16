@@ -43,6 +43,8 @@ pub const NEO4J_SERVER_ERROR: &str = "DATAOMNI_NEO4J_SERVER_ERROR";
 pub const NEO4J_TIMEOUT: &str = "DATAOMNI_NEO4J_TIMEOUT";
 /// CA 证书文件读不了或不是证书。冒号后面带着路径
 pub const NEO4J_TLS_FILE_INVALID: &str = "DATAOMNI_NEO4J_TLS_FILE_INVALID";
+/// 按路由连时不能走 SSH 隧道：路由表里是成员各自公布的地址，在隧道另一头
+pub const NEO4J_ROUTING_VIA_TUNNEL: &str = "DATAOMNI_NEO4J_ROUTING_VIA_TUNNEL";
 /// 连接串对应的连接不在（断开之后还有请求过来）
 pub const NEO4J_NOT_CONNECTED: &str = "DATAOMNI_DB_SESSION_NOT_CONNECTED";
 
@@ -69,11 +71,17 @@ pub struct Neo4jTarget {
   database: Option<String>,
   tls: TlsMode,
   ca_certificate_path: Option<String>,
+  /// 按集群路由连（`neo4j://`）：读发给跟随者、写发给主，成员换了驱动自己跟
+  routing: bool,
 }
 
 impl Neo4jTarget {
-  pub fn from_profile(profile: &ConnectionProfile) -> Self {
-    Self {
+  pub fn from_profile(profile: &ConnectionProfile) -> Result<Self, String> {
+    let routing = profile.neo4j_routing();
+    if routing && profile.ssh_tunnel.is_some() {
+      return Err(NEO4J_ROUTING_VIA_TUNNEL.to_string());
+    }
+    Ok(Self {
       host: profile.host.clone(),
       port: profile.port,
       username: profile.username.clone(),
@@ -86,14 +94,15 @@ impl Neo4jTarget {
         .map(str::to_string),
       tls: profile.effective_tls_mode(),
       ca_certificate_path: profile.ca_certificate_path.clone().filter(|path| !path.is_empty()),
-    }
+      routing,
+    })
   }
 
   fn driver(&self) -> Result<Driver, String> {
-    // 总是直连：路由（`neo4j://`）要按服务端给的成员地址去连，经隧道或 NAT 时那些地址
-    // 从这台机器上连不到。集群这一版不做，见 TODOs 4.3
-    let address =
-      ConnectionConfig::new(Address::from((self.host.as_str(), self.port))).with_routing(false);
+    // 默认直连：路由要按服务端公布的成员地址去连，经隧道或 NAT 时那些地址从这台机器上
+    // 连不到（所以路由与隧道互斥）。直连一台集群成员时写只能落在主上
+    let address = ConnectionConfig::new(Address::from((self.host.as_str(), self.port)))
+      .with_routing(self.routing);
     // `Preferred` / `Required` 只加密不校验，与另外几家一致；`VerifyCa` 按完整校验
     // （rustls 没有只放过主机名的开关），往严里走
     let connection = match (self.tls, &self.ca_certificate_path) {
@@ -132,6 +141,7 @@ impl Neo4jTarget {
 pub struct Neo4jPool {
   driver: Driver,
   database: Option<String>,
+  routing: bool,
 }
 
 impl Neo4jPool {
@@ -161,7 +171,11 @@ async fn blocking<T: Send + 'static>(
 pub async fn connect(target: Neo4jTarget) -> Result<Neo4jPool, String> {
   let limit = CONNECT_TIMEOUT + Duration::from_secs(2);
   let work = tokio::task::spawn_blocking(move || {
-    let pool = Neo4jPool { driver: target.driver()?, database: target.database.clone() };
+    let pool = Neo4jPool {
+      driver: target.driver()?,
+      database: target.database.clone(),
+      routing: target.routing,
+    };
     pool.session(None).auto_commit("RETURN 1").run().map_err(describe_connect_error)?;
     Ok(pool)
   });
@@ -303,6 +317,8 @@ pub struct CypherSummary {
   pub query_type: Option<&'static str>,
   /// 实际跑在哪个库上（`USE` 子句会改它）
   pub database: Option<String>,
+  /// 按路由连时实际跑在哪个成员上（集群里读多半在跟随者上）；直连的就是填的那一台，不给
+  pub server: Option<String>,
   /// 只列不为零的计数：建了几个节点、设了几个属性……
   pub counters: Vec<(&'static str, i64)>,
   pub notifications: Vec<CypherNotification>,
@@ -352,7 +368,7 @@ pub async fn run(pool: Arc<Neo4jPool>, request: CypherRequest) -> Result<CypherR
           rows.push(record?.into_values().map(CypherValue::from).collect());
         }
         let summary = stream.consume()?;
-        Ok(CypherResult { columns, rows, truncated, summary: summarize(summary) })
+        Ok(CypherResult { columns, rows, truncated, summary: summarize(summary, pool.routing) })
       })
       .run()
       .map_err(describe_error)
@@ -395,8 +411,9 @@ fn query_type_code(query_type: SummaryQueryType) -> Option<&'static str> {
   }
 }
 
-fn summarize(summary: Option<Summary>) -> CypherSummary {
+fn summarize(summary: Option<Summary>, routing: bool) -> CypherSummary {
   let Some(summary) = summary else { return CypherSummary::default() };
+  let server = routing.then(|| summary.server_info.address.to_string());
   let counters = &summary.counters;
   let counters = [
     ("nodesCreated", counters.nodes_created),
@@ -424,6 +441,7 @@ fn summarize(summary: Option<Summary>) -> CypherSummary {
     plan,
     query_type: summary.query_type.and_then(query_type_code),
     database: summary.database,
+    server,
     counters,
     notifications: summary
       .notifications
@@ -842,6 +860,48 @@ fn describe_server_error(code: &str, message: &str) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  fn routed(routing: bool) -> ConnectionProfile {
+    let mut profile = ConnectionProfile {
+      db_type: crate::models::DatabaseType::Neo4j,
+      host: "graph.example.com".to_string(),
+      port: 7687,
+      username: "neo4j".to_string(),
+      ..ConnectionProfile::default()
+    };
+    if routing {
+      profile.options.insert(crate::models::NEO4J_ROUTING_OPTION.to_string(), "true".to_string());
+    }
+    profile
+  }
+
+  /// 同一台成员直连与按路由连是两种连接：后者的读可能落在别的成员上
+  #[test]
+  fn a_routing_connection_has_its_own_key_and_cannot_go_through_a_tunnel() {
+    let key = |profile: ConnectionProfile| profile.db_type.to_connection_string(&profile);
+    assert_eq!(key(routed(false)), "bolt://neo4j@graph.example.com:7687/");
+    assert_eq!(key(routed(true)), "bolt://neo4j@graph.example.com:7687/?routing");
+    assert!(Neo4jTarget::from_profile(&routed(true)).expect("target").routing);
+
+    let tunnel = crate::models::SshTunnelConfig {
+      host: "bastion".to_string(),
+      port: 22,
+      username: "ops".to_string(),
+      private_key_path: String::new(),
+      auth: Default::default(),
+      secret: String::new(),
+      secret_ref: None,
+      remote_host: None,
+      remote_port: None,
+    };
+    let tunnelled =
+      |routing| ConnectionProfile { ssh_tunnel: Some(tunnel.clone()), ..routed(routing) };
+    assert_eq!(
+      Neo4jTarget::from_profile(&tunnelled(true)).err().as_deref(),
+      Some(NEO4J_ROUTING_VIA_TUNNEL)
+    );
+    assert!(Neo4jTarget::from_profile(&tunnelled(false)).is_ok(), "直连照常可以走隧道");
+  }
 
   #[test]
   fn floats_read_back_as_floats() {

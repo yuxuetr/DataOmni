@@ -23,6 +23,8 @@ pub const REDIS_MODE_OPTION: &str = "redisMode";
 pub const REDIS_SENTINEL: &str = "sentinel";
 /// 集群：表单上的主机与端口是任意一个节点，其余的由它报出来
 pub const REDIS_CLUSTER: &str = "cluster";
+/// `options` 里的键：Neo4j 按集群路由连（`neo4j://`），值为 `true`；不设就是直连（`bolt://`）
+pub const NEO4J_ROUTING_OPTION: &str = "neo4jRouting";
 /// Sentinel 里登记的主节点名（`sentinel monitor <name> …`）
 pub const REDIS_SENTINEL_MASTER_OPTION: &str = "sentinelMaster";
 
@@ -334,14 +336,15 @@ impl DatabaseType {
         }
       ),
       // 和 SQL Server 同一个理由：是 `Neo4jRegistry` 里的键，不带口令。最后一段是库，
-      // 空着就是这个用户的主库
+      // 空着就是这个用户的主库；按路由连的带上 `?routing`
       DatabaseType::Neo4j => format!(
-        "{}{}@{}:{}/{}",
+        "{}{}@{}:{}/{}{}",
         crate::services::neo4j::NEO4J_SCHEME,
         encode(&config.username),
         config.host,
         config.port,
-        encode(config.database.as_deref().map(str::trim).unwrap_or(""))
+        encode(config.database.as_deref().map(str::trim).unwrap_or("")),
+        if config.neo4j_routing() { "?routing" } else { "" }
       ),
       // `DuckDbRegistry` 里的键：scheme 后面是文件路径，原样
       DatabaseType::DuckDB => format!(
@@ -417,6 +420,11 @@ impl ConnectionProfile {
     let sentinel = self.db_type == DatabaseType::Redis
       && self.options.get(REDIS_MODE_OPTION).is_some_and(|value| value == REDIS_SENTINEL);
     sentinel.then(|| self.options.get(REDIS_SENTINEL_MASTER_OPTION).map_or("", |name| name.trim()))
+  }
+
+  pub fn neo4j_routing(&self) -> bool {
+    self.db_type == DatabaseType::Neo4j
+      && self.options.get(NEO4J_ROUTING_OPTION).is_some_and(|value| value == "true")
   }
 
   pub fn redis_cluster(&self) -> bool {

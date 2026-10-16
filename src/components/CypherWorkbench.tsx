@@ -59,6 +59,8 @@ interface CypherResult {
   summary: {
     queryType: CypherQueryType;
     database: string | null;
+    /** 按集群路由连时跑在哪个成员上；直连的是 null */
+    server: string | null;
     counters: Array<[string, number]>;
     notifications: Array<{ code: string; title: string; description: string; severity: string }>;
     /** 以 `EXPLAIN` / `PROFILE` 开头的才有 */
@@ -768,6 +770,7 @@ function ResultView({
     result.truncated ? t(plan?.analyzed ? 'cypher.truncatedProfiled' : 'cypher.truncated') : null,
     ...summary.counters.map(([key, count]) => (COUNTER_KEYS[key] ? t(COUNTER_KEYS[key], { count }) : `${key}: ${count}`)),
     summary.database ? t('cypher.ranOn', { database: summary.database }) : null,
+    summary.server ? t('cypher.ranOnServer', { server: summary.server }) : null,
     t('cypher.elapsed', { ms: elapsedMs })
   ].filter((fact): fact is string => fact !== null);
 

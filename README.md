@@ -63,7 +63,7 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
 | ClickHouse | 25.8 | ClickHouse（HTTP 接口，reqwest） | ⚠️ 表格一次改一行，没有事务 | 14 / 14（独立用例，`clickhouse_smoke.rs` 与最重的一条 `clickhouse_mutation_smoke.rs`；经 SSH 隧道那一条另要隧道的环境变量） |
 | MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 32 / 32（独立用例，`mongodb_smoke.rs`） |
 | Redis | 7.4 | Redis（redis-rs） | ✅ 单机、Sentinel、集群（集群与 Sentinel 的 TLS 没测过） | 14 / 14（独立用例，`redis_smoke.rs`） |
-| Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例，不含集群路由 | 8 / 8（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |
+| Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例；集群路由（`neo4j://`）只在单实例上跑过，成员之间的分派没测过 | 10 / 10（独立用例，`neo4j_smoke.rs`，直连与路由各跑一遍） |
 | Elasticsearch | 8.19、9.5 | HTTP（reqwest） | ⚠️ 单节点直连 | 7 / 7（独立用例，`elasticsearch_smoke.rs`，两个版本各跑一遍） |
 | OpenSearch | 3.8 | Elasticsearch（同一个连接类型） | ⚠️ 单节点直连；只读账号列不出对象树；没有 API Key | 6 / 6（同一份用例，按服务端分支） |
 
@@ -183,7 +183,7 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
   （别处改过就不覆盖，剩余时间不变）、改 hash / list / set / zset 的元素（同样先比对再写）、
   新建键、stream 加条目与按 ID 删条目。还没有的：集群与 Sentinel。
   详见 [用户手册](docs/user-manual.md#redis)。
-- **Neo4j**：连接（用户名口令或不认证；库空着就是用户的主库；TLS 与 CA；SSH 隧道）、对象树按库
+- **Neo4j**：连接（用户名口令或不认证；库空着就是用户的主库；TLS 与 CA；SSH 隧道；可按集群路由连（`neo4j://`），结果下方写出跑在哪个成员上，不能走隧道）、对象树按库
   列出标签与关系类型（点开是一条 `MATCH` 查询，开出来就跑）、Cypher 查询标签（多条按分号依次
   跑，一条失败就停；结果上限与超时，超时由服务端按事务超时停下；写入计数与服务端的提示；
   会写的先问服务端是读是写，按「危险语句确认」的门槛决定要不要先确认）。值按 Cypher 字面量
@@ -586,6 +586,7 @@ bun install
 - CockroachDB 的结构页列得出触发器了（此前那一段只显示「列不出」）
 - openGauss 的序列属性页读得出了（此前报 `pg_sequences` 不存在）
 - Redis 可以经 Sentinel 连接（连接表单「部署方式」选 Sentinel，填主节点名），也可以连集群（选「集群」，填任意一个节点）
+- Neo4j 可以按集群路由连接（连接表单勾「按集群路由连接」，即 `neo4j://`）
 
 ### v0.6.1（2026-10-07）
 

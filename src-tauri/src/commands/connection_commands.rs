@@ -215,7 +215,7 @@ pub async fn test_connection(
       Some(port) => resolved.redirected_to("127.0.0.1", port),
       None => resolved,
     };
-    let target = crate::services::neo4j::Neo4jTarget::from_profile(&reachable);
+    let target = crate::services::neo4j::Neo4jTarget::from_profile(&reachable)?;
     let pool = crate::services::neo4j::connect(target).await?;
     neo4j_registry.insert(connection_string.clone(), std::sync::Arc::new(pool));
   } else if resolved.db_type == DatabaseType::DuckDB {

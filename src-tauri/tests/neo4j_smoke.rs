@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const URL_ENV: &str = "DATAOMNI_NEO4J_TEST_URL";
+
 const REQUIRE_ENV: &str = "DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS";
 const TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -30,30 +31,39 @@ fn profile() -> Option<ConnectionProfile> {
     }
     _ => return None,
   };
-  let rest = url.strip_prefix("bolt://").expect("bolt:// URL");
+  Some(profile_from_url(&url))
+}
+
+/// `bolt://` 直连，`neo4j://` 按集群路由连
+fn profile_from_url(url: &str) -> ConnectionProfile {
+  let (routing, rest) = match url.strip_prefix("neo4j://") {
+    Some(rest) => (true, rest),
+    None => (false, url.strip_prefix("bolt://").expect("bolt:// or neo4j:// URL")),
+  };
   let (credentials, address) = rest.rsplit_once('@').expect("user:password@host");
   let (username, password) = credentials.split_once(':').expect("user:password");
   let (host, port) = address.trim_end_matches('/').rsplit_once(':').expect("host:port");
-  Some(
-    serde_json::from_value(json!({
-      "name": "neo4j-smoke",
-      "db_type": "neo4j",
-      "host": host,
-      "port": port.parse::<u16>().expect("port"),
-      "database": "",
-      "username": username,
-      "password": password,
-      "ssl": false,
-      "tls_mode": "disabled",
-      "options": {},
-      "tags": []
-    }))
-    .expect("profile"),
-  )
+  let options = if routing { json!({ "neo4jRouting": "true" }) } else { json!({}) };
+  serde_json::from_value(json!({
+    "name": "neo4j-smoke",
+    "db_type": "neo4j",
+    "host": host,
+    "port": port.parse::<u16>().expect("port"),
+    "database": "",
+    "username": username,
+    "password": password,
+    "ssl": false,
+    "tls_mode": "disabled",
+    "options": options,
+    "tags": []
+  }))
+  .expect("profile")
 }
 
 async fn pool(profile: &ConnectionProfile) -> Arc<Neo4jPool> {
-  Arc::new(graph::connect(Neo4jTarget::from_profile(profile)).await.expect("connect"))
+  Arc::new(
+    graph::connect(Neo4jTarget::from_profile(profile).expect("target")).await.expect("connect"),
+  )
 }
 
 async fn cypher(pool: &Arc<Neo4jPool>, query: &str) -> CypherResult {
@@ -95,21 +105,30 @@ async fn a_wrong_password_a_closed_port_and_a_missing_database_are_named() {
 
   let mut wrong = profile.clone();
   wrong.password.push_str("-wrong");
-  let error = graph::connect(Neo4jTarget::from_profile(&wrong)).await.err().unwrap_or_default();
+  let error = graph::connect(Neo4jTarget::from_profile(&wrong).expect("target"))
+    .await
+    .err()
+    .unwrap_or_default();
   assert!(error.starts_with(NEO4J_AUTH_FAILED), "{error}");
 
   let mut closed = profile.clone();
   closed.host = "127.0.0.1".to_string();
   closed.port = 1;
   let started = Instant::now();
-  let error = graph::connect(Neo4jTarget::from_profile(&closed)).await.err().unwrap_or_default();
+  let error = graph::connect(Neo4jTarget::from_profile(&closed).expect("target"))
+    .await
+    .err()
+    .unwrap_or_default();
   assert!(error.starts_with(NEO4J_UNREACHABLE), "{error}");
   assert!(started.elapsed() < Duration::from_secs(15), "{:?}", started.elapsed());
 
   // 库名写错在连接这一步就报出来，不是等到展开对象树
   let mut missing = profile;
   missing.database = Some("no_such_database".to_string());
-  let error = graph::connect(Neo4jTarget::from_profile(&missing)).await.err().unwrap_or_default();
+  let error = graph::connect(Neo4jTarget::from_profile(&missing).expect("target"))
+    .await
+    .err()
+    .unwrap_or_default();
   assert!(error.starts_with(NEO4J_DATABASE_NOT_FOUND), "{error}");
 }
 
@@ -408,4 +427,22 @@ async fn written_temporals_points_and_floats_read_back_as_the_same_value() {
       "{expression} 写成 {written}"
     );
   }
+}
+
+/// 连接串写成 `neo4j://` 时整套用例按路由跑（驱动先取路由表，再按它连）。按路由连的结果
+/// 说出跑在哪个成员上，直连的不说。单机版把客户端用的地址原样当路由表报回，所以这里看不出
+/// 成员之间的分派——那要一套企业版集群
+#[tokio::test]
+async fn a_routed_query_names_the_member_it_ran_on() {
+  let Some(profile) = profile() else { return };
+  if !profile.options.contains_key("neo4jRouting") {
+    return;
+  }
+  let result = cypher(&pool(&profile).await, "RETURN 1 AS one").await;
+  assert!(result.summary.server.is_some(), "{:?}", result.summary);
+
+  let mut direct = profile.clone();
+  direct.options.clear();
+  let result = cypher(&pool(&direct).await, "RETURN 1 AS one").await;
+  assert_eq!(result.summary.server, None);
 }
