@@ -266,7 +266,10 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
   - 顺带修了「校验 CA」panic（`6fbfa9c`，见 P0–P3 那条）。
   - 剩下的：口令存成 md5 的用户服务端不发这种请求，照旧由 sqlx 处理；SM3（`password_encryption_type = 3`）没做。
     重估条件：有人的服务端用 SM3。
-- [ ] G4 Elasticsearch：API Key 认证（多一个请求头）
+- [x] G4 Elasticsearch：API Key 认证（多一个请求头）（`e52ab71`）
+  - 表单「认证方式」选 API Key，key 存口令那一格（进钥匙串），`options.auth = apiKey`；encoded 与 `id:api_key` 都收。
+  - 池子的键里用户那一段是 key 的 SHA-256 前 8 字节：同一台服务端两把 key 不共用池子。401 单独报「API Key 不对」。
+  - 验证：ES 9.5.3（HTTPS）与 8.19（HTTP）整套 7 / 7；表单在浏览器里看过。OpenSearch 没有 API Key，跳过。打包版上没连过。
 - [ ] G5 Oracle：按 SID 连接（换一种连接描述符）
 - [ ] G6 CockroachDB：结构页的触发器改用 `SHOW CREATE TRIGGER` 读
 - [ ] G7 openGauss：序列属性页（没有 `pg_sequences`，直接查序列关系）
