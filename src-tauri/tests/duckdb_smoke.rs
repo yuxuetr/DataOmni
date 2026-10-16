@@ -211,7 +211,7 @@ async fn duckdb_timeout_interrupts_the_statement_and_keeps_the_session() {
     pool: PoolRef::DuckDb(&pool),
     sql,
     autocommit: true,
-    explain_plan: false,
+    explain_plan: dataomni_lib::services::ExplainPlan::Off,
     row_limit: 10,
     byte_limit: 16 * 1024 * 1024,
     batch_size: 10,
@@ -269,7 +269,7 @@ async fn run_in(
     pool: PoolRef::DuckDb(pool),
     sql,
     autocommit,
-    explain_plan: false,
+    explain_plan: dataomni_lib::services::ExplainPlan::Off,
     row_limit: 100,
     byte_limit: 16 * 1024 * 1024,
     batch_size: 100,
@@ -624,7 +624,8 @@ async fn duckdb_explain_reads_the_json_plan() {
   connection
     .execute_streaming(
       &statement,
-      StreamOptions::limited(100, 16 * 1024 * 1024, 100).for_explain(),
+      StreamOptions::limited(100, 16 * 1024 * 1024, 100)
+        .with_explain_plan(dataomni_lib::services::ExplainPlan::Estimated),
       &mut |batch| {
         rows.extend(batch.rows);
         Ok(())

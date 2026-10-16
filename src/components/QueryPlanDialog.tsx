@@ -19,14 +19,15 @@ interface QueryPlanDialogProps {
 }
 
 /**
- * 只有 PostgreSQL 能真的跑一遍。
+ * PostgreSQL（`EXPLAIN ANALYZE`，CockroachDB 也走这个类型）与 SQL Server（`SET STATISTICS XML`）
+ * 能真的跑一遍。
  *
  * 这一行和 Rust 的 `services::explain::supports_analyze` 是同一个判断。
  * 两边分叉时后端会**报错**而不是降级成普通 EXPLAIN——所以界面这边错了会立刻
  * 看见，不会变成一句「真的跑了一遍」的假话。
  */
 function supportsAnalyze(dbType: string): boolean {
-  return dbType === 'postgresql';
+  return dbType === 'postgresql' || dbType === 'sqlserver';
 }
 
 export function QueryPlanDialog({

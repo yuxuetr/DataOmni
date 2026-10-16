@@ -461,7 +461,7 @@ async fn sql_server_timeout_closes_the_connection_so_the_server_stops_the_statem
     pool: PoolRef::SqlServer(&pool),
     sql,
     autocommit: true,
-    explain_plan: false,
+    explain_plan: dataomni_lib::services::ExplainPlan::Off,
     row_limit: 10,
     byte_limit: 16 * 1024 * 1024,
     batch_size: 10,
@@ -522,7 +522,7 @@ async fn sql_server_statements_may_run_past_the_drivers_own_default_timeout() {
         pool: PoolRef::SqlServer(&pool),
         sql: "WAITFOR DELAY '00:00:32'; SELECT 1 AS late",
         autocommit: true,
-        explain_plan: false,
+        explain_plan: dataomni_lib::services::ExplainPlan::Off,
         row_limit: 10,
         byte_limit: 16 * 1024 * 1024,
         batch_size: 10,
@@ -1086,7 +1086,7 @@ fn session_options<'a>(
     pool: PoolRef::SqlServer(pool),
     sql,
     autocommit,
-    explain_plan: false,
+    explain_plan: dataomni_lib::services::ExplainPlan::Off,
     row_limit: 100,
     byte_limit: 16 * 1024 * 1024,
     batch_size: 100,
@@ -1293,7 +1293,10 @@ async fn sql_server_plans_are_estimated_and_leave_the_session_as_it_was() {
   let mut rows = Vec::new();
   sessions
     .execute_streaming(
-      StreamingQueryOptions { explain_plan: true, ..session_options(&pool, id, &statement, true) },
+      StreamingQueryOptions {
+        explain_plan: dataomni_lib::services::ExplainPlan::Estimated,
+        ..session_options(&pool, id, &statement, true)
+      },
       &mut |batch| {
         rows.extend(batch.rows);
         Ok(())
@@ -1328,6 +1331,73 @@ async fn sql_server_plans_are_estimated_and_leave_the_session_as_it_was() {
   // 事务还开着，还是原来那一个
   assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Active);
   run_in(&sessions, &pool, id, "ROLLBACK", true).await.expect("rollback");
+}
+
+/// 实际计划：`SET STATISTICS XML` 包住语句，语句真的执行。要钉住三件事：计划里有每一步的
+/// 实际行数；语句的效果真的发生了（在同一个事务里）；之后这条会话不再多回计划
+#[tokio::test]
+async fn sql_server_actual_plans_run_the_statement_and_leave_the_session_as_it_was() {
+  let Some(pool) = pool().await else { return };
+  write_fixture(&pool).await;
+  let sessions = QuerySessionState::default();
+  let id = "sql-server-actual-plan";
+
+  run_in(&sessions, &pool, id, "BEGIN TRANSACTION", true).await.expect("begin");
+  let actual = |sql: &'static str| {
+    let sessions = &sessions;
+    let pool = &pool;
+    async move {
+      let mut rows = Vec::new();
+      sessions
+        .execute_streaming(
+          StreamingQueryOptions {
+            explain_plan: dataomni_lib::services::ExplainPlan::Actual,
+            ..session_options(pool, id, sql, true)
+          },
+          &mut |batch| {
+            rows.extend(batch.rows);
+            Ok(())
+          },
+        )
+        .await
+        .expect("actual plan");
+      dataomni_lib::services::parse_plan(&DatabaseType::SqlServer, &rows, true).expect("parse plan")
+    }
+  };
+
+  let plan = actual("SELECT name FROM dbo.dataomni_write WHERE id > 0").await;
+  assert!(plan.analyzed);
+  assert!(plan.execution_ms.is_some(), "{plan:?}");
+  assert_eq!(plan.roots[0].actual_rows, Some(2.0), "{:?}", plan.roots[0]);
+
+  let plan = actual("DELETE FROM dbo.dataomni_write WHERE id = 1").await;
+  assert!(plan.roots[0].operation.contains("Delete"), "{:?}", plan.roots[0]);
+  assert_eq!(plan.roots[0].actual_rows, Some(1.0), "{:?}", plan.roots[0]);
+
+  // 真的删了（同一个事务里看）；STATISTICS 关掉了：普通语句拿回的是它自己的结果
+  let mut rows = Vec::new();
+  let summary = sessions
+    .execute_streaming(
+      session_options(&pool, id, "SELECT COUNT(*) AS n FROM dbo.dataomni_write", true),
+      &mut |batch| {
+        rows.extend(batch.rows);
+        Ok(())
+      },
+    )
+    .await
+    .expect("count");
+  assert_eq!(rows, vec![serde_json::from_value(json!({ "n": 1 })).expect("row")]);
+  // 没关掉的话它自己的结果后面还跟着一份计划，被当成多出来的结果集读掉
+  assert!(
+    matches!(
+      summary,
+      dataomni_lib::services::QueryExecutionSummary::Rows { omitted_result_sets: 0, .. }
+    ),
+    "{summary:?}"
+  );
+  assert_eq!(sessions.transaction(id).await.status, TransactionStatus::Active);
+  run_in(&sessions, &pool, id, "ROLLBACK", true).await.expect("rollback");
+  assert_eq!(names(&pool).await, ["甲", "乙"], "回滚之后那一行回来了");
 }
 
 fn export_options() -> dataomni_lib::services::ExportOptions {

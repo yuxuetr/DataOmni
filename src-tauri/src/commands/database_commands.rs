@@ -225,7 +225,7 @@ pub async fn execute_query(
         pool,
         sql: &request.sql,
         autocommit: request.autocommit,
-        explain_plan: false,
+        explain_plan: crate::services::ExplainPlan::Off,
         row_limit: request.row_limit,
         byte_limit: request.byte_limit,
         batch_size: DEFAULT_QUERY_BATCH_SIZE,
@@ -725,7 +725,7 @@ pub async fn explain_query(
           pool,
           sql: SERVER_VERSION_QUERY,
           autocommit: request.autocommit,
-          explain_plan: false,
+          explain_plan: crate::services::ExplainPlan::Off,
           row_limit: 1,
           byte_limit: crate::services::explain::EXPLAIN_BYTE_LIMIT,
           batch_size: DEFAULT_QUERY_BATCH_SIZE,
@@ -758,7 +758,12 @@ pub async fn explain_query(
         pool,
         sql: &statement,
         autocommit: request.autocommit,
-        explain_plan: true,
+        // PostgreSQL / CockroachDB 的「实际」写在 EXPLAIN ANALYZE 里；SQL Server 要换一种开关
+        explain_plan: if request.analyze {
+          crate::services::ExplainPlan::Actual
+        } else {
+          crate::services::ExplainPlan::Estimated
+        },
         row_limit: crate::services::explain::EXPLAIN_ROW_LIMIT,
         byte_limit: crate::services::explain::EXPLAIN_BYTE_LIMIT,
         batch_size: DEFAULT_QUERY_BATCH_SIZE,

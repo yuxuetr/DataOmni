@@ -72,6 +72,17 @@ pub enum NonQueryHandling {
 ///
 /// 合成一个结构不是为了抽象，是因为位置参数已经排到第六个——
 /// `(connection, sql, 100000, 16777216, 250, sink)` 里哪个是哪个，读的人得回去数。
+/// 这一次执行是不是在取执行计划、取哪一种。只对 SQL Server 有区别：估算的用
+/// `SET SHOWPLAN_XML`（只编译不执行），实际的用 `SET STATISTICS XML`（真的执行）。
+/// 别的方言的「实际」写在 EXPLAIN 语句里（`EXPLAIN ANALYZE`），这里只当「在取计划」
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExplainPlan {
+  #[default]
+  Off,
+  Estimated,
+  Actual,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct StreamOptions {
   pub row_limit: usize,
@@ -84,8 +95,9 @@ pub struct StreamOptions {
   ///   返回一行 JSON。按 describe 的说法走会拿回一个 `Affected`，执行计划就此
   ///   消失——所以 describe 说「没有列」时仍然去取结果集。
   /// - SQL Server 没有 `EXPLAIN`：语句原样，前后各发一批 `SET SHOWPLAN_XML`，
-  ///   服务端只编译不执行，返回一份 XML 计划。
-  pub explain_plan: bool,
+  ///   服务端只编译不执行，返回一份 XML 计划（[`ExplainPlan::Actual`] 时换成
+  ///   `SET STATISTICS XML`，见 `SqlServerConnection::actual_plan`）。
+  pub explain_plan: ExplainPlan,
 }
 
 impl StreamOptions {
@@ -95,13 +107,13 @@ impl StreamOptions {
       byte_limit,
       batch_size,
       non_query: NonQueryHandling::Execute,
-      explain_plan: false,
+      explain_plan: ExplainPlan::Off,
     }
   }
 
   /// 见 [`StreamOptions::explain_plan`]
-  pub fn for_explain(mut self) -> Self {
-    self.explain_plan = true;
+  pub fn with_explain_plan(mut self, plan: ExplainPlan) -> Self {
+    self.explain_plan = plan;
     self
   }
 
@@ -112,7 +124,7 @@ impl StreamOptions {
       byte_limit: usize::MAX,
       batch_size,
       non_query: NonQueryHandling::Refuse,
-      explain_plan: false,
+      explain_plan: ExplainPlan::Off,
     }
   }
 }
@@ -611,7 +623,7 @@ async fn execute_sqlite_connection_streaming(
   let column_metadata = describe_sqlite_columns(connection, sql).await?;
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
-  if columns.is_empty() && !options.explain_plan {
+  if columns.is_empty() && options.explain_plan == ExplainPlan::Off {
     refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
@@ -768,7 +780,7 @@ async fn execute_mysql_connection_streaming(
   };
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
-  if columns.is_empty() && !options.explain_plan {
+  if columns.is_empty() && options.explain_plan == ExplainPlan::Off {
     refuse_non_query(options.non_query)?;
     return stream_mysql_undescribed(connection, sql, options, sink, true).await;
   }
@@ -1002,7 +1014,7 @@ async fn execute_postgres_connection_streaming(
   let (column_metadata, binary) = describe_postgres_columns(connection, sql).await?;
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
 
-  if columns.is_empty() && !options.explain_plan {
+  if columns.is_empty() && options.explain_plan == ExplainPlan::Off {
     refuse_non_query(options.non_query)?;
     let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });

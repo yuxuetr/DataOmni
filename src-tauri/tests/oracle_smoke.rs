@@ -551,7 +551,7 @@ async fn oracle_timeout_breaks_the_statement_on_the_server() {
     pool: PoolRef::Oracle(&pool),
     sql,
     autocommit: true,
-    explain_plan: false,
+    explain_plan: dataomni_lib::services::ExplainPlan::Off,
     row_limit: 10,
     byte_limit: 16 * 1024 * 1024,
     batch_size: 10,
@@ -978,7 +978,7 @@ fn session_options<'a>(
     pool: PoolRef::Oracle(pool),
     sql,
     autocommit,
-    explain_plan: false,
+    explain_plan: dataomni_lib::services::ExplainPlan::Off,
     row_limit: 100,
     byte_limit: 16 * 1024 * 1024,
     batch_size: 100,
@@ -1114,7 +1114,7 @@ async fn explain_in(
   let statement = dataomni_lib::services::explain_statement(&DatabaseType::Oracle, sql, false)?;
   let mut rows = Vec::new();
   let mut options = session_options(pool, session_id, &statement, autocommit);
-  options.explain_plan = true;
+  options.explain_plan = dataomni_lib::services::ExplainPlan::Estimated;
   sessions
     .execute_streaming(options, &mut |batch| {
       rows.extend(batch.rows);

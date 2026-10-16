@@ -372,7 +372,7 @@ pub struct StreamingQueryOptions<'a> {
   /// `setAutoCommit(false)` 都是这么做的），SQLite 也没有。
   pub autocommit: bool,
   /// 见 `StreamOptions::explain_plan`
-  pub explain_plan: bool,
+  pub explain_plan: crate::services::ExplainPlan,
   pub row_limit: usize,
   pub byte_limit: usize,
   pub batch_size: usize,
@@ -493,15 +493,8 @@ impl QuerySessionState {
         .connection
         .execute_streaming(
           options.sql,
-          {
-            let stream =
-              StreamOptions::limited(options.row_limit, options.byte_limit, options.batch_size);
-            if options.explain_plan {
-              stream.for_explain()
-            } else {
-              stream
-            }
-          },
+          StreamOptions::limited(options.row_limit, options.byte_limit, options.batch_size)
+            .with_explain_plan(options.explain_plan),
           sink,
         )
         .await;
@@ -656,7 +649,7 @@ mod tests {
           pool: pool.into(),
           sql,
           autocommit,
-          explain_plan: false,
+          explain_plan: crate::services::ExplainPlan::Off,
           row_limit: 100,
           byte_limit: 1 << 20,
           batch_size: 10,

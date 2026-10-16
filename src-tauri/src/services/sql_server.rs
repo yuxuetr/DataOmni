@@ -292,8 +292,10 @@ impl SqlServerConnection {
     }
     // 和 MySQL 同一个理由：会话连接换了库，对象树与表数据还在原来那个库上读
     crate::services::query_executor::refuse_use_statement(sql)?;
-    if options.explain_plan {
-      return self.show_plan(sql, options, sink).await;
+    match options.explain_plan {
+      crate::services::ExplainPlan::Off => {}
+      crate::services::ExplainPlan::Estimated => return self.show_plan(sql, options, sink).await,
+      crate::services::ExplainPlan::Actual => return self.actual_plan(sql, options, sink).await,
     }
     let mut client = self.take_client().await?;
     let outcome = guarded(stream_first_result(&mut client, sql, options, sink)).await;
@@ -450,6 +452,33 @@ impl SqlServerConnection {
     run_simple(&mut client, "SET SHOWPLAN_XML OFF").await?;
     self.client = Some(client);
     outcome
+  }
+
+  /// 真的执行一遍，取带实际行数与耗时的计划。
+  ///
+  /// `SET STATISTICS XML ON` 之后语句照常执行——写语句真的写，与 PostgreSQL 的
+  /// `EXPLAIN ANALYZE` 一样，界面上已经说了。每条语句之后多回一个结果集，只有一列
+  /// [`SHOWPLAN_COLUMN`]；语句自己的结果集读掉不留。关掉之后照常问事务状态：语句
+  /// 可能开了或提交了事务。关不掉就把连接丢掉：留着它，之后每一条语句都多回一份计划
+  async fn actual_plan(
+    &mut self,
+    sql: &str,
+    options: StreamOptions,
+    sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+  ) -> Result<QueryExecutionSummary, QueryError> {
+    let mut client = self.take_client().await?;
+    if let Err(error) = run_simple(&mut client, "SET STATISTICS XML ON").await {
+      if !breaks_connection(&error) {
+        self.client = Some(client);
+      }
+      return Err(error);
+    }
+    let outcome = guarded(stream_showplans(&mut client, sql, options, sink)).await;
+    if !keeps_connection(&outcome) {
+      return outcome;
+    }
+    run_simple(&mut client, "SET STATISTICS XML OFF").await?;
+    self.finish(client, outcome, |summary, _| summary).await
   }
 
   /// 服务端上一次报的事务状态。
@@ -837,6 +866,84 @@ async fn stream_first_result(
     byte_limit: options.byte_limit,
     bytes_read,
     omitted_result_sets,
+  })
+}
+
+/// `SET STATISTICS XML` 多回的那个结果集的列名（SQL Server 2005 起一直是这个名字）
+const SHOWPLAN_COLUMN: &str = "Microsoft SQL Server 2005 XML Showplan";
+
+/// 只收计划那几个结果集（一条语句一个），合成一个结果给解析那一侧；其余的读掉。
+/// 行数与字节的上限照常算：计划被截断时解析报「不是完整的 XML」，而不是给出半棵树
+async fn stream_showplans(
+  client: &mut SqlServerClient,
+  sql: &str,
+  options: StreamOptions,
+  sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+) -> Result<QueryExecutionSummary, QueryError> {
+  let mut stream = client.simple_query(sql).await.map_err(|error| query_error(error, Some(sql)))?;
+  let mut showplan: Option<usize> = None;
+  let mut column_metadata = None;
+  let mut rows = Vec::with_capacity(options.batch_size);
+  let mut row_count = 0;
+  let mut batch_count = 0;
+  let mut bytes_read: usize = 0;
+  let mut truncation_reason = None;
+  while let Some(item) = stream.try_next().await.map_err(|error| query_error(error, Some(sql)))? {
+    match item {
+      tiberius::QueryItem::Metadata(metadata) => {
+        let columns = metadata.columns();
+        showplan = match columns {
+          [column] if column.name() == SHOWPLAN_COLUMN => {
+            column_metadata.get_or_insert_with(|| QueryColumnMetadata {
+              name: SHOWPLAN_COLUMN.to_string(),
+              ordinal: 0,
+              database_type: type_name(column.column_type()).to_string(),
+              logical_type: logical_type(column.column_type()).to_string(),
+              nullable: None,
+            });
+            Some(metadata.result_index())
+          }
+          _ => None,
+        };
+      }
+      tiberius::QueryItem::Row(row) => {
+        if showplan != Some(row.result_index()) || truncation_reason.is_some() {
+          continue;
+        }
+        if row_count >= options.row_limit {
+          truncation_reason = Some(QueryTruncationReason::RowLimit);
+          continue;
+        }
+        let mut values = Map::new();
+        for (column, data) in row.cells() {
+          values.insert(SHOWPLAN_COLUMN.to_string(), decode(column.column_type(), data)?);
+        }
+        if !admit_row_bytes(&values, options.byte_limit, &mut bytes_read)? {
+          truncation_reason = Some(QueryTruncationReason::ByteLimit);
+          continue;
+        }
+        rows.push(values);
+        row_count += 1;
+        flush_full_batch(&mut rows, options.batch_size, &mut batch_count, row_count, sink)?;
+      }
+    }
+  }
+  drop(stream);
+  let Some(column_metadata) = column_metadata else {
+    return Ok(QueryExecutionSummary::Affected { rows_affected: 0 });
+  };
+  flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
+  Ok(QueryExecutionSummary::Rows {
+    columns: vec![SHOWPLAN_COLUMN.to_string()],
+    column_metadata: vec![column_metadata],
+    row_count,
+    batch_count,
+    truncated: truncation_reason.is_some(),
+    truncation_reason,
+    row_limit: options.row_limit,
+    byte_limit: options.byte_limit,
+    bytes_read,
+    omitted_result_sets: 0,
   })
 }
 

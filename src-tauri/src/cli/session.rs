@@ -323,7 +323,7 @@ async fn plan_in(
   let statement = explain_statement(dialect.clone(), sql, false)?;
   let options =
     StreamOptions::limited(EXPLAIN_ROW_LIMIT, EXPLAIN_BYTE_LIMIT, DEFAULT_QUERY_BATCH_SIZE)
-      .for_explain();
+      .with_explain_plan(crate::services::ExplainPlan::Estimated);
   let mut rows = Vec::new();
   session
     .execute_streaming(&statement, options, &mut |batch| {

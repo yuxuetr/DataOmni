@@ -97,10 +97,12 @@ impl PlanNode {
 ///   给不出 JSON，要再写一个按缩进认层级的解析器。路线图这一条要的是
 ///   「支持 MySQL EXPLAIN」，没要 ANALYZE。重估条件：这条断言——哪天真的
 ///   支持了它会红，逼着回来改掉理由。
+/// - SQL Server 没有 `EXPLAIN ANALYZE`，用 `SET STATISTICS XML` 执行一遍（见
+///   `SqlServerConnection::actual_plan`）。
 ///
 /// 界面据此把开关禁掉，而不是给一个按了会报错的按钮。
 pub fn supports_analyze(db_type: &DatabaseType) -> bool {
-  matches!(db_type, DatabaseType::PostgreSQL)
+  matches!(db_type, DatabaseType::PostgreSQL | DatabaseType::SqlServer)
 }
 
 /// 发哪一种 EXPLAIN、按哪一种形状解析。
@@ -164,7 +166,7 @@ impl PlanDialect {
   }
 
   fn supports_analyze(&self) -> bool {
-    matches!(self, Self::PostgreSql | Self::CockroachDb)
+    matches!(self, Self::PostgreSql | Self::CockroachDb | Self::SqlServer)
   }
 
   fn label(&self) -> &str {
@@ -289,7 +291,7 @@ pub fn parse_plan(
     PlanDialect::TiDb => parse_tidb(rows),
     PlanDialect::OceanBase => parse_oceanbase(rows),
     PlanDialect::Sqlite => Ok(parse_sqlite(rows)),
-    PlanDialect::SqlServer => parse_sql_server(rows),
+    PlanDialect::SqlServer => parse_sql_server(rows, analyze),
     PlanDialect::Oracle => parse_oracle(rows),
     PlanDialect::DuckDb => parse_duckdb(rows),
     PlanDialect::ClickHouse => parse_clickhouse(rows),
@@ -753,19 +755,31 @@ fn parse_sqlite(rows: &[Map<String, JsonValue>]) -> QueryPlan {
 /// （`RelOp/NestedLoops/RelOp`、`RelOp/Hash/RelOp`），而谓词、列清单里也有
 /// 深浅不一的嵌套。所以往下走的规矩是「遇到下一个 `RelOp` 就停」——它是
 /// 子节点，它下面的东西归它。只认直接子元素的写法会得到一棵只有根的树。
-fn parse_sql_server(rows: &[Map<String, JsonValue>]) -> Result<QueryPlan, QueryError> {
+fn parse_sql_server(
+  rows: &[Map<String, JsonValue>],
+  analyze: bool,
+) -> Result<QueryPlan, QueryError> {
   let texts: Vec<String> = rows.iter().filter_map(first_cell).collect();
   if texts.iter().all(|text| text.trim().is_empty()) {
     return Err(QueryError::message(EXPLAIN_EMPTY));
   }
 
   let mut roots = Vec::new();
+  // 实际计划里每条语句带 `QueryTimeStats`：几条语句的耗时加起来是这一批的
+  let mut elapsed_ms: Option<f64> = None;
   for text in &texts {
     let document = roxmltree::Document::parse(text)
       .map_err(|error| QueryError::message(format!("{EXPLAIN_NOT_XML}: {error}")))?;
     // `SET`、`DECLARE` 这类语句也有 StmtSimple，但没有 QueryPlan
     for plan in document.descendants().filter(|node| is_element(node, "QueryPlan")) {
       roots.extend(plan.children().filter(|node| is_element(node, "RelOp")).map(sql_server_node));
+      let elapsed = plan
+        .children()
+        .find(|node| is_element(node, "QueryTimeStats"))
+        .and_then(|stats| stats.attribute("ElapsedTime")?.parse::<f64>().ok());
+      if let Some(elapsed) = elapsed {
+        elapsed_ms = Some(elapsed_ms.unwrap_or(0.0) + elapsed);
+      }
     }
   }
   if roots.is_empty() {
@@ -774,9 +788,9 @@ fn parse_sql_server(rows: &[Map<String, JsonValue>]) -> Result<QueryPlan, QueryE
 
   Ok(QueryPlan {
     roots,
-    analyzed: false,
+    analyzed: analyze,
     planning_ms: None,
-    execution_ms: None,
+    execution_ms: elapsed_ms,
     // 一行到底的 XML 没法读；每个标签起一行。标签之间的空白在 XML 里不算内容，
     // 换行之后仍是同一份计划，另存成 .sqlplan 照样能在 SSMS 里打开
     raw: texts.join("\n").replace("><", ">\n<"),
@@ -940,7 +954,42 @@ fn sql_server_node(relop: roxmltree::Node<'_, '_>) -> PlanNode {
       node.detail.push(PlanDetail { key: key.to_string(), value: value.to_string() });
     }
   }
+  sql_server_runtime(relop, &mut node);
   node
+}
+
+/// 实际计划（`SET STATISTICS XML`）里这个运算符自己的计数，逐线程给：行数是所有执行的总和，
+/// 估算却是「每次执行」的。所以实际行数按「每次执行」折算——总行数除以单个线程上最多的执行
+/// 次数（并行时每个工作线程各执行一次，协调线程是 0 次），这样才能和估算比。耗时取最慢的线程。
+/// 一次也没执行过的没有实际行数（同 PostgreSQL 的 `never executed`），不是 0 行
+fn sql_server_runtime(relop: roxmltree::Node<'_, '_>, node: &mut PlanNode) {
+  let threads: Vec<roxmltree::Node<'_, '_>> = relop
+    .children()
+    .filter(|child| is_element(child, "RunTimeInformation"))
+    .flat_map(|info| info.children().filter(|child| is_element(child, "RunTimeCountersPerThread")))
+    .collect();
+  if threads.is_empty() {
+    return;
+  }
+  let values = |name: &str| -> Vec<f64> {
+    threads.iter().filter_map(|thread| thread.attribute(name)?.parse().ok()).collect()
+  };
+  let largest = |name: &str| values(name).into_iter().reduce(f64::max);
+  let executions = largest("ActualExecutions").unwrap_or(0.0);
+  if executions > 0.0 {
+    node.actual_rows = Some(values("ActualRows").iter().sum::<f64>() / executions);
+  }
+  node.actual_ms = largest("ActualElapsedms");
+  node
+    .detail
+    .push(PlanDetail { key: "ActualExecutions".to_string(), value: executions.to_string() });
+  let reads = values("ActualLogicalReads");
+  if !reads.is_empty() {
+    node.detail.push(PlanDetail {
+      key: "ActualLogicalReads".to_string(),
+      value: reads.iter().sum::<f64>().to_string(),
+    });
+  }
 }
 
 /// 索引查找的范围，`id GT (1)`。它没有现成的文本：列在 `RangeColumns`，
@@ -1300,6 +1349,45 @@ mod tests {
   #[test]
   fn unsupported_databases_say_so_instead_of_returning_broken_sql() {
     assert!(explain_statement(&DatabaseType::MongoDB, "SELECT 1", false).is_err());
+  }
+
+  /// `SET STATISTICS XML` 的计划：每个运算符下有逐线程的实际计数。形状照 SQL Server 2022
+  /// 实测（`RunTimeInformation` / `RunTimeCountersPerThread`、语句上的 `QueryTimeStats`）
+  const SQL_SERVER_ACTUAL: &str = r#"<ShowPlanXML xmlns="http://schemas.microsoft.com/sqlserver/2004/07/showplan" Version="1.564"><BatchSequence><Batch><Statements><StmtSimple StatementText="SELECT 1"><QueryPlan DegreeOfParallelism="2"><QueryTimeStats ElapsedTime="12" CpuTime="9" />
+<RelOp NodeId="0" PhysicalOp="Nested Loops" LogicalOp="Inner Join" EstimateRows="40" EstimatedTotalSubtreeCost="0.5">
+<RunTimeInformation><RunTimeCountersPerThread Thread="0" ActualRows="0" ActualElapsedms="0" ActualExecutions="0" /><RunTimeCountersPerThread Thread="1" ActualRows="20" ActualElapsedms="11" ActualExecutions="1" /><RunTimeCountersPerThread Thread="2" ActualRows="22" ActualElapsedms="10" ActualExecutions="1" /></RunTimeInformation>
+<NestedLoops Optimized="0">
+<RelOp NodeId="1" PhysicalOp="Clustered Index Scan" LogicalOp="Clustered Index Scan" EstimateRows="4" EstimatedTotalSubtreeCost="0.1"><RunTimeInformation><RunTimeCountersPerThread Thread="0" ActualRows="4" ActualElapsedms="1" ActualExecutions="1" ActualLogicalReads="7" /></RunTimeInformation></RelOp>
+<RelOp NodeId="2" PhysicalOp="Index Seek" LogicalOp="Index Seek" EstimateRows="10" EstimatedTotalSubtreeCost="0.2"><RunTimeInformation><RunTimeCountersPerThread Thread="0" ActualRows="42" ActualElapsedms="3" ActualExecutions="4" ActualLogicalReads="8" /></RunTimeInformation></RelOp>
+<RelOp NodeId="3" PhysicalOp="Table Scan" LogicalOp="Table Scan" EstimateRows="1" EstimatedTotalSubtreeCost="0.1"><RunTimeInformation><RunTimeCountersPerThread Thread="0" ActualRows="0" ActualElapsedms="0" ActualExecutions="0" /></RunTimeInformation></RelOp>
+</NestedLoops></RelOp></QueryPlan></StmtSimple></Statements></Batch></BatchSequence></ShowPlanXML>"#;
+
+  #[test]
+  fn a_sql_server_actual_plan_reads_rows_per_execution_and_the_elapsed_time() {
+    let plan =
+      parse_plan(&DatabaseType::SqlServer, &json_row(SQL_SERVER_ACTUAL), true).expect("parses");
+    assert!(plan.analyzed);
+    assert_eq!(plan.execution_ms, Some(12.0));
+    let join = &plan.roots[0];
+    // 两个工作线程各执行一次：42 行是这一次执行的全部，耗时取最慢的线程
+    assert_eq!((join.actual_rows, join.actual_ms), (Some(42.0), Some(11.0)));
+    let [scan, seek, never] = join.children.as_slice() else { panic!("{:?}", join.children) };
+    assert_eq!(scan.actual_rows, Some(4.0));
+    // 内侧执行了 4 次，共 42 行：与每次执行估的 10 行比的是 10.5
+    assert_eq!(seek.actual_rows, Some(10.5));
+    assert!(seek.detail.iter().any(|d| d.key == "ActualExecutions" && d.value == "4"));
+    assert!(seek.detail.iter().any(|d| d.key == "ActualLogicalReads" && d.value == "8"));
+    // 一次也没执行：没有实际行数，不是 0 行
+    assert_eq!(never.actual_rows, None);
+  }
+
+  #[test]
+  fn sql_server_can_run_the_statement_for_an_actual_plan() {
+    assert!(supports_analyze(&DatabaseType::SqlServer));
+    assert_eq!(
+      explain_statement(&DatabaseType::SqlServer, "SELECT 1;", true).expect("statement"),
+      "SELECT 1"
+    );
   }
 
   /// 真库上取回来的一份计划（`fixtures/sqlserver-showplan.xml`，两表连接加排序）

@@ -617,7 +617,7 @@ impl OracleConnection {
     options: StreamOptions,
     sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
   ) -> Result<QueryExecutionSummary, QueryError> {
-    if options.explain_plan {
+    if options.explain_plan != crate::services::ExplainPlan::Off {
       return self.explain(sql, options, sink).await;
     }
     // 事务控制语句本身不按「自动提交」再提交一次：`SET TRANSACTION` 之后提交等于
