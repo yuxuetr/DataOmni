@@ -33,6 +33,7 @@ bun tauri dev        # 开发（前后端一起）
 bun tauri build      # 打包
 scripts/install-macos.sh  # 构建（带 Oracle Instant Client，只出 .app）并装进 /Applications
 bun tauri icon src-tauri/app-icon.png -o <临时目录>  # 换图标：从这张 1024 透明底源图生成各平台图标，再拷进 src-tauri/icons（不要 android/ios）
+scripts/macos-icns.sh     # 然后用系统的 sips / iconutil 重出 icon.icns：tauri 出的那份在新版 macOS 上被套灰色底板（脚本开头有原因）
 ```
 
 AI 在 Cargo feature `ai` 后面（默认开）。`bun run rust:clippy:no-ai` 查不带 AI 的构建，CI 两种都跑；
