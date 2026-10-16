@@ -1,16 +1,28 @@
 import { useMemo, useState } from 'react';
-import { Loader2, Plus, Trash2, X } from 'lucide-react';
+import { ArrowLeftRight, Loader2, Plus, Spline, Trash2, X } from 'lucide-react';
 import { useLanguageStore } from '../stores/languageStore';
 import { PLAIN_TEXT_INPUT } from './FormControls';
-import { draftOf, entityWrite, type DraftProblem, type EditableEntity, type EntityDraft } from '../utils/cypherEdit';
-import { cypherName, formatCypherValue } from '../utils/cypherValue';
+import {
+  draftOf,
+  entityWrite,
+  relationshipCreate,
+  type DraftProblem,
+  type EditableEntity,
+  type EntityDraft,
+  type RelationshipEnds
+} from '../utils/cypherEdit';
+import { cypherName, formatCypherValue, type CypherNodeValue } from '../utils/cypherValue';
 import type { TranslationKey, TranslationParams } from '../i18n/translate';
 import { HighlightedCode } from './HighlightedCode';
 import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface CypherEntityEditorProps {
-  /** `null` 是建一个新节点 */
+  /** `null` 是建一个新节点，或者给了 `relationship` 时建一条关系 */
   entity: EditableEntity | null;
+  /** 建关系：两头已经选好（`entity` 为 `null`） */
+  relationship?: RelationshipEnds;
+  /** 看着的是节点时才给：以它为起点建关系，接着去结果里点终点 */
+  onLink?: () => void;
   busy: boolean;
   error: string | null;
   onSave: (statement: string, labelsChanged: boolean) => void;
@@ -28,13 +40,28 @@ interface CypherEntityEditorProps {
  * 将要运行的语句一直摆在下面——这里的值是 Cypher 表达式，看一眼语句最能看出写对了没有。
  * 换了实体时由调用方换 `key`，草稿从头来。
  */
-export function CypherEntityEditor({ entity, busy, error, onSave, onRevert, onDelete, onClose }: CypherEntityEditorProps) {
+export function CypherEntityEditor({
+  entity,
+  relationship,
+  onLink,
+  busy,
+  error,
+  onSave,
+  onRevert,
+  onDelete,
+  onClose
+}: CypherEntityEditorProps) {
   const t = useLanguageStore((state) => state.t);
   const [draft, setDraft] = useState<EntityDraft>(() => draftOf(entity));
   const [labelInput, setLabelInput] = useState('');
-  const write = useMemo(() => entityWrite(entity, draft), [entity, draft]);
+  const [ends, setEnds] = useState<RelationshipEnds | undefined>(relationship);
+  const [type, setType] = useState('');
+  const write = useMemo(
+    () => (ends ? relationshipCreate(ends, type, draft) : entityWrite(entity, draft)),
+    [ends, type, entity, draft]
+  );
   const originals = useMemo(() => new Map(entity?.properties ?? []), [entity]);
-  const isNode = entity === null || entity.kind === 'node';
+  const isNode = !ends && (entity === null || entity.kind === 'node');
 
   const updateProperty = (index: number, change: { key?: string; value?: string }) => setDraft((previous) => ({
     ...previous,
@@ -47,7 +74,9 @@ export function CypherEntityEditor({ entity, busy, error, onSave, onRevert, onDe
     setLabelInput('');
   };
 
-  const title = entity === null
+  const title = ends
+    ? t('cypher.edit.newRelationship')
+    : entity === null
     ? t('cypher.edit.newNode')
     : entity.kind === 'node'
       ? t('cypher.edit.node')
@@ -64,6 +93,33 @@ export function CypherEntityEditor({ entity, busy, error, onSave, onRevert, onDe
           <X size={14} />
         </button>
       </div>
+
+      {ends && (
+        <div className="mb-2 space-y-1">
+          <div className="flex flex-wrap items-center gap-1 font-mono text-xs">
+            <span className="text-fg">{nodeText(ends.from)}</span>
+            <span className="text-fg-muted">-[:</span>
+            <input
+              {...PLAIN_TEXT_INPUT}
+              value={type}
+              onChange={(event) => setType(event.target.value)}
+              placeholder={t('cypher.edit.relationshipType')}
+              aria-label={t('cypher.edit.relationshipType')}
+              className="w-36 rounded-control border border-line-strong bg-surface px-1.5 py-0.5 font-mono text-xs"
+            />
+            <span className="text-fg-muted">]-&gt;</span>
+            <span className="text-fg">{nodeText(ends.to)}</span>
+            <button
+              type="button"
+              onClick={() => setEnds({ from: ends.to, to: ends.from })}
+              className="ml-1 flex items-center gap-1 rounded-control px-1.5 py-0.5 font-sans text-xs text-accent hover:bg-surface-hover"
+            >
+              <ArrowLeftRight size={12} />
+              {t('cypher.edit.swapDirection')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {isNode && (
         <div className="mb-2 flex flex-wrap items-center gap-1">
@@ -163,8 +219,19 @@ export function CypherEntityEditor({ entity, busy, error, onSave, onRevert, onDe
           className="flex items-center gap-1 rounded-control bg-accent px-3 py-1 text-xs text-accent-fg hover:opacity-90 disabled:opacity-50"
         >
           {busy && <Loader2 size={12} className="animate-spin" />}
-          {t(entity === null ? 'cypher.edit.create' : 'cypher.edit.save')}
+          {t(ends ? 'cypher.edit.createRelationship' : entity === null ? 'cypher.edit.create' : 'cypher.edit.save')}
         </button>
+        {onLink && (
+          <button
+            type="button"
+            onClick={onLink}
+            disabled={busy}
+            className="flex items-center gap-1 rounded-control border border-line-strong px-3 py-1 text-xs text-fg hover:bg-surface-hover disabled:opacity-50"
+          >
+            <Spline size={12} />
+            {t('cypher.edit.linkFrom')}
+          </button>
+        )}
         {entity && (
           <button
             type="button"
@@ -191,8 +258,15 @@ export function CypherEntityEditor({ entity, busy, error, onSave, onRevert, onDe
   );
 }
 
+/** 关系一头的样子：标签加 elementId，与结果里认节点的写法一致 */
+function nodeText(node: CypherNodeValue): string {
+  return `(${node.labels.map((label) => `:${cypherName(label)}`).join('')} ${node.elementId})`;
+}
+
 function problemText(problem: DraftProblem, t: (key: TranslationKey, params?: TranslationParams) => string): string {
   switch (problem.kind) {
+    case 'empty-type':
+      return t('cypher.edit.problem.emptyType');
     case 'empty-key':
       return t('cypher.edit.problem.emptyKey');
     case 'duplicate-key':

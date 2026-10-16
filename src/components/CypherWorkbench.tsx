@@ -31,7 +31,7 @@ import {
   riskiestCypherStatement,
   type CypherQueryType
 } from '../utils/cypherRisk';
-import { formatCypherValue, type CypherValue } from '../utils/cypherValue';
+import { formatCypherValue, type CypherNodeValue, type CypherValue } from '../utils/cypherValue';
 import { hasGraphValues } from '../utils/cypherGraph';
 import { CypherGraphView } from './CypherGraphView';
 import { CypherEntityEditor } from './CypherEntityEditor';
@@ -43,7 +43,8 @@ import {
   readStatement,
   removeEntity,
   replaceEntity,
-  type EditableEntity
+  type EditableEntity,
+  type RelationshipEnds
 } from '../utils/cypherEdit';
 import { requiresConfirmation, type StatementRisk } from '../utils/statementRisk';
 import { MAX_UNVIRTUALIZED_ROWS } from '../utils/gridPagination';
@@ -136,6 +137,9 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
   const [pending, setPending] = useState<{ statements: string[]; text: string; risk: StatementRisk } | null>(null);
   const [inspecting, setInspecting] = useState<Inspected | null>(null);
   const [creating, setCreating] = useState(false);
+  // 建关系：先在节点上点「从这个节点建关系」（`linkFrom`），再在结果里点终点，两头齐了打开编辑框
+  const [linkFrom, setLinkFrom] = useState<{ node: CypherNodeValue; database: string | null } | null>(null);
+  const [linking, setLinking] = useState<{ ends: RelationshipEnds; database: string | null } | null>(null);
   // 每写成一次加一：编辑框换 `key`，草稿按改完的样子从头来
   const [editRevision, setEditRevision] = useState(0);
   const [editBusy, setEditBusy] = useState(false);
@@ -256,8 +260,24 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
   };
 
   const inspect = (value: CypherValue, database: string | null) => {
+    if (linkFrom && value.kind === 'node') {
+      // 两个库之间连不了：起点的 elementId 在终点那个库里找不到
+      if (database !== linkFrom.database) {
+        setEditError(t('cypher.edit.linkOtherDatabase'));
+        return;
+      }
+      setLinking({ ends: { from: linkFrom.node, to: value }, database });
+      setLinkFrom(null);
+      setInspecting(null);
+      setCreating(false);
+      setEditError(null);
+      setEditRevision((revision) => revision + 1);
+      return;
+    }
     setInspecting({ value, database });
     setCreating(false);
+    setLinkFrom(null);
+    setLinking(null);
     setEditError(null);
     setNewer(null);
   };
@@ -265,6 +285,8 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
   const closeInspector = () => {
     setInspecting(null);
     setCreating(false);
+    setLinkFrom(null);
+    setLinking(null);
     setEditError(null);
     setNewer(null);
   };
@@ -277,10 +299,12 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
 
   /** 编辑框里点了保存：改的是一个实体，建的是一个节点，按这两个等级过「危险语句确认」 */
   const saveEntity = (statement: string, labelsChanged: boolean) => {
-    const edit: EntityEdit = creating
+    const edit: EntityEdit = linking
+      ? { statement, labelsChanged, target: null, database: linking.database }
+      : creating
       ? { statement, labelsChanged, target: null, database: null }
       : { statement, labelsChanged, target: inspectedEntity, database: inspecting?.database ?? null };
-    if (!creating && !edit.target) return;
+    if (!creating && !linking && !edit.target) return;
     const risk: StatementRisk = edit.target ? 'scoped-write' : 'append';
     if (requiresConfirmation(risk, connection.environment, confirmationPolicy)) {
       setPendingEdit({ edit, risk });
@@ -320,7 +344,8 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
           setNewer({ value: current, database });
           setEditError(t('cypher.edit.changed'));
         } else {
-          setEditError(t('cypher.edit.gone'));
+          // 建关系时一行没回来，是两头里有一头在选好之后被删了
+          setEditError(t(linking ? 'cypher.edit.endGone' : 'cypher.edit.gone'));
         }
         return;
       }
@@ -332,6 +357,7 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
         const elapsedMs = Math.round(performance.now() - started);
         setRuns((previous) => [...previous, { id, statement, state: 'done', result, elapsedMs }]);
         setCreating(false);
+        setLinking(null);
         scrollToRun.current = id;
       }
       setInspecting({ value: written, database: result.summary.database ?? database });
@@ -489,6 +515,8 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
             type="button"
             onClick={() => {
               setInspecting(null);
+              setLinkFrom(null);
+              setLinking(null);
               setCreating(true);
               setEditError(null);
             }}
@@ -570,18 +598,37 @@ export function CypherWorkbench({ connection }: CypherWorkbenchProps) {
             key={run.id}
             run={run}
             showStatement={runs.length > 1}
-            selectedId={inspectedEntity?.elementId ?? null}
+            selectedId={linkFrom?.node.elementId ?? inspectedEntity?.elementId ?? null}
             onInspect={inspect}
           />
         ))}
       </div>
 
-      {(creating || inspectedEntity) && (
+      {linkFrom && (
+        <div className="flex shrink-0 items-center gap-2 border-t border-line bg-accent-soft px-3 py-2 text-xs text-fg">
+          <span className="min-w-0 flex-1">
+            {t('cypher.edit.linkPick', { node: formatCypherValue(linkFrom.node, true) })}
+          </span>
+          {editError && <span className="text-danger">{editError}</span>}
+          <button type="button" onClick={closeInspector} className="rounded-control px-2 py-0.5 hover:bg-surface-hover">
+            {t('common.cancel')}
+          </button>
+        </div>
+      )}
+
+      {(creating || linking || inspectedEntity) && (
         // 高度固定：语句预览、提示随着输入出现消失时，输入框不在光标底下挪位置
         <div className="h-80 max-h-[50%] shrink-0 overflow-y-auto border-t border-line bg-surface-sunken px-3 py-2">
           <CypherEntityEditor
-            key={creating ? `new:${editRevision}` : `${inspectedEntity?.elementId}:${editRevision}`}
-            entity={creating ? null : inspectedEntity}
+            key={linking ? `link:${editRevision}` : creating ? `new:${editRevision}` : `${inspectedEntity?.elementId}:${editRevision}`}
+            entity={creating || linking ? null : inspectedEntity}
+            relationship={linking?.ends}
+            onLink={!creating && !linking && inspectedEntity?.kind === 'node' ? () => {
+              setLinkFrom({ node: inspectedEntity, database: inspecting?.database ?? null });
+              setInspecting(null);
+              setEditError(null);
+              setNewer(null);
+            } : undefined}
             busy={editBusy}
             error={editError}
             onSave={saveEntity}

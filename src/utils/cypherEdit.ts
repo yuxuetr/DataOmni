@@ -7,7 +7,7 @@ import {
 } from './cypherValue';
 
 /**
- * 在界面上改节点与关系：改属性、加摘标签、删、建节点。这里只生成 Cypher，由查询标签去跑。
+ * 在界面上改节点与关系：改属性、加摘标签、删、建节点、在两个节点之间建关系。这里只生成 Cypher，由查询标签去跑。
  *
  * 属性的值**按 Cypher 表达式写**：`'文字'`、`42`、`date('2024-01-01')`、`[1, 2]`。
  * Neo4j 的属性没有声明类型，类型只能从写法里来——输入框里放的就是当前值的字面量，
@@ -34,6 +34,7 @@ export interface EntityDraft {
 }
 
 export type DraftProblem =
+  | { kind: 'empty-type' }
   | { kind: 'empty-key' }
   | { kind: 'duplicate-key'; key: string }
   | { kind: 'empty-value'; key: string };
@@ -139,11 +140,11 @@ export function entityWrite(entity: EditableEntity | null, input: EntityDraft): 
   const labels = [...new Set(draft.labels.map((label) => label.trim()).filter((label) => label !== ''))];
 
   if (!entity) {
-    const properties = draft.properties.map(effective).filter((property) => property.value !== null);
-    const map = properties.length === 0
-      ? ''
-      : ` {${properties.map(({ key, value }) => `${cypherName(key)}: ${value}`).join(', ')}}`;
-    return { kind: 'write', statement: `CREATE (n${labelsText(labels)}${map})\nRETURN n`, labelsChanged: labels.length > 0 };
+    return {
+      kind: 'write',
+      statement: `CREATE (n${labelsText(labels)}${propertyMap(draft)})\nRETURN n`,
+      labelsChanged: labels.length > 0
+    };
   }
 
   const variable = variableOf(entity);
@@ -189,6 +190,45 @@ export function entityWrite(entity: EditableEntity | null, input: EntityDraft): 
   if (assignments.length > 0) lines.push(`SET ${assignments.join(', ')}`);
   lines.push(`RETURN ${variable}`);
   return { kind: 'write', statement: lines.join('\n'), labelsChanged };
+}
+
+/** 新关系的两头；方向从 `from` 指向 `to`，两头可以是同一个节点 */
+export interface RelationshipEnds {
+  from: CypherNodeValue;
+  to: CypherNodeValue;
+}
+
+/** 新属性那几行写成 `{k: v}`；空的就没有这一段 */
+function propertyMap(draft: EntityDraft): string {
+  const properties = draft.properties.map(effective).filter((property) => property.value !== null);
+  return properties.length === 0
+    ? ''
+    : ` {${properties.map(({ key, value }) => `${cypherName(key)}: ${value}`).join(', ')}}`;
+}
+
+/**
+ * 在两个节点之间建一条关系。两头各按 `elementId` 定位：哪一头在打开之后被删了，`MATCH`
+ * 就一行也不匹配、什么也不建。新类型会出现在对象树里，所以总说 `labelsChanged`
+ */
+export function relationshipCreate(ends: RelationshipEnds, type: string, input: EntityDraft): EntityWrite {
+  const name = type.trim();
+  if (name === '') return { kind: 'invalid', problem: { kind: 'empty-type' } };
+  const draft = {
+    ...input,
+    properties: input.properties.filter((property) => property.key.trim() !== '' || (property.value ?? '').trim() !== '')
+  };
+  const problem = problemOf(draft.properties);
+  if (problem) return { kind: 'invalid', problem };
+  return {
+    kind: 'write',
+    statement: [
+      `MATCH (a) WHERE elementId(a) = ${cypherString(ends.from.elementId)}`,
+      `MATCH (b) WHERE elementId(b) = ${cypherString(ends.to.elementId)}`,
+      `CREATE (a)-[r:${cypherName(name)}${propertyMap(draft)}]->(b)`,
+      'RETURN r'
+    ].join('\n'),
+    labelsChanged: true
+  };
 }
 
 /**

@@ -6,6 +6,7 @@ import {
   draftOf,
   entityWrite,
   readStatement,
+  relationshipCreate,
   removeEntity,
   replaceEntity,
   type EntityDraft
@@ -257,5 +258,47 @@ describe('改完、删完之后的结果', () => {
 
   it('删了关系：只拿掉提到这条关系的行，两头的节点还在', () => {
     expect(removeEntity(rows, livesIn)).toEqual([rows[0], rows[1]]);
+  });
+});
+
+describe('建关系', () => {
+  const draft = (properties: Array<[string, string]> = []): EntityDraft => ({
+    labels: [],
+    properties: properties.map(([key, value]) => ({ originalKey: null, key, value }))
+  });
+
+  it('按两头的 elementId 定位，建一条带属性的关系并拿回它', () => {
+    expect(relationshipCreate({ from: person, to: city }, ' LIVES_IN ', draft([['since', '2020']]))).toEqual({
+      kind: 'write',
+      statement: [
+        "MATCH (a) WHERE elementId(a) = '4:db:1'",
+        "MATCH (b) WHERE elementId(b) = '4:db:2'",
+        'CREATE (a)-[r:LIVES_IN {since: 2020}]->(b)',
+        'RETURN r'
+      ].join('\n'),
+      labelsChanged: true
+    });
+  });
+
+  // 类型名照标签的规矩引用；自己连自己是合法的
+  it('类型名要引用时引用，两头可以是同一个节点', () => {
+    const write = relationshipCreate({ from: person, to: person }, 'KNOWS WELL', draft());
+    expect(write.kind === 'write' ? write.statement : write).toBe([
+      "MATCH (a) WHERE elementId(a) = '4:db:1'",
+      "MATCH (b) WHERE elementId(b) = '4:db:1'",
+      'CREATE (a)-[r:`KNOWS WELL`]->(b)',
+      'RETURN r'
+    ].join('\n'));
+  });
+
+  it('没写类型、属性有问题时不生成语句', () => {
+    expect(relationshipCreate({ from: person, to: city }, '  ', draft())).toEqual({
+      kind: 'invalid',
+      problem: { kind: 'empty-type' }
+    });
+    expect(relationshipCreate({ from: person, to: city }, 'R', draft([['a', '1'], ['a', '2']]))).toEqual({
+      kind: 'invalid',
+      problem: { kind: 'duplicate-key', key: 'a' }
+    });
   });
 });

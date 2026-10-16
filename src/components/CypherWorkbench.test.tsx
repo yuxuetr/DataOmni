@@ -228,3 +228,66 @@ describe('CypherWorkbench 的结果摘要', () => {
     expect(container.textContent).not.toContain('member');
   });
 });
+
+describe('CypherWorkbench 建关系', () => {
+  const paris: CypherNodeValue = {
+    kind: 'node',
+    elementId: '4:db:2',
+    labels: ['City'],
+    properties: [['name', { kind: 'string', value: 'Paris' }]]
+  };
+
+  async function clickNode(text: string) {
+    const cell = [...container.querySelectorAll('td')].find((candidate) => candidate.textContent?.includes(text));
+    if (!cell) throw new Error(`结果里没有 ${text}`);
+    await click(cell.querySelector('button') ?? cell);
+  }
+
+  it('点起点、点终点、填类型，按两头的 elementId 建一条，建好的另起一段', async () => {
+    const sent: string[] = [];
+    invoke.mockImplementation(async (_command: string, args: { query: string }) => {
+      sent.push(args.query);
+      if (args.query.startsWith('MATCH (a)')) {
+        return {
+          columns: ['r'],
+          rows: [[{
+            kind: 'relationship',
+            elementId: '5:db:7',
+            type: 'LIVES_IN',
+            startElementId: alice('30').elementId,
+            endElementId: paris.elementId,
+            properties: []
+          }]],
+          truncated: false,
+          summary: { ...result([]).summary, queryType: 'w', counters: [['relationshipsCreated', 1]] }
+        };
+      }
+      return { ...result([[alice('30')], [paris]]) };
+    });
+    await act(async () => {
+      root.render(<CypherWorkbench connection={connection} />);
+    });
+    await click(button('Run all'));
+    await click(button('Table'));
+    await clickNode('Alice');
+    await click(button('Relationship from this node'));
+    expect(container.textContent).toContain('Click the end node');
+    await clickNode('Paris');
+    const type = container.querySelector<HTMLInputElement>('input[aria-label="Relationship type"]');
+    if (!type) throw new Error('没有关系类型输入框');
+    await act(async () => {
+      typeInto(type, 'LIVES_IN');
+    });
+    await click(button('Create relationship'));
+
+    expect(sent[sent.length - 1]).toBe([
+      "MATCH (a) WHERE elementId(a) = '4:db:1'",
+      "MATCH (b) WHERE elementId(b) = '4:db:2'",
+      'CREATE (a)-[r:LIVES_IN]->(b)',
+      'RETURN r'
+    ].join('\n'));
+    expect(container.textContent).toContain('created 1 relationship');
+    // 建好之后看着的就是这条新关系
+    expect(container.textContent).toContain('elementId: 5:db:7');
+  });
+});
