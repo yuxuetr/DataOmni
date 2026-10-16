@@ -7,6 +7,7 @@ import {
   columnDefaultSql,
   incompleteDraftColumns,
   renamesApart,
+  renamesByChange,
   typeChangesApart,
   type ColumnDraft,
   type TableDdlRequest
@@ -308,6 +309,29 @@ describe('buildTableDdl / MySQL', () => {
     expect(plan.statements).toEqual(['ALTER TABLE `orders` RENAME COLUMN `shape` TO `area`']);
     expect(plan.refusals).toEqual([
       { column: 'g', action: 'change-nullability', reason: 'ddl.refuse.mysqlSpatialColumn' }
+    ]);
+  });
+
+  it('没有 RENAME COLUMN 的服务端（MySQL 5.7）只改名也用 CHANGE 重述', () => {
+    // 5.7.44 上 `RENAME COLUMN` 报 1064
+    const plan = buildTableDdl(request('mysql', [
+      { ...draftOf(code, 'mysql'), name: 'sku' }
+    ], { renameByChange: true }));
+    expect(plan.statements).toEqual([
+      'ALTER TABLE `orders`'
+        + ' CHANGE COLUMN `code` `sku` varchar(32) COLLATE utf8mb4_bin NOT NULL COMMENT \'hello\''
+    ]);
+    expect(plan.refusals).toEqual([]);
+  });
+
+  it('要用 CHANGE 改名而这一列重述不了时点名拒绝，不退回 RENAME COLUMN', () => {
+    const shape = column({ name: 'shape', data_type: 'geomcollection' });
+    const plan = buildTableDdl(request('mysql', [
+      { ...draftOf(shape, 'mysql'), name: 'area' }
+    ], { renameByChange: true }));
+    expect(plan.statements).toEqual([]);
+    expect(plan.refusals).toEqual([
+      { column: 'area', action: 'rename-column', reason: 'ddl.refuse.mysqlSpatialColumn' }
     ]);
   });
 
@@ -655,6 +679,26 @@ describe('typeChangesApart', () => {
     expect(typeChangesApart('postgresql', 'PostgreSQL 16.4 on x86_64-pc-linux-gnu')).toBe(false);
     expect(typeChangesApart('postgresql', null)).toBe(false);
     expect(typeChangesApart('mysql', 'CockroachDB')).toBe(false);
+  });
+});
+
+describe('renamesByChange', () => {
+  it('MySQL 8.0 与 MariaDB 10.5 之前没有 RENAME COLUMN', () => {
+    expect(renamesByChange('mysql', '5.7.44')).toBe(true);
+    expect(renamesByChange('mysql', '5.7.44-log')).toBe(true);
+    expect(renamesByChange('mysql', '5.6.51')).toBe(true);
+    expect(renamesByChange('mysql', '8.0.36')).toBe(false);
+    expect(renamesByChange('mysql', '8.4.2')).toBe(false);
+    expect(renamesByChange('mysql', '10.4.34-MariaDB')).toBe(true);
+    expect(renamesByChange('mysql', '5.5.5-10.4.34-MariaDB-1:10.4.34+maria~ubu2004')).toBe(true);
+    expect(renamesByChange('mysql', '10.5.0-MariaDB')).toBe(false);
+    expect(renamesByChange('mysql', '11.4.3-MariaDB')).toBe(false);
+    // 这两家的版本号是兼容的 MySQL 版本，不是自己的；都认 RENAME COLUMN（真库用例里改过列名）
+    expect(renamesByChange('mysql', '5.7.25-OceanBase_CE-v4.4.2.1')).toBe(false);
+    expect(renamesByChange('mysql', '8.0.11-TiDB-v8.5.3')).toBe(false);
+    // 还没读到版本时照旧：RENAME COLUMN 不碰列定义，是更窄的那条
+    expect(renamesByChange('mysql', null)).toBe(false);
+    expect(renamesByChange('postgresql', '5.7.44')).toBe(false);
   });
 });
 

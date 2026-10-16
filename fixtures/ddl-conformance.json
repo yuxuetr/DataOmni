@@ -477,6 +477,103 @@
       "renameApart": true
     },
     {
+      "name": "mysql57-renames-columns-by-restating-them",
+      "why": "MySQL 8.0 与 MariaDB 10.5 之前没有 RENAME COLUMN（5.7.44 上报 1064）。只改列名时界面在这些服务端上用 CHANGE COLUMN 重述整段定义（renameByChange）：自增、排序规则、默认值、注释、ON UPDATE 一项都不能丢。CHANGE 在每一家 MySQL 系上都认，所以这条在所有 MySQL 连接上都跑；database_smoke.rs 另有一条拿它在 5.7 上跑",
+      "dialect": "mysql",
+      "schema": null,
+      "table": "ddl_conf_m57",
+      "newTableName": "ddl_conf_m57",
+      "fixture": [
+        "DROP TABLE IF EXISTS ddl_conf_m57",
+        "CREATE TABLE ddl_conf_m57 (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, code VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL DEFAULT 'a' COMMENT 'hello', ts TIMESTAMP NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP)"
+      ],
+      "origin": [
+        {
+          "name": "id",
+          "dataType": "int",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": true,
+          "extra": "auto_increment"
+        },
+        {
+          "name": "code",
+          "dataType": "varchar(32)",
+          "nullable": false,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "a",
+          "generated": false,
+          "collation": "utf8mb4_bin",
+          "comment": "hello",
+          "extra": ""
+        },
+        {
+          "name": "ts",
+          "dataType": "timestamp",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "extra": "on update CURRENT_TIMESTAMP"
+        }
+      ],
+      "draft": [
+        {
+          "origin": "id",
+          "name": "order_id"
+        },
+        {
+          "origin": "code",
+          "name": "sku"
+        },
+        {
+          "origin": "ts",
+          "name": "changed_at"
+        }
+      ],
+      "statements": [
+        "ALTER TABLE `ddl_conf_m57` CHANGE COLUMN `id` `order_id` int NOT NULL AUTO_INCREMENT, CHANGE COLUMN `code` `sku` varchar(32) COLLATE utf8mb4_bin NOT NULL DEFAULT 'a' COMMENT 'hello', CHANGE COLUMN `ts` `changed_at` timestamp NULL ON UPDATE CURRENT_TIMESTAMP"
+      ],
+      "refusals": [],
+      "impacts": [],
+      "after": [
+        {
+          "name": "order_id",
+          "dataType": "int",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": true,
+          "extra": "auto_increment"
+        },
+        {
+          "name": "sku",
+          "dataType": "varchar(32)",
+          "nullable": false,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "a",
+          "generated": false,
+          "collation": "utf8mb4_bin",
+          "comment": "hello",
+          "extra": ""
+        },
+        {
+          "name": "changed_at",
+          "dataType": "timestamp",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "extra": "on update CURRENT_TIMESTAMP"
+        }
+      ],
+      "cleanup": [
+        "DROP TABLE IF EXISTS ddl_conf_m57"
+      ],
+      "renameByChange": true
+    },
+    {
       "name": "sqlite-only-the-four-forms-it-really-has",
       "dialect": "sqlite",
       "schema": null,

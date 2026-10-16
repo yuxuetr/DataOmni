@@ -15,7 +15,7 @@ import {
   buildTableDdl,
   columnDefaultSql,
   incompleteDraftColumns,
-  renamesApart, typeChangesApart,
+  renamesApart, renamesByChange, typeChangesApart,
   type ColumnDraft,
   type DdlPlan
 } from '../utils/tableDdl';
@@ -145,7 +145,8 @@ export function TableStructureEditor({
       dialect,
       columns: drafts,
       renameApart: renamesApart(dialect, serverVersion),
-      typeChangesApart: typeChangesApart(dialect, serverVersion)
+      typeChangesApart: typeChangesApart(dialect, serverVersion),
+      renameByChange: renamesByChange(dialect, serverVersion)
     }));
   };
 

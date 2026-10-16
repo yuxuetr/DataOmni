@@ -154,6 +154,58 @@ async fn mysql_57_check_constraint_catalog_is_missing_with_42s02() {
   assert_eq!(error.code.as_deref(), Some("42S02"), "{error}");
 }
 
+/// 5.7 没有 `RENAME COLUMN`（8.0 起才有），界面只改列名时发的是 `CHANGE COLUMN` 重述整段定义
+/// （`renamesByChange`）。拿语料里 `renameByChange` 的用例在 5.7 上跑，核对跑完之后自增、排序规则、
+/// 默认值、注释与 ON UPDATE 都还在。同样只在设了 `DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL` 时跑
+#[tokio::test]
+async fn mysql_57_renames_columns_by_restating_them() {
+  let Some(url) =
+    std::env::var("DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL").ok().filter(|url| !url.is_empty())
+  else {
+    return;
+  };
+  let separator = if url.contains('?') { '&' } else { '?' };
+  let pool = MySqlPoolOptions::new()
+    .max_connections(1)
+    .connect(&format!("{url}{separator}ssl-mode=DISABLED"))
+    .await
+    .expect("connect with TLS disabled");
+  let catalog = column_queries(dataomni_lib::models::DatabaseType::MySQL);
+  // 5.7 照自己的写法报 `int(11)`，比之前去掉显示宽度
+  let comparable = |columns: Vec<ddl_corpus::Column>| -> Vec<ddl_corpus::Column> {
+    columns.into_iter().map(mariadb_spelling_as_mysql).collect()
+  };
+
+  let cases: Vec<_> =
+    ddl_corpus::load("mysql").into_iter().filter(|case| case.rename_by_change).collect();
+  assert!(!cases.is_empty(), "语料里要有 renameByChange 的用例");
+  for case in cases {
+    for statement in &case.fixture {
+      sqlx::query(statement).execute(&pool).await.expect("prepare corpus fixture");
+    }
+    let origin = comparable(mysql_catalog_columns(&pool, catalog, &case.table).await);
+    assert_eq!(origin, case.origin, "{}: 语料里的 origin 和数据库给的对不上", case.name);
+
+    // 为什么不能用 RENAME COLUMN：哪天 5.7 收了它，这条会红，`renamesByChange` 就该重估
+    let first = case.origin.first().expect("用例至少有一列");
+    let rename = format!("ALTER TABLE `{}` RENAME COLUMN `{}` TO `x`", case.table, first.name);
+    let error = sqlx::query(&rename).execute(&pool).await.expect_err("5.7 has no RENAME COLUMN");
+    assert!(error.to_string().contains("1064"), "{error}");
+
+    for statement in &case.statements {
+      sqlx::query(statement)
+        .execute(&pool)
+        .await
+        .unwrap_or_else(|error| panic!("{}: 生成的语句跑不了\n{statement}\n{error}", case.name));
+    }
+    let after = comparable(mysql_catalog_columns(&pool, catalog, &case.final_table).await);
+    assert_eq!(after, case.after, "{}: 跑完之后的表和语料说的不一样", case.name);
+    for statement in &case.cleanup {
+      sqlx::query(statement).execute(&pool).await.ok();
+    }
+  }
+}
+
 #[tokio::test]
 async fn postgres_supports_basic_read_write() {
   let Some(url) = network_database_url(POSTGRES_URL_ENV) else {

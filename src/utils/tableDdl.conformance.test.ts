@@ -52,6 +52,7 @@ interface CorpusCase {
   table: string;
   newTableName: string;
   renameApart?: boolean;
+  renameByChange?: boolean;
   origin: CorpusColumn[];
   draft: CorpusDraft[];
   statements: string[];
@@ -131,7 +132,8 @@ describe('改结构语料', () => {
           newTableName: testCase.newTableName,
           dialect: testCase.dialect,
           columns,
-          renameApart: testCase.renameApart
+          renameApart: testCase.renameApart,
+          renameByChange: testCase.renameByChange
         });
 
       expect(plan.statements).toEqual(testCase.statements);

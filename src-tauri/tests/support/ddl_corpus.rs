@@ -17,6 +17,10 @@ pub struct Case {
   /// 只有 MySQL 系的用例读它，另两份用例文件里是死字段
   #[allow(dead_code)]
   pub rename_apart: bool,
+  /// 只改列名也用 `CHANGE COLUMN`（没有 `RENAME COLUMN` 的 MySQL 5.7 上界面发的就是它）。
+  /// 只有 MySQL 5.7 那条用例读它
+  #[allow(dead_code)]
+  pub rename_by_change: bool,
 }
 
 /// 目录里一列的期望值。`None` 表示这个方言不报告该字段，不参与比对
@@ -87,6 +91,7 @@ pub fn load(dialect: &str) -> Vec<Case> {
       after: columns(case, "after"),
       cleanup: strings(case, "cleanup"),
       rename_apart: case.get("renameApart").and_then(JsonValue::as_bool).unwrap_or(false),
+      rename_by_change: case.get("renameByChange").and_then(JsonValue::as_bool).unwrap_or(false),
     })
     .collect()
 }

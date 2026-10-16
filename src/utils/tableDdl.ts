@@ -68,6 +68,12 @@ export interface TableDdlRequest {
    * 那边的 DDL 本来就逐条提交，拆开不损失原子性。由 [`typeChangesApart`] 按服务端版本决定
    */
   typeChangesApart?: boolean;
+  /**
+   * 只改列名也用 `CHANGE COLUMN` 重述整段定义。MySQL 8.0 与 MariaDB 10.5 之前没有 `RENAME COLUMN`
+   * （5.7.44 上报 1064）；重述不了的列（计算列、表达式默认值、空间列）照样点名拒绝。
+   * 由 [`renamesByChange`] 按服务端版本决定
+   */
+  renameByChange?: boolean;
 }
 
 /** `version()` 里带 `CockroachDB` 的 PostgreSQL 连接要把改类型拆出来 */
@@ -79,6 +85,27 @@ export function typeChangesApart(dialect: SqlIdentifierDialect, serverVersion: s
 export function renamesApart(dialect: SqlIdentifierDialect, serverVersion: string | null): boolean {
   const version = serverVersion ?? '';
   return dialect === 'mysql' && (version.includes('TiDB') || version.includes('OceanBase'));
+}
+
+/**
+ * `VERSION()` 是 MySQL 8.0 之前或 MariaDB 10.5 之前的 MySQL 连接要用 `CHANGE COLUMN` 改名。
+ * TiDB 与 OceanBase 报的是兼容的 MySQL 版本（OceanBase 报 5.7.25），它们都认 `RENAME COLUMN`
+ */
+export function renamesByChange(dialect: SqlIdentifierDialect, serverVersion: string | null): boolean {
+  if (dialect !== 'mysql' || serverVersion == null) {
+    return false;
+  }
+  if (serverVersion.includes('TiDB') || serverVersion.includes('OceanBase')) {
+    return false;
+  }
+  // 经旧协议握手的 MariaDB 前面带 `5.5.5-`，所以找紧挨着 `-MariaDB` 的那个版本号
+  const mariadb = /(\d+)\.(\d+)\.\d+-MariaDB/.exec(serverVersion);
+  if (mariadb) {
+    const [major, minor] = [Number(mariadb[1]), Number(mariadb[2])];
+    return major < 10 || (major === 10 && minor < 5);
+  }
+  const mysql = /^(\d+)\./.exec(serverVersion);
+  return mysql != null && Number(mysql[1]) < 8;
 }
 
 export type DdlAction =
@@ -384,7 +411,8 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
       // 改名之外还改了别的，用 CHANGE 一次做完：`RENAME COLUMN` 之后再
       // `MODIFY` 依赖同一条 ALTER 里前后动作的生效次序，那是没有保证的
       const needsRestatement =
-        change.typeChanged || change.nullabilityChanged || (change.renamed && change.defaultChanged);
+        change.typeChanged || change.nullabilityChanged
+        || (change.renamed && (change.defaultChanged || request.renameByChange === true));
       if (needsRestatement) {
         const refusal = mysqlRestatementRefusal(column);
         if (refusal) {
