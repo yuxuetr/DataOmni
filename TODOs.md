@@ -300,7 +300,11 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
     只有 0 号库；经隧道拒。改名跨槽时服务端报 CROSSSLOT，原话照报。验证：本地三主节点，300 个键翻页每个恰好一次，三处变异各自变红；
     打包版上没连过，集群与 Sentinel 的 TLS 没测过。
   - 顺带修了（`99c8d75`）：进程里没先连过 MySQL / PostgreSQL 时，加密的 Redis 连接一连就 panic（rustls 没有进程级默认实现）。
-- [ ] G9 Neo4j 集群路由 `neo4j://`（用的 `neo4j` crate 已有 routing）
+- [x] G9 Neo4j 集群路由 `neo4j://`（用的 `neo4j` crate 已有 routing）（`e73adca`）
+  - 表单勾「按集群路由连接」（`options.neo4jRouting`），驱动 `with_routing(true)`；键带 `?routing`；经隧道拒。结果摘要带 `server`
+    （跑在哪个成员上，只在路由时给），工作台结果下方显示。
+  - 验证：本地 5.26 社区版单实例，整套用例经 `neo4j://` 与 `bolt://` 各 10 / 10。**没验证成员之间的分派**：单实例把客户端发来的
+    地址原样当路由表报回，要企业版集群（Docker 镜像要接受 Neo4j 的商业或评估许可，留给用户决定）。打包版上没连过。
 - [ ] G10 SQL Server「真的执行一遍」（`SET STATISTICS XML ON`）
 - [ ] G11 Neo4j：界面上建关系
 - [ ] G12 ClickHouse：表格改一行按物理位置定位，堵上「数完到执行之间别处写进一模一样的一行会被一起改」
