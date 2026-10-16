@@ -9,6 +9,9 @@
 //! TLS 那一条另设 `DATAOMNI_REDIS_TLS_TEST_URL`（一台只开 TLS 端口的服务端）与
 //! `DATAOMNI_REDIS_TLS_TEST_CA`（签它证书的 CA 文件路径；证书上写着 127.0.0.1）。
 //!
+//! Sentinel 那一条另设 `DATAOMNI_REDIS_SENTINEL_TEST_URL=redis://user:password@哨兵:端口/主节点名`
+//! （口令是数据节点的；哨兵自己不设口令）。它会做一次主从切换，只对一套用完就扔的环境设。
+//!
 //! 用例各占一个库号（5–15，并行跑时互不干扰），开头 `FLUSHDB` 清掉残留——那几个库号只给这里用。
 
 use dataomni_lib::models::ConnectionProfile;
@@ -17,13 +20,15 @@ use dataomni_lib::services::redis::{
   self as store, ElementChange, KeyChange, NewKey, RedisReply, RedisTarget, RedisValue,
   ScanRequest, ValueRequest, REDIS_AUTH_FAILED, REDIS_AUTH_REQUIRED,
   REDIS_COMMAND_CONNECTION_STATE, REDIS_ELEMENT_EXISTS, REDIS_ELEMENT_GONE, REDIS_KEY_EXISTS,
-  REDIS_KEY_GONE, REDIS_TLS_FILE_INVALID, REDIS_UNREACHABLE, REDIS_VALUE_CHANGED,
+  REDIS_KEY_GONE, REDIS_SENTINEL_MASTER_UNKNOWN, REDIS_TLS_FILE_INVALID, REDIS_UNREACHABLE,
+  REDIS_VALUE_CHANGED,
 };
 use serde_json::json;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 const URL_ENV: &str = "DATAOMNI_REDIS_TEST_URL";
+const SENTINEL_URL_ENV: &str = "DATAOMNI_REDIS_SENTINEL_TEST_URL";
 const REQUIRE_ENV: &str = "DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS";
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -790,4 +795,64 @@ async fn stream_entries_are_added_with_every_field_and_deleted_by_id() {
   let exists: i64 =
     redis::cmd("EXISTS").arg("vanished").query_async(&mut seed).await.expect("EXISTS");
   assert_eq!(exists, 0);
+}
+
+/// 主节点的 `ROLE` 第一项是 master；哨兵自己答 sentinel——答成 sentinel 就是没去问主节点地址
+async fn role_and_port(pool: &store::RedisPool) -> (String, u16) {
+  let mut connection = pool.connection(0).await.expect("connection");
+  let role: Vec<redis::Value> =
+    redis::cmd("ROLE").query_async(&mut connection).await.expect("ROLE");
+  let role = match role.first() {
+    Some(redis::Value::BulkString(bytes)) => String::from_utf8_lossy(bytes).into_owned(),
+    other => panic!("unexpected ROLE reply: {other:?}"),
+  };
+  let port: Vec<String> =
+    redis::cmd("CONFIG").arg("GET").arg("port").query_async(&mut connection).await.expect("port");
+  (role, port[1].parse().expect("port number"))
+}
+
+#[tokio::test]
+async fn a_sentinel_hands_over_the_master_and_a_reconnect_follows_a_failover() {
+  let Ok(url) = std::env::var(SENTINEL_URL_ENV) else { return };
+  let (url, master) = url.rsplit_once('/').expect("redis://…/master");
+  let mut profile = profile_from_url(url, 0);
+  profile.options.insert("redisMode".to_string(), "sentinel".to_string());
+  profile.options.insert("sentinelMaster".to_string(), master.to_string());
+
+  let pool = pool(&profile).await;
+  let (role, before) = role_and_port(&pool).await;
+  assert_eq!(role, "master");
+  assert_ne!(before, profile.port, "连到的是哨兵自己");
+
+  let mut unknown = profile.clone();
+  unknown.options.insert("sentinelMaster".to_string(), "no-such-master".to_string());
+  let error = store::connect(RedisTarget::from_profile(&unknown).expect("target"))
+    .await
+    .err()
+    .unwrap_or_default();
+  assert_eq!(error, format!("{REDIS_SENTINEL_MASTER_UNKNOWN}: no-such-master"));
+
+  // 主从切换：哨兵改报副本的地址之后，新开的连接（「重新连接」）跟着去
+  let sentinel = redis::Client::open(format!("redis://{}:{}", profile.host, profile.port))
+    .expect("sentinel client");
+  let mut sentinel = sentinel.get_multiplexed_async_connection().await.expect("sentinel");
+  redis::cmd("SENTINEL")
+    .arg("FAILOVER")
+    .arg(master)
+    .query_async::<()>(&mut sentinel)
+    .await
+    .expect("failover");
+  let deadline = Instant::now() + Duration::from_secs(30);
+  let after = loop {
+    let pool = store::connect(RedisTarget::from_profile(&profile).expect("target")).await;
+    if let Ok(pool) = pool {
+      let (role, port) = role_and_port(&pool).await;
+      if role == "master" && port != before {
+        break port;
+      }
+    }
+    assert!(Instant::now() < deadline, "30 秒内没看到新的主节点");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+  };
+  assert_ne!(after, before);
 }

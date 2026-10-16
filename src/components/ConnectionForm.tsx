@@ -46,6 +46,12 @@ import { connectionNameFromFile, databaseFileExtensions, isFileDatabase } from '
 import { isMongoSrv, isMongoX509, withMongoSrv, withMongoX509 } from '../utils/mongoConnection';
 import { isEsApiKey, withEsApiKey } from '../utils/esConnection';
 import { ORACLE_DEFAULT_SERVICE, isOracleSid, withOracleSid } from '../utils/oracleConnection';
+import {
+  REDIS_SENTINEL_MASTER_OPTION,
+  isRedisSentinel,
+  withRedisSentinel,
+  withRedisSentinelMaster
+} from '../utils/redisConnection';
 import { clsx } from 'clsx';
 import { PLAIN_TEXT_INPUT } from './FormControls';
 import { 
@@ -348,6 +354,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   // API Key 存在口令那一格，用户名不用
   const esApiKey = isEsApiKey(formData);
   const oracleSid = isOracleSid(formData);
+  const redisSentinel = isRedisSentinel(formData);
   // 一格都没填时不提示：刚勾开就红着一片，读起来像是用户做错了什么
   const tunnelGaps = tunnel && !isSshTunnelBlank(tunnel) ? sshTunnelProblems(tunnel) : [];
 
@@ -859,6 +866,49 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       <option value="service">{t('form.oracleService')}</option>
                       <option value="sid">SID</option>
                     </select>
+                  </div>
+                )}
+
+                {formData.db_type === DatabaseType.Redis && (
+                  <div>
+                    <label htmlFor="redis-mode" className="block text-sm font-medium text-fg mb-1">
+                      {t('form.redisMode')}
+                    </label>
+                    <select
+                      id="redis-mode"
+                      value={redisSentinel ? 'sentinel' : 'standalone'}
+                      onChange={(event) => {
+                        const enabled = event.target.value === 'sentinel';
+                        setFormData((previous) => ({ ...previous, ...withRedisSentinel(previous, enabled) }));
+                      }}
+                      className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                    >
+                      <option value="standalone">{t('form.redisStandalone')}</option>
+                      <option value="sentinel">Sentinel</option>
+                    </select>
+                    {redisSentinel && (
+                      <>
+                        <label htmlFor="redis-sentinel-master" className="block text-sm font-medium text-fg mb-1 mt-3">
+                          {t('form.redisSentinelMaster')} *
+                        </label>
+                        <input
+                          id="redis-sentinel-master"
+                          type="text"
+                          {...PLAIN_TEXT_INPUT}
+                          value={formData.options?.[REDIS_SENTINEL_MASTER_OPTION] ?? ''}
+                          onChange={(event) => {
+                            const master = event.target.value;
+                            setFormData((previous) => ({
+                              ...previous,
+                              options: withRedisSentinelMaster(previous.options, master)
+                            }));
+                          }}
+                          className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                          placeholder="mymaster"
+                        />
+                        <p className="text-xs text-fg-muted mt-1">{t('form.redisSentinelHint')}</p>
+                      </>
+                    )}
                   </div>
                 )}
 

@@ -44,6 +44,12 @@ pub const REDIS_DATABASE_INVALID: &str = "DATAOMNI_REDIS_DATABASE_INVALID";
 pub const REDIS_KEY_INVALID: &str = "DATAOMNI_REDIS_KEY_INVALID";
 /// CA 证书文件读不了。冒号后面带着路径
 pub const REDIS_TLS_FILE_INVALID: &str = "DATAOMNI_REDIS_TLS_FILE_INVALID";
+/// 选了 Sentinel 却没填主节点名
+pub const REDIS_SENTINEL_MASTER_MISSING: &str = "DATAOMNI_REDIS_SENTINEL_MASTER_MISSING";
+/// 哨兵不认这个主节点名（`SENTINEL get-master-addr-by-name` 回的是空）。冒号后面是那个名字
+pub const REDIS_SENTINEL_MASTER_UNKNOWN: &str = "DATAOMNI_REDIS_SENTINEL_MASTER_UNKNOWN";
+/// 经 SSH 隧道连 Sentinel：隧道只通到哨兵，它报回的主节点地址在隧道另一头，这边连不到
+pub const REDIS_SENTINEL_VIA_TUNNEL: &str = "DATAOMNI_REDIS_SENTINEL_VIA_TUNNEL";
 /// 连接串对应的连接不在（断开之后还有请求过来）
 pub const REDIS_NOT_CONNECTED: &str = "DATAOMNI_DB_SESSION_NOT_CONNECTED";
 
@@ -85,10 +91,17 @@ pub struct RedisTarget {
   database: i64,
   tls: TlsMode,
   ca_certificate_path: Option<String>,
+  /// 经 Sentinel：`host` / `port` 是哨兵，主节点地址每次开连接时问它
+  sentinel_master: Option<String>,
 }
 
 impl RedisTarget {
   pub fn from_profile(profile: &ConnectionProfile) -> Result<Self, String> {
+    let sentinel_master = match profile.redis_sentinel_master() {
+      Some("") => return Err(REDIS_SENTINEL_MASTER_MISSING.to_string()),
+      Some(_) if profile.ssh_tunnel.is_some() => return Err(REDIS_SENTINEL_VIA_TUNNEL.to_string()),
+      master => master.map(str::to_string),
+    };
     Ok(Self {
       host: profile.host.clone(),
       port: profile.port,
@@ -97,26 +110,34 @@ impl RedisTarget {
       database: database_index(profile.database.as_deref())?,
       tls: profile.effective_tls_mode(),
       ca_certificate_path: profile.ca_certificate_path.clone().filter(|path| !path.is_empty()),
+      sentinel_master,
     })
   }
 
-  fn client(&self, database: i64) -> Result<redis::Client, String> {
+  /// `credentials` 为假时不带用户名与口令：给没设口令的哨兵用
+  fn client(
+    &self,
+    host: &str,
+    port: u16,
+    database: i64,
+    credentials: bool,
+  ) -> Result<redis::Client, String> {
     // `Required` 只加密不校验，与另外几家一致；`VerifyCa` 按完整校验（rustls 没有
     // 只放过主机名的开关），往严里走
     let address = match self.tls {
-      TlsMode::Disabled => ConnectionAddr::Tcp(self.host.clone(), self.port),
+      TlsMode::Disabled => ConnectionAddr::Tcp(host.to_string(), port),
       mode => ConnectionAddr::TcpTls {
-        host: self.host.clone(),
-        port: self.port,
+        host: host.to_string(),
+        port,
         insecure: matches!(mode, TlsMode::Preferred | TlsMode::Required),
         tls_params: None,
       },
     };
     let mut settings = RedisConnectionInfo::default().set_db(database);
-    if !self.username.is_empty() {
+    if credentials && !self.username.is_empty() {
       settings = settings.set_username(&self.username);
     }
-    if !self.password.is_empty() {
+    if credentials && !self.password.is_empty() {
       settings = settings.set_password(&self.password);
     }
     let info = address.into_connection_info().map_err(describe_error)?.set_redis_settings(settings);
@@ -181,8 +202,29 @@ pub async fn connect(target: RedisTarget) -> Result<RedisPool, String> {
   Ok(RedisPool { target, connections: tokio::sync::Mutex::new(connections) })
 }
 
+/// 问哨兵这个主节点现在在哪。哨兵常常不设口令（数据节点设了）：带着口令去会被它拒
+/// （「AUTH … called without any password configured」），那就不带再问一次——不另设一格
+/// 哨兵口令。重估条件：有人的哨兵口令与数据节点不同
+async fn master_address(target: &RedisTarget, master: &str) -> Result<(String, u16), String> {
+  let ask = |credentials: bool| async move {
+    let client = target.client(&target.host, target.port, 0, credentials)?;
+    let mut connection =
+      client.get_multiplexed_async_connection().await.map_err(describe_connect_error)?;
+    redis::cmd("SENTINEL")
+      .arg("get-master-addr-by-name")
+      .arg(master)
+      .query_async::<Option<(String, u16)>>(&mut connection)
+      .await
+      .map_err(describe_error)
+  };
+  let address = match ask(true).await {
+    Err(error) if error.contains("without any password configured") => ask(false).await?,
+    result => result?,
+  };
+  address.ok_or_else(|| format!("{REDIS_SENTINEL_MASTER_UNKNOWN}: {master}"))
+}
+
 async fn open(target: &RedisTarget, database: i64) -> Result<ConnectionManager, String> {
-  let client = target.client(database)?;
   // 不设响应时限：每条命令外面各套一层查询超时（默认的 500 毫秒对大库上的 SCAN
   // 太短）。重试只留一次：连不上时要尽快说出来，不是在后台退避六轮
   let config = ConnectionManagerConfig::new()
@@ -190,6 +232,14 @@ async fn open(target: &RedisTarget, database: i64) -> Result<ConnectionManager, 
     .set_response_timeout(None)
     .set_number_of_retries(1);
   let attempt = async {
+    // 每开一条连接都问一次：主从切换之后，「重新连接」就连到新的主节点上
+    let client = match &target.sentinel_master {
+      Some(master) => {
+        let (host, port) = master_address(target, master).await?;
+        target.client(&host, port, database, true)?
+      }
+      None => target.client(&target.host, target.port, database, true)?,
+    };
     let mut connection =
       client.get_connection_manager_with_config(config).await.map_err(describe_connect_error)?;
     redis::cmd("PING")
@@ -1179,6 +1229,72 @@ pub async fn execute(
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::models::{REDIS_MODE_OPTION, REDIS_SENTINEL, REDIS_SENTINEL_MASTER_OPTION};
+
+  fn sentinel_profile(master: Option<&str>) -> ConnectionProfile {
+    let mut options = HashMap::new();
+    if let Some(master) = master {
+      options.insert(REDIS_MODE_OPTION.to_string(), REDIS_SENTINEL.to_string());
+      options.insert(REDIS_SENTINEL_MASTER_OPTION.to_string(), master.to_string());
+    }
+    ConnectionProfile {
+      db_type: crate::models::DatabaseType::Redis,
+      host: "sentinel.example.com".to_string(),
+      port: 26379,
+      database: Some("2".to_string()),
+      options,
+      ..ConnectionProfile::default()
+    }
+  }
+
+  /// 哨兵的地址与主节点的地址可以是同一个 host:port（单机上起的一套），也可以同一个哨兵
+  /// 管着几组：主节点名不同就是不同的库，不共用池子
+  #[test]
+  fn a_sentinel_connection_is_keyed_by_its_master_name() {
+    let key = |profile: ConnectionProfile| profile.db_type.to_connection_string(&profile);
+    assert_eq!(key(sentinel_profile(None)), "redis://@sentinel.example.com:26379/2");
+    assert_eq!(
+      key(sentinel_profile(Some("mymaster"))),
+      "redis://@sentinel.example.com:26379/2?sentinel=mymaster"
+    );
+    assert_eq!(
+      key(sentinel_profile(Some("a b/c"))),
+      "redis://@sentinel.example.com:26379/2?sentinel=a%20b%2Fc"
+    );
+  }
+
+  #[test]
+  fn a_sentinel_connection_cannot_go_through_an_ssh_tunnel() {
+    let tunnel = crate::models::SshTunnelConfig {
+      host: "bastion".to_string(),
+      port: 22,
+      username: "ops".to_string(),
+      private_key_path: String::new(),
+      auth: Default::default(),
+      secret: String::new(),
+      secret_ref: None,
+      remote_host: None,
+      remote_port: None,
+    };
+    let tunnelled =
+      |master| ConnectionProfile { ssh_tunnel: Some(tunnel.clone()), ..sentinel_profile(master) };
+    let error = RedisTarget::from_profile(&tunnelled(Some("mymaster"))).err().expect("refused");
+    assert_eq!(error, REDIS_SENTINEL_VIA_TUNNEL);
+    assert!(RedisTarget::from_profile(&tunnelled(None)).is_ok(), "单机照常可以走隧道");
+  }
+
+  #[test]
+  fn a_sentinel_profile_names_its_master_and_a_blank_name_is_refused() {
+    let target = RedisTarget::from_profile(&sentinel_profile(Some(" mymaster "))).expect("target");
+    assert_eq!(target.sentinel_master.as_deref(), Some("mymaster"));
+    assert!(RedisTarget::from_profile(&sentinel_profile(None))
+      .expect("plain")
+      .sentinel_master
+      .is_none());
+    let error =
+      RedisTarget::from_profile(&sentinel_profile(Some("  "))).err().expect("blank master");
+    assert!(error.starts_with(REDIS_SENTINEL_MASTER_MISSING), "{error}");
+  }
 
   #[test]
   fn the_scan_count_follows_how_densely_the_pattern_matches() {
