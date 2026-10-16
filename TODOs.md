@@ -239,8 +239,12 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
 
 ### 1.0 之内修（生成了错的语句或连不上，按缺陷算）
 
-- [ ] G1 MySQL 5.7：结构编辑里只改列名生成 `RENAME COLUMN`（8.0 语法），5.7 报语法错
-  - 做法：5.7 上改用 `CHANGE COLUMN 旧名 完整定义`（列定义本来就有）。
+- [x] G1 MySQL 5.7：结构编辑里只改列名生成 `RENAME COLUMN`（8.0 语法），5.7 报语法错（`7e81f01`）
+  - `renamesByChange` 按 `VERSION()` 判：MySQL 8.0 之前、MariaDB 10.5 之前为真（TiDB、OceanBase 报的是兼容版本，排除；
+    没读到版本时照旧发 `RENAME COLUMN`）。为真时只改名也走 `CHANGE COLUMN` 重述，计算列、表达式默认值、空间列点名拒绝。
+  - 验证：单测、语料（`mysql57-renames-columns-by-restating-them`，所有 MySQL 连接上都跑）、5.7 专用真库用例
+    `mysql_57_renames_columns_by_restating_them`（同时钉住 `RENAME COLUMN` 报 1064）各做过反向验证；本机 5.7.44 与 8.4 上通过。
+    打包版上没看过。
 - [ ] G2 MariaDB：查询结果表头把 JSON 列标成 BLOB
 
 ### 1.0 之后，按这个次序
