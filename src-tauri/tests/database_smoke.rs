@@ -2645,27 +2645,42 @@ async fn postgres_lists_user_triggers_without_the_foreign_key_internals() {
     .bind(Option::<String>::None)
     .fetch_all(&pool)
     .await;
-  let rows = match outcome {
+  let (names, definition) = match outcome {
+    // 目录读不到，界面改走两条 SHOW（同 `catalogQueries.ts` 的 `readTriggersByShow`）
     Err(error) if is_cockroach(&pool).await => {
       assert_cockroach_refuses_the_trigger_catalog(error);
-      Vec::new()
+      let show = queries.triggers_by_show.expect("PostgreSQL carries the SHOW fallback");
+      let quote = |name: &str| format!("\"{}\"", name.replace('"', "\"\""));
+      let list = show.list.replace("{table}", &quote(&fixture.child));
+      let rows = sqlx::query(&list).fetch_all(&pool).await.expect("run SHOW TRIGGERS");
+      let names: Vec<String> =
+        rows.iter().map(|row| row.get::<String, _>("trigger_name")).collect();
+      let definition = match names.first() {
+        Some(name) => {
+          let sql = show
+            .definition
+            .replace("{trigger}", &quote(name))
+            .replace("{table}", &quote(&fixture.child));
+          let row = sqlx::query(&sql).fetch_one(&pool).await.expect("run SHOW CREATE TRIGGER");
+          row.get::<String, _>("create_statement")
+        }
+        None => String::new(),
+      };
+      (names, definition)
     }
-    result => result.expect("run trigger query"),
+    result => {
+      let rows = result.expect("run trigger query");
+      let names: Vec<String> =
+        rows.iter().map(|row| row.get::<String, _>("trigger_name")).collect();
+      let definition =
+        rows.first().map(|row| row.get::<String, _>("definition")).unwrap_or_default();
+      (names, definition)
+    }
   };
 
-  if rows.is_empty() && is_cockroach(&pool).await {
-    for table in [&fixture.child, &fixture.parent] {
-      sqlx::query(&format!("DROP TABLE IF EXISTS {table} CASCADE")).execute(&pool).await.ok();
-    }
-    sqlx::query(&format!("DROP FUNCTION IF EXISTS {function}()")).execute(&pool).await.ok();
-    return;
-  }
-
-  let names: Vec<String> = rows.iter().map(|row| row.get::<String, _>("trigger_name")).collect();
   // 这张表带外键，PostgreSQL 会为它建内部触发器；tgisinternal 没排掉的话
   // 这里会多出几条用户看不懂的条目
   assert_eq!(names, vec![trigger.clone()], "只应列出用户写的触发器: {names:?}");
-  let definition: String = rows[0].get("definition");
   assert!(definition.starts_with("CREATE TRIGGER"), "应是完整定义原文: {definition}");
 
   sqlx::query(&format!("DROP TRIGGER IF EXISTS {trigger} ON {}", fixture.child))
@@ -2673,7 +2688,7 @@ async fn postgres_lists_user_triggers_without_the_foreign_key_internals() {
     .await
     .ok();
   for table in [&fixture.child, &fixture.parent] {
-    sqlx::query(&format!("DROP TABLE IF EXISTS {table}")).execute(&pool).await.ok();
+    sqlx::query(&format!("DROP TABLE IF EXISTS {table} CASCADE")).execute(&pool).await.ok();
   }
   sqlx::query(&format!("DROP FUNCTION IF EXISTS {function}()")).execute(&pool).await.ok();
 }

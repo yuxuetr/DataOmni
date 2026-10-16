@@ -90,9 +90,8 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
   只存 sha256 口令的用户（`password_encryption_type = 2`，openGauss 的默认）也连得上：标准 PostgreSQL 驱动不认
   它的 sha256 认证，应用在本机开一个只给这条连接用的转发口代为登录，TLS 照连接里的设置。缺口：序列的属性页读不出（没有 `pg_sequences`）；
   违反约束时不给约束名与表名（服务端不填那两个字段）。
-- **CockroachDB 的缺口**：结构页的触发器一段读不到（它没有
-  `pg_get_triggerdef()`，目录表里也查不到触发器，只有 `SHOW CREATE TRIGGER`
-  看得见），那一段单独显示原因，其余照常；错误里没有出错位置和表名。执行计划
+- **CockroachDB 的缺口**：错误里没有出错位置和表名。结构页的触发器它的目录表里查不到，
+  改用 `SHOW TRIGGERS` / `SHOW CREATE TRIGGER` 读（24.3 之前的版本没有触发器，那一段说「列不出」）。执行计划
   解析的是它的 `EXPLAIN (VERBOSE)` 文本树，「真的执行一遍」走 `EXPLAIN ANALYZE`。
   改结构的几条语句逐条执行、各自提交，不是一个事务（它在事务里改不了要重写数据的列类型），
   预览里会说明；改类型各自单独一条。
@@ -584,6 +583,7 @@ bun install
 - openGauss / GaussDB 只存 sha256 口令的用户（openGauss 的默认）现在连得上，不用再请管理员改口令的存法
 - Elasticsearch 可以用 API Key 登录（连接表单「认证方式」选 API Key；Kibana 给的 encoded 与 `id:api_key` 两种写法都收）
 - Oracle 可以按 SID 连接（连接表单「连接方式」选 SID），11g 及更早的库与只在监听里登记了 SID 的库也连得上
+- CockroachDB 的结构页列得出触发器了（此前那一段只显示「列不出」）
 
 ### v0.6.1（2026-10-07）
 

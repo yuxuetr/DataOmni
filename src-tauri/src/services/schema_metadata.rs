@@ -26,6 +26,8 @@ pub struct SchemaMetadataQueries {
   pub check_constraints: Option<&'static str>,
   pub ddl: Option<DdlQuery>,
   pub triggers: &'static str,
+  /// `triggers` 报 42883（缺 `pg_get_triggerdef`）时改用的两条 SHOW，只有 PostgreSQL 连接类型有。
+  pub triggers_by_show: Option<ShowTriggerQueries>,
   /// 每段 `Bound` 查询要绑几个参数。**这一个数管这个方言的全部查询**：
   /// 前端据它构造 `[表名]` 或 `[表名, schema]`，不再自己按方言分支。
   ///
@@ -47,6 +49,23 @@ pub enum DdlQuery {
   Interpolated { sql: &'static str },
 }
 
+/// CockroachDB 的触发器：`pg_trigger` 与 `information_schema.triggers` 都是空的，也没有
+/// `pg_get_triggerdef()`，只有 SHOW 看得见（25.2 上核对过；对表有任一权限就能读）。
+///
+/// 两条都不收占位符，同 MySQL 的 `SHOW CREATE TABLE`：调用方把 `{table}`（可带 schema）与
+/// `{trigger}` 换成按 PostgreSQL 规则引用过的标识符。`list` 每行一个 `trigger_name`，
+/// `definition` 给 `create_statement`。
+#[derive(Debug, Clone, Serialize)]
+pub struct ShowTriggerQueries {
+  pub list: &'static str,
+  pub definition: &'static str,
+}
+
+const COCKROACH_SHOW_TRIGGERS: ShowTriggerQueries = ShowTriggerQueries {
+  list: "SHOW TRIGGERS FROM {table}",
+  definition: "SHOW CREATE TRIGGER {trigger} ON {table}",
+};
+
 /// 该方言是否支持目录级的结构浏览。
 ///
 /// 只有已经实现了查询执行层的三种关系型数据库有；其它类型连查询都跑不了，
@@ -62,6 +81,7 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       // 见 `postgres_has_no_create_table_statement` 上的说明。
       ddl: Some(DdlQuery::Bound { sql: POSTGRES_VIEW_DEFINITION }),
       triggers: POSTGRES_TRIGGERS,
+      triggers_by_show: Some(COCKROACH_SHOW_TRIGGERS),
       parameter_count: 2,
     }),
     DatabaseType::MySQL => Some(SchemaMetadataQueries {
@@ -71,6 +91,7 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       check_constraints: Some(MYSQL_CHECK_CONSTRAINTS),
       ddl: Some(DdlQuery::Interpolated { sql: MYSQL_DDL }),
       triggers: MYSQL_TRIGGERS,
+      triggers_by_show: None,
       parameter_count: 2,
     }),
     DatabaseType::SQLite => Some(SchemaMetadataQueries {
@@ -80,6 +101,7 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       check_constraints: None,
       ddl: Some(DdlQuery::Bound { sql: SQLITE_DDL }),
       triggers: SQLITE_TRIGGERS,
+      triggers_by_show: None,
       parameter_count: 1,
     }),
     // SQL Server 没有 `SHOW CREATE TABLE`，和 PostgreSQL 一样：视图有权威定义，
@@ -91,6 +113,7 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       check_constraints: Some(SQL_SERVER_CHECK_CONSTRAINTS),
       ddl: Some(DdlQuery::Bound { sql: SQL_SERVER_VIEW_DEFINITION }),
       triggers: SQL_SERVER_TRIGGERS,
+      triggers_by_show: None,
       parameter_count: 2,
     }),
     // Oracle 有权威的建表语句（`DBMS_METADATA.GET_DDL`），表和视图都给
@@ -101,6 +124,7 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       check_constraints: Some(ORACLE_CHECK_CONSTRAINTS),
       ddl: Some(DdlQuery::Bound { sql: ORACLE_DDL }),
       triggers: ORACLE_TRIGGERS,
+      triggers_by_show: None,
       parameter_count: 2,
     }),
     // DuckDB 的建表语句是库自己存的原文（`duckdb_tables().sql`），表和视图都给
@@ -111,6 +135,7 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       check_constraints: Some(DUCKDB_CHECK_CONSTRAINTS),
       ddl: Some(DdlQuery::Bound { sql: DUCKDB_DDL }),
       triggers: DUCKDB_TRIGGERS,
+      triggers_by_show: None,
       parameter_count: 2,
     }),
     // ClickHouse 的建表原文在 `system.tables` 里；没有外键、没有触发器，检查约束
@@ -122,6 +147,7 @@ pub fn schema_metadata_queries(db_type: &DatabaseType) -> Option<SchemaMetadataQ
       check_constraints: None,
       ddl: Some(DdlQuery::Bound { sql: CLICKHOUSE_DDL }),
       triggers: CLICKHOUSE_TRIGGERS,
+      triggers_by_show: None,
       parameter_count: 2,
     }),
     _ => None,

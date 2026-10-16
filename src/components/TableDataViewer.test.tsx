@@ -198,3 +198,42 @@ describe('TableDataViewer（ClickHouse）', () => {
     expect(container.textContent).not.toContain('Committed 1 change.');
   });
 });
+
+describe('TableDataViewer（CockroachDB 的触发器）', () => {
+  // CockroachDB 没有 pg_get_triggerdef()，目录查询报 42883；它的触发器只有 SHOW 看得见
+  it('目录查询报缺函数时改走 SHOW，画出触发器原文', async () => {
+    const crdb = { ...connection, id: 'crdb', name: 'crdb', db_type: DatabaseType.PostgreSQL };
+    const select = vi.fn(async (sql: string) => {
+      if (sql === 'COLUMNS') return COLUMNS;
+      if (sql === 'TRIGGERS') {
+        throw Object.assign(new Error('unknown function: pg_get_triggerdef()'), { code: '42883' });
+      }
+      if (sql === 'SHOW TRIGGERS FROM "public"."t"') return [{ trigger_name: 'audit', enabled: true }];
+      if (sql === 'SHOW CREATE TRIGGER "audit" ON "public"."t"') {
+        return [{ trigger_name: 'audit', create_statement: 'CREATE TRIGGER audit BEFORE INSERT ON db.public.t' }];
+      }
+      return [];
+    });
+    useQueryStore.setState({ connectionId: 'crdb', database: { select } as never });
+    invoke.mockImplementation(async (command: string) => (
+      command === 'get_schema_metadata_queries'
+        ? {
+          columns: 'COLUMNS', indexes: 'INDEXES', foreign_keys: 'FKS', check_constraints: null, ddl: null,
+          triggers: 'TRIGGERS',
+          triggers_by_show: { list: 'SHOW TRIGGERS FROM {table}', definition: 'SHOW CREATE TRIGGER {trigger} ON {table}' },
+          parameter_count: 2
+        }
+        : null
+    ));
+
+    await act(async () => {
+      root.render(<TableDataViewer connection={crdb} tableName="t" schema="public" initialTab="schema" />);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.textContent).toContain('CREATE TRIGGER audit BEFORE INSERT ON db.public.t');
+    expect(container.textContent).not.toContain('pg_get_triggerdef');
+  });
+});

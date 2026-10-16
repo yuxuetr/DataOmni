@@ -1,4 +1,5 @@
-import { quoteQualifiedSqlIdentifier, type SqlIdentifierDialect } from './sqlIdentifiers';
+import type { TriggerInfo } from './schemaObjects';
+import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier, type SqlIdentifierDialect } from './sqlIdentifiers';
 
 /**
  * 目录查询该怎么发出去。
@@ -18,8 +19,16 @@ export interface SchemaMetadataQueries {
   /** 对象定义原文；PostgreSQL 只对视图与物化视图有 */
   ddl: DdlQuery | null;
   triggers: string;
+  /** `triggers` 报 42883 时改用的两条 SHOW（CockroachDB），只有 PostgreSQL 有 */
+  triggers_by_show: ShowTriggerQueries | null;
   /** 上面每段 `bound` 查询要绑几个参数 */
   parameter_count: number;
+}
+
+/** 都不收占位符：`{table}`、`{trigger}` 换成引用过的标识符 */
+export interface ShowTriggerQueries {
+  list: string;
+  definition: string;
 }
 
 /** `bound` 走绑定参数，`interpolated` 要把 `{table}` 换成引用过的标识符 */
@@ -72,4 +81,40 @@ export function ddlRequest(
   }
   const quoted = quoteQualifiedSqlIdentifier(schema ? [schema, name] : [name], dialect);
   return { sql: ddl.sql.replace('{table}', quoted), params: [] };
+}
+
+/**
+ * CockroachDB 的触发器只有 SHOW 看得见：先 `SHOW TRIGGERS` 列名字，再逐个
+ * `SHOW CREATE TRIGGER` 取原文。
+ *
+ * 服务端不认 `SHOW TRIGGERS`（42601，24.3 之前的 CockroachDB 没有触发器，或者根本不是
+ * CockroachDB）时返回 null，由调用方说「列不出」；别的错误（比如没有权限）照样抛出。
+ */
+export async function readTriggersByShow(
+  show: ShowTriggerQueries,
+  select: (sql: string) => Promise<unknown>,
+  tableName: string,
+  schema: string | null | undefined
+): Promise<TriggerInfo[] | null> {
+  const table = quoteQualifiedSqlIdentifier(schema ? [schema, tableName] : [tableName], 'postgresql');
+  let listed: unknown;
+  try {
+    listed = await select(show.list.replace('{table}', () => table));
+  } catch (reason) {
+    if (typeof reason === 'object' && reason !== null && (reason as { code?: unknown }).code === '42601') {
+      return null;
+    }
+    throw reason;
+  }
+  const names = (Array.isArray(listed) ? listed : []).map(row => String((row as Record<string, unknown>).trigger_name));
+  const triggers: TriggerInfo[] = [];
+  for (const name of names) {
+    const sql = show.definition
+      .replace('{trigger}', () => quoteSqlIdentifier(name, 'postgresql'))
+      .replace('{table}', () => table);
+    const rows = await select(sql);
+    const row = (Array.isArray(rows) ? rows[0] : undefined) as Record<string, unknown> | undefined;
+    triggers.push({ name, timing: null, event: null, definition: String(row?.create_statement ?? '') });
+  }
+  return triggers;
 }

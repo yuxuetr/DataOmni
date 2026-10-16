@@ -81,6 +81,7 @@ import { toColumnInfo } from '../utils/tableMetadata';
 import {
   catalogQueryParams,
   ddlRequest,
+  readTriggersByShow,
   type DdlQuery,
   type SchemaMetadataQueries
 } from '../utils/catalogQueries';
@@ -356,8 +357,19 @@ export default function TableDataViewer({
         // SQLite 的 pragma 之外的目录查询同样只认一个表名参数
         select(queries.triggers).then(
           (rows) => toTriggers(asRows(rows)),
-          (reason: unknown) => {
-            throw isUndefinedFunctionError(reason) ? new Error(t('schema.triggers.unsupported')) : reason;
+          async (reason: unknown) => {
+            if (!isUndefinedFunctionError(reason)) throw reason;
+            // CockroachDB：目录里查不到，改走 SHOW
+            const shown = queries.triggers_by_show
+              ? await readTriggersByShow(
+                queries.triggers_by_show,
+                (sql) => requireDatabase(database).select(sql, []),
+                tableName,
+                schema
+              )
+              : null;
+            if (shown === null) throw new Error(t('schema.triggers.unsupported'));
+            return shown;
           }
         )
       ]);
