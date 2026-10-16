@@ -219,8 +219,42 @@ impl CredentialStore for SystemCredentialStore {
   fn delete_password(&self, profile_id: &str) -> Result<(), String> {
     match credential_entry(profile_id)?.delete_credential() {
       Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+      #[cfg(target_os = "macos")]
+      Err(error) if written_by_another_signature(&error) => delete_with_security_tool(profile_id)
+        .map_err(|cause| format!("{CREDENTIAL_DELETE_FAILED}: {error}; {cause}")),
       Err(error) => Err(format!("{CREDENTIAL_DELETE_FAILED}: {error}")),
     }
+  }
+}
+
+/// 条目是另一个代码签名写的，`SecItemDelete` 拒绝删（errSecInvalidOwnerEdit，-25244）。
+///
+/// ad-hoc 签名每次构建都换 cdhash，所以**升级之后**删旧版本存的连接都走到这里——
+/// 删除连接因此一直失败、连接删不掉。读同样的条目只弹授权框，不报这个码
+#[cfg(target_os = "macos")]
+fn written_by_another_signature(error: &keyring::Error) -> bool {
+  match error {
+    keyring::Error::NoStorageAccess(cause) | keyring::Error::PlatformFailure(cause) => cause
+      .downcast_ref::<security_framework::base::Error>()
+      .is_some_and(|cause| cause.code() == -25244),
+    _ => false,
+  }
+}
+
+/// 系统自带的 `security` 走旧的 `SecKeychainItemDelete`，同样的条目删得掉、不弹框
+/// （2026-10-16 在本机实测：`security add-generic-password` 写的条目，keyring 报 -25244，
+/// 它删掉了；13 条旧版本存的连接口令同样）。只删、不读，所以拿不到口令本身
+#[cfg(target_os = "macos")]
+fn delete_with_security_tool(account: &str) -> Result<(), String> {
+  let output = std::process::Command::new("/usr/bin/security")
+    .args(["delete-generic-password", "-s", CREDENTIAL_SERVICE, "-a", account])
+    .output()
+    .map_err(|error| error.to_string())?;
+  // 44 = 没有这一条：别处已经删了，目的同样达到
+  if output.status.success() || output.status.code() == Some(44) {
+    Ok(())
+  } else {
+    Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
   }
 }
 
@@ -1051,6 +1085,45 @@ impl CredentialStore for MemoryCredentialStore {
 mod tests {
   use super::*;
   use crate::models::ConnectionEnvironment;
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn only_the_foreign_owner_code_falls_back_to_the_security_tool() {
+    let rejected = |code| {
+      keyring::Error::NoStorageAccess(Box::new(security_framework::base::Error::from_code(code)))
+    };
+    assert!(written_by_another_signature(&rejected(-25244)));
+    // 反向：写权限、钥匙串锁着这类照原样报，不换一条路去删
+    assert!(!written_by_another_signature(&rejected(-61)));
+    assert!(!written_by_another_signature(&rejected(-25291)));
+    assert!(!written_by_another_signature(&keyring::Error::NoEntry));
+  }
+
+  /// 升级后删旧版本存的连接：条目由别的签名写入，`SecItemDelete` 报 -25244，连接一直删不掉。
+  /// 这里拿 `security add-generic-password` 造一条别人写的。动的是真钥匙串（只有这一个测试账号），
+  /// 所以只在设了 `DATAOMNI_KEYCHAIN_TEST=1` 时跑
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn deletes_a_password_written_by_another_signature() {
+    if std::env::var("DATAOMNI_KEYCHAIN_TEST").as_deref() != Ok("1") {
+      return;
+    }
+    let account = "om-test-foreign-owner";
+    let security = |args: &[&str]| {
+      std::process::Command::new("/usr/bin/security").args(args).output().expect("run security")
+    };
+    let added =
+      security(&["add-generic-password", "-U", "-s", CREDENTIAL_SERVICE, "-a", account, "-w", "x"]);
+    assert!(added.status.success(), "{}", String::from_utf8_lossy(&added.stderr));
+
+    let deleted = SystemCredentialStore.delete_password(account);
+    let left = security(&["find-generic-password", "-s", CREDENTIAL_SERVICE, "-a", account]);
+    if left.status.success() {
+      security(&["delete-generic-password", "-s", CREDENTIAL_SERVICE, "-a", account]);
+    }
+    assert_eq!(deleted, Ok(()));
+    assert!(!left.status.success(), "the item is still in the keychain");
+  }
 
   fn profile(id: &str, password: &str) -> ConnectionProfile {
     ConnectionProfile {

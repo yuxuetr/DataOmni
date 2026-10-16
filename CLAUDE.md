@@ -67,6 +67,7 @@ SQL Server、Oracle、MongoDB、Redis、Neo4j、Elasticsearch、ClickHouse 各�
 `DATAOMNI_ELASTICSEARCH_TEST_URL`（`https://user:password@host:port`，`http://` 就是不加密）、
 `DATAOMNI_CLICKHOUSE_TEST_URL`（`http://user:password@host:port`，HTTP 接口，同样 `https://` 是加密）。
 几个文件开头另列了可选的变量（SRV、TLS、客户端证书、只读用户），没设就跳过那几条。
+动 macOS 真钥匙串的单测（`connection_service.rs`，别的签名写入的条目能否删掉）设 `DATAOMNI_KEYCHAIN_TEST=1` 才跑。
 
 ## 目录
 
