@@ -22,7 +22,8 @@ import {
   Info,
   Search,
   X,
-  Archive
+  Archive,
+  FileDown
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { DatabaseType } from '../contracts/connection';
@@ -48,6 +49,7 @@ import { jsonField, parseJson } from '../utils/esJson';
 import { ObjectDefinitionDialog } from './ObjectDefinitionDialog';
 import { CreateTableDialog } from './CreateTableDialog';
 import { CreateSchemaDialog } from './CreateSchemaDialog';
+import { SchemaExportDialog } from './SchemaExportDialog';
 import { identifierDialectFor } from '../utils/sqlIdentifiers';
 import { ObjectContextMenu } from './ObjectContextMenu';
 import { startDatabaseBackup } from '../utils/databaseBackup';
@@ -192,6 +194,11 @@ export default function DatabaseExplorer({
   const [databaseMenu, setDatabaseMenu] = useState<
     { database: string; position: { x: number; y: number } } | null
   >(null);
+  /** MySQL 系「表」那一组上右键 */
+  const [tablesMenu, setTablesMenu] = useState<
+    { tables: DatabaseObject[]; position: { x: number; y: number } } | null
+  >(null);
+  const [exportingTables, setExportingTables] = useState<DatabaseObject[] | null>(null);
   // 复制失败与删表 / 清空失败共用这一条：都是「右键菜单那一下没成」
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingChange, setPendingChange] = useState<PendingObjectChange | null>(null);
@@ -767,9 +774,19 @@ export default function DatabaseExplorer({
                 onToggle={toggleNode}
                 onSelect={handleObjectClick}
                 onContextMenu={(object, position) => setObjectMenu({ object, position })}
-                onGroupContextMenu={connection.db_type === DatabaseType.MongoDB
-                  ? (group, position) => setDatabaseMenu({ database: group.label, position })
-                  : undefined}
+                onGroupContextMenu={(group, position) => {
+                  // MongoDB 在库那一层（有子分组）上右键：备份这个库
+                  if (connection.db_type === DatabaseType.MongoDB && group.children) {
+                    setDatabaseMenu({ database: group.label, position });
+                    return true;
+                  }
+                  // MySQL 系在「表」那一组上右键：勾一批表导出结构。先只开 MySQL 系，别的方言见 TODOs
+                  if (connection.db_type === DatabaseType.MySQL && group.key === 'kind:table') {
+                    setTablesMenu({ tables: group.objects, position });
+                    return true;
+                  }
+                  return false;
+                }}
               />
             ))}
           </div>
@@ -854,6 +871,27 @@ export default function DatabaseExplorer({
             Icon: Archive,
             run: () => void startDatabaseBackup(connection, databaseMenu.database)
           }]}
+        />
+      )}
+
+      {tablesMenu && (
+        <PopupMenu
+          position={tablesMenu.position}
+          onDismiss={() => setTablesMenu(null)}
+          items={[{
+            key: 'export-structure',
+            label: t('schemaExport.menu'),
+            Icon: FileDown,
+            run: () => setExportingTables(tablesMenu.tables)
+          }]}
+        />
+      )}
+
+      {exportingTables && (
+        <SchemaExportDialog
+          connection={connection}
+          tables={exportingTables}
+          onClose={() => setExportingTables(null)}
         />
       )}
 
@@ -981,8 +1019,8 @@ function ObjectTreeGroup({
   onToggle: (key: string) => void;
   onSelect: (object: DatabaseObject) => void;
   onContextMenu: (object: DatabaseObject, position: { x: number; y: number }) => void;
-  /** 在 schema 那一层（有子分组的节点）上右键；不给就是浏览器默认的菜单 */
-  onGroupContextMenu?: (node: ObjectTreeNode, position: { x: number; y: number }) => void;
+  /** 在分组标题上右键；返回 false（这一组没有菜单）就留给浏览器默认的菜单 */
+  onGroupContextMenu?: (node: ObjectTreeNode, position: { x: number; y: number }) => boolean;
 }) {
   const t = useLanguageStore((state) => state.t);
   const expanded = forceExpand || expandedNodes.has(node.key);
@@ -1004,10 +1042,11 @@ function ObjectTreeGroup({
         tabIndex={node.key === rovingKey ? 0 : -1}
         onFocus={() => onFocusNode(node.key)}
         onClick={() => onToggle(node.key)}
-        onContextMenu={node.children && onGroupContextMenu
+        onContextMenu={onGroupContextMenu
           ? (event) => {
-            event.preventDefault();
-            onGroupContextMenu(node, { x: event.clientX, y: event.clientY });
+            if (onGroupContextMenu(node, { x: event.clientX, y: event.clientY })) {
+              event.preventDefault();
+            }
           }
           : undefined}
         // 焦点不另加底色：渲染验证过，浏览器默认的 outline 在深浅两套主题下

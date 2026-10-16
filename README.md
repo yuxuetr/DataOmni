@@ -601,6 +601,7 @@ bun install
 - SQL Server 的 `sp_help`、`EXEC` 过程与 MySQL 的 `CALL` 返回几个结果集时逐个显示（此前只显示第一个，`sp_help` 的列在第二个里）
 - 表数据页的右键菜单里可以「编辑这一行」（操作列在最右边，列多时要横向滚过去才看得到）
 - 修复（macOS）：新版 macOS 在 Dock 与访达里给应用图标套了一层灰色底板
+- MySQL 系（含 MariaDB、TiDB、OceanBase）可以勾一批表，一次导出它们的建表语句（`.sql`）或数据字典（Markdown）：对象树上「表」那一组右键「导出表结构…」
 
 ### v0.6.1（2026-10-07）
 
