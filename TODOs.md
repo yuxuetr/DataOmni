@@ -284,7 +284,13 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
     真应用里没渲染看过（这段的界面没改，画的还是 PostgreSQL 那份完整原文）。
   - 顺带看到：整套 PostgreSQL 冒烟在 CockroachDB 上 39 / 41，`postgres_exported_inserts_carry_every_value_back` 建表用了它没有的
     多维数组（用例遗漏，见下一个提交）；`postgres_session_recovers_after_the_server_drops_it_mid_transaction` 并行跑偶发失败，单独跑通过。
-- [ ] G7 openGauss：序列属性页（没有 `pg_sequences`，直接查序列关系）
+- [x] G7 openGauss：序列属性页（没有 `pg_sequences`，直接查序列关系）（`7e3ffd2`）
+  - 序列关系自己那一行有 start / increment / min / max / cache_value / is_cycled / last_value，没有 data_type（5.0.3 上核对）。
+    按 oid 查 `pg_sequences` 报 42P01 时改查 `{sequence}`（`object_catalog.rs` 的 `sequence_properties_by_relation`，
+    前端 `readSequenceProperties` 插引用过的带 schema 的名字），别名与 PostgreSQL 那条一致。
+  - 验证：本地 openGauss-lite 5.0.3 上两条真库用例从「钉住报错」改成核对值，改错列名变红；PostgreSQL 16 整套 40 / 41
+    （pg_dump 那条并行时撞上别的用例删表，单独跑通过）；前端单测与对话框渲染用例（happy-dom）旧代码上红。真应用里没渲染看过。
+  - 顺带：openGauss-lite 上导出往返那条建表报 `unsupported XML feature`（lite 版没编 libxml），同 CockroachDB 那条，下一个提交处理。
 - [ ] G8 Redis 集群与 Sentinel（redis-rs 有 `cluster-async` / `sentinel` feature；工作量在键浏览要跨节点扫）
 - [ ] G9 Neo4j 集群路由 `neo4j://`（用的 `neo4j` crate 已有 routing）
 - [ ] G10 SQL Server「真的执行一遍」（`SET STATISTICS XML ON`）
