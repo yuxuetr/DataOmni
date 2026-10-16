@@ -1893,6 +1893,12 @@ export default function TableDataViewer({
           onCopy={(withHeaders) => cells.copy(withHeaders)}
           onCopyRow={(row) => cells.copyRow(row)}
           onCopyColumn={(column) => cells.copyColumn(column, true)}
+          // 与操作列给「编辑」按钮的条件相同：排了队的行只能撤销
+          onEditRow={
+            editable && editState.mode === 'view' && !pendingFor(tableData[contextTarget.row] ?? {})
+              ? startEditRow
+              : undefined
+          }
           onClose={() => setContextTarget(null)}
         />
       )}

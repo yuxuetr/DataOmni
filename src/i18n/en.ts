@@ -669,6 +669,7 @@ export const en: Translations = {
   'grid.copyWithHeaders': 'Copy with column names',
   'grid.copyRow': 'Copy row',
   'grid.copyColumn': 'Copy column with its name',
+  'grid.editRow': 'Edit this row',
 
   // Column control: show/hide, freeze, density (width comes from drag and double-click autofit)
   'columns.title': 'Columns',

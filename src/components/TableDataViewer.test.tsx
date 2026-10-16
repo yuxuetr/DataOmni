@@ -53,6 +53,23 @@ function byTitle(title: string): HTMLButtonElement {
   return found;
 }
 
+function openContextMenuOn(text: string) {
+  const cell = [...container.querySelectorAll('td')].find((td) => td.textContent === text);
+  if (!cell) throw new Error(`没有内容是「${text}」的格子`);
+  cell.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 10, clientY: 10 }));
+}
+
+function menuLabels(): string[] {
+  return [...document.querySelectorAll('div.fixed button')].map((button) => button.firstElementChild?.textContent ?? '');
+}
+
+function menuItem(label: string): HTMLButtonElement {
+  const found = [...document.querySelectorAll<HTMLButtonElement>('div.fixed button')]
+    .find((button) => button.firstElementChild?.textContent === label);
+  if (!found) throw new Error(`菜单里没有「${label}」，只有 ${menuLabels().join(' / ')}`);
+  return found;
+}
+
 beforeEach(() => {
   useLanguageStore.getState().setPreference('en');
   useTableEditStore.setState({ changes: {} });
@@ -119,6 +136,38 @@ describe('TableDataViewer（ClickHouse）', () => {
     const [change] = Object.values(useTableEditStore.getState().changes).flat();
     expect(change?.kind).toBe('delete');
     expect(change && 'key' in change ? change.key.columns : null).toEqual(['id', 'note']);
+  });
+
+  // 用户反馈：操作列在最右边，列一多就被挤出屏幕，右键菜单里又只有复制，找不到怎么改一行
+  it('右键菜单里可以编辑这一行', async () => {
+    await act(async () => {
+      root.render(<TableDataViewer connection={connection} tableName="t" schema="db" initialTab="data" />);
+    });
+    expect(container.querySelectorAll('input[value="x"]').length).toBe(0);
+    await act(async () => {
+      openContextMenuOn('x');
+    });
+    await act(async () => {
+      menuItem('Edit this row').click();
+    });
+
+    const inputs = [...container.querySelectorAll('input')].map((input) => input.value);
+    expect(inputs).toContain('x');
+  });
+
+  it('已经排进待提交的行，右键菜单不给编辑', async () => {
+    await act(async () => {
+      root.render(<TableDataViewer connection={connection} tableName="t" schema="db" initialTab="data" />);
+    });
+    await act(async () => {
+      byTitle('Delete').click();
+    });
+    await act(async () => {
+      openContextMenuOn('x');
+    });
+
+    expect(menuLabels()).toContain('Copy row');
+    expect(menuLabels()).not.toContain('Edit this row');
   });
 
   // 打包版上看到的：四个翻页按钮只有图标，读屏与自动化都只拿到一个空名字

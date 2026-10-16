@@ -14,6 +14,8 @@ interface GridContextMenuProps {
   onCopy: (withHeaders: boolean) => void;
   onCopyRow: (row: number) => void;
   onCopyColumn: (column: number) => void;
+  /** 只有这一行此刻能改时才给：表数据页的操作列在最右边，列一多就看不见 */
+  onEditRow?: (row: number) => void;
   onClose: () => void;
 }
 
@@ -28,6 +30,7 @@ export function GridContextMenu({
   onCopy,
   onCopyRow,
   onCopyColumn,
+  onEditRow,
   onClose
 }: GridContextMenuProps) {
   const t = useLanguageStore((state) => state.t);
@@ -38,7 +41,8 @@ export function GridContextMenu({
     { label: t('grid.copySelection'), hint: hint(SHORTCUTS.copySelection), run: () => onCopy(false) },
     { label: t('grid.copyWithHeaders'), hint: hint(SHORTCUTS.copyWithHeaders), run: () => onCopy(true) },
     { label: t('grid.copyRow'), hint: hint(SHORTCUTS.copyRow), run: () => onCopyRow(target.row) },
-    { label: t('grid.copyColumn'), hint: hint(SHORTCUTS.copyColumn), run: () => onCopyColumn(target.column) }
+    { label: t('grid.copyColumn'), hint: hint(SHORTCUTS.copyColumn), run: () => onCopyColumn(target.column) },
+    ...(onEditRow ? [{ label: t('grid.editRow'), run: () => onEditRow(target.row) }] : [])
   ];
 
   return (
