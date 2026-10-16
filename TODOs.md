@@ -323,6 +323,13 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
   - 实验结果：都收。但每次 mutation 给全部 part 名加版本号，所以比 part 名前四段（`rowPosition.ts` 的 `PART_BLOCK_EXPRESSION`）加偏移；
     mutation 不挪行，合并后旧位置匹配 0 行（报「没有执行」）。只对 MergeTree 一族（列目录多给 `table_engine`）；Memory 等没有 `_part`。
     顺带：两行一模一样时也能只改其中一行。验证：25.8 真库用例（双胞胎、后插入的同样一行、合并）与整套 16 / 16；打包版上没改过。
+- [x] README 兼容性矩阵按现在的用例重跑（2026-10-16，`902f27b`）
+  - 表头原写「一组 23 条」，实际 MySQL 一组 42 条、PostgreSQL 一组 39 条。各库全部重跑：MySQL 8.4、PG16、MariaDB、
+    CockroachDB、openGauss 全过；TiDB 40 / 42、OceanBase 39 / 42，挂的是夹具（`HANDLER`、`wait_timeout`），不是应用；
+    MySQL 5.7 与 10-15 一致。独立用例：SQL Server 31、Oracle 29、DuckDB 18、ClickHouse 16 + 1、MongoDB 34。
+  - VECTOR 导入那条在 TiDB（网格给文本）与 OceanBase（不收 `HEX()`）上原先是夹具错，改了用例（`4fed247`），应用没问题。
+  - cu 上的 `dataomni-mongo-rs` 自 9-25 起重启就退出（入口脚本重写 `/tmp/key`，被 `protected_regular` 挡住），
+    SRV 那 3 条这期间一直没真跑。按原配置与原数据卷重建，启动前先删 key；重启一次验过，3 / 3。
 
 ### 要自己实现、当前版本不做
 
