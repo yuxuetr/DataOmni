@@ -305,7 +305,11 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
     （跑在哪个成员上，只在路由时给），工作台结果下方显示。
   - 验证：本地 5.26 社区版单实例，整套用例经 `neo4j://` 与 `bolt://` 各 10 / 10。**没验证成员之间的分派**：单实例把客户端发来的
     地址原样当路由表报回，要企业版集群（Docker 镜像要接受 Neo4j 的商业或评估许可，留给用户决定）。打包版上没连过。
-- [ ] G10 SQL Server「真的执行一遍」（`SET STATISTICS XML ON`）
+- [x] G10 SQL Server「真的执行一遍」（`SET STATISTICS XML ON`）（`f71316d`）
+  - 语句照常执行，只收 showplan 那几个结果集；`explain_plan` 换成 `ExplainPlan { Off, Estimated, Actual }`。实际行数按每次执行
+    折算（与估算可比），没执行过的不给；耗时取最慢的线程，`QueryTimeStats` 记为总耗时。
+  - 验证：SQL Server 2022（cu）显式事务里真跑 SELECT / DELETE，同一事务里看得到效果、之后不再多回计划、回滚后复原；两处变异各自变红；
+    整套 31 / 31。打包版上没跑过。
 - [ ] G11 Neo4j：界面上建关系
 - [ ] G12 ClickHouse：表格改一行按物理位置定位，堵上「数完到执行之间别处写进一模一样的一行会被一起改」
   - 现在按整行的值定位，先数后改再核对。ClickHouse 服务端没有行锁（没有 `SELECT … FOR UPDATE`），通用事务只有实验版
