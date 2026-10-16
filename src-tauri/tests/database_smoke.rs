@@ -7000,6 +7000,11 @@ async fn postgres_exported_inserts_carry_every_value_back() {
   };
   let pool =
     PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  // 这组类型照 PostgreSQL 本身列的，CockroachDB 没有多维数组、money、xml、point、区间类型，建表就报 0A000。
+  // 所以它上面导出 INSERT 的逐类型往返没有覆盖；重估条件：有人从 CockroachDB 导出后值对不上
+  if is_cockroach(&pool).await {
+    return;
+  }
   let columns = "id INT PRIMARY KEY, t TEXT, b BYTEA, words TEXT[], grid INT[][], n NUMERIC, \
     x FLOAT8, r REAL, day DATE, at TIMESTAMP, atz TIMESTAMPTZ, span INTERVAL, cash MONEY, \
     bits BIT VARYING(8), doc JSONB, raw JSON, id2 UUID, ip INET, net CIDR, mac MACADDR, \
