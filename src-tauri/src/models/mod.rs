@@ -8,6 +8,10 @@ pub const MONGO_SRV_OPTION: &str = "srv";
 pub const MONGO_AUTH_MECHANISM_OPTION: &str = "authMechanism";
 /// 拿客户端证书登录，用户名是证书的主题，认证库固定是 `$external`
 pub const MONGO_X509: &str = "MONGODB-X509";
+/// `options` 里的键：Elasticsearch 的认证方式。只认 [`ES_API_KEY`]，不设就是用户名和口令
+pub const ES_AUTH_OPTION: &str = "auth";
+/// 拿 API Key 登录：口令那一格存的是 key，用户名不用
+pub const ES_API_KEY: &str = "apiKey";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionProfile {
@@ -334,11 +338,16 @@ impl DatabaseType {
         config.port,
         encode(config.database.as_deref().map(str::trim).unwrap_or(""))
       ),
-      // 同样是 `EsRegistry` 里的键，不带口令
+      // 同样是 `EsRegistry` 里的键，不带口令。API Key 没有用户名，用户那一段换成 key 的摘要：
+      // 同一台服务端上两把权限不同的 key 不能落到同一个池子里
       DatabaseType::Elasticsearch => format!(
         "{}{}@{}:{}",
         crate::services::elasticsearch::ELASTICSEARCH_SCHEME,
-        encode(&config.username),
+        if config.es_api_key() {
+          crate::services::elasticsearch::api_key_fingerprint(&config.password)
+        } else {
+          encode(&config.username).into_owned()
+        },
         config.host,
         config.port
       ),
@@ -368,6 +377,12 @@ impl ConnectionProfile {
   pub fn mongo_x509(&self) -> bool {
     self.db_type == DatabaseType::MongoDB
       && self.options.get(MONGO_AUTH_MECHANISM_OPTION).is_some_and(|value| value == MONGO_X509)
+  }
+
+  /// Elasticsearch 用 API Key 登录（`Authorization: ApiKey …`），不用用户名和口令
+  pub fn es_api_key(&self) -> bool {
+    self.db_type == DatabaseType::Elasticsearch
+      && self.options.get(ES_AUTH_OPTION).is_some_and(|value| value == ES_API_KEY)
   }
 
   /// 登录用的用户名。X.509 的用户名是证书的主题、由服务端从证书里读，表单上那一格

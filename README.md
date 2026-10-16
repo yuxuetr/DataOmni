@@ -64,8 +64,8 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
 | MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 32 / 32（独立用例，`mongodb_smoke.rs`） |
 | Redis | 7.4 | Redis（redis-rs） | ⚠️ 单机，不含集群 | 11 / 11（独立用例，`redis_smoke.rs`） |
 | Neo4j | 5.26 LTS、2026.09 | Neo4j（`neo4j` crate，Bolt 5） | ⚠️ 单实例，不含集群路由 | 8 / 8（独立用例，`neo4j_smoke.rs`，两个版本各跑一遍） |
-| Elasticsearch | 8.19、9.5 | HTTP（reqwest） | ⚠️ 单节点直连，不含 API Key 认证 | 6 / 6（独立用例，`elasticsearch_smoke.rs`，两个版本各跑一遍） |
-| OpenSearch | 3.8 | Elasticsearch（同一个连接类型） | ⚠️ 同上；只读账号列不出对象树 | 6 / 6（同一份用例，按服务端分支） |
+| Elasticsearch | 8.19、9.5 | HTTP（reqwest） | ⚠️ 单节点直连 | 7 / 7（独立用例，`elasticsearch_smoke.rs`，两个版本各跑一遍） |
+| OpenSearch | 3.8 | Elasticsearch（同一个连接类型） | ⚠️ 单节点直连；只读账号列不出对象树；没有 API Key | 6 / 6（同一份用例，按服务端分支） |
 
 - **MySQL 5.7**：TLS 要选「禁用」。5.7 只提供不带 ECDHE 的旧套件，应用用的 rustls 跟它没有共同套件，
   「要求」「优先」都会握手失败，连接时会这样提示。服务器字符集要是 utf8mb4（官方镜像默认 latin1，存不了中文）。
@@ -195,7 +195,7 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
   工具栏上「新建节点」。按 `elementId` 定位，一次只动一个，要跑的语句一直摆在下面。
   以 `EXPLAIN` / `PROFILE` 开头的，结果里多一个「计划」：与 SQL 同一棵树，每一步带估算行数，
   `PROFILE` 还带实际行数与 DbHits，估错最多的那一步会被指出来；「计划原文」是服务端自己的那张表。
-- **Elasticsearch**：连接（用户名口令或不认证；TLS 与 CA；SSH 隧道，经隧道仍按原主机名校验证书）、
+- **Elasticsearch**：连接（用户名口令、API Key 或不认证；TLS 与 CA；SSH 隧道，经隧道仍按原主机名校验证书）、
   对象树列出索引、别名、数据流（点开是一条 `GET 名字/_search`，开出来就发）、控制台标签（写法同
   Kibana Dev Tools：一行方法与路径，下面跟 JSON 请求体；`_bulk` 这类多份 JSON 按 NDJSON 发；依次发，
   出错或 4xx / 5xx 就停）。回答是状态码加排好版的 JSON，搜索命中、ES|QL / SQL 的列与值、
@@ -582,6 +582,7 @@ bun install
   `VARBINARY`；认得出来源表的查询（单表、裸列名）现在照目录显示声明类型，与表数据页一致
 - 修复：PostgreSQL / MySQL 连接的 TLS 选「校验 CA」时一连接就出错（后端 panic，rustls 挑不出默认的加密实现）
 - openGauss / GaussDB 只存 sha256 口令的用户（openGauss 的默认）现在连得上，不用再请管理员改口令的存法
+- Elasticsearch 可以用 API Key 登录（连接表单「认证方式」选 API Key；Kibana 给的 encoded 与 `id:api_key` 两种写法都收）
 
 ### v0.6.1（2026-10-07）
 

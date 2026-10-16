@@ -25,6 +25,8 @@ pub const ELASTICSEARCH_SCHEME: &str = "elasticsearch://";
 
 /// 用户名或口令不对（401）
 pub const ES_AUTH_FAILED: &str = "DATAOMNI_ES_AUTH_FAILED";
+/// API Key 不对、过期了或已作废（同样是 401，但要让人去看的是 key 而不是口令）
+pub const ES_API_KEY_REJECTED: &str = "DATAOMNI_ES_API_KEY_REJECTED";
 /// 在时限内没连上：地址不通、TLS 对不上、HTTP 连到了 HTTPS 端口。冒号后面是原因
 pub const ES_UNREACHABLE: &str = "DATAOMNI_ES_UNREACHABLE";
 /// 连上的不是 Elasticsearch（Kibana 的端口、别的 HTTP 服务）
@@ -54,22 +56,58 @@ pub const MAX_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 
 pub type EsRegistry = PoolRegistry<EsPool>;
 
+/// 每个请求带什么凭据
+#[derive(Clone, Debug, PartialEq)]
+enum EsAuth {
+  /// 用户名空着：服务端关着认证
+  Anonymous,
+  Basic {
+    username: String,
+    password: String,
+  },
+  /// `Authorization: ApiKey` 后面那一段，已经是 base64
+  ApiKey(String),
+}
+
 #[derive(Clone)]
 pub struct EsTarget {
   endpoint: HttpEndpoint,
-  username: String,
-  password: String,
+  auth: EsAuth,
 }
 
 impl EsTarget {
   /// 隧道端口单独传：HTTPS 要按原来的主机名校验证书（见 `HttpEndpoint::from_profile`）
   pub fn from_profile(profile: &ConnectionProfile, tunnel_port: Option<u16>) -> Self {
-    Self {
-      endpoint: HttpEndpoint::from_profile(profile, tunnel_port),
-      username: profile.username.clone(),
-      password: profile.password.clone(),
-    }
+    let auth = if profile.es_api_key() {
+      EsAuth::ApiKey(api_key_credential(&profile.password))
+    } else if profile.username.is_empty() {
+      EsAuth::Anonymous
+    } else {
+      EsAuth::Basic { username: profile.username.clone(), password: profile.password.clone() }
+    };
+    Self { endpoint: HttpEndpoint::from_profile(profile, tunnel_port), auth }
   }
+}
+
+/// 建 key 时 ES 回的是 `id`、`api_key` 与 `encoded`（前两者 `id:api_key` 的 base64），Kibana 只给
+/// `encoded`。两种都收：带冒号的就是没编码的那种，替人编上
+fn api_key_credential(key: &str) -> String {
+  use base64::Engine;
+  let key = key.trim();
+  if key.contains(':') {
+    base64::engine::general_purpose::STANDARD.encode(key)
+  } else {
+    key.to_string()
+  }
+}
+
+/// 连接串（池子的键）里代替用户名的那一段：key 的 SHA-256 取前 8 字节。key 本身是服务端
+/// 生成的随机串，这几个字节反推不出它
+pub fn api_key_fingerprint(key: &str) -> String {
+  use sha2::{Digest, Sha256};
+  let digest = Sha256::digest(api_key_credential(key).as_bytes());
+  let hex: String = digest.iter().take(8).map(|byte| format!("{byte:02x}")).collect();
+  format!("api-key-{hex}")
 }
 
 fn endpoint_error(error: EndpointError) -> String {
@@ -83,16 +121,18 @@ fn endpoint_error(error: EndpointError) -> String {
 pub struct EsPool {
   client: Client,
   base: Url,
-  /// 用户名空着就是服务端关着认证
-  credentials: Option<(String, String)>,
+  auth: EsAuth,
 }
 
 impl EsPool {
   fn request(&self, method: Method, url: Url) -> reqwest::RequestBuilder {
     let request = self.client.request(method, url);
-    match &self.credentials {
-      Some((username, password)) => request.basic_auth(username, Some(password)),
-      None => request,
+    match &self.auth {
+      EsAuth::Anonymous => request,
+      EsAuth::Basic { username, password } => request.basic_auth(username, Some(password)),
+      EsAuth::ApiKey(key) => {
+        request.header(reqwest::header::AUTHORIZATION, format!("ApiKey {key}"))
+      }
     }
   }
 
@@ -146,15 +186,18 @@ pub async fn connect(target: EsTarget) -> Result<EsPool, String> {
   let pool = EsPool {
     client: target.endpoint.client(CONNECT_TIMEOUT, None).map_err(endpoint_error)?,
     base: target.endpoint.base_url().map_err(endpoint_error)?,
-    credentials: (!target.username.is_empty())
-      .then(|| (target.username.clone(), target.password.clone())),
+    auth: target.auth.clone(),
   };
   let (status, body) = pool
     .send(Method::GET, "/", None, CONNECT_TIMEOUT)
     .await
     .map_err(|error| error.replacen(ES_TIMEOUT, ES_UNREACHABLE, 1))?;
   match status {
-    StatusCode::UNAUTHORIZED => Err(format!("{ES_AUTH_FAILED}: {}", error_reason(&body))),
+    StatusCode::UNAUTHORIZED => {
+      let code =
+        if matches!(pool.auth, EsAuth::ApiKey(_)) { ES_API_KEY_REJECTED } else { ES_AUTH_FAILED };
+      Err(format!("{code}: {}", error_reason(&body)))
+    }
     StatusCode::FORBIDDEN => Ok(pool),
     status if status.is_success() && is_elasticsearch_root(&body) => Ok(pool),
     status => Err(format!("{ES_NOT_ELASTICSEARCH}: HTTP {}", status.as_u16())),
@@ -293,7 +336,7 @@ mod tests {
   use super::*;
 
   fn pool(base: &str) -> EsPool {
-    EsPool { client: Client::new(), base: Url::parse(base).unwrap(), credentials: None }
+    EsPool { client: Client::new(), base: Url::parse(base).unwrap(), auth: EsAuth::Anonymous }
   }
 
   /// 本机起一个 HTTP 服务，回答比上限多一截：读到上限就停、报错，不是整份读完再说
@@ -324,10 +367,95 @@ mod tests {
     let pool = EsPool {
       client: Client::builder().no_proxy().build().unwrap(),
       base: Url::parse(&format!("http://{address}")).unwrap(),
-      credentials: None,
+      auth: EsAuth::Anonymous,
     };
     let error = pool.send(Method::GET, "/big", None, Duration::from_secs(20)).await.unwrap_err();
     assert_eq!(error, format!("{ES_RESPONSE_TOO_LARGE}: {MAX_RESPONSE_BYTES}"));
+  }
+
+  fn profile(username: &str, password: &str, api_key: bool) -> ConnectionProfile {
+    let options = if api_key {
+      serde_json::json!({ crate::models::ES_AUTH_OPTION: crate::models::ES_API_KEY })
+    } else {
+      serde_json::json!({})
+    };
+    serde_json::from_value(serde_json::json!({
+      "name": "es", "db_type": "elasticsearch", "host": "127.0.0.1", "port": 9200,
+      "username": username, "password": password, "ssl": false,
+      "options": options, "tags": []
+    }))
+    .unwrap()
+  }
+
+  #[test]
+  fn an_api_key_profile_sends_the_key_and_not_the_username() {
+    let encoded = "VnVhQ2ZHY0JDZGJrUW0tZTVhT3g6dWkybHAyYXhUTm1zeWFrdzl0dk5udw==";
+    assert_eq!(
+      EsTarget::from_profile(&profile("elastic", encoded, true), None).auth,
+      EsAuth::ApiKey(encoded.to_string())
+    );
+    // 没编码的 `id:api_key` 替人编上；两头的空白是粘贴带进来的
+    assert_eq!(
+      EsTarget::from_profile(
+        &profile("", " VuaCfGcBCdbkQm-e5aOx:ui2lp2axTNmsyakw9tvNnw\n", true),
+        None
+      )
+      .auth,
+      EsAuth::ApiKey(encoded.to_string())
+    );
+    assert_eq!(
+      EsTarget::from_profile(&profile("elastic", "secret", false), None).auth,
+      EsAuth::Basic { username: "elastic".to_string(), password: "secret".to_string() }
+    );
+    assert_eq!(EsTarget::from_profile(&profile("", "", false), None).auth, EsAuth::Anonymous);
+  }
+
+  #[test]
+  fn two_api_keys_on_one_server_get_two_pools_without_the_key_in_the_name() {
+    let first = profile("", "a2V5LW9uZTpzZWNyZXQ=", true);
+    let second = profile("", "a2V5LXR3bzpzZWNyZXQ=", true);
+    let first_key = first.db_type.to_connection_string(&first);
+    let second_key = second.db_type.to_connection_string(&second);
+    assert_ne!(first_key, second_key);
+    // 两种写法是同一把 key，就是同一个池子
+    let raw = profile("", "key-one:secret", true);
+    assert_eq!(raw.db_type.to_connection_string(&raw), first_key);
+    assert!(first_key.starts_with("elasticsearch://api-key-"), "{first_key}");
+    assert!(!first_key.contains("a2V5") && !first_key.contains("secret"), "{first_key}");
+    let basic = profile("elastic", "a2V5LW9uZTpzZWNyZXQ=", false);
+    assert_eq!(
+      basic.db_type.to_connection_string(&basic),
+      "elasticsearch://elastic@127.0.0.1:9200"
+    );
+  }
+
+  /// 本机起一个只回 401 的服务：看请求头里带的是什么，以及报的是 key 不对而不是口令不对
+  #[tokio::test]
+  async fn a_rejected_api_key_is_named_as_such() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+      let (mut socket, _) = listener.accept().await.unwrap();
+      let mut request = vec![0u8; 4096];
+      let read = socket.read(&mut request).await.unwrap();
+      let body = r#"{"error":{"reason":"unable to authenticate with provided credentials"}}"#;
+      let response = format!(
+        "HTTP/1.1 401 Unauthorized\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}",
+        body.len()
+      );
+      socket.write_all(response.as_bytes()).await.unwrap();
+      String::from_utf8_lossy(&request[..read]).to_ascii_lowercase()
+    });
+    let mut api_key = profile("elastic", "key-one:secret", true);
+    api_key.port = port;
+    let error = connect(EsTarget::from_profile(&api_key, None)).await.err().unwrap_or_default();
+    assert_eq!(
+      error,
+      format!("{ES_API_KEY_REJECTED}: unable to authenticate with provided credentials")
+    );
+    let request = server.await.unwrap();
+    assert!(request.contains("authorization: apikey a2v5lw9uztpzzwnyzxq="), "{request}");
   }
 
   #[test]

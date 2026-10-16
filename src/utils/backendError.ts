@@ -161,6 +161,7 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_NEO4J_TIMEOUT: 'error.backend.neo4jTimeout',
   DATAOMNI_NEO4J_TLS_FILE_INVALID: 'error.backend.neo4jTlsFileInvalid',
   DATAOMNI_ES_AUTH_FAILED: 'error.backend.esAuthFailed',
+  DATAOMNI_ES_API_KEY_REJECTED: 'error.backend.esApiKeyRejected',
   DATAOMNI_ES_UNREACHABLE: 'error.backend.esUnreachable',
   DATAOMNI_ES_NOT_ELASTICSEARCH: 'error.backend.esNotElasticsearch',
   DATAOMNI_ES_TIMEOUT: 'error.backend.esTimeout',

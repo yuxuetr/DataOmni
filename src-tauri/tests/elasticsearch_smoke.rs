@@ -12,8 +12,8 @@
 
 use dataomni_lib::models::ConnectionProfile;
 use dataomni_lib::services::elasticsearch::{
-  self as es, EsPool, EsRequest, EsResponse, EsTarget, ES_AUTH_FAILED, ES_NO_PERMISSION,
-  ES_REQUEST_INVALID, ES_TIMEOUT, ES_UNREACHABLE,
+  self as es, EsPool, EsRequest, EsResponse, EsTarget, ES_API_KEY_REJECTED, ES_AUTH_FAILED,
+  ES_NO_PERMISSION, ES_REQUEST_INVALID, ES_TIMEOUT, ES_UNREACHABLE,
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -212,6 +212,45 @@ async fn a_reader_without_monitor_still_connects_and_sees_its_objects() {
     ok(&admin, "DELETE", "/_security/role/smoke_reader", None).await;
   }
   fresh_index(&admin, "smoke_reader").await;
+}
+
+/// OpenSearch 没有 API Key，只在 ES 上跑
+#[tokio::test]
+async fn an_api_key_logs_in_in_either_form_and_an_invalidated_one_is_named() {
+  let Some(profile) = profile() else { return };
+  let admin = pool(&profile).await;
+  if is_opensearch(&admin).await {
+    return;
+  }
+  let created = ok(
+    &admin,
+    "POST",
+    "/_security/api_key",
+    Some(r#"{"name":"dataomni-smoke","expiration":"1h"}"#),
+  )
+  .await;
+  let id = created["id"].as_str().expect("id").to_string();
+  let encoded = created["encoded"].as_str().expect("encoded").to_string();
+  let pair = format!("{id}:{}", created["api_key"].as_str().expect("api_key"));
+
+  let mut api_key = profile.clone();
+  api_key.options.insert(
+    dataomni_lib::models::ES_AUTH_OPTION.to_string(),
+    dataomni_lib::models::ES_API_KEY.to_string(),
+  );
+  // 用户名留着也不发：服务端认出来的是这把 key
+  for key in [&encoded, &pair] {
+    api_key.password = key.clone();
+    let keyed = pool(&api_key).await;
+    let who = ok(&keyed, "GET", "/_security/_authenticate", None).await;
+    assert_eq!(who["authentication_type"], json!("api_key"), "{who}");
+    assert_eq!(who["api_key"]["id"], json!(id), "{who}");
+  }
+
+  ok(&admin, "DELETE", "/_security/api_key", Some(&json!({ "ids": [id] }).to_string())).await;
+  api_key.password = encoded;
+  let error = es::connect(EsTarget::from_profile(&api_key, None)).await.err().unwrap_or_default();
+  assert!(error.starts_with(ES_API_KEY_REJECTED), "{error}");
 }
 
 #[tokio::test]

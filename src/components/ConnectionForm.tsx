@@ -44,6 +44,7 @@ import {
 } from '../utils/sshTunnel';
 import { connectionNameFromFile, databaseFileExtensions, isFileDatabase } from '../utils/databaseFiles';
 import { isMongoSrv, isMongoX509, withMongoSrv, withMongoX509 } from '../utils/mongoConnection';
+import { isEsApiKey, withEsApiKey } from '../utils/esConnection';
 import { clsx } from 'clsx';
 import { PLAIN_TEXT_INPUT } from './FormControls';
 import { 
@@ -343,6 +344,8 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
   const srv = isMongoSrv(formData);
   // 拿证书登录：用户名是证书的主题、认证库是 $external，那三格都不用填
   const x509 = isMongoX509(formData);
+  // API Key 存在口令那一格，用户名不用
+  const esApiKey = isEsApiKey(formData);
   // 一格都没填时不提示：刚勾开就红着一片，读起来像是用户做错了什么
   const tunnelGaps = tunnel && !isSshTunnelBlank(tunnel) ? sshTunnelProblems(tunnel) : [];
 
@@ -816,6 +819,27 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   </div>
                 )}
 
+                {formData.db_type === DatabaseType.Elasticsearch && (
+                  <div>
+                    <label htmlFor="es-auth" className="block text-sm font-medium text-fg mb-1">
+                      {t('form.mongoAuth')}
+                    </label>
+                    <select
+                      id="es-auth"
+                      value={esApiKey ? 'apiKey' : 'password'}
+                      onChange={(event) => {
+                        const enabled = event.target.value === 'apiKey';
+                        setFormData((previous) => ({ ...previous, ...withEsApiKey(previous, enabled) }));
+                      }}
+                      className="w-full px-3 py-2 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
+                    >
+                      <option value="password">{t('form.mongoAuth.password')}</option>
+                      <option value="apiKey">API Key</option>
+                    </select>
+                    {esApiKey && <p className="text-xs text-fg-muted mt-1">{t('form.esApiKeyHint')}</p>}
+                  </div>
+                )}
+
                 {/* 数据库名称 - 某些数据库类型不需要 */}
                 {!x509 && (formData.db_type === DatabaseType.MySQL || 
                   formData.db_type === DatabaseType.PostgreSQL || 
@@ -894,7 +918,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                   formData.db_type === DatabaseType.ClickHouse ||
                   formData.db_type === DatabaseType.Elasticsearch) && (
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
+                    {!esApiKey && <div>
                       <label className="block text-sm font-medium text-fg mb-1">
                         {t('form.username')} {formData.db_type === DatabaseType.Elasticsearch || formData.db_type === DatabaseType.MongoDB || formData.db_type === DatabaseType.Redis || formData.db_type === DatabaseType.Neo4j || formData.db_type === DatabaseType.ClickHouse ? '' : '*'}
                       </label>
@@ -914,11 +938,11 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                       {validationErrors.username && (
                         <p className="text-danger text-sm mt-1">{validationErrors.username}</p>
                       )}
-                    </div>
+                    </div>}
                     
-                    <div>
+                    <div className={esApiKey ? 'col-span-2' : undefined}>
                       <label className="block text-sm font-medium text-fg mb-1">
-                        {t('form.password')}
+                        {esApiKey ? 'API Key' : t('form.password')}
                       </label>
                       <div className="relative">
                         <input
@@ -926,7 +950,7 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
                           value={formData.password || ''}
                           onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
                           className="w-full px-3 py-2 pr-10 border border-line-strong rounded-control focus:outline-none focus:ring-2 focus:ring-accent"
-                          placeholder={t('form.passwordPlaceholder')}
+                          placeholder={esApiKey ? t('form.esApiKeyPlaceholder') : t('form.passwordPlaceholder')}
                           {...PLAIN_TEXT_INPUT}
                         />
                         <button
