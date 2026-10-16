@@ -93,6 +93,12 @@
 
 ### v1.0.0-rc.1：三平台验收
 
+- [x] 打 `v1.0.0-rc.1`（`387bb28`，2026-10-16；Release run 38907400889）
+  - 预发布 tag 先修了工作流（`a1b7855`）：MSI 版本号不收 `rc.1`，另给 `1.0.0.1`；冒烟按它核对；Release 标 prerelease。
+  - 结果：三个平台的包都打出来；Windows 冒烟全过，含从已发布的 0.6.1 MSI 升级上来、两种安装包日志里都是「DataOmni 1.0.0-rc.1 启动」。
+    草稿 Release（prerelease）挂着 dmg、msi、setup.exe、deb、rpm，等用户看过手动发布。
+  - 接下来：在这批包上走 R5 人工项与 R7 回归，修完打 `v1.0.0`。
+
 - [ ] R5 Windows 验证
   - [x] CI 跑静默的安装、升级、卸载（`1825cd5`、`30fef3b`）
     - `scripts/windows-install-smoke.ps1`；`release.yml` 里打完包先跑 `windows-install`，过了才建草稿 Release；`windows-install.yml` 可对已发布的 tag 手动跑。
