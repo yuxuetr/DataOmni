@@ -256,9 +256,16 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
 
 ### 1.0 之后，按这个次序
 
-- [ ] G3 openGauss：只存 sha256 口令的用户连不上（默认安装常常就是这样，信创用户第一次连就撞上）
-  - sqlx 不认 openGauss 的 sha256 认证（PBKDF2 系）。要自己实现这段握手：`[patch]` 改 sqlx，或只对 openGauss 加一步登录。
-  - 动手前先做五分钟实验：不改 sqlx 能不能在它前面完成认证。结果决定改在哪一层。
+- [x] G3 openGauss：只存 sha256 口令的用户连不上（默认安装常常就是这样，信创用户第一次连就撞上）（`be3872a`）
+  - 实验：手写握手直连服务端，认证成功。算法是官方驱动的 RFC 5802 变体（PBKDF2-HMAC-SHA1 → HMAC-SHA256）。
+    协议 3.0（sqlx 发的）时服务端**不带迭代次数**（这台是 10000，可配），客户端只能猜；声明 3.51 才带。
+  - 所以不改 sqlx：普通连接报了 `unsupported SASL authentication mechanisms` 之后，在本机开转发口（`opengauss_relay`），
+    它声明 3.51、答掉认证、再原样转发；到服务端那一段照连接串的 sslmode 与证书加密（配法照 sqlx）。改 sqlx 的话还得让它
+    对 openGauss 改协议版本，等于长期维护一份 sqlx 的分叉。
+  - 验证：见提交说明（五种 sslmode、错 CA、只收 hostssl、整套 PostgreSQL 冒烟经转发口 40 / 41）。打包版上没连过。
+  - 顺带修了「校验 CA」panic（`6fbfa9c`，见 P0–P3 那条）。
+  - 剩下的：口令存成 md5 的用户服务端不发这种请求，照旧由 sqlx 处理；SM3（`password_encryption_type = 3`）没做。
+    重估条件：有人的服务端用 SM3。
 - [ ] G4 Elasticsearch：API Key 认证（多一个请求头）
 - [ ] G5 Oracle：按 SID 连接（换一种连接描述符）
 - [ ] G6 CockroachDB：结构页的触发器改用 `SHOW CREATE TRIGGER` 读
