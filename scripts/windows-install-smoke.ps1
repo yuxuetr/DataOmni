@@ -1,13 +1,16 @@
 # Windows 安装包冒烟：MSI 与 NSIS 各走一遍 安装 → 启动 → 卸载，给了旧版 MSI 时先装旧版再升级。
 # 在 GitHub Actions 的 windows 机器上跑（.github/workflows/windows-install.yml 与 release.yml），本机也能跑：
-#   pwsh scripts/windows-install-smoke.ps1 -Msi x.msi -Nsis x-setup.exe -Version 0.6.0 [-PreviousMsi old.msi]
+#   pwsh scripts/windows-install-smoke.ps1 -Msi x.msi -Nsis x-setup.exe -Version 0.6.0 [-MsiVersion 0.6.0] [-PreviousMsi old.msi]
+# -MsiVersion：MSI 在「应用」里登记的版本，预发布时与 -Version 不同（1.0.0-rc.1 → 1.0.0.1），不给就同 -Version
 # 管不到的、要人看的（SmartScreen、界面、Oracle 真连）在 docs/windows-checklist.md。
 param(
   [Parameter(Mandatory)][string]$Msi,
   [Parameter(Mandatory)][string]$Nsis,
   [Parameter(Mandatory)][string]$Version,
+  [string]$MsiVersion,
   [string]$PreviousMsi
 )
+if (-not $MsiVersion) { $MsiVersion = $Version }
 $ErrorActionPreference = 'Stop'
 $failures = [System.Collections.Generic.List[string]]::new()
 
@@ -71,7 +74,7 @@ if ($PreviousMsi) {
 }
 $entries = Get-UninstallEntries
 Check ($entries.Count -eq 1) "「应用」里只有一个 DataOmni（实际 $($entries.Count) 个）"
-Check ($entries.Count -ge 1 -and $entries[0].DisplayVersion -like "$Version*") "版本是 $Version（实际 $($entries | ForEach-Object DisplayVersion)）"
+Check ($entries.Count -ge 1 -and $entries[0].DisplayVersion -like "$MsiVersion*") "版本是 $MsiVersion（实际 $($entries | ForEach-Object DisplayVersion)）"
 $msiDir = Join-Path $env:ProgramFiles 'DataOmni'
 Check ($null -ne (Find-Shortcut $machinePrograms)) '开始菜单有快捷方式'
 Test-Launch $msiDir 'MSI'

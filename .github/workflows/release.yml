@@ -74,12 +74,24 @@ jobs:
       - name: Fetch Oracle Instant Client
         run: bash scripts/fetch-oracle-client.sh ${{ matrix.platform }}
 
-      # tag 推上来时版本号跟 tag 走（v0.6.0 → 0.6.0），免得包名和 Release 对不上
+      # tag 推上来时版本号跟 tag 走（v0.6.0 → 0.6.0），免得包名和 Release 对不上。
+      # 预发布（v1.0.0-rc.1）另给 MSI 一个纯数字版本 1.0.0.1：tauri-bundler 的 convert_version 遇到
+      # 不是纯数字的预发布标识直接报错。MSI 判升级只比前三段，正式版 1.0.0 装在 rc 上靠模板里的
+      # AllowSameVersionUpgrades
       - name: Build
         run: |
           version_config=()
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            version_config=(--config "{\"version\":\"${GITHUB_REF_NAME#v}\"}")
+            version="${GITHUB_REF_NAME#v}"
+            version_config=(--config "{\"version\":\"$version\"}")
+            if [[ "$version" == *-* ]]; then
+              pre_number="${version##*[!0-9]}"
+              if [[ -z "$pre_number" ]]; then
+                echo "预发布号要以数字结尾（如 1.0.0-rc.1），MSI 才有版本号可用：$version" >&2
+                exit 1
+              fi
+              version_config+=(--config "{\"bundle\":{\"windows\":{\"wix\":{\"version\":\"${version%%-*}.$pre_number\"}}}}")
+            fi
           fi
           # macOS 要给整个 .app 做 ad-hoc 签名：只有链接器签的主程序时，包的签名校验不过，
           # 下载下来 macOS 说「已损坏」，而且不给「仍要打开」。
@@ -148,8 +160,10 @@ jobs:
           $previousVersion = if ($previous) { [regex]::Match($previous.Name, '_(\d+\.\d+\.\d+[^_]*)_').Groups[1].Value } else { '' }
           # 同一个版本号 MSI 不当升级处理，只验全新安装
           $previousMsi = if ($previous -and $previousVersion -ne $version) { $previous.FullName } else { '' }
-          Write-Host "新包 $version，已发布 $previousVersion，验升级：$([bool]$previousMsi)"
-          ./scripts/windows-install-smoke.ps1 -Msi $msi -Nsis $nsis -Version $version -PreviousMsi $previousMsi
+          # 预发布的 MSI 在「应用」里登记的是 1.0.0.1 这样的纯数字版本（见 Build 那一步）
+          $msiVersion = if ($version -match '^(\d+\.\d+\.\d+)-.*?(\d+)$') { "$($Matches[1]).$($Matches[2])" } else { $version }
+          Write-Host "新包 $version（MSI $msiVersion），已发布 $previousVersion，验升级：$([bool]$previousMsi)"
+          ./scripts/windows-install-smoke.ps1 -Msi $msi -Nsis $nsis -Version $version -MsiVersion $msiVersion -PreviousMsi $previousMsi
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -180,8 +194,14 @@ jobs:
           EOF
           # 产物按 dmg/、deb/… 分了子目录，传文件不传目录
           mapfile -t files < <(find packages -type f)
+          # 预发布标成 prerelease：GitHub 的 releases/latest 不返回它，装着正式版的人不会被「新版本」横幅叫去装 rc
+          prerelease=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
           gh release create "$GITHUB_REF_NAME" "${files[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --draft \
+            "${prerelease[@]}" \
             --title "DataOmni $GITHUB_REF_NAME" \
             --notes-file notes.md
