@@ -347,3 +347,61 @@ describe('编辑器里的文本与编辑器的位置', () => {
       .toBe('SELECT 1;\nDELETE FROM t WHERE id = 1;\n');
   });
 });
+
+/**
+ * 一条语句返回几个结果集（`sp_help`、`EXEC` 过程、`CALL`）：第一个之后的随摘要带回来，
+ * 每个都要落进这条语句的结果里——之前只有一句「还有 N 个」，`sp_help` 的列在第二个里，等于没用
+ */
+describe('一条语句的后续结果集', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    resetStore();
+  });
+
+  it('按列序转成行，挂在这条语句的结果上', async () => {
+    invokeMock.mockImplementation(async (command: string) => (
+      command === 'execute_query'
+        ? {
+            kind: 'rows',
+            columns: ['name'],
+            column_metadata: [],
+            row_count: 0,
+            batch_count: 0,
+            truncated: false,
+            truncation_reason: null,
+            row_limit: 100,
+            byte_limit: 1024,
+            bytes_read: 0,
+            omitted_result_sets: 1,
+            extra_result_sets: [
+              {
+                columns: ['column_name', 'type'],
+                column_metadata: [],
+                rows: [{ type: 'int', column_name: 'id' }],
+                truncated: true,
+                truncation_reason: 'row_limit'
+              }
+            ]
+          }
+        : undefined
+    ));
+    const store = useQueryStore.getState();
+    store.openDocument('tab-a');
+    store.setSqlInput('EXEC sp_help orders;');
+    store.parseStatements();
+    const statement = selectActiveSqlDocument(useQueryStore.getState()).statements[0];
+    await useQueryStore.getState().executeStatement(statement.id);
+
+    const result = selectActiveSqlDocument(useQueryStore.getState()).statements[0].result;
+    expect(result?.omitted_result_sets).toBe(1);
+    expect(result?.extra_result_sets).toEqual([
+      expect.objectContaining({
+        columns: ['column_name', 'type'],
+        rows: [['id', 'int']],
+        affected_rows: 1,
+        truncated: true,
+        truncation_reason: 'row_limit'
+      })
+    ]);
+  });
+});

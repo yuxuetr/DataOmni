@@ -23,9 +23,9 @@ use crate::services::query_error::QueryErrorDetails;
 use crate::services::query_error::{CONNECTION_LOST, CONNECTION_LOST_CODE};
 use crate::services::query_executor::{
   admit_row_bytes, flush_full_batch, flush_remaining_batch, format_date, format_datetime,
-  format_time, number_duplicate_columns, tagged_value, widen_f32, NonQueryHandling,
-  QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow, QueryTruncationReason,
-  StreamOptions,
+  format_time, number_duplicate_columns, tagged_value, widen_f32, ExtraResultSets,
+  NonQueryHandling, QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow,
+  QueryTruncationReason, StreamOptions,
 };
 use crate::services::transaction_state::{TransactionState, TransactionStatus};
 use crate::services::write_batch::{
@@ -787,10 +787,10 @@ async fn stream_first_result(
 ) -> Result<QueryExecutionSummary, QueryError> {
   let mut stream = client.simple_query(sql).await.map_err(|error| query_error(error, Some(sql)))?;
 
-  // 第一个结果集是要给用户看的；之后的结果集读掉不留（和另外三家一样），只记个数
+  // 第一个结果集流式交出去；之后的收进 `extra` 随摘要带回。每个结果集先来一份列定义，空的也有
   let mut first: Option<(usize, Vec<QueryColumnMetadata>, Vec<String>)> = None;
-  // 每个结果集先来一份列定义，空的也有
-  let mut omitted_result_sets = 0;
+  let mut extra = ExtraResultSets::new(&options);
+  let mut extra_set: Option<(usize, Vec<String>)> = None;
   let mut rows = Vec::with_capacity(options.batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
@@ -800,29 +800,27 @@ async fn stream_first_result(
   while let Some(item) = stream.try_next().await.map_err(|error| query_error(error, Some(sql)))? {
     match item {
       tiberius::QueryItem::Metadata(metadata) => {
+        let names = column_names(metadata.columns());
+        let column_metadata = column_metadata(metadata.columns(), &names);
         if first.is_some() {
-          omitted_result_sets += 1;
+          extra.start(column_metadata);
+          extra_set = Some((metadata.result_index(), names));
           continue;
         }
-        let columns = metadata.columns();
-        let names = column_names(columns);
-        let column_metadata = columns
-          .iter()
-          .zip(&names)
-          .enumerate()
-          .map(|(ordinal, (column, name))| QueryColumnMetadata {
-            name: name.clone(),
-            ordinal,
-            database_type: type_name(column.column_type()).to_string(),
-            logical_type: logical_type(column.column_type()).to_string(),
-            nullable: None,
-          })
-          .collect();
         first = Some((metadata.result_index(), column_metadata, names));
       }
       tiberius::QueryItem::Row(row) => {
         let Some((index, _, names)) = &first else { continue };
         if row.result_index() != *index {
+          if let Some((extra_index, extra_names)) = &extra_set {
+            if row.result_index() == *extra_index {
+              let mut values = Map::new();
+              for (name, (column, data)) in extra_names.iter().zip(row.cells()) {
+                values.insert(name.clone(), decode(column.column_type(), data)?);
+              }
+              extra.push(values)?;
+            }
+          }
           continue;
         }
         // 到了上限之后还要把剩下的行读完：不读完这条连接就用不了，
@@ -855,6 +853,7 @@ async fn stream_first_result(
     return Ok(QueryExecutionSummary::Affected { rows_affected: 0 });
   };
   flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
+  let (extra_result_sets, omitted_result_sets) = extra.finish();
   Ok(QueryExecutionSummary::Rows {
     columns,
     column_metadata,
@@ -866,7 +865,23 @@ async fn stream_first_result(
     byte_limit: options.byte_limit,
     bytes_read,
     omitted_result_sets,
+    extra_result_sets,
   })
+}
+
+fn column_metadata(columns: &[tiberius::Column], names: &[String]) -> Vec<QueryColumnMetadata> {
+  columns
+    .iter()
+    .zip(names)
+    .enumerate()
+    .map(|(ordinal, (column, name))| QueryColumnMetadata {
+      name: name.clone(),
+      ordinal,
+      database_type: type_name(column.column_type()).to_string(),
+      logical_type: logical_type(column.column_type()).to_string(),
+      nullable: None,
+    })
+    .collect()
 }
 
 /// `SET STATISTICS XML` 多回的那个结果集的列名（SQL Server 2005 起一直是这个名字）
@@ -944,6 +959,7 @@ async fn stream_showplans(
     byte_limit: options.byte_limit,
     bytes_read,
     omitted_result_sets: 0,
+    extra_result_sets: Vec::new(),
   })
 }
 

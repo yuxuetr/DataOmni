@@ -6428,9 +6428,9 @@ async fn mysql_backup_with_mysqldump_restores_into_a_new_database() {
 }
 
 /// `CALL` 一个查询过程：describe 说没有列，原先当成非查询执行，结果整个丢掉、显示「影响 0 行」。
-/// 只显示第一个结果集，后面还有几个要报出来
+/// 第一个结果集流式给出，后面有行的随结果带回来，空的只能报个数
 #[tokio::test]
-async fn mysql_call_shows_the_procedures_first_result_set() {
+async fn mysql_call_brings_back_the_procedures_result_sets() {
   let Some(url) = network_database_url(MYSQL_URL_ENV) else {
     return;
   };
@@ -6456,14 +6456,23 @@ async fn mysql_call_shows_the_procedures_first_result_set() {
   let database = DbPool::MySql(pool.clone());
 
   let result = execute_query(&database, "CALL om_call_two()").await.expect("call");
-  let QueryExecutionResult::Rows { columns, rows, omitted_result_sets, .. } = result else {
+  let QueryExecutionResult::Rows { columns, rows, omitted_result_sets, extra_result_sets, .. } =
+    result
+  else {
     panic!("expected the first result set, got {result:?}");
   };
   assert_eq!(columns, ["a", "b"]);
   assert_eq!(rows.len(), 2);
   assert_eq!(rows[1]["b"], "y");
-  // 后面两个结果集（一个是空的）不显示，但要说出来；CALL 自己的状态包不算
-  assert_eq!(omitted_result_sets, 2);
+  // 第二个结果集随结果带回来
+  let [extra] = extra_result_sets.as_slice() else {
+    panic!("expected one extra result set: {extra_result_sets:?}");
+  };
+  assert_eq!(extra.columns, ["c"]);
+  assert_eq!(extra.rows.len(), 1);
+  assert_eq!(extra.rows[0]["c"]["value"], "3");
+  // 空的那个 sqlx 给不出列，只能说出来；CALL 自己的状态包不算
+  assert_eq!(omitted_result_sets, 1);
 
   // 只写不查的过程照旧报影响行数；连接还能接着用
   let result = execute_query(&database, "CALL om_call_write()").await.expect("call write");

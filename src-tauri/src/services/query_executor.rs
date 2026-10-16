@@ -55,6 +55,96 @@ pub enum QueryTruncationReason {
   ByteLimit,
 }
 
+/// 一条语句返回的第二个及以后的结果集（`EXEC` 过程、`sp_help`、`CALL`）。
+///
+/// 第一个照常流式交给前端；后面的读进内存随摘要带回。行数上限按每个结果集算，
+/// 字节上限所有后续结果集合用一份——一个过程吐出几十万行，不能整份进内存
+#[derive(Debug, Serialize)]
+pub struct ExtraResultSet {
+  pub columns: Vec<String>,
+  pub column_metadata: Vec<QueryColumnMetadata>,
+  pub rows: Vec<QueryRow>,
+  pub truncated: bool,
+  pub truncation_reason: Option<QueryTruncationReason>,
+}
+
+/// 最多带回几个后续结果集；再往后的只计数（界面上每个是一张表，二十张已经翻不过来）
+pub const MAX_EXTRA_RESULT_SETS: usize = 20;
+
+/// 边读边收后续结果集。超过 [`MAX_EXTRA_RESULT_SETS`] 个、或字节预算用完之后开始的，只计数
+pub(crate) struct ExtraResultSets {
+  sets: Vec<ExtraResultSet>,
+  omitted: usize,
+  row_limit: usize,
+  byte_limit: usize,
+  bytes_read: usize,
+  out_of_bytes: bool,
+  /// 正在读的那个结果集收不收（没收的只计了数，它的行读掉）
+  collecting: bool,
+}
+
+impl ExtraResultSets {
+  pub(crate) fn new(options: &StreamOptions) -> Self {
+    Self {
+      sets: Vec::new(),
+      omitted: 0,
+      row_limit: options.row_limit,
+      byte_limit: options.byte_limit,
+      bytes_read: 0,
+      out_of_bytes: false,
+      collecting: false,
+    }
+  }
+
+  /// 一个新的结果集开始了
+  pub(crate) fn start(&mut self, column_metadata: Vec<QueryColumnMetadata>) {
+    if self.sets.len() >= MAX_EXTRA_RESULT_SETS || self.out_of_bytes {
+      self.omitted += 1;
+      self.collecting = false;
+      return;
+    }
+    self.sets.push(ExtraResultSet {
+      columns: column_metadata.iter().map(|column| column.name.clone()).collect(),
+      column_metadata,
+      rows: Vec::new(),
+      truncated: false,
+      truncation_reason: None,
+    });
+    self.collecting = true;
+  }
+
+  /// 正在读的那个结果集的一行
+  pub(crate) fn push(&mut self, row: QueryRow) -> Result<(), QueryError> {
+    if !self.collecting {
+      return Ok(());
+    }
+    let Some(set) = self.sets.last_mut() else {
+      return Ok(());
+    };
+    if set.truncated {
+      return Ok(());
+    }
+    if set.rows.len() >= self.row_limit {
+      set.truncated = true;
+      set.truncation_reason = Some(QueryTruncationReason::RowLimit);
+      return Ok(());
+    }
+    if !admit_row_bytes(&row, self.byte_limit, &mut self.bytes_read)? {
+      set.truncated = true;
+      set.truncation_reason = Some(QueryTruncationReason::ByteLimit);
+      self.out_of_bytes = true;
+      return Ok(());
+    }
+    set.rows.push(row);
+    Ok(())
+  }
+
+  /// 带回来的结果集，与没带回来的个数
+  pub(crate) fn finish(self) -> (Vec<ExtraResultSet>, usize) {
+    (self.sets, self.omitted)
+  }
+}
+
 /// 语句不返回结果集时怎么办。
 ///
 /// 谁也无法只看 SQL 文本就断定它返不返回行——`WITH ... SELECT` 返回，
@@ -142,9 +232,11 @@ pub enum QueryExecutionSummary {
     row_limit: usize,
     byte_limit: usize,
     bytes_read: usize,
-    /// 第一个之后还有几个结果集没给出来（`EXEC` 过程、`CALL`、一批里几条 SELECT）。
-    /// 只显示第一个，但界面上要说少了东西
+    /// 第一个之后还有几个结果集没带回来（超过个数或字节上限，或 MySQL 的空结果集：
+    /// sqlx 给不出它的列）。界面上要说少了东西
     omitted_result_sets: usize,
+    /// 第一个之后的结果集
+    extra_result_sets: Vec<ExtraResultSet>,
   },
   Affected {
     rows_affected: u64,
@@ -163,9 +255,11 @@ pub enum QueryExecutionResult {
     row_limit: usize,
     byte_limit: usize,
     bytes_read: usize,
-    /// 第一个之后还有几个结果集没给出来（`EXEC` 过程、`CALL`、一批里几条 SELECT）。
-    /// 只显示第一个，但界面上要说少了东西
+    /// 第一个之后还有几个结果集没带回来（超过个数或字节上限，或 MySQL 的空结果集：
+    /// sqlx 给不出它的列）。界面上要说少了东西
     omitted_result_sets: usize,
+    /// 第一个之后的结果集
+    extra_result_sets: Vec<ExtraResultSet>,
   },
   Affected {
     rows_affected: u64,
@@ -666,6 +760,7 @@ async fn execute_sqlite_connection_streaming(
     byte_limit: options.byte_limit,
     bytes_read,
     omitted_result_sets: 0,
+    extra_result_sets: Vec::new(),
   })
 }
 
@@ -822,6 +917,7 @@ async fn execute_mysql_connection_streaming(
     byte_limit: options.byte_limit,
     bytes_read,
     omitted_result_sets: 0,
+    extra_result_sets: Vec::new(),
   })
 }
 
@@ -848,8 +944,12 @@ async fn stream_mysql_undescribed(
   let mut first_done = false;
   // 第一个结果集的列名（重名的编了号），行按它做键
   let mut names: Vec<String> = Vec::new();
-  // 第一个结果集之后的每个结果集（空的也一样）各以一个 OK 收尾，最后还有 CALL 自己的那一个
-  let mut results_after_first: usize = 0;
+  // 第一个结果集之后的每个结果集各以一个 OK 收尾，最后还有 CALL 自己的那一个。有行的收进
+  // `extra`；没有行的 sqlx 给不出列，只能计数
+  let mut extra = ExtraResultSets::new(&options);
+  let mut in_extra_set = false;
+  let mut empty_after_first: usize = 0;
+  let mut extra_names: Vec<String> = Vec::new();
   let mut rows_affected = 0;
   let mut rows = Vec::with_capacity(options.batch_size);
   let mut row_count = 0;
@@ -860,34 +960,29 @@ async fn stream_mysql_undescribed(
     let row = match item {
       sqlx::Either::Left(result) => {
         rows_affected += result.rows_affected();
-        if first_done {
-          results_after_first += 1;
+        if first_done && !std::mem::take(&mut in_extra_set) {
+          empty_after_first += 1;
         }
         first_done |= first.is_some();
         continue;
       }
       sqlx::Either::Right(row) => row,
     };
-    if first_done || truncation_reason.is_some() {
+    if first_done {
+      if !in_extra_set {
+        extra_names = number_duplicate_columns(row.columns().iter().map(|column| column.name()));
+        extra.start(mysql_row_column_metadata(&row, &extra_names));
+        in_extra_set = true;
+      }
+      extra.push(decode_mysql_row(&row, &extra_names)?)?;
+      continue;
+    }
+    if truncation_reason.is_some() {
       continue;
     }
     if first.is_none() {
       names = number_duplicate_columns(row.columns().iter().map(|column| column.name()));
-      first = Some(
-        row
-          .columns()
-          .iter()
-          .zip(names.iter().cloned())
-          .enumerate()
-          .map(|(ordinal, (column, name))| QueryColumnMetadata {
-            name,
-            ordinal,
-            database_type: column.type_info().name().to_string(),
-            logical_type: mysql_logical_type(column.type_info().name()).to_string(),
-            nullable: None,
-          })
-          .collect(),
-      );
+      first = Some(mysql_row_column_metadata(&row, &names));
     }
     if row_count >= options.row_limit {
       truncation_reason = Some(QueryTruncationReason::RowLimit);
@@ -906,6 +1001,7 @@ async fn stream_mysql_undescribed(
     return Ok(QueryExecutionSummary::Affected { rows_affected });
   };
   flush_remaining_batch(&mut rows, &mut batch_count, row_count, sink)?;
+  let (extra_result_sets, omitted) = extra.finish();
   Ok(QueryExecutionSummary::Rows {
     columns: column_metadata.iter().map(|column| column.name.clone()).collect(),
     column_metadata,
@@ -916,8 +1012,28 @@ async fn stream_mysql_undescribed(
     row_limit: options.row_limit,
     byte_limit: options.byte_limit,
     bytes_read,
-    omitted_result_sets: results_after_first.saturating_sub(1),
+    omitted_result_sets: omitted + empty_after_first.saturating_sub(1),
+    extra_result_sets,
   })
+}
+
+fn mysql_row_column_metadata(
+  row: &sqlx::mysql::MySqlRow,
+  names: &[String],
+) -> Vec<QueryColumnMetadata> {
+  row
+    .columns()
+    .iter()
+    .zip(names.iter().cloned())
+    .enumerate()
+    .map(|(ordinal, (column, name))| QueryColumnMetadata {
+      name,
+      ordinal,
+      database_type: column.type_info().name().to_string(),
+      logical_type: mysql_logical_type(column.type_info().name()).to_string(),
+      nullable: None,
+    })
+    .collect()
 }
 
 async fn execute_postgres(
@@ -1060,6 +1176,7 @@ async fn execute_postgres_connection_streaming(
     byte_limit: options.byte_limit,
     bytes_read,
     omitted_result_sets: 0,
+    extra_result_sets: Vec::new(),
   })
 }
 
@@ -1219,6 +1336,7 @@ fn summary_with_rows(
       byte_limit,
       bytes_read,
       omitted_result_sets,
+      extra_result_sets,
       ..
     } => Ok(QueryExecutionResult::Rows {
       columns,
@@ -1230,6 +1348,7 @@ fn summary_with_rows(
       byte_limit,
       bytes_read,
       omitted_result_sets,
+      extra_result_sets,
     }),
     QueryExecutionSummary::Affected { rows_affected } => {
       Ok(QueryExecutionResult::Affected { rows_affected })
@@ -1972,6 +2091,56 @@ pub(crate) fn tagged_value(value_type: &str, value: String) -> JsonValue {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  fn one_column(name: &str) -> Vec<QueryColumnMetadata> {
+    vec![QueryColumnMetadata {
+      name: name.to_string(),
+      ordinal: 0,
+      database_type: "INT".to_string(),
+      logical_type: "integer".to_string(),
+      nullable: None,
+    }]
+  }
+
+  fn row(value: i64) -> QueryRow {
+    let mut row = QueryRow::new();
+    row.insert("n".to_string(), JsonValue::from(value));
+    row
+  }
+
+  #[test]
+  fn extra_result_sets_past_the_cap_are_only_counted() {
+    let mut extra = ExtraResultSets::new(&StreamOptions::limited(10, 1 << 20, 10));
+    for index in 0..MAX_EXTRA_RESULT_SETS + 3 {
+      extra.start(one_column("n"));
+      extra.push(row(index as i64)).expect("push");
+    }
+    let (sets, omitted) = extra.finish();
+    assert_eq!((sets.len(), omitted), (MAX_EXTRA_RESULT_SETS, 3));
+    // 没收的那几个的行也没混进最后一个收下的结果集
+    assert_eq!(sets.last().map(|set| set.rows.len()), Some(1));
+  }
+
+  #[test]
+  fn extra_result_sets_share_one_byte_budget() {
+    let row_bytes = serialized_row_size(&row(1)).expect("size");
+    let mut extra = ExtraResultSets::new(&StreamOptions::limited(10, row_bytes * 3, 10));
+    extra.start(one_column("n"));
+    extra.push(row(1)).expect("push");
+    extra.push(row(2)).expect("push");
+    extra.start(one_column("n"));
+    for value in 3..6 {
+      extra.push(row(value)).expect("push");
+    }
+    extra.start(one_column("n"));
+    extra.push(row(9)).expect("push");
+    let (sets, omitted) = extra.finish();
+    let rows: Vec<_> = sets.iter().map(|set| set.rows.len()).collect();
+    assert_eq!(rows, vec![2, 1]);
+    assert_eq!(sets[1].truncation_reason, Some(QueryTruncationReason::ByteLimit));
+    // 预算用完之后开始的结果集不再收，只计数
+    assert_eq!(omitted, 1);
+  }
 
   /// 期望值是 MySQL 8.4 对同一个 `TIME(6)` 值的输出去掉末尾的 0（与 DATETIME 的小数秒同一个写法）
   #[test]

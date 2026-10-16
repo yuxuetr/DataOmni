@@ -386,6 +386,7 @@ impl DuckDbConnection {
       byte_limit: options.byte_limit,
       bytes_read,
       omitted_result_sets: 0,
+      extra_result_sets: Vec::new(),
     })
   }
 

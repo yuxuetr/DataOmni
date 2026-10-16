@@ -14,8 +14,10 @@ export interface QueryResult {
   row_limit?: number;
   byte_limit?: number;
   bytes_read?: number;
-  /** 第一个之后还有几个结果集没给出来（`EXEC` 过程、`CALL`）；只显示第一个 */
+  /** 第一个之后还有几个结果集没带回来（超过个数或大小上限，或 MySQL 的空结果集） */
   omitted_result_sets?: number;
+  /** 同一条语句的第二个及以后的结果集（`sp_help`、`EXEC` 过程、`CALL`），只读 */
+  extra_result_sets?: QueryResult[];
   /**
    * 这份结果能不能就地改，以及靠哪几列定位一行。
    *
@@ -45,6 +47,15 @@ export interface DriverQueryColumn {
   nullable: boolean | null;
 }
 
+/** 第二个及以后的结果集：不流式，整份随摘要带回（后端按行数与字节上限截过） */
+export interface DriverExtraResultSet {
+  columns: string[];
+  column_metadata: DriverQueryColumn[];
+  rows: Record<string, SerializedResultValue>[];
+  truncated: boolean;
+  truncation_reason: 'row_limit' | 'byte_limit' | null;
+}
+
 export interface DriverQueryBatch {
   index: number;
   offset: number;
@@ -64,6 +75,7 @@ export type DriverQueryResult =
       byte_limit: number;
       bytes_read: number;
       omitted_result_sets: number;
+      extra_result_sets: DriverExtraResultSet[];
     }
   | {
       kind: 'affected';

@@ -54,10 +54,10 @@ pub use object_catalog::{object_catalog_queries, ObjectCatalogQueries};
 pub use query_error::QueryError;
 pub use query_executor::{
   execute_query, execute_query_with_limit, execute_query_with_limits, execute_query_with_timeout,
-  ExplainPlan, NonQueryHandling, PoolRef, QueryColumnMetadata, QueryExecutionResult,
-  QueryExecutionSummary, QueryResultBatch, QueryRow, QueryTruncationReason, SessionConnection,
-  StreamOptions, DEFAULT_QUERY_BATCH_SIZE, DEFAULT_QUERY_BYTE_LIMIT, DEFAULT_QUERY_ROW_LIMIT,
-  NON_QUERY_MESSAGE, QUERY_TIMEOUT_CODE, USE_STATEMENT_REFUSED,
+  ExplainPlan, ExtraResultSet, NonQueryHandling, PoolRef, QueryColumnMetadata,
+  QueryExecutionResult, QueryExecutionSummary, QueryResultBatch, QueryRow, QueryTruncationReason,
+  SessionConnection, StreamOptions, DEFAULT_QUERY_BATCH_SIZE, DEFAULT_QUERY_BYTE_LIMIT,
+  DEFAULT_QUERY_ROW_LIMIT, NON_QUERY_MESSAGE, QUERY_TIMEOUT_CODE, USE_STATEMENT_REFUSED,
 };
 pub use query_session::{QuerySessionState, StreamingQueryOptions, SESSION_TRANSACTION_OPEN};
 pub use schema_metadata::{schema_metadata_queries, DdlQuery, SchemaMetadataQueries};

@@ -60,7 +60,7 @@ MySQL 一组 42 条、PostgreSQL 一组 39 条；只在设了专门的环境变�
 | OceanBase | 4.4.2（CE，MySQL 模式） | MySQL | ⚠️ 可用，有缺口 | 39 / 42（缺口由用例钉住；挂的三条是夹具：`HANDLER` 它收下却不返回行，两条；它不按 `wait_timeout` 断开连接，一条） |
 | CockroachDB | 25.2 | PostgreSQL | ⚠️ 可用，有缺口 | 39 / 39（缺口由用例钉住） |
 | openGauss | 5.0.3（lite，PG 兼容库） | PostgreSQL | ⚠️ 可用，有缺口 | 39 / 39（缺口由用例钉住） |
-| SQL Server | 2022 | SQL Server | ✅ 支持 | 31 / 31（独立用例，`sql_server_smoke.rs`，含改结构语料） |
+| SQL Server | 2022 | SQL Server | ✅ 支持 | 32 / 32（独立用例，`sql_server_smoke.rs`，含改结构语料；几条共用测试表，要 `--test-threads=1`） |
 | Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 29 / 29（独立用例，`oracle_smoke.rs`，含改结构语料；另有一条只计时、不做断言） |
 | DuckDB | 1.5.5（编进应用） | DuckDB（libduckdb） | ✅ 支持 | 18 / 18（独立用例，`duckdb_smoke.rs`，每次都跑，含改结构语料） |
 | ClickHouse | 25.8 | ClickHouse（HTTP 接口，reqwest） | ⚠️ 表格一次改一行，没有事务 | 16 / 16 ＋ 1 / 1（独立用例，`clickhouse_smoke.rs` 与最重的一条 `clickhouse_mutation_smoke.rs`；经 SSH 隧道那一条另要隧道的环境变量） |
@@ -100,6 +100,8 @@ MySQL 一组 42 条、PostgreSQL 一组 39 条；只在设了专门的环境变�
   预览里会说明；改类型各自单独一条。
 - **SQL Server**：四个阶段都已接上（连接、执行、对象与结构浏览、表格编辑、事务、
   执行计划、改结构与建表、CSV 导入、整表导出）。与另外几家不同、值得知道的几处：
+  - 一条语句返回几个结果集（`sp_help`、`EXEC` 过程）时逐个显示，每个标「结果集 n / N」；后面的结果集
+    只读，最多 20 个，行数上限与第一个相同。MySQL 的 `CALL` 一样，但没有行的结果集 sqlx 给不出列，只报个数。
   - 脚本里单独一行的 `GO` 按 SSMS 的约定分批；有 `GO` 时只按它切，一批原样发出去
     （过程体里的分号不切）。`GO 5` 这种带次数的不认，留给服务端报错。
   - 执行计划：估算的走 `SHOWPLAN_XML`（只编译不执行）；「真的执行一遍」走 `SET STATISTICS XML`，
@@ -596,6 +598,9 @@ bun install
 - SQL Server 的执行计划可以「真的执行一遍」（`SET STATISTICS XML`），每一步带实际行数与耗时
 - Neo4j 可以在界面上建关系（节点编辑框里「从这个节点建关系」，再点终点）
 - ClickHouse 的 MergeTree 表在表格里改一行时按物理位置定位：一模一样的两行能分开改，数完到执行之间别处写进来的一模一样的行不会被一起改
+- SQL Server 的 `sp_help`、`EXEC` 过程与 MySQL 的 `CALL` 返回几个结果集时逐个显示（此前只显示第一个，`sp_help` 的列在第二个里）
+- 表数据页的右键菜单里可以「编辑这一行」（操作列在最右边，列多时要横向滚过去才看得到）
+- 修复（macOS）：新版 macOS 在 Dock 与访达里给应用图标套了一层灰色底板
 
 ### v0.6.1（2026-10-07）
 

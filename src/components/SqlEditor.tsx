@@ -876,6 +876,7 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
   const hasOutput = Boolean(statement.result || statement.error);
   const collapsed = hasOutput && statement.collapsed === true;
   const outcome = statementOutcome(statement, execution);
+  const extraResultSets = statement.result?.extra_result_sets ?? [];
 
   return (
     <div className="border border-line rounded-panel overflow-hidden">
@@ -986,8 +987,22 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
             result={statement.result}
             statementId={statement.id}
             resultSql={statement.resultSql}
+            label={extraResultSets.length > 0
+              ? t('result.resultSetLabel', { index: 1, total: extraResultSets.length + 1 })
+              : undefined}
             formatExecutionTime={formatExecutionTime}
           />
+          {/* 后面的结果集没有 resultSql：截断了也不给「重新执行导出整份」，那会把整个过程再跑一遍 */}
+          {extraResultSets.map((extra, position) => (
+            <div key={position} className="mt-2">
+              <QueryResultScrollTable
+                result={extra}
+                statementId={`${statement.id}#${position + 2}`}
+                label={t('result.resultSetLabel', { index: position + 2, total: extraResultSets.length + 1 })}
+                formatExecutionTime={formatExecutionTime}
+              />
+            </div>
+          ))}
         </>
       )}
 

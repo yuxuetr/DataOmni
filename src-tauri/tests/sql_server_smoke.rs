@@ -409,10 +409,10 @@ async fn sql_server_truncates_at_the_row_limit_and_the_connection_stays_usable()
   assert_eq!(next[0]["n"], json!(7));
 }
 
-/// 一条语句返回几个结果集（`EXEC` 一个过程、`sp_help`）：只显示第一个，**而且要说还有几个**——
-/// 之前后面的读掉就没了，界面上看不出少了东西。空的结果集也算一个
+/// 一条语句返回几个结果集（`EXEC` 一个过程、`sp_help`）：后面的结果集随摘要一起带回来——
+/// 之前后面的读掉就没了，`sp_help` 的列在第二个结果集里，等于没用。空的结果集也带回来
 #[tokio::test]
-async fn sql_server_counts_the_result_sets_it_does_not_show() {
+async fn sql_server_brings_back_every_result_set() {
   let Some(pool) = pool().await else { return };
   let mut connection = session(&pool).await;
   let mut rows = Vec::new();
@@ -427,12 +427,23 @@ async fn sql_server_counts_the_result_sets_it_does_not_show() {
     )
     .await
     .expect("stream");
-  let QueryExecutionSummary::Rows { columns, omitted_result_sets, .. } = summary else {
+  let QueryExecutionSummary::Rows { columns, omitted_result_sets, extra_result_sets, .. } = summary
+  else {
     panic!("expected rows");
   };
   assert_eq!(columns, vec!["a".to_string()]);
   assert_eq!(rows.len(), 1);
-  assert_eq!(omitted_result_sets, 2);
+  // 后面两个结果集随摘要一起带回来（`sp_help` 的列在第二个里），空的也带着列名
+  assert_eq!(omitted_result_sets, 0);
+  let shapes: Vec<_> =
+    extra_result_sets.iter().map(|set| (set.columns.clone(), set.rows.clone())).collect();
+  assert_eq!(
+    shapes,
+    vec![
+      (vec!["b".to_string()], vec![]),
+      (vec!["c".to_string()], vec![serde_json::from_value(json!({ "c": 3 })).expect("row")]),
+    ]
+  );
   let single = connection
     .execute_streaming(
       "SELECT 7 AS n",
@@ -441,10 +452,38 @@ async fn sql_server_counts_the_result_sets_it_does_not_show() {
     )
     .await
     .expect("single");
-  let QueryExecutionSummary::Rows { omitted_result_sets, .. } = single else {
+  let QueryExecutionSummary::Rows { omitted_result_sets, extra_result_sets, .. } = single else {
     panic!("expected rows");
   };
   assert_eq!(omitted_result_sets, 0);
+  assert!(extra_result_sets.is_empty());
+}
+
+/// 后面的结果集同样受行数上限管：一个过程吐出几十万行不能整份进内存
+#[tokio::test]
+async fn sql_server_extra_result_sets_obey_the_row_limit() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool).await;
+  let summary = connection
+    .execute_streaming(
+      "SELECT 1 AS a; SELECT n FROM (VALUES (1), (2), (3), (4), (5)) AS t(n)",
+      StreamOptions::limited(3, 16 * 1024 * 1024, 10),
+      &mut |_| Ok(()),
+    )
+    .await
+    .expect("stream");
+  let QueryExecutionSummary::Rows { extra_result_sets, .. } = summary else {
+    panic!("expected rows");
+  };
+  let [extra] = extra_result_sets.as_slice() else {
+    panic!("expected one extra result set: {extra_result_sets:?}");
+  };
+  assert_eq!(extra.rows.len(), 3);
+  assert!(extra.truncated);
+  assert_eq!(extra.truncation_reason, Some(QueryTruncationReason::RowLimit));
+  // 剩下的行照样读完，连接接着能用
+  let next = rows_of(connection.execute("SELECT 7 AS n", 10).await.expect("next statement"));
+  assert_eq!(next[0]["n"], json!(7));
 }
 
 /// 超时之后：会话马上能用，**服务端的那条语句也停了**。
@@ -1391,7 +1430,8 @@ async fn sql_server_actual_plans_run_the_statement_and_leave_the_session_as_it_w
   assert!(
     matches!(
       summary,
-      dataomni_lib::services::QueryExecutionSummary::Rows { omitted_result_sets: 0, .. }
+      dataomni_lib::services::QueryExecutionSummary::Rows { omitted_result_sets: 0, ref extra_result_sets, .. }
+        if extra_result_sets.is_empty()
     ),
     "{summary:?}"
   );

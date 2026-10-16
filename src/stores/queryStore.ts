@@ -853,6 +853,18 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           byte_limit: driverResult.byte_limit,
           bytes_read: driverResult.bytes_read,
           omitted_result_sets: driverResult.omitted_result_sets,
+          // 后面的结果集不认来源表，一律只读：不带 editability
+          extra_result_sets: (driverResult.extra_result_sets ?? []).map((set) => ({
+            columns: set.columns,
+            column_metadata: set.column_metadata,
+            rows: set.rows.map((row) => set.columns.map((column) => row[column])),
+            affected_rows: set.rows.length,
+            execution_time: executionTime,
+            truncated: set.truncated,
+            truncation_reason: set.truncation_reason,
+            row_limit: driverResult.row_limit,
+            byte_limit: driverResult.byte_limit
+          })),
           editability,
           tableColumns: metadata?.columns ?? []
         };

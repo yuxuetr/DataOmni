@@ -710,6 +710,7 @@ impl OracleConnection {
       byte_limit: options.byte_limit,
       bytes_read,
       omitted_result_sets,
+      extra_result_sets: Vec::new(),
     })
   }
 
@@ -753,6 +754,7 @@ impl OracleConnection {
       byte_limit: options.byte_limit,
       bytes_read: 0,
       omitted_result_sets: 0,
+      extra_result_sets: Vec::new(),
     })
   }
 

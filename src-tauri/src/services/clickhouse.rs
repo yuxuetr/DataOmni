@@ -929,6 +929,7 @@ impl ResultReader {
       byte_limit: self.options.byte_limit,
       bytes_read: self.bytes_read,
       omitted_result_sets: 0,
+      extra_result_sets: Vec::new(),
     }
   }
 }

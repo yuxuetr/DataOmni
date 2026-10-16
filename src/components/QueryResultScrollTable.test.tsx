@@ -57,6 +57,23 @@ describe('结果头部', () => {
   });
 });
 
+describe('一条语句的第几个结果集', () => {
+  it('标签写在结果头最前面', async () => {
+    await act(async () => {
+      root.render(
+        <QueryResultScrollTable
+          result={{ columns: ['n'], rows: [[1]], affected_rows: 1, execution_time: 0 }}
+          statementId="s1#2"
+          label="Result set 2 / 3"
+          formatExecutionTime={(ms) => `${ms}ms`}
+        />
+      );
+    });
+
+    expect(container.textContent?.startsWith('Result set 2 / 3')).toBe(true);
+  });
+});
+
 describe('表头的列类型', () => {
   // MariaDB 的 JSON 列是 LONGTEXT + utf8mb4_bin。sqlx 只凭 BINARY 标志起类型名，拿不到字符集，
   // 报成 LONGBLOB；表数据页照目录显示 longtext

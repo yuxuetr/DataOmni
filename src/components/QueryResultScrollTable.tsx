@@ -70,6 +70,8 @@ interface QueryResultScrollTableProps {
   statementId: string;
   /** 产生这份结果的那条 SQL。结果被截断时，导出整份要靠它重新执行一遍。 */
   resultSql?: string;
+  /** 一条语句返回几个结果集时，这是第几个 */
+  label?: string;
   formatExecutionTime: (ms: number) => string;
 }
 
@@ -77,6 +79,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
   result, 
   statementId, 
   resultSql,
+  label,
   formatExecutionTime 
 }) => {
   const t = useLanguageStore((state) => state.t);
@@ -405,6 +408,7 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
         {/* 窄窗口（半屏笔记本）里：行数、耗时这类事实不许折行，提示文字截成一行、
             全文放 title，按钮组不让位——此前「3 rows」折成两行、复制提示折成五行 */}
         <div className="mr-4 flex min-w-0 flex-1 items-center gap-4 text-sm text-fg-muted">
+          {label && <span className="shrink-0 whitespace-nowrap font-medium text-fg">{label}</span>}
           {/* 返回行的语句说行数，不返回的说影响了几行——此前两句一起印，SELECT 上
               「影响行数」就是行数本身（前端拿 rows.length 填的），DML 上「0 行」是噪音 */}
           {returnsRows
