@@ -231,6 +231,48 @@
 
 ---
 
+## 兼容性矩阵里的缺口（2026-10-16 盘点）
+
+按 README「兼容性矩阵」逐条分了类。服务端本身没有的（MySQL 5.7 的检查约束目录、函数索引、表达式默认值；
+TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；CockroachDB 错误里没有位置；ClickHouse 没有通用事务）
+**不算缺口**，界面上说清楚即可，已经在说。
+
+### 1.0 之内修（生成了错的语句或连不上，按缺陷算）
+
+- [ ] G1 MySQL 5.7：结构编辑里只改列名生成 `RENAME COLUMN`（8.0 语法），5.7 报语法错
+  - 做法：5.7 上改用 `CHANGE COLUMN 旧名 完整定义`（列定义本来就有）。
+- [ ] G2 MariaDB：查询结果表头把 JSON 列标成 BLOB
+
+### 1.0 之后，按这个次序
+
+- [ ] G3 openGauss：只存 sha256 口令的用户连不上（默认安装常常就是这样，信创用户第一次连就撞上）
+  - sqlx 不认 openGauss 的 sha256 认证（PBKDF2 系）。要自己实现这段握手：`[patch]` 改 sqlx，或只对 openGauss 加一步登录。
+  - 动手前先做五分钟实验：不改 sqlx 能不能在它前面完成认证。结果决定改在哪一层。
+- [ ] G4 Elasticsearch：API Key 认证（多一个请求头）
+- [ ] G5 Oracle：按 SID 连接（换一种连接描述符）
+- [ ] G6 CockroachDB：结构页的触发器改用 `SHOW CREATE TRIGGER` 读
+- [ ] G7 openGauss：序列属性页（没有 `pg_sequences`，直接查序列关系）
+- [ ] G8 Redis 集群与 Sentinel（redis-rs 有 `cluster-async` / `sentinel` feature；工作量在键浏览要跨节点扫）
+- [ ] G9 Neo4j 集群路由 `neo4j://`（用的 `neo4j` crate 已有 routing）
+- [ ] G10 SQL Server「真的执行一遍」（`SET STATISTICS XML ON`）
+- [ ] G11 Neo4j：界面上建关系
+- [ ] G12 ClickHouse：表格改一行按物理位置定位，堵上「数完到执行之间别处写进一模一样的一行会被一起改」
+  - 现在按整行的值定位，先数后改再核对。ClickHouse 服务端没有行锁（没有 `SELECT … FOR UPDATE`），通用事务只有实验版
+    （`allow_experimental_transactions`，要 Keeper、要改服务端配置），所以这不是客户端没实现。应用这边加锁只挡得住本应用，
+    挡不住别的写入方。
+  - 想法：WHERE 里再加 `_part = … AND _part_offset = …`（读的时候一起取）。新写进来的行在新的 part 里，不会被匹配；
+    中间发生合并时 part 名变了，匹配 0 行，核对报「没有执行」，安全。
+  - 先做实验：mutation 与 lightweight `DELETE` / `UPDATE` 的 WHERE 收不收这两个虚拟列，25.8 上各跑一次。不收就不做。
+
+### 要自己实现、当前版本不做
+
+- Oracle 原生 JSON / VECTOR 的读取（已有 `JSON_SERIALIZE` 绕法）；SQL Server `money` 超过约 9×10¹¹ 的精度（要 fork tiberius，
+  表数据页与导出不受影响）；MongoDB `db.coll.find()` 的 JS 写法（要 JS 引擎或子集解析器）；Oracle TLS（要钱包，现走 SSH 隧道）；
+  OceanBase 表达式默认值（要解析 `SHOW CREATE TABLE`，预览里看得见）。
+- 重估条件：有人报。
+
+---
+
 ## 还没做完的旧条目
 
 ### 2.4 表数据浏览
