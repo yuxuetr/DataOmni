@@ -295,6 +295,9 @@ async fn master_address(target: &RedisTarget, master: &str) -> Result<(String, u
 }
 
 async fn open(target: &RedisTarget, database: i64) -> Result<RedisConnection, String> {
+  if target.tls != TlsMode::Disabled {
+    crate::services::sqlx_pool::ensure_tls_provider();
+  }
   if target.cluster {
     return open_cluster(target).await;
   }

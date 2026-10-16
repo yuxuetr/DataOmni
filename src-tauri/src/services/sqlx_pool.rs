@@ -117,9 +117,10 @@ async fn unless_refused<T>(
 ///
 /// 依赖树里 rustls 的 ring 与 aws-lc 两个 feature 都开着（reqwest、neo4j、tiberius 带进 aws-lc），
 /// rustls 就不替我们挑默认的。sqlx 的 `verify-ca`（PostgreSQL）/ `VERIFY_CA`（MySQL）要用进程级默认值
-/// 去建「不核主机名」的校验器，取不到就 panic：选了「校验 CA」的连接一连就崩。已经装过（别处先装了）
-/// 就沿用那一个
-fn ensure_tls_provider() {
+/// 去建「不核主机名」的校验器，取不到就 panic：选了「校验 CA」的连接一连就崩。redis-rs 的 TLS 一律
+/// 用进程级默认值，所以 Redis 开连接前也调一次（此前启动后第一条连接是加密的 Redis 时一连就崩）。
+/// 已经装过（别处先装了）就沿用那一个
+pub(crate) fn ensure_tls_provider() {
   let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
