@@ -112,7 +112,18 @@ async fn unless_refused<T>(
   }
 }
 
+/// 进程级的 rustls 加密实现装成 ring（sqlx 用的就是它）。
+///
+/// 依赖树里 rustls 的 ring 与 aws-lc 两个 feature 都开着（reqwest、neo4j、tiberius 带进 aws-lc），
+/// rustls 就不替我们挑默认的。sqlx 的 `verify-ca`（PostgreSQL）/ `VERIFY_CA`（MySQL）要用进程级默认值
+/// 去建「不核主机名」的校验器，取不到就 panic：选了「校验 CA」的连接一连就崩。已经装过（别处先装了）
+/// 就沿用那一个
+fn ensure_tls_provider() {
+  let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 pub async fn open(connection_string: &str) -> Result<DbPool, String> {
+  ensure_tls_provider();
   if connection_string.starts_with("postgres://") || connection_string.starts_with("postgresql://")
   {
     let options =
@@ -296,6 +307,16 @@ fn scheme_of(connection_string: &str) -> &str {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn verify_ca_finds_a_process_level_crypto_provider() {
+    ensure_tls_provider();
+    // sqlx 建 `verify-ca` 的校验器走的就是这一步：没有进程级默认值时 `builder` 就 panic。
+    // 空的根证书集合在 `build` 时报错，那是后话，这里只看取不取得到加密实现
+    let roots = std::sync::Arc::new(rustls::RootCertStore::empty());
+    let _ = rustls::client::WebPkiServerVerifier::builder(roots).build();
+    assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+  }
 
   #[test]
   fn only_the_two_network_families_are_opened_here() {

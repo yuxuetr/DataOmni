@@ -580,6 +580,7 @@ bun install
 - 修复：MySQL 5.7（与 MariaDB 10.5 之前）上结构编辑只改列名时报语法错；现在用 `CHANGE COLUMN` 改名
 - 修复：MySQL 系的查询结果里，`_bin` 排序规则的文本列（MariaDB 的 JSON 列、大小写敏感的 varchar）表头标成 `LONGBLOB` /
   `VARBINARY`；认得出来源表的查询（单表、裸列名）现在照目录显示声明类型，与表数据页一致
+- 修复：PostgreSQL / MySQL 连接的 TLS 选「校验 CA」时一连接就出错（后端 panic，rustls 挑不出默认的加密实现）
 
 ### v0.6.1（2026-10-07）
 
