@@ -292,6 +292,9 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
     （pg_dump 那条并行时撞上别的用例删表，单独跑通过）；前端单测与对话框渲染用例（happy-dom）旧代码上红。真应用里没渲染看过。
   - 顺带：openGauss-lite 上导出往返那条建表报 `unsupported XML feature`（lite 版没编 libxml），同 CockroachDB 那条，下一个提交处理。
 - [ ] G8 Redis 集群与 Sentinel（redis-rs 有 `cluster-async` / `sentinel` feature；工作量在键浏览要跨节点扫）
+  - Sentinel 已做（`8cd7ea1`）：每开一条连接先问哨兵主节点地址再照单机连（没用驱动的 sentinel feature）；哨兵不设口令时
+    不带口令再问；经 SSH 隧道拒。主从切换后要「重新连接」（`ConnectionManager` 断线重连仍连旧地址）——重估条件：有人切换后撞上
+    `READONLY`。只填一个哨兵地址：重估条件：有人要列多个哨兵。验证：本地一主一从一哨兵，含一次 `SENTINEL FAILOVER`；打包版上没连过。
 - [ ] G9 Neo4j 集群路由 `neo4j://`（用的 `neo4j` crate 已有 routing）
 - [ ] G10 SQL Server「真的执行一遍」（`SET STATISTICS XML ON`）
 - [ ] G11 Neo4j：界面上建关系
