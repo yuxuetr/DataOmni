@@ -400,7 +400,8 @@ describe('一条语句的后续结果集', () => {
         rows: [['id', 'int']],
         affected_rows: 1,
         truncated: true,
-        truncation_reason: 'row_limit'
+        truncation_reason: 'row_limit',
+        editability: { editable: false, reason: 'later-result-set' }
       })
     ]);
   });

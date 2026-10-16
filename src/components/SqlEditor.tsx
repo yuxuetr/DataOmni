@@ -999,7 +999,6 @@ const SqlStatementCard: React.FC<SqlStatementCardProps> = ({
                 result={extra}
                 statementId={`${statement.id}#${position + 2}`}
                 label={t('result.resultSetLabel', { index: position + 2, total: extraResultSets.length + 1 })}
-                formatExecutionTime={formatExecutionTime}
               />
             </div>
           ))}

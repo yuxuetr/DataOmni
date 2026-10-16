@@ -72,6 +72,28 @@ describe('一条语句的第几个结果集', () => {
 
     expect(container.textContent?.startsWith('Result set 2 / 3')).toBe(true);
   });
+
+  // 打包版上看到的：第二个起只读却没有锁和说明，而且印着整条语句的耗时，像是它自己花了这么久
+  it('后面的结果集说明只读，不印耗时', async () => {
+    await act(async () => {
+      root.render(
+        <QueryResultScrollTable
+          result={{
+            columns: ['n'],
+            rows: [[1]],
+            affected_rows: 1,
+            execution_time: 134,
+            editability: { editable: false, reason: 'later-result-set' }
+          }}
+          statementId="s1#2"
+          label="Result set 2 / 2"
+        />
+      );
+    });
+
+    expect(container.textContent).toContain('Result sets after the first are read-only');
+    expect(container.textContent).not.toContain('134');
+  });
 });
 
 describe('表头的列类型', () => {

@@ -72,7 +72,8 @@ interface QueryResultScrollTableProps {
   resultSql?: string;
   /** 一条语句返回几个结果集时，这是第几个 */
   label?: string;
-  formatExecutionTime: (ms: number) => string;
+  /** 不给就不印耗时：同一条语句后面的结果集没有自己的耗时 */
+  formatExecutionTime?: (ms: number) => string;
 }
 
 export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({ 
@@ -184,6 +185,9 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
     [result.tableColumns]
   );
   const readOnlyReason = (() => {
+    if (editability?.editable === false && editability.reason === 'later-result-set') {
+      return t('result.readOnly.laterResultSet');
+    }
     // 这类连接还没接上表格编辑：说这个，而不是去猜索引读没读到
     if (editability && !supportsFeature(dialect, 'dataEditing')) {
       return t('table.readOnly.pendingFeature');
@@ -430,7 +434,9 @@ export const QueryResultScrollTable: React.FC<QueryResultScrollTableProps> = ({
               {t('result.omittedResultSets', { count: result.omitted_result_sets ?? 0 })}
             </span>
           )}
-          <span className="shrink-0 whitespace-nowrap">{t('result.executionTime', { time: formatExecutionTime(result.execution_time) })}</span>
+          {formatExecutionTime && (
+            <span className="shrink-0 whitespace-nowrap">{t('result.executionTime', { time: formatExecutionTime(result.execution_time) })}</span>
+          )}
           {canEdit && <span className="min-w-0 truncate text-fg-subtle" title={t('result.doubleClickToEdit')}>{t('result.doubleClickToEdit')}</span>}
           {/* 不能改就说清为什么。只把编辑入口收起来，用户会以为这个版本没有这个功能 */}
           {readOnlyReason && (

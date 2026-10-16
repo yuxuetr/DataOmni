@@ -379,6 +379,7 @@ export const en: Translations = {
   'result.affectedRows': 'Rows affected: {count}',
   'result.executionTime': 'Duration: {time}',
   'result.doubleClickToEdit': 'Double-click a cell to edit',
+  'result.readOnly.laterResultSet': 'Result sets after the first are read-only: their rows do not map to the rows of a table.',
   'result.readOnly.complexQuery': 'This result cannot be edited in place: there is no way to tell which row of which table each row came from. Only a query shaped like SELECT <plain column names> FROM <one table> proves that mapping — joins, unions, grouping, DISTINCT, aliases and computed columns all break it.',
   'result.readOnly.missingUniqueKey': 'This result cannot be edited in place: the target table has neither a primary key nor a unique index that is complete, not null and not partial, so no WHERE clause can pin down a single row.',
   'result.readOnly.keyNotProjected': 'This result cannot be edited in place: the key columns that identify a row were not selected, so their values are not available. Add them to the column list, or use SELECT *.',

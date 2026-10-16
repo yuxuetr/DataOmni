@@ -396,6 +396,7 @@ export const zh = {
   'result.affectedRows': '影响行数: {count}',
   'result.executionTime': '执行时间: {time}',
   'result.doubleClickToEdit': '双击单元格编辑',
+  'result.readOnly.laterResultSet': '第一个之后的结果集只读：它们不对应某张表的行。',
   'result.readOnly.complexQuery': '这份结果不能就地改：认不出它的每一行对应某张表的哪一行。只有形如「SELECT 若干裸列名 FROM 单表」的查询能证明这种对应——有连接、并集、分组、去重、别名或表达式列时都不行。',
   'result.readOnly.missingUniqueKey': '这份结果不能就地改：目标表既没有主键，也没有一个非空、完整、无谓词的唯一索引，UPDATE 的条件无法锁定到唯一一行。',
   'result.readOnly.keyNotProjected': '这份结果不能就地改：定位一行要用的键列没有被查出来，拿不到键值。把键列加进 SELECT 的列清单，或者直接用 SELECT *。',

@@ -30,7 +30,9 @@ export type ResultReadOnlyReason =
   /** 有键，但键列没被投影出来，拿不到键值 */
   | 'key-not-projected'
   /** 元数据还在读 */
-  | 'metadata-pending';
+  | 'metadata-pending'
+  /** 同一条语句的第二个及以后的结果集（`sp_help`、`CALL`）：不认来源表 */
+  | 'later-result-set';
 
 export type ResultEditability =
   | { editable: true; schema: string | null; table: string; keyColumns: string[] }

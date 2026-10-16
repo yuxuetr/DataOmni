@@ -853,7 +853,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           byte_limit: driverResult.byte_limit,
           bytes_read: driverResult.bytes_read,
           omitted_result_sets: driverResult.omitted_result_sets,
-          // 后面的结果集不认来源表，一律只读：不带 editability
+          // 后面的结果集不认来源表，一律只读，结果头上照实说。耗时是整条语句的，只在第一个上印
           extra_result_sets: (driverResult.extra_result_sets ?? []).map((set) => ({
             columns: set.columns,
             column_metadata: set.column_metadata,
@@ -863,7 +863,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
             truncated: set.truncated,
             truncation_reason: set.truncation_reason,
             row_limit: driverResult.row_limit,
-            byte_limit: driverResult.byte_limit
+            byte_limit: driverResult.byte_limit,
+            editability: { editable: false, reason: 'later-result-set' } as const
           })),
           editability,
           tableColumns: metadata?.columns ?? []
