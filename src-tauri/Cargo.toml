@@ -33,6 +33,10 @@ tauri-plugin-sql = { version = "2", features = ["sqlite", "mysql", "postgres"] }
 # sqlx 的 TLS 用的就是它；直接依赖为认出握手失败的告警，以及把 ring 装成进程级默认的加密实现
 # （`sqlx_pool::ensure_tls_provider`），版本跟 sqlx 走
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+# openGauss 转发口到服务端那一段的 TLS（`services/opengauss_relay.rs`），配法照 sqlx。两个都已经在依赖树里；
+# 关掉 tokio-rustls 的默认 feature，不带进第二套加密实现（aws-lc）
+tokio-rustls = { version = "0.26", default-features = false }
+webpki-roots = "1"
 sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "mysql", "postgres", "sqlite", "json", "time", "chrono", "bigdecimal", "uuid"] }
 # 只为 `sqlite3_interrupt` / `sqlite3_get_autocommit`：钉死在 sqlx 用的那一版（sqlx 的文档要求直接调它时这么做），
 # 不开任何 feature，构建方式跟着 sqlx 走
@@ -53,6 +57,8 @@ encoding_rs = "0.8"
 # 钉住 2.2.0：2.4.x 会把 tauri-runtime-wry 顶到与当前 tauri 2.5.1 不兼容的版本
 tauri-plugin-window-state = "=2.2.0"
 urlencoding = "2.1.3"
+# 拆连接串（openGauss 转发口要口令，sqlx 的连接选项不给读；命令行的真库用例也用）。已经是依赖树里的一项
+url = "2"
 keyring = "4.2.0"
 # 命令行不起 Tauri，自己算应用的配置目录（同 `PathResolver::app_config_dir`）。已经是 tauri 的依赖
 dirs = "6"
@@ -60,6 +66,9 @@ dirs = "6"
 sha2 = "0.10"
 # 命令行的开放凭证（`rfcs/agent-cli.md` §5.4）。已经是依赖树里的一项
 hmac = "0.12"
+# openGauss 的 sha256 认证（`services/opengauss_relay.rs`）：PBKDF2-HMAC-SHA1。和上面的 hmac、sha2 同一代 digest
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+sha1 = "0.10"
 # `net` 是连接诊断要的：解析主机与试连端口（`services/connection_probe.rs`）
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
 # SQL Server（`services/sql_server.rs`）。sqlx 0.7 起不再带 MSSQL 驱动，插件也就没有；
@@ -97,8 +106,6 @@ tauri-plugin-log = "2"
 log = "0.4"
 
 [dev-dependencies]
-# 命令行的真库用例把 `DATAOMNI_*_TEST_URL` 拆成连接的各个字段
-url = "2"
 # 只为在测试里**造**一把带口令的私钥：russh 依赖的 ssh-key 默认不开
 # `rand_core`，没有它就没法生成密钥，于是「有口令的私钥」这条门要么依赖
 # 仓库里的密钥文件（扫描器会报），要么依赖外部的 ssh-keygen（装没装不一定）。

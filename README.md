@@ -87,8 +87,8 @@ MySQL 一组 23 条、PostgreSQL 一组 23 条），不是按协议兼容推断�
   预览里看得见，动这种列前先核对。备份用 `mysqldump` 或 `mariadb-dump` 都行；恢复要用 MariaDB 的
   `mariadb` 客户端——mysql 命令行客户端（Homebrew 的 26.7）对它的每一条非查询语句都报 `Malformed packet`。
 - **openGauss**（GaussDB 同源）：建库时要 `DBCOMPATIBILITY 'PG'`（默认的 `'A'` 是 Oracle 语义，没测过）。
-  只存 sha256 口令的用户连不上——标准 PostgreSQL 驱动不认它的 sha256 认证，连接时会说明服务端怎么改
-  （`password_encryption_type = 1` 后重设口令）。缺口：序列的属性页读不出（没有 `pg_sequences`）；
+  只存 sha256 口令的用户（`password_encryption_type = 2`，openGauss 的默认）也连得上：标准 PostgreSQL 驱动不认
+  它的 sha256 认证，应用在本机开一个只给这条连接用的转发口代为登录，TLS 照连接里的设置。缺口：序列的属性页读不出（没有 `pg_sequences`）；
   违反约束时不给约束名与表名（服务端不填那两个字段）。
 - **CockroachDB 的缺口**：结构页的触发器一段读不到（它没有
   `pg_get_triggerdef()`，目录表里也查不到触发器，只有 `SHOW CREATE TRIGGER`
@@ -581,6 +581,7 @@ bun install
 - 修复：MySQL 系的查询结果里，`_bin` 排序规则的文本列（MariaDB 的 JSON 列、大小写敏感的 varchar）表头标成 `LONGBLOB` /
   `VARBINARY`；认得出来源表的查询（单表、裸列名）现在照目录显示声明类型，与表数据页一致
 - 修复：PostgreSQL / MySQL 连接的 TLS 选「校验 CA」时一连接就出错（后端 panic，rustls 挑不出默认的加密实现）
+- openGauss / GaussDB 只存 sha256 口令的用户（openGauss 的默认）现在连得上，不用再请管理员改口令的存法
 
 ### v0.6.1（2026-10-07）
 

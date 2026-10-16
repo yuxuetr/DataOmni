@@ -12,12 +12,13 @@
 //! 这两家的目录查询与关池子也不走插件，走这里的 [`select`] / [`close`]：插件的
 //! 那两条命令持着 `DbInstances` 的读锁等网络，理由见 [`shared`]。SQLite 仍走插件：
 //! 文件路径的映射和「不存在就建」对本地文件是合适的，本地查询也不会挂在网络上。
+use crate::services::opengauss_relay;
 use crate::services::plugin_decode::{mysql_to_json, postgres_to_json};
 use crate::services::QueryError;
 use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
 use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgSslMode};
 use sqlx::{Column, Row};
 use std::str::FromStr;
 use std::time::Duration;
@@ -129,12 +130,31 @@ pub async fn open(connection_string: &str) -> Result<DbPool, String> {
     let options =
       PgConnectOptions::from_str(connection_string).map_err(|error| error.to_string())?;
     let endpoint = tcp_endpoint(options.get_socket(), options.get_host(), options.get_port());
-    let pool = unless_refused(
+    let opened = unless_refused(
       endpoint,
-      PgPoolOptions::new().idle_timeout(IDLE_TIMEOUT).connect_with(options),
+      PgPoolOptions::new().idle_timeout(IDLE_TIMEOUT).connect_with(options.clone()),
     )
-    .await
-    .map_err(|error| describe_open_error(&error))?;
+    .await;
+    let pool = match opened {
+      Ok(pool) => pool,
+      // openGauss 只存 sha256 口令的用户：经本机的转发口再连一次（`opengauss_relay`）
+      Err(error) if opengauss_relay::is_sha256_rejection(&error.to_string()) => {
+        let upstream = opengauss_relay::Upstream {
+          host: options.get_host().to_string(),
+          port: options.get_port(),
+          password: url_password(connection_string).unwrap_or_default(),
+          tls: relay_tls(&options, connection_string),
+        };
+        let port = opengauss_relay::local_port(upstream).await?;
+        let relayed = options.host("127.0.0.1").port(port).ssl_mode(PgSslMode::Disable);
+        PgPoolOptions::new()
+          .idle_timeout(IDLE_TIMEOUT)
+          .connect_with(relayed)
+          .await
+          .map_err(|error| describe_open_error(&error))?
+      }
+      Err(error) => return Err(describe_open_error(&error)),
+    };
     return Ok(DbPool::Postgres(pool));
   }
   if handles(connection_string) {
@@ -175,6 +195,36 @@ pub async fn open(connection_string: &str) -> Result<DbPool, String> {
     return Ok(DbPool::MySql(pool));
   }
   Err(format!("unsupported connection string scheme: {}", scheme_of(connection_string)))
+}
+
+/// 连接串里的口令（解码后）。sqlx 的连接选项不给读口令
+fn url_password(connection_string: &str) -> Option<String> {
+  let url = url::Url::parse(connection_string).ok()?;
+  let password = url.password()?;
+  urlencoding::decode(password).ok().map(|decoded| decoded.into_owned())
+}
+
+/// 转发口到服务端那一段照原来的 TLS 设置。证书路径 sqlx 的连接选项也不给读，从连接串里取
+fn relay_tls(options: &PgConnectOptions, connection_string: &str) -> opengauss_relay::Tls {
+  let parameter = |name: &str| {
+    url::Url::parse(connection_string)
+      .ok()?
+      .query_pairs()
+      .find(|(key, _)| key == name)
+      .map(|(_, value)| value.into_owned())
+  };
+  opengauss_relay::Tls {
+    mode: match options.get_ssl_mode() {
+      PgSslMode::Disable | PgSslMode::Allow => opengauss_relay::TlsMode::Disable,
+      PgSslMode::Prefer => opengauss_relay::TlsMode::Prefer,
+      PgSslMode::Require => opengauss_relay::TlsMode::Require,
+      PgSslMode::VerifyCa => opengauss_relay::TlsMode::VerifyCa,
+      PgSslMode::VerifyFull => opengauss_relay::TlsMode::VerifyFull,
+    },
+    root_certificate: parameter("sslrootcert"),
+    client_certificate: parameter("sslcert"),
+    client_key: parameter("sslkey"),
+  }
 }
 
 /// 这条连接串的池子，**拿到就放掉 `DbInstances` 的锁**。

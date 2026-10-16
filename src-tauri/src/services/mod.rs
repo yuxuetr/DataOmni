@@ -17,6 +17,7 @@ pub mod mongo_shell;
 pub mod mongodb;
 pub mod neo4j;
 pub mod object_catalog;
+pub mod opengauss_relay;
 pub mod oracle;
 pub mod plugin_decode;
 pub mod pool_registry;

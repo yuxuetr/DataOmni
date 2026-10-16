@@ -206,6 +206,49 @@ async fn mysql_57_renames_columns_by_restating_them() {
   }
 }
 
+/// openGauss 只存 sha256 口令的用户（`password_encryption_type = 2`）：普通连接 sqlx 不认那种认证，
+/// 应用经本机的转发口登录（`opengauss_relay`）。连接串照常写，`sslmode` 也照常——转发口到服务端那一段
+/// 照它加密与校验。只在设了 `DATAOMNI_OPENGAUSS_SHA256_TEST_URL`（这样一个用户的连接串）时跑
+#[tokio::test]
+async fn opengauss_sha256_user_logs_in_through_the_relay() {
+  let Some(url) =
+    std::env::var("DATAOMNI_OPENGAUSS_SHA256_TEST_URL").ok().filter(|url| !url.is_empty())
+  else {
+    return;
+  };
+  let parsed = url::Url::parse(&url).expect("parse test url");
+  let pool = match dataomni_lib::services::sqlx_pool::open(&url).await.expect("open through relay")
+  {
+    DbPool::Postgres(pool) => pool,
+    _ => panic!("expected a PostgreSQL pool"),
+  };
+  let user: String =
+    sqlx::query_scalar("SELECT current_user::text").fetch_one(&pool).await.expect("current_user");
+  assert_eq!(user, parsed.username());
+  // 带参数的语句走扩展协议（Parse / Bind），转发口之后照常
+  let echoed: String = sqlx::query_scalar("SELECT $1::text")
+    .bind("经转发口")
+    .fetch_one(&pool)
+    .await
+    .expect("bound parameter");
+  assert_eq!(echoed, "经转发口");
+  // 连接池里不止一条连接，每条都要登录成功
+  let (a, b) = tokio::join!(
+    sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&pool),
+    sqlx::query_scalar::<_, i32>("SELECT 2").fetch_one(&pool)
+  );
+  assert_eq!((a.expect("first"), b.expect("second")), (1, 2));
+
+  // 口令错的时候说的是服务端的原话，不是转发口断开
+  let mut wrong = parsed.clone();
+  wrong.set_password(Some("not-the-password")).expect("set password");
+  let error = dataomni_lib::services::sqlx_pool::open(wrong.as_str())
+    .await
+    .err()
+    .expect("wrong password must fail");
+  assert!(error.contains("28P01") || error.contains("Invalid username/password"), "{error}");
+}
+
 #[tokio::test]
 async fn postgres_supports_basic_read_write() {
   let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
