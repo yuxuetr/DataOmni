@@ -15,6 +15,7 @@ import {
   activeTaskCount,
   describeTask,
   formatTaskElapsed,
+  taskTitle,
   type BackgroundTask
 } from '../utils/backgroundTasks';
 import { useTaskStore } from '../stores/taskStore';
@@ -105,7 +106,7 @@ function TaskRow({ task }: { task: BackgroundTask }) {
       <div className="flex items-start gap-2">
         <StatusIcon tone={display.tone} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-xs font-medium text-fg">{task.title}</p>
+          <p className="truncate text-xs font-medium text-fg">{taskTitle(task, t)}</p>
           {/* 失败时 detail 是原因，pg_dump 之类的原话能有十几行；全文在日志里 */}
           <p className="line-clamp-3 break-words text-xs text-fg-muted">
             {t(display.labelKey)}

@@ -366,7 +366,7 @@ function App() {
 
       // 后台任务跑在这个进程里，窗口一关就停在半路：分批导入前面的批次已经提交，
       // 下次打开任务中心是空的，看不出表里只进了一半
-      const interrupted = closeInterruption(useTaskStore.getState().tasks);
+      const interrupted = closeInterruption(useTaskStore.getState().tasks, translateNow);
       if (interrupted) {
         const confirmed = await askToClose({
           title: translateNow('app.closeWithTasks.title'),

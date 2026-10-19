@@ -4,7 +4,7 @@ import { save } from '@tauri-apps/plugin-dialog';
 import { describeError } from '../utils/describeError';
 import { suggestExportFileName } from '../utils/exportResult';
 import { useLanguageStore } from '../stores/languageStore';
-import { useTaskStore, type MongoExportTaskPayload } from '../stores/taskStore';
+import { taskTitleFields, useTaskStore, type MongoExportTaskPayload } from '../stores/taskStore';
 import { Field, SegmentedControl } from './FormControls';
 import { isImeKeyEvent } from '../utils/shortcuts';
 
@@ -71,7 +71,7 @@ export function MongoExportDialog({
     }
     startTask({
       kind: 'export',
-      title: t('task.title.export', { name }),
+      ...taskTitleFields('task.title.export', { name }),
       payload: { mongo: { connectionString, database, collection, filter, sort, format }, path }
     });
     onClose();

@@ -7,6 +7,7 @@ import {
   formatTaskElapsed,
   importOutcome,
   MAX_LOG_ENTRIES,
+  taskTitle,
   TASK_STATUSES,
   type BackgroundTask
 } from './backgroundTasks';
@@ -229,5 +230,20 @@ describe('closeInterruption', () => {
   it('只有导出、备份时不提「留在表里」', () => {
     expect(closeInterruption([task({ kind: 'backup', title: '备份 app.db' })]))
       .toEqual({ count: 1, titles: ['备份 app.db'], hasImport: false });
+  });
+});
+
+describe('taskTitle', () => {
+  const t = (key: string, params?: Record<string, unknown>) => `${key}:${String(params?.name)}`;
+
+  it('有文案键就按当前语言重新翻译，不用起任务时那份', () => {
+    const exported = task({ title: '导出 orders', titleKey: 'task.title.export', titleParams: { name: 'orders' } });
+    expect(taskTitle(exported, t as never)).toBe('task.title.export:orders');
+    expect(closeInterruption([exported], t as never)?.titles).toEqual(['task.title.export:orders']);
+  });
+
+  // 反向：没有键的（旧任务）照旧用存下的字符串
+  it('没有文案键就用存下的标题', () => {
+    expect(taskTitle(task({ title: '导出 orders' }), t as never)).toBe('导出 orders');
   });
 });

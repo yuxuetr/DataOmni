@@ -18,7 +18,7 @@ import {
 import { describeError } from '../utils/describeError';
 import { formatBytes } from '../utils/formatBytes';
 import { useLanguageStore } from '../stores/languageStore';
-import { useTaskStore } from '../stores/taskStore';
+import { taskTitleFields, useTaskStore } from '../stores/taskStore';
 import type { TranslationKey } from '../i18n/translate';
 import { Checkbox, Field, SegmentedControl } from './FormControls';
 import type { SqlIdentifierDialect } from '../utils/sqlIdentifiers';
@@ -166,7 +166,7 @@ export function CsvImportDialog({
     }
     const taskId = startTask({
       kind: 'import',
-      title: t('task.title.import', { table: schema ? `${schema}.${table}` : table }),
+      ...taskTitleFields('task.title.import', { table: schema ? `${schema}.${table}` : table }),
       payload: {
         connectionId,
         schema,

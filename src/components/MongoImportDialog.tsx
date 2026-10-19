@@ -3,7 +3,7 @@ import { FileUp, Upload } from 'lucide-react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { describeError } from '../utils/describeError';
 import { useLanguageStore } from '../stores/languageStore';
-import { useTaskStore, type MongoImportTaskPayload } from '../stores/taskStore';
+import { taskTitleFields, useTaskStore, type MongoImportTaskPayload } from '../stores/taskStore';
 import { Field, SegmentedControl } from './FormControls';
 import { isImeKeyEvent } from '../utils/shortcuts';
 
@@ -63,7 +63,7 @@ export function MongoImportDialog({ connectionString, database, collection, onCl
     }
     startTask({
       kind: 'import',
-      title: t('task.title.import', { table: name }),
+      ...taskTitleFields('task.title.import', { table: name }),
       payload: { mongo: { connectionString, database, collection, mode }, path }
     });
     onClose();

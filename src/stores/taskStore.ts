@@ -7,8 +7,10 @@ import {
   isTaskActive,
   type BackgroundTask,
   type TaskKind,
-  type TaskLogEntry
+  type TaskLogEntry,
+  type TaskTitleFields
 } from '../utils/backgroundTasks';
+import type { TranslationKey, TranslationParams } from '../i18n/translate';
 import { translateBackendMessage } from '../utils/backendError';
 import { describeError } from '../utils/describeError';
 import { formatBytes } from '../utils/formatBytes';
@@ -69,10 +71,16 @@ export interface BackupTaskPayload {
   database?: string;
 }
 
-export type TaskRequest =
-  | { kind: 'import'; title: string; payload: ImportTaskPayload }
-  | { kind: 'export'; title: string; payload: ExportTaskPayload }
-  | { kind: 'backup'; title: string; payload: BackupTaskPayload };
+export type TaskRequest = TaskTitleFields & (
+  | { kind: 'import'; payload: ImportTaskPayload }
+  | { kind: 'export'; payload: ExportTaskPayload }
+  | { kind: 'backup'; payload: BackupTaskPayload }
+);
+
+/** 起任务时的标题：存下文案键，任务中心按当前语言译；`title` 是此刻的译文，作回落 */
+export function taskTitleFields(key: TranslationKey, params: TranslationParams): TaskTitleFields {
+  return { title: translateNow(key, params), titleKey: key, titleParams: params };
+}
 
 interface ImportProgress {
   rowsRead: number;
@@ -320,6 +328,8 @@ export const useTaskStore = create<TaskState>((set, get) => {
       id,
       kind: request.kind satisfies TaskKind,
       title: request.title,
+      titleKey: request.titleKey,
+      titleParams: request.titleParams,
       status: 'running',
       detail: null,
       log: [entry('info', translateNow('task.log.started'))],

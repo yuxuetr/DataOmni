@@ -1,7 +1,6 @@
 import { save } from '@tauri-apps/plugin-dialog';
 import { DatabaseType, type ConnectionProfile } from '../contracts';
-import { translateNow } from '../stores/languageStore';
-import { useTaskStore } from '../stores/taskStore';
+import { taskTitleFields, useTaskStore } from '../stores/taskStore';
 import { isFileDatabase } from './databaseFiles';
 import { serverPresetOf } from './serverPresets';
 
@@ -73,7 +72,7 @@ export async function startDatabaseBackup(connection: ConnectionProfile, databas
   }
   useTaskStore.getState().start({
     kind: 'backup',
-    title: translateNow('backup.taskTitle', { name: backupTaskName(connection, database) }),
+    ...taskTitleFields('backup.taskTitle', { name: backupTaskName(connection, database) }),
     payload: { connectionId: connection.id, path, ...(mongo ? { database } : {}) }
   });
 }

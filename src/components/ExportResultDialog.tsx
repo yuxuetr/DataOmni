@@ -17,7 +17,7 @@ import { describeError } from '../utils/describeError';
 import { formatBytes } from '../utils/formatBytes';
 import { Checkbox, Field, PLAIN_TEXT_INPUT, SegmentedControl } from './FormControls';
 import { useLanguageStore } from '../stores/languageStore';
-import { useTaskStore } from '../stores/taskStore';
+import { taskTitleFields, useTaskStore } from '../stores/taskStore';
 import type { TranslationKey } from '../i18n/translate';
 import { isImeKeyEvent } from '../utils/shortcuts';
 
@@ -182,7 +182,7 @@ export function ExportResultDialog({
         // 这个框关掉也不会打断它
         startTask({
           kind: 'export',
-          title: t('task.title.export', { name: sourceName }),
+          ...taskTitleFields('task.title.export', { name: sourceName }),
           payload: { connectionId: connectionId ?? '', sql: scope.sql, path, options }
         });
         onClose();

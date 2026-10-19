@@ -1,4 +1,4 @@
-import type { TranslationKey } from '../i18n/translate';
+import type { TranslationKey, TranslationParams } from '../i18n/translate';
 
 export type TaskKind = 'import' | 'export' | 'backup';
 
@@ -27,7 +27,24 @@ export interface TaskLogEntry {
   text: string;
 }
 
-export interface BackgroundTask {
+/**
+ * 任务标题。有文案键时按当前语言翻译，`title` 是起任务那一刻的译文，只作回落——
+ * 和标签页标题（`tabTitle`）同一个道理：切了语言，正在跑的任务不该还是另一种语言
+ */
+export interface TaskTitleFields {
+  title: string;
+  titleKey?: TranslationKey;
+  titleParams?: TranslationParams;
+}
+
+export function taskTitle(
+  task: TaskTitleFields,
+  t: (key: TranslationKey, params?: TranslationParams) => string
+): string {
+  return task.titleKey ? t(task.titleKey, task.titleParams) : task.title;
+}
+
+export interface BackgroundTask extends TaskTitleFields {
   id: string;
   kind: TaskKind;
   /** 一句话说清这是哪个任务：「导入 public.users」 */
@@ -172,7 +189,8 @@ export function activeTaskCount(tasks: readonly BackgroundTask[]): number {
  * 导出与备份只留下一个 `.part`。没有就返回 null，不用问
  */
 export function closeInterruption(
-  tasks: readonly BackgroundTask[]
+  tasks: readonly BackgroundTask[],
+  t?: (key: TranslationKey, params?: TranslationParams) => string
 ): { count: number; titles: string[]; hasImport: boolean } | null {
   const active = tasks.filter((task) => isTaskActive(task.status));
   if (active.length === 0) {
@@ -180,7 +198,7 @@ export function closeInterruption(
   }
   return {
     count: active.length,
-    titles: active.map((task) => task.title),
+    titles: active.map((task) => (t ? taskTitle(task, t) : task.title)),
     hasImport: active.some((task) => task.kind === 'import')
   };
 }
