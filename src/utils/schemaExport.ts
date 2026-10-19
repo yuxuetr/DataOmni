@@ -34,6 +34,22 @@ export interface DdlScriptSource {
   reconstructed: boolean;
 }
 
+// eslint-disable-next-line no-control-regex
+const ILLEGAL_IN_FILE_NAME = /[\\/:*?"<>|\u0000-\u001f]/g;
+
+/**
+ * 保存对话框里的默认文件名。来源是库名或连接名：SQLite / DuckDB 的库名是整条文件路径
+ * （只取文件名、去掉扩展名），DuckDB 内存库是 `:memory:`，连接名可以带 `/`。
+ * Windows 不许文件名里有 `\ / : * ? " < > |`，原样塞进去对话框会拒绝或落到别的目录
+ */
+export function suggestSchemaExportFileName(source: string, extension: 'sql' | 'md', date: string): string {
+  const segments = source.split(/[\\/]/);
+  const last = segments.pop() ?? '';
+  const name = segments.length > 0 ? last.replace(/\.[^.]+$/, '') : last;
+  const cleaned = name.replace(ILLEGAL_IN_FILE_NAME, ' ').trim().replace(/\s+/g, ' ');
+  return `${cleaned || 'schema'}-schema-${date}.${extension}`;
+}
+
 /**
  * 选中的那批表拼成一个 `.sql`：开头一段注释说是什么、读不到的有哪几张，
  * 之后每张表一段，原文就是数据库自己给的（`SHOW CREATE TABLE`）。

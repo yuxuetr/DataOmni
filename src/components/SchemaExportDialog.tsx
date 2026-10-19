@@ -14,7 +14,13 @@ import { filterObjects, MAX_RENDERED_TREE_ITEMS, type DatabaseObject } from '../
 import { tableKey, toErLinks, toErTables } from '../utils/erLayout';
 import { buildDataDictionary } from '../utils/dataDictionary';
 import { serverLabel } from '../utils/serverPresets';
-import { buildDdlScript, dictionarySubset, orderByDependencies, readTableDdls } from '../utils/schemaExport';
+import {
+  buildDdlScript,
+  dictionarySubset,
+  orderByDependencies,
+  readTableDdls,
+  suggestSchemaExportFileName
+} from '../utils/schemaExport';
 import { isImeKeyEvent } from '../utils/shortcuts';
 
 interface SchemaExportDialogProps {
@@ -92,7 +98,7 @@ export function SchemaExportDialog({ connection, tables, onClose }: SchemaExport
     const databaseName = connection.database ?? chosen[0].schema ?? '';
     const date = localDate(new Date());
     const path = await save({
-      defaultPath: `${databaseName || connection.name}-schema-${date}.${format === 'sql' ? 'sql' : 'md'}`,
+      defaultPath: suggestSchemaExportFileName(databaseName || connection.name, format === 'sql' ? 'sql' : 'md', date),
       filters: format === 'sql'
         ? [{ name: 'SQL', extensions: ['sql'] }]
         : [{ name: 'Markdown', extensions: ['md'] }]

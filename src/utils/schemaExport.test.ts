@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { translate } from '../i18n/translate';
-import { buildDdlScript, dictionarySubset, mapWithConcurrency, orderByDependencies, readTableDdls } from './schemaExport';
+import {
+  buildDdlScript,
+  dictionarySubset,
+  mapWithConcurrency,
+  orderByDependencies,
+  readTableDdls,
+  suggestSchemaExportFileName
+} from './schemaExport';
 import type { SchemaMetadataQueries } from './catalogQueries';
 import type { DatabaseObject } from './databaseObjects';
 import type { ErLink, ErTable } from './erLayout';
@@ -62,6 +69,23 @@ describe('buildDdlScript', () => {
     expect(lines[1]).toContain('rebuilt from the catalog');
     expect(script.indexOf('ALTER TABLE')).toBeGreaterThan(script.indexOf('CREATE TABLE "public"."orders"'));
     expect(script.trimEnd().endsWith('ALTER TABLE "public"."lines" ADD CONSTRAINT fk1;')).toBe(true);
+  });
+});
+
+describe('suggestSchemaExportFileName', () => {
+  it('库名照用', () => {
+    expect(suggestSchemaExportFileName('shop', 'sql', '2026-10-19')).toBe('shop-schema-2026-10-19.sql');
+  });
+
+  it('SQLite / DuckDB 的库名是路径：只取文件名、去掉扩展名', () => {
+    expect(suggestSchemaExportFileName('D:\\测试 数据\\a.db', 'sql', '2026-10-19')).toBe('a-schema-2026-10-19.sql');
+    expect(suggestSchemaExportFileName('/Users/me/data/b.duckdb', 'md', '2026-10-19')).toBe('b-schema-2026-10-19.md');
+  });
+
+  it('Windows 文件名不许的字符换掉；全换光了用 schema', () => {
+    expect(suggestSchemaExportFileName(':memory:', 'sql', '2026-10-19')).toBe('memory-schema-2026-10-19.sql');
+    expect(suggestSchemaExportFileName('生产: 订单*库?', 'md', '2026-10-19')).toBe('生产 订单 库-schema-2026-10-19.md');
+    expect(suggestSchemaExportFileName('::', 'sql', '2026-10-19')).toBe('schema-schema-2026-10-19.sql');
   });
 });
 
