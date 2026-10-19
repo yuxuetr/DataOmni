@@ -111,7 +111,7 @@
       NSIS 安装 / 升级 / 降级 / 卸载 / 重装、凭据、中文路径、隧道、Oracle 都过；顺带修了 Windows 上「拒绝连接」
       判不出来（探测超时 1 秒短于 Windows 的 SYN 重试）与 `~\` 私钥路径。
     - 路径专项也走了：中文空格路径、UNC、中文用户名（模拟）、完整私钥路径、备份工具（中文空格目录、不闪窗）都过。
-      **已知限制**：DuckDB 库文件放在超 260 字符的路径下打不开（DuckDB 会把 `\\?\` 规范化掉，加了也没用）。
+      **已知限制**：DuckDB 库文件放在超 260 字符的路径下打不开（DuckDB 打开前规范化路径时剥掉 `\\?\`，加了也没用；见 G13）。
       SQLite 原先也打不开，rc.1 之后修了：Windows 上过长的路径改写成 `\\?\`（连接串里写成 `\\%3F\`），
       `%` 编码成 `%25`（`services/sqlite_path.rs`）。
     - 十种库的连真库冒烟用例 rc.1 之后也在这台 Windows 上全跑过（MySQL / PostgreSQL 用测试服务器，其余本地 Docker），全过。
@@ -339,6 +339,15 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
   - VECTOR 导入那条在 TiDB（网格给文本）与 OceanBase（不收 `HEX()`）上原先是夹具错，改了用例（`4fed247`），应用没问题。
   - cu 上的 `dataomni-mongo-rs` 自 9-25 起重启就退出（入口脚本重写 `/tmp/key`，被 `protected_regular` 挡住），
     SRV 那 3 条这期间一直没真跑。按原配置与原数据卷重建，启动前先删 key；重启一次验过，3 / 3。
+- [ ] G13 DuckDB：Windows 上库文件放在超 260 字符的路径下打不开（没开系统长路径时；SQLite 的已修，见 R5）
+  - 根因在 DuckDB 自己（`src/common/local_file_system.cpp`，1.5.x 与上游 main 2026-10-19 相同）：打开前 `CanonicalizePath`
+    从整条路径往上逐级找存在的目录，`TryCanonicalizeExistingPath` 的缓冲区只有 `MAX_PATH`，长的几级都失败；退到短的祖先
+    （`\\?\C:\Users\…`）成功时把 `\\?\` 剥掉，再拼回剩下的段——又是一条超长的普通路径，`CreateFileW` 报「系统找不到指定的路径」。
+    实测：传 `C:\…` 与 `\\?\C:\…` 报一样的错，报错里的路径都不带前缀。所以应用这边加前缀没用。
+  - 修法：给 duckdb/duckdb 提补丁——输入带 `\\?\`（或结果超过 `MAX_PATH`）时保留前缀，缓冲区按需加长。
+    之后等 DuckDB 发版、duckdb-rs 更新内带源码，再升 `Cargo.toml` 的 `duckdb`，Windows 上加一条超长路径用例（照 SQLite 那条）。
+  - 不做：fork libduckdb-sys 走 `[patch]`（每次升 DuckDB 都要重打）；8.3 短路径（非系统盘常关掉短名，不保证可用）。
+  - 用户这边的绕法：开 `LongPathsEnabled`（应用清单还没声明 `longPathAware`，开了也未必够，没验），或者把库放到短一点的目录。
 
 ### 要自己实现、当前版本不做
 
