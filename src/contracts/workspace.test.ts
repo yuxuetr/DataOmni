@@ -5,6 +5,7 @@ import {
   markWorkspaceTabProfileDeleted,
   orderWorkspaceTabs,
   keepsActiveTabOnConnect,
+  renameProfileInTabs,
   tabsShowingTable,
   updateSqlWorkspaceTabDraft,
   workspaceTabId
@@ -171,5 +172,27 @@ describe('keepsActiveTabOnConnect', () => {
 
   it('当前标签属于别的连接时切过去', () => {
     expect(keepsActiveTabOnConnect([sqlTab, elsewhere], 'p2-query', 'p1')).toBe(false);
+  });
+});
+
+describe('renameProfileInTabs', () => {
+  const query = createSqlWorkspaceTab('p1', { id: 'q', titleKey: 'tab.queryTitle', titleParams: { connection: 'old' }, now });
+  const numbered = createSqlWorkspaceTab('p1', { id: 'q2', titleKey: 'tab.queryNumbered', titleParams: { index: 2, connection: 'old' }, now });
+  const table = createTableWorkspaceTab('p1', 'users', { id: 't', now });
+  const other = createSqlWorkspaceTab('p2', { id: 'o', titleKey: 'tab.queryTitle', titleParams: { connection: 'old' }, now });
+
+  it('换掉这条连接标签标题里的连接名，其余参数不动', () => {
+    const [renamed, renamedNumbered] = renameProfileInTabs([query, numbered], 'p1', 'new');
+    expect(renamed.titleParams).toEqual({ connection: 'new' });
+    expect(renamedNumbered.titleParams).toEqual({ index: 2, connection: 'new' });
+  });
+
+  // 反向：表标签、别的连接的标签、名字没变的，都原样返回（同一个对象）
+  it('不带连接名的、别的连接的、名字没变的都不动', () => {
+    const tabs = [table, other, query];
+    const result = renameProfileInTabs(tabs, 'p1', 'new');
+    expect(result[0]).toBe(table);
+    expect(result[1]).toBe(other);
+    expect(renameProfileInTabs([query], 'p1', 'old')[0]).toBe(query);
   });
 });

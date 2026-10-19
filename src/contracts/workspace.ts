@@ -233,6 +233,29 @@ export function markWorkspaceTabProfileDeleted(
   };
 }
 
+/**
+ * 连接改了名：把属于它、标题里嵌着连接名（「查询 · 旧名」）的标签换成新名。
+ *
+ * 只动 `titleParams.connection`：表名、文件名这类标题与连接名无关，不碰；没有变化的标签原样返回，
+ * 不让无关的标签跟着重渲染。
+ */
+export function renameProfileInTabs<T extends WorkspaceTab>(
+  tabs: readonly T[],
+  profileId: string,
+  name: string
+): T[] {
+  return tabs.map((tab) => {
+    if (
+      tab.binding.profileId !== profileId
+      || tab.titleParams?.connection === undefined
+      || tab.titleParams.connection === name
+    ) {
+      return tab;
+    }
+    return { ...tab, titleParams: { ...tab.titleParams, connection: name } };
+  });
+}
+
 export function createErDiagramWorkspaceTab(
   profileId: string,
   options: WorkspaceTabOptions = {}

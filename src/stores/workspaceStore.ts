@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import {
   markWorkspaceTabProfileDeleted,
+  renameProfileInTabs,
   type ClosedWorkspaceTab,
   type WorkspaceTab
 } from '../contracts/workspace';
@@ -35,6 +36,8 @@ interface WorkspaceActions {
   /** SQL 标签存到了某个文件：记下它，标题换成文件名 */
   linkSqlTabFile: (tabId: string, file: SqlFileLink) => void;
   handleProfileDeleted: (profileId: string, tabIdsWithDrafts?: ReadonlySet<string>) => void;
+  /** 连接改名：标题里带连接名的标签（含最近关闭的）跟着换 */
+  handleProfileRenamed: (profileId: string, name: string) => void;
 }
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
@@ -111,6 +114,19 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         ? { ...tab, file, title: tabTitleFromSqlPath(file.path), titleKey: undefined, titleParams: undefined, dirty: false }
         : tab)
     }));
+  },
+
+  handleProfileRenamed: (profileId, name) => {
+    set((state) => {
+      const tabs = renameProfileInTabs(state.tabs, profileId, name);
+      const renamedClosed = renameProfileInTabs(state.closedTabs.map((closed) => closed.tab), profileId, name);
+      return {
+        tabs,
+        closedTabs: state.closedTabs.map((closed, index) => (
+          renamedClosed[index] === closed.tab ? closed : { ...closed, tab: renamedClosed[index] }
+        ))
+      };
+    });
   },
 
   activateTab: (tabId) => {

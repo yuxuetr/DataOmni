@@ -19,6 +19,8 @@ vi.mock('@tauri-apps/plugin-sql', () => ({
 const { useConnectionStore } = await import('./connectionStore');
 const { useQueryStore } = await import('./queryStore');
 const { useAppStore } = await import('./appStore');
+const { useWorkspaceStore } = await import('./workspaceStore');
+const { createSqlWorkspaceTab } = await import('../contracts/workspace');
 
 const LIVE = 'mysql://root@127.0.0.1:3306/app';
 const CONFIG = { db_type: 'mysql', port: 3306 } as never;
@@ -111,5 +113,17 @@ describe('改正连着的连接', () => {
     invokeMock.mockImplementation(async (command: string) => (command === 'get_connections' ? [other] : undefined));
     await useConnectionStore.getState().updateConnection('p2', other as never);
     expect(useAppStore.getState().activeConnection?.config.environment).toBe('development');
+  });
+
+  // Windows R7 回归时看到：改完名，已开着的「查询 · shop」标签还叫旧名
+  it('改名后已开着的查询标签跟着换名', async () => {
+    useWorkspaceStore.setState({
+      tabs: [createSqlWorkspaceTab('p1', { id: 'q', titleKey: 'tab.queryTitle', titleParams: { connection: 'shop' } })],
+      closedTabs: []
+    });
+    const saved = { ...(LIVE_PROFILE as object), name: 'shop-prod' };
+    invokeMock.mockImplementation(async (command: string) => (command === 'get_connections' ? [saved] : undefined));
+    await useConnectionStore.getState().updateConnection('p1', saved as never);
+    expect(useWorkspaceStore.getState().tabs[0].titleParams).toEqual({ connection: 'shop-prod' });
   });
 });

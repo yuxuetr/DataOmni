@@ -12,6 +12,7 @@ import { openDatabase } from '../utils/databaseHandle';
 import { describeError } from '../utils/describeError';
 import { translateNow } from './languageStore';
 import { useAppStore } from './appStore';
+import { useWorkspaceStore } from './workspaceStore';
 import { ORACLE_DEFAULT_SERVICE } from '../utils/oracleConnection';
 
 export {
@@ -266,6 +267,10 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       // 生产环境后徽标变了，写语句却照旧按开发环境的门槛不问就跑。主机、口令这些连接参数
       // 不换——池子还连着原来那一个，等重连
       const saved = get().connections.find((candidate) => candidate.id === id);
+      if (saved) {
+        // 已开着的「查询 · 旧名」标签跟着换名，不然改完名标签栏上还是旧的
+        useWorkspaceStore.getState().handleProfileRenamed(id, saved.name);
+      }
       const { activeConnection } = useAppStore.getState();
       if (saved && activeConnection?.config.id === id) {
         useAppStore.setState({
