@@ -56,7 +56,10 @@ pub async fn backup_embedded<'a>(
   // VACUUM INTO / EXPORT DATABASE 不收绑定参数，路径只能写成字面量；单引号写两遍是两家共同的规则
   let (kind, statement) = match pool {
     PoolRef::Sqlx(tauri_plugin_sql::DbPool::Sqlite(_)) => {
-      (BackupKind::SqliteFile, format!("VACUUM INTO {}", quote_literal(&part)))
+      // SQLite 不给超长路径加 `\\?\`，备份目标也得我们改写（见 `sqlite_path`）
+      let part =
+        crate::services::sqlite_path::sqlite_file_path(&part.to_string_lossy()).into_owned();
+      (BackupKind::SqliteFile, format!("VACUUM INTO {}", quote_literal(Path::new(&part))))
     }
     PoolRef::DuckDb(_) => (
       BackupKind::DuckdbDirectory,
@@ -878,6 +881,30 @@ mod tests {
         .expect("read");
     assert_eq!(rows, vec![(1, "O'Brien".into(), Some(vec![0, 255])), (2, "中文".into(), None)]);
     std::fs::remove_dir_all(&dir).ok();
+  }
+
+  /// Windows 没开长路径时，超过 260 字符的库文件 SQLite 原本打不开，备份也写不进去
+  #[cfg(windows)]
+  #[tokio::test]
+  async fn a_sqlite_file_beyond_max_path_opens_and_backs_up_on_windows() {
+    use crate::services::sqlite_path::sqlite_connection_string;
+    let root = temp_dir("sqlite-long%path");
+    let dir = root.join(["abcdefghijklmnopqrstuvwxyz0123456789"; 8].join("\\"));
+    std::fs::create_dir_all(&dir).expect("long dir");
+    let source = dir.join("source.db");
+    assert!(source.to_string_lossy().len() > 260);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+      .connect(&format!("{}?mode=rwc", sqlite_connection_string(&source.to_string_lossy())))
+      .await
+      .expect("open long path");
+    sqlx::query("CREATE TABLE t (id INTEGER)").execute(&pool).await.expect("create");
+    sqlx::query("INSERT INTO t VALUES (7)").execute(&pool).await.expect("insert");
+    let pool = DbPool::Sqlite(pool);
+    let target = dir.join("backup.db");
+    assert_eq!(backup_embedded(&pool, &target).await.expect("backup"), BackupKind::SqliteFile);
+    assert!(target.exists());
+    drop(pool);
+    std::fs::remove_dir_all(&root).ok();
   }
 
   /// DuckDB 1.5 的 EXPORT DATABASE 把 ENUM 取值里的撇号原样写进 `CREATE TYPE`：

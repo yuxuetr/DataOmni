@@ -400,7 +400,7 @@ Tauri 本身跨平台，但**本项目只在下表记录的环境上实际验证
 | macOS (Apple Silicon / aarch64) | `DataOmni.app`、`DataOmni_0.4.0_aarch64.dmg` | ✅ 已验证 | 2026-09-25 于 macOS 27.0 / arm64 执行 `bun run package`（带 Oracle Instant Client），退出码 0；装上后逐库回归，见 TODOs「发布里程碑」 |
 | macOS (Intel / x86_64) | — | ⚠️ 未验证 | 无 x86_64 机器，也未做交叉编译 |
 | Linux (Ubuntu 22.04 / x86_64) | `DataOmni_0.4.0_amd64.deb`、`DataOmni-0.4.0-1.x86_64.rpm` | ✅ 已验证（容器内） | 2026-09-25 执行 `bun tauri build --bundles deb,rpm --config src-tauri/tauri.oracle.conf.json`，退出码 0，包里的 Instant Client 与原件逐字节相同。**不发 AppImage**：打包工具会改 Instant Client 的 .so，而它的许可只许原样分发（TODOs 5.4）。以下为 2026-09-23 的验证记录：`.deb` 在干净的 Ubuntu 22.04 容器里装、升级、卸载都验过，在 Xvfb + openbox 里跑通界面、Ctrl+W 与 gnome-keyring 存取密码；AppImage 只以 `--appimage-extract-and-run` 跑过（容器里没有 FUSE）；`.rpm` 没装过。**没有在真实桌面会话（GNOME / Wayland）里验过** |
-| Windows (x86_64) | `DataOmni_<版本>_x64_en-US.msi`、`DataOmni_<版本>_x64-setup.exe` | ✅ 已验证（NSIS 逐项；MSI 人工装过） | 2026-10-06 起由 GitHub Actions（`release.yml`，windows-latest）打包，带 Oracle Instant Client。2026-10 在 Windows 11（非管理员）上走了 `docs/windows-checklist.md`：NSIS 安装、升级、降级、卸载、重装，凭据管理器，中文与 UNC 路径，SSH 隧道，MySQL / PostgreSQL / DuckDB / Oracle 冒烟都过；MSI 用户人工装过。打包版界面回归（R7-windows）：PostgreSQL 走满，其余各库走方言项，都过。**没测**：SmartScreen、多屏与缩放、真键盘快捷键与输入法。已知限制：SQLite / DuckDB 库文件放在超过 260 字符的路径下打不开 |
+| Windows (x86_64) | `DataOmni_<版本>_x64_en-US.msi`、`DataOmni_<版本>_x64-setup.exe` | ✅ 已验证（NSIS 逐项；MSI 人工装过） | 2026-10-06 起由 GitHub Actions（`release.yml`，windows-latest）打包，带 Oracle Instant Client。2026-10 在 Windows 11（非管理员）上走了 `docs/windows-checklist.md`：NSIS 安装、升级、降级、卸载、重装，凭据管理器，中文与 UNC 路径，SSH 隧道，MySQL / PostgreSQL / DuckDB / Oracle 冒烟都过；MSI 用户人工装过。之后十种库的连真库冒烟用例也在 Windows 上全跑过。打包版界面回归（R7-windows）：PostgreSQL 走满，其余各库走方言项，都过。**没测**：SmartScreen、多屏与缩放、真键盘快捷键与输入法。已知限制：DuckDB 库文件放在超过 260 字符的路径下打不开（SQLite 的已在 rc.1 之后修好） |
 
 安装包由 GitHub Actions 打（`.github/workflows/release.yml`）：推 `v*` tag 时 macOS（Apple Silicon）、Linux、Windows
 各打一份，放进一个草稿 Release。都**没有签名**——没有 Apple Developer ID，也没有 Windows 代码签名证书。
@@ -571,6 +571,10 @@ bun install
 
 - 修复：批量导出表结构时，默认文件名直接用库名——SQLite / DuckDB 的库名是完整路径、内存库是 `:memory:`，
   在 Windows 上带出 `\`、`:` 这类不许出现在文件名里的字符。现在只取路径最后一段、去掉扩展名并替换非法字符
+- 修复：连接改名后，已开着的「查询 · 旧名」标签还叫旧名；现在当场换成新名（含最近关闭的标签）
+- 修复：后台任务（导入、导出、备份）的标题按起任务时的语言定下，切换语言后任务中心与关窗确认里还是原来的语言
+- 修复：Windows 上 SQLite 库文件放在超过 260 字符的路径下打不开、也备份不进去（没开系统长路径时）；
+  任何平台上路径里带 `%`（如文件夹 `a%20b`）时被当成转义解码、打开的是另一个文件。DuckDB 的超长路径仍不支持
 
 ### v1.0.0-rc.1（2026-10-16）
 

@@ -271,9 +271,10 @@ impl DatabaseType {
         // 「ignoring unrecognized connect parameter」。等待上限在池子的 acquire_timeout 与前端的连接超时上
         format!("{}?{}", base_url, params.join("&"))
       }
-      DatabaseType::SQLite => {
-        format!("sqlite:{}", config.database.as_ref().unwrap_or(&":memory:".to_string()))
-      }
+      // 路径里的 `%`、`?` 与 Windows 的超长路径怎么写进连接串，见 `sqlite_path`
+      DatabaseType::SQLite => crate::services::sqlite_path::sqlite_connection_string(
+        config.database.as_deref().unwrap_or(":memory:"),
+      ),
       // 这不是给驱动的连接串，是 `SqlServerRegistry` 里的键：前端拿它认出这条
       // 连接归后端管，后端每条命令按它取池子。所以**不带口令**——它会出现在
       // 前端的状态里，而连接参数在登记池子的时候就已经交给后端了

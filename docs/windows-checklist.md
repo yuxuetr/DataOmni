@@ -152,10 +152,12 @@ VC++ 运行库已装，账户不是管理员（MSI 要 UAC，没测）。界面�
 | --- | --- | --- | --- | --- |
 | `D:\测试 数据\…`（中文、空格） | 过 | 过 | 过 | 过 |
 | UNC `\\localhost\D$\测试 数据\unc\…` | 过 | 过 | 过 | 过 |
-| 超 260 字符（`LongPathsEnabled` = 0） | **不过**：`(code: 14) unable to open database file` | **不过**：「系统找不到指定的路径」 | 过 | 过 |
+| 超 260 字符（`LongPathsEnabled` = 0） | 0.6.1 **不过**：`(code: 14) unable to open database file`；rc.1 之后修了（单测：打开、写、备份） | **不过**：「系统找不到指定的路径」 | 过 | 过 |
 
 - 超长路径：Rust 标准库自己加 `\\?\`，所以读写文件没事；SQLite 与 DuckDB 的 C 库不加。sqlx 的连接串里
-  `?` 会被当成参数，直接拼 `\\?\` 也不行。记为已知限制，没修。
+  `?` 会被当成参数、路径还会被百分号解码，所以直接拼 `\\?\` 不行。现在 SQLite 把过长的路径写成 `\\%3F\C:\…`
+  （sqlx 解码回 `\\?\`），路径里的 `%` 写成 `%25`，备份目标与 `dataomni cli` 也一样改写（`services/sqlite_path.rs`）。
+  DuckDB 会把 `\\?\` 规范化掉，加了也没用，仍是已知限制。
 - 中文用户名：把 `USERPROFILE` 指到 `D:\用户 测试` 启动（要先建好 `AppData\Local`、`AppData\Roaming`，
   否则 log 插件取不到目录直接 panic——这是模拟手法本身的问题，真账户不会缺这两个目录）。应用数据、
   `~` 展开、known_hosts 都跟着走，见 5.3、5.4。
@@ -199,4 +201,5 @@ ClickHouse），cu 上的 MySQL / PostgreSQL，以及走 SSH 隧道的 MySQL。
   与新的一样，于是把刚登记的池子摘掉。界面显示「已连接」，树报 `DATAOMNI_DB_SESSION_NOT_CONNECTED`，重试无效。
   同一条断线重连也会这样。改成同一个池子时只释放会话、不关池子（`databaseHandle.ts` 的 `sharesRegisteredPool`）。
   在打包版上复验：两条都指 `master` 来回切四次，树正常，查询返回 `master`。与平台无关，只是在 Windows 上先撞到。
-- 小问题（与平台无关，没修）：后台任务的标题按创建时的语言定下，切语言后不变；连接改名后已开标签的标题还是旧名。
+- 小问题（与平台无关）：后台任务的标题按创建时的语言定下，切语言后不变；连接改名后已开标签的标题还是旧名。
+  rc.1 之后都修了：任务与标签一样存文案键、按当前语言译（`taskTitle`）；改名时 `renameProfileInTabs` 换掉标签标题里的连接名。

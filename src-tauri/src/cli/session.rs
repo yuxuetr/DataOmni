@@ -100,7 +100,7 @@ async fn connect(
     DatabaseType::SQLite => {
       let path = database_file(profile, config_dir)?;
       let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(&path)
+        .filename(&*crate::services::sqlite_path::sqlite_file_path(&path.to_string_lossy()))
         .read_only(true)
         .create_if_missing(false);
       let pool = sqlx::sqlite::SqlitePoolOptions::new()
