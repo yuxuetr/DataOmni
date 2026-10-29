@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
-import { ENVIRONMENTS, ENVIRONMENT_NAME_KEYS, environmentBadge } from '../contracts/environment';
+import { ENVIRONMENTS, ENVIRONMENT_NAME_KEYS } from '../contracts/environment';
+import { EnvironmentBadgeTag } from './EnvironmentBadge';
 import {
   CONFIRMATION_THRESHOLDS,
   type ConfirmationThreshold
@@ -94,7 +95,6 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
 
             <div className="mt-3 space-y-1.5">
               {ENVIRONMENTS.map((environment) => {
-                const badge = environmentBadge(environment);
                 return (
                   <label
                     key={environment}
@@ -102,17 +102,7 @@ export function SettingsDialog({ onClose }: SettingsDialogProps) {
                   >
                     <span className="flex min-w-0 items-center gap-2 text-sm text-fg">
                       {t(ENVIRONMENT_NAME_KEYS[environment])}
-                      {badge && (
-                        <span
-                          className={
-                            badge.tone === 'danger'
-                              ? 'shrink-0 rounded-control border border-danger-line bg-danger-soft px-1.5 py-0.5 text-[11px] font-medium text-danger'
-                              : 'shrink-0 rounded-control border border-warning-line bg-warning-soft px-1.5 py-0.5 text-[11px] font-medium text-warning'
-                          }
-                        >
-                          {t(badge.labelKey)}
-                        </span>
-                      )}
+                      <EnvironmentBadgeTag environment={environment} />
                     </span>
                     <select
                       value={confirmationPolicy[environment]}

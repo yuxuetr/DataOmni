@@ -7,20 +7,20 @@ export interface EnvironmentBadge {
    * 而文案要跟着语言走。不能只用颜色区分——色觉障碍和灰度截图下颜色都会失效。
    */
   labelKey: TranslationKey;
-  tone: 'danger' | 'warning';
+  tone: 'danger' | 'warning' | 'info' | 'neutral';
   /** 完整说明的文案键，挂在 title 上 */
   descriptionKey: TranslationKey;
 }
 
 /**
- * 哪些环境需要常驻标识。
+ * 每种环境的常驻标识。
  *
- * 开发和测试不标：每个连接都挂一个牌子就等于没有牌子，真正危险的那个反而
- * 淹没在里面。只标改坏了会真出事的两种。
+ * 四种都标：没有牌子的连接分不出是「开发」还是「忘了设」。危险程度靠色调区分——
+ * 生产红、预发黄、测试蓝、开发灰，越危险越醒目。
  *
  * 类型写成完整的 Record，新增环境时这里编译不过——不会悄悄漏掉一种。
  */
-const BADGES: Record<ConnectionEnvironment, EnvironmentBadge | null> = {
+const BADGES: Record<ConnectionEnvironment, EnvironmentBadge> = {
   production: {
     labelKey: 'environment.production',
     tone: 'danger',
@@ -31,8 +31,16 @@ const BADGES: Record<ConnectionEnvironment, EnvironmentBadge | null> = {
     tone: 'warning',
     descriptionKey: 'environment.staging.description'
   },
-  testing: null,
-  development: null
+  testing: {
+    labelKey: 'environment.testing',
+    tone: 'info',
+    descriptionKey: 'environment.testing.description'
+  },
+  development: {
+    labelKey: 'environment.development',
+    tone: 'neutral',
+    descriptionKey: 'environment.development.description'
+  }
 };
 
 export function environmentBadge(environment: ConnectionEnvironment): EnvironmentBadge | null {

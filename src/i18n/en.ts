@@ -34,6 +34,8 @@ export const en: Translations = {
   'environment.name.staging': 'Staging',
   'environment.name.production': 'Production',
   'environment.staging': 'STAGING',
+  'environment.testing': 'TEST',
+  'environment.development': 'DEV',
 
   'explorer.title': 'Database',
   'explorer.connected': 'Connected',
@@ -149,6 +151,8 @@ export const en: Translations = {
 
   'environment.production.description': 'Production connection — changes affect live data',
   'environment.staging.description': 'Staging connection — changes may affect release validation',
+  'environment.testing.description': 'Testing connection',
+  'environment.development.description': 'Development connection',
 
 
   'schema.loadingObjects': 'Reading indexes and constraints…',

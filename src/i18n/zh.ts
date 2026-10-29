@@ -43,6 +43,8 @@ export const zh = {
   'environment.name.staging': '预发环境',
   'environment.name.production': '生产环境',
   'environment.staging': '预发',
+  'environment.testing': '测试',
+  'environment.development': '开发',
 
   // 对象浏览器
   'explorer.title': '数据库浏览器',
@@ -165,6 +167,8 @@ export const zh = {
 
   'environment.production.description': '生产环境连接，改动会影响线上数据',
   'environment.staging.description': '预发环境连接，改动可能影响发布验证',
+  'environment.testing.description': '测试环境连接',
+  'environment.development.description': '开发环境连接',
 
   // 表结构页
   'schema.loadingObjects': '正在读取索引与约束…',

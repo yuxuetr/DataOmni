@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { environmentBadge } from './environment';
+import { ENVIRONMENTS, environmentBadge } from './environment';
 import { zh } from '../i18n/zh';
 
 describe('环境标识', () => {
@@ -14,14 +14,16 @@ describe('环境标识', () => {
     expect(badge && zh[badge.labelKey]).toBe('预发');
   });
 
-  it('开发和测试不标', () => {
-    // 每个连接都挂牌子就等于没有牌子
-    expect(environmentBadge('development')).toBeNull();
-    expect(environmentBadge('testing')).toBeNull();
+  it('开发和测试也有标识，色调与生产、预发都不同', () => {
+    // 没有牌子的连接分不出是「开发」还是「忘了设」
+    expect(zh[environmentBadge('testing')!.labelKey]).toBe('测试');
+    expect(zh[environmentBadge('development')!.labelKey]).toBe('开发');
+    const tones = ENVIRONMENTS.map((environment) => environmentBadge(environment)?.tone);
+    expect(new Set(tones).size).toBe(ENVIRONMENTS.length);
   });
 
   it('需要标识的环境都带文字，不能只靠颜色', () => {
-    for (const environment of ['production', 'staging'] as const) {
+    for (const environment of ENVIRONMENTS) {
       const badge = environmentBadge(environment);
       // 文案键必须真的存在于目录里，否则界面上是一片空白而不是报错
       expect(badge && zh[badge.labelKey]).toBeTruthy();
