@@ -141,14 +141,36 @@ fn ensure_client() -> Result<(), QueryError> {
       }
       let dir = loadable_dir(&dir)
         .map_err(|error| QueryError::message(format!("{ORACLE_CLIENT_LOAD_FAILED}: {error}")))?;
-      InitParams::new()
+      let load_failed =
+        |error: oracle::Error| QueryError::message(format!("{ORACLE_CLIENT_LOAD_FAILED}: {error}"));
+      let mut params = InitParams::new();
+      params
         .oracle_client_lib_dir(&dir)
         .and_then(|params| params.default_driver_name("DataOmni"))
-        .and_then(|params| params.init())
-        .map(|_| ())
-        .map_err(|error| QueryError::message(format!("{ORACLE_CLIENT_LOAD_FAILED}: {error}")))
+        .map_err(load_failed)?;
+      // 写不出来就照旧加载：诊断日志落在家目录，总比连不上 Oracle 强
+      if let Ok(config) = client_config_dir() {
+        params.oracle_client_config_dir(config).map_err(load_failed)?;
+      }
+      params.init().map(|_| ()).map_err(load_failed)
     })
     .clone()
+}
+
+/// 给 Instant Client 的配置目录（相当于本进程的 `TNS_ADMIN`），里面只有一份 `sqlnet.ora`。
+///
+/// 没有它的时候，客户端把诊断日志（ADR，每次连接失败记一条）写进 `$HOME/oradiag_<用户名>`，
+/// 在用户的家目录里凭空长出一个目录。`ADR_BASE` 把它挪进临时目录；不用
+/// `DIAG_ADR_ENABLED = OFF`，那样 `sqlnet.log` 会写进当前目录，命令行在哪儿跑就落在哪儿。
+///
+/// 盖掉用户自己的 `TNS_ADMIN` 不丢东西：连接串只用 Easy Connect 和完整描述符
+/// （[`OracleTarget::from_profile`]），不查 `tnsnames.ora`；要钱包的 TLS 也没做。
+fn client_config_dir() -> std::io::Result<PathBuf> {
+  let dir = std::env::temp_dir().join("dataomni-oracle");
+  std::fs::create_dir_all(&dir)?;
+  // 加引号：Windows 的临时目录在用户目录下，用户名可能带空格
+  std::fs::write(dir.join("sqlnet.ora"), format!("ADR_BASE = \"{}\"\n", dir.display()))?;
+  Ok(dir)
 }
 
 /// ODPI-C 按目录找的是**不带版本号**的名字（`libclntsh.dylib`、`libclntsh.so`），
