@@ -196,7 +196,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <Database size={14} className="shrink-0 text-fg-muted" />
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="truncate text-sm text-fg">{conn.name}</span>
+                          <span className="truncate text-sm text-fg" title={conn.name}>{conn.name}</span>
                           <EnvironmentBadgeTag environment={conn.environment} compact />
                           {connectingProfileId === conn.id && (
                             <span className="shrink-0 text-xs text-accent">{t('connection.connecting')}</span>
@@ -211,7 +211,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {/* 不悬停时不占位：透明但占着宽度时，带环境标识和「已连接」的那一行名字被挤得只剩一个字 */}
+                    <div className="hidden shrink-0 items-center space-x-1 group-hover:flex">
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
