@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { HighlightedCode } from './HighlightedCode';
 import { invoke } from '@tauri-apps/api/core';
 import CodeMirror from '@uiw/react-codemirror';
 import { EditorState } from '@codemirror/state';
@@ -240,7 +241,11 @@ export function MongoConsole({ connection }: { connection: ConnectionProfile }) 
             {run.state === 'done' && (
               <>
                 <pre className="mt-1 select-text whitespace-pre-wrap break-all font-mono text-[13px] text-fg">
-                  {run.reply.text.length > MAX_RENDERED_CHARS ? run.reply.text.slice(0, MAX_RENDERED_CHARS) : run.reply.text}
+                  {/* 与文档面板同一种写法（mongosh 的 EJSON），一样按 JavaScript 上色 */}
+                  <HighlightedCode
+                    code={run.reply.text.length > MAX_RENDERED_CHARS ? run.reply.text.slice(0, MAX_RENDERED_CHARS) : run.reply.text}
+                    language="javascript"
+                  />
                 </pre>
                 {run.reply.text.length > MAX_RENDERED_CHARS && (
                   <p className="mt-1 text-xs text-warning">{t('mongo.console.truncated', { limit: MAX_RENDERED_CHARS.toLocaleString() })}</p>

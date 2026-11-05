@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { HighlightedCode } from './HighlightedCode';
 import clsx from 'clsx';
 import { AlertCircle, Loader2, Plus, Pencil, Trash2, Undo2, X } from 'lucide-react';
 import { useLanguageStore } from '../stores/languageStore';
@@ -146,7 +147,7 @@ export function ChangeDiffDialog({
 
                     {rendered[index].sql ? (
                       <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap break-all rounded-control bg-surface px-2 py-1 font-mono text-[11px] text-fg-muted select-text">
-                        {rendered[index].sql}
+                        <HighlightedCode code={rendered[index].sql} language="sql" />
                       </pre>
                     ) : (
                       <p className="mt-1.5 text-[11px] text-danger">{rendered[index].error}</p>

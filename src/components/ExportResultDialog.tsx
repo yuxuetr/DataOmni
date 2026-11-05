@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { HighlightedCode } from './HighlightedCode';
 import { Download, Loader2 } from 'lucide-react';
 import { save } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
@@ -362,7 +363,13 @@ export function ExportResultDialog({
                     })}
             </p>
             <pre className="max-h-36 overflow-auto rounded-control border border-line bg-surface-sunken px-3 py-2 font-mono text-xs text-fg select-text whitespace-pre">
-              {missingTable ? t('export.sqlTableMissing') : preview || t('export.previewEmpty')}
+              {missingTable
+                ? t('export.sqlTableMissing')
+                : !preview
+                  ? t('export.previewEmpty')
+                  : options.format === 'csv'
+                    ? preview
+                    : <HighlightedCode code={preview} language={options.format} />}
             </pre>
           </div>
         </div>
