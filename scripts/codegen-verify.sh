@@ -9,7 +9,9 @@
 # - 从 Prisma 快照里删掉一条反向关系，`prisma validate` 报「missing an opposite relation field」；
 # - TypeORM 把一个 referencedColumnName 改成不存在的属性，建元数据报「Referenced column nope was not found」；
 #   不写列类型时（早先的写法）五种驱动都报「Data type "Object" … is not supported」；
-# - MikroORM 把一个 mappedBy 改成不存在的属性，实体发现报「has unknown 'mappedBy' reference」。
+# - MikroORM 把一个 mappedBy 改成不存在的属性，实体发现报「has unknown 'mappedBy' reference」；
+# - SeaORM 给 orders 写两个 Related<users>（同一对表两条外键时），cargo check 报 E0119。
+# sqlx 只验到编译：整数宽度对不对（INT 读进 i64 是运行期错误）由 codegenModel 的类型语料钉住。
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -113,5 +115,38 @@ JS
   node discovery.js || status=1
   exit "$status"
 ) || failed=1
+
+# --- SeaORM 与 sqlx：放进一个依赖 sea-orm 1.1、sqlx 0.8 的 crate，cargo check，警告也算失败 ---
+crate="$work/rust"
+mkdir -p "$crate/src"
+cp -R "$snapshots"/seaorm-* "$snapshots"/sqlx-* "$crate/src/"
+cat > "$crate/Cargo.toml" <<'TOML'
+[package]
+name = "codegen_verify"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+sea-orm = { version = "1.1", default-features = false, features = ["macros", "with-chrono", "with-uuid", "with-rust_decimal", "with-json"] }
+sqlx = { version = "0.8", default-features = false, features = ["macros", "postgres", "mysql", "sqlite", "chrono", "uuid", "rust_decimal", "json"] }
+TOML
+{
+  echo '#![allow(dead_code)]'
+  for dir in "$crate"/src/seaorm-*; do
+    name="$(basename "$dir")"
+    echo "#[path = \"$name/mod.rs\"] pub mod ${name//-/_};"
+  done
+  for dir in "$crate"/src/sqlx-*; do
+    name="$(basename "$dir")"
+    echo "#[path = \"$name/models.rs\"] pub mod ${name//-/_};"
+  done
+} > "$crate/src/lib.rs"
+if (cd "$crate" && CARGO_TERM_COLOR=never RUSTFLAGS="-D warnings" cargo check --quiet); then
+  echo "ok    seaorm + sqlx cargo check"
+else
+  echo "FAIL  seaorm + sqlx cargo check"
+  failed=1
+fi
 
 exit "$failed"

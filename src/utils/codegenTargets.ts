@@ -4,10 +4,12 @@ import { isCodegenDialect, type CodegenDialect, type CodegenSchema, type Generat
 import { generatePrisma, isPrismaDialect } from './codegenPrisma';
 import { generateTypeorm } from './codegenTypeorm';
 import { generateMikroorm, isMikroormDialect } from './codegenMikroorm';
+import { generateSeaorm, isSeaormDialect } from './codegenSeaorm';
+import { generateSqlx, isSqlxDialect } from './codegenSqlx';
 
 /** 代码生成的目标：对话框里的选项、预览用的语言、各自支持的方言（rfcs/codegen.md §2） */
 export interface CodegenTarget {
-  id: 'prisma' | 'typeorm' | 'mikroorm';
+  id: 'prisma' | 'typeorm' | 'mikroorm' | 'seaorm' | 'sqlx';
   label: string;
   language: CodeLanguage;
   supports: (dialect: CodegenDialect) => boolean;
@@ -42,6 +44,28 @@ export const CODEGEN_TARGETS: CodegenTarget[] = [
       const { dialect } = schema;
       if (!isMikroormDialect(dialect)) throw new Error(`MikroORM does not support ${dialect}`);
       return generateMikroorm({ ...schema, dialect }, source);
+    }
+  },
+  {
+    id: 'seaorm',
+    label: 'SeaORM',
+    language: 'rust',
+    supports: isSeaormDialect,
+    generate: (schema, source) => {
+      const { dialect } = schema;
+      if (!isSeaormDialect(dialect)) throw new Error(`SeaORM does not support ${dialect}`);
+      return generateSeaorm({ ...schema, dialect }, source);
+    }
+  },
+  {
+    id: 'sqlx',
+    label: 'sqlx',
+    language: 'rust',
+    supports: isSqlxDialect,
+    generate: (schema, source) => {
+      const { dialect } = schema;
+      if (!isSqlxDialect(dialect)) throw new Error(`sqlx does not support ${dialect}`);
+      return generateSqlx({ ...schema, dialect }, source);
     }
   }
 ];
