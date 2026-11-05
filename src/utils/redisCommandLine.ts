@@ -1,3 +1,4 @@
+import type { CodeSegment, CodeTone } from './codeHighlight';
 import type { RedisBytes } from './redisKeys';
 
 /** 与后端 `RedisReply` 一致 */
@@ -121,49 +122,70 @@ function quoted(bytes: RedisBytes): string {
 
 /** 一条回答 → redis-cli 画出来的样子，一行一个元素，嵌套的按序号宽度缩进 */
 export function formatReply(reply: RedisReply): string {
-  return replyLines(reply).join('\n');
+  return replySegments(reply).map((segment) => segment.text).join('');
 }
 
-function replyLines(reply: RedisReply): string[] {
+/** 同上，切成上了色的片段：值按类型着色，`(integer)` 这类标记与序号保持正文颜色 */
+export function replySegments(reply: RedisReply): CodeSegment[] {
+  const merged: CodeSegment[] = [];
+  replyLines(reply).forEach((line, index) => {
+    for (const segment of index === 0 ? line : [{ text: '\n', tone: null }, ...line]) {
+      const last = merged[merged.length - 1];
+      if (last && last.tone === segment.tone) last.text += segment.text;
+      else merged.push({ ...segment });
+    }
+  });
+  return merged;
+}
+
+type Line = CodeSegment[];
+
+const plain = (text: string): CodeSegment => ({ text, tone: null });
+const tagged = (tag: string, value: string, tone: CodeTone): Line => [plain(`${tag} `), { text: value, tone }];
+
+function replyLines(reply: RedisReply): Line[] {
   switch (reply.kind) {
     case 'nil':
-      return ['(nil)'];
+      return [[{ text: '(nil)', tone: 'atom' }]];
     case 'integer':
-      return [`(integer) ${reply.value}`];
+      return [tagged('(integer)', reply.value, 'number')];
     case 'bulk':
-      return [quoted(reply.value)];
+      return [[{ text: quoted(reply.value), tone: 'string' }]];
     case 'status':
-      return [reply.value];
+      return [[plain(reply.value)]];
     case 'error':
-      return [`(error) ${reply.message}`];
+      return [[plain(`(error) ${reply.message}`)]];
     case 'double':
-      return [`(double) ${reply.value}`];
+      return [tagged('(double)', String(reply.value), 'number')];
     case 'boolean':
-      return [reply.value ? '(true)' : '(false)'];
+      return [[{ text: reply.value ? '(true)' : '(false)', tone: 'atom' }]];
     case 'bigNumber':
-      return [`(big number) ${reply.value}`];
+      return [tagged('(big number)', reply.value, 'number')];
     case 'array':
-      if (reply.items.length === 0) return ['(empty array)'];
+      if (reply.items.length === 0) return [[plain('(empty array)')]];
       return numbered(reply.items.map(replyLines), ') ');
     case 'map':
-      if (reply.entries.length === 0) return ['(empty hash)'];
+      if (reply.entries.length === 0) return [[plain('(empty hash)')]];
       return numbered(
         reply.entries.map(([key, value]) => {
           const keyLines = replyLines(key);
           const valueLines = replyLines(value);
-          const head = `${keyLines.join(' ')} => `;
-          return [`${head}${valueLines[0]}`, ...valueLines.slice(1).map((line) => `${' '.repeat(head.length)}${line}`)];
+          const head: Line = [...keyLines.flatMap((line, index) => (index === 0 ? line : [plain(' '), ...line])), plain(' => ')];
+          const width = lineWidth(head);
+          return [[...head, ...valueLines[0]], ...valueLines.slice(1).map((line) => [plain(' '.repeat(width)), ...line])];
         }),
         '# '
       );
   }
 }
 
-function numbered(children: string[][], marker: string): string[] {
+const lineWidth = (line: Line) => line.reduce((sum, segment) => sum + segment.text.length, 0);
+
+function numbered(children: Line[][], marker: string): Line[] {
   const width = String(children.length).length;
   return children.flatMap((lines, index) => {
     const prefix = `${String(index + 1).padStart(width)}${marker}`;
-    return lines.map((line, lineIndex) => (lineIndex === 0 ? prefix : ' '.repeat(prefix.length)) + line);
+    return lines.map((line, lineIndex) => [plain(lineIndex === 0 ? prefix : ' '.repeat(prefix.length)), ...line]);
   });
 }
 

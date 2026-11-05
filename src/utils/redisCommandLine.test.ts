@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bytesToBase64, commandRisk, formatReply, splitCommandLine } from './redisCommandLine';
+import { bytesToBase64, commandRisk, formatReply, replySegments, splitCommandLine } from './redisCommandLine';
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 const args = (line: string) => {
@@ -40,6 +40,29 @@ describe('splitCommandLine', () => {
 
   it('base64 是原样的字节', () => {
     expect(bytesToBase64(Uint8Array.from([0xff, 0x00]))).toBe('/wA=');
+  });
+});
+
+describe('replySegments', () => {
+  it('值按类型上色，标记与序号是正文；拼回去就是 formatReply 的文字', () => {
+    const reply = {
+      kind: 'array' as const,
+      items: [
+        { kind: 'bulk' as const, value: b('a') },
+        { kind: 'integer' as const, value: '1' },
+        { kind: 'nil' as const },
+        { kind: 'map' as const, entries: [[{ kind: 'bulk' as const, value: b('k') }, { kind: 'double' as const, value: 1.5 }]] as [never, never][] },
+      ],
+    };
+    const segments = replySegments(reply);
+    expect(segments.map((segment) => segment.text).join('')).toBe(formatReply(reply));
+    expect(segments.filter((segment) => segment.tone !== null)).toEqual([
+      { text: '"a"', tone: 'string' },
+      { text: '1', tone: 'number' },
+      { text: '(nil)', tone: 'atom' },
+      { text: '"k"', tone: 'string' },
+      { text: '1.5', tone: 'number' },
+    ]);
   });
 });
 

@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { PLAIN_TEXT_INPUT } from './FormControls';
 import { useConfirmPrompt } from './ConfirmPrompt';
+import { CodeSegments } from './HighlightedCode';
 import { useLanguageStore } from '../stores/languageStore';
 import { useQueryStore } from '../stores/queryStore';
 import { useAppStore } from '../stores/appStore';
@@ -13,10 +14,12 @@ import {
   bytesToBase64,
   commandRisk,
   formatReply,
+  replySegments,
   splitCommandLine,
   type RedisReply
 } from '../utils/redisCommandLine';
 import { isImeKeyEvent } from '../utils/shortcuts';
+import type { CodeSegment } from '../utils/codeHighlight';
 
 interface RedisConsoleProps {
   database: number;
@@ -30,6 +33,8 @@ interface ConsoleEntry {
   id: number;
   line: string;
   output: string;
+  /** 服务端的回答按类型上了色的样子；没跑成的只有 `output` */
+  reply?: CodeSegment[];
   /** 没跑成（拆不开、被拒、断线）；服务端的错误回答不算，那是一条正常的回答 */
   failed: boolean;
 }
@@ -114,7 +119,7 @@ export function RedisConsole({ database, active, onRan }: RedisConsoleProps) {
         arguments: split.args.map(bytesToBase64),
         timeoutMs
       });
-      record({ line: text, output: formatReply(reply), failed: false });
+      record({ line: text, output: formatReply(reply), reply: replySegments(reply), failed: false });
       // 服务端回的错误是一条正常的回答，但对历史来说这条没跑成
       remember(reply.kind === 'error' ? 'failed' : 'succeeded', reply.kind === 'error' ? reply.message : undefined);
       setLine('');
@@ -148,7 +153,7 @@ export function RedisConsole({ database, active, onRan }: RedisConsoleProps) {
           <div key={entry.id} className="mb-3">
             <p className="select-text text-fg-muted">{`db${database}> ${entry.line}`}</p>
             <pre className={clsx('select-text whitespace-pre-wrap break-all', entry.failed ? 'text-danger' : 'text-fg')}>
-              {entry.output}
+              {entry.reply ? <CodeSegments segments={entry.reply} /> : entry.output}
             </pre>
           </div>
         ))}
