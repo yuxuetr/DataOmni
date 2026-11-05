@@ -96,6 +96,9 @@ not from protocol compatibility on paper. The last full run was on 2026-10-16. T
   connection, tick what to sync, and get a script that makes the target match. The script opens in the
   editor and runs through the usual per-environment confirmation; across different kinds of database you
   get the report only.
+- Bind parameters: write `:name` in the editor and fill in the values before the statement runs. The
+  driver binds them, so nothing is pasted into the SQL and text needs no quotes. Not yet for ClickHouse
+  or the execution plan.
 - Quick bar and line charts of the current result.
 
 ### MongoDB, Redis, Neo4j and Elasticsearch

@@ -288,9 +288,21 @@
     关掉另开的 SQLite 句柄会把当前 SQLite 连接一起关掉（`d218679`）。
   - 没验到：Oracle、DuckDB 没有往返（只有单测；Oracle 的 `is_constraint` 查询没在真库上跑过）；
     网络库只验了往返脚本，没在真应用里点过（读目录与执行都是已有路径）；没试过用经 SSH 隧道的连接作源。
-- [ ] D2 `execute_query` 支持绑定参数
-  - 解锁：4.4 的查询模板；2.4 剩下的「表结构查询离开 `tauri-plugin-sql`」。
-  - 先评估：编辑器里参数怎么写（`?` / `$1` / `:name`）、各驱动怎么绑、类型怎么定。
+- [x] D2 `execute_query` 支持绑定参数（设计 `rfcs/bind-parameters.md`，用户 2026-11-06 确认：真绑定、值只在内存里）（`ac1d0ed`、`1c8c2c1`、`e8a59b7`）
+  - 解锁：4.4 的查询模板（前置条件已满足，重估条件改为「有人要」）。2.4 那项评估时发现已经大半不成立：
+    MySQL / PostgreSQL 的目录查询早已走后端 `sqlx_select`，只剩 SQLite 走插件，且没报过缺口。
+  - 做了：编辑器认 `:name`（在 `sqlWords` 那套词法里认，顺带认了 Oracle `q'[…]'`），运行前弹框填值（文本 / 数字 / NULL，
+    PostgreSQL 不问类型），前端换成各方言占位符，`execute_query` 多一个 `params`，六条执行路径各自绑。
+    PostgreSQL 先 prepare 拿参数类型再转。ClickHouse 与执行计划遇到参数说清楚不支持。
+  - 验收：
+    - 词法六条排除规则各做过反向验证；store 的「错误换回参数名」「不用改写后的位置」各做过反向验证。
+    - 真库：PostgreSQL 16（整数、uuid、带与不带时区的 timestamptz、jsonb、枚举、NULL、转不了与不认得的类型）、MySQL 8.4、
+      SQL Server 2022（`TOP` 绑文本报 1060、绑数字通过）在 cu 上过；SQLite、DuckDB 每次都跑。
+      去掉「带参数时清掉语句缓存」，没写时区的 timestamptz 那条精确变红。
+    - 真应用：SQLite 库上写 `:code OR :id`，弹框、填 `007` 与 `3`，只出 1、3 两行（`'7'` 不匹配）；再跑预填；执行计划给出说明。
+  - 评估里的一条事实实测不成立：MySQL 的 `LIMIT ?` 经驱动绑文本照收（命令行用户变量才报 1210），SQL Server 的 `TOP` 才不收。设计说明已改。
+  - 没验到：Oracle 没有真库（本机已无 Docker，cu 上跑不动），只有与目录查询共用的绑定代码；MariaDB、MySQL 5.7 没试；
+    PostgreSQL 结果里有 inet、money 这类只能按文本读的列时，带参数会报不支持（提示加 `::text`）。
 - [ ] C2 DataOmni 作为 MCP 服务（A8 的重估条件满足：用户要）
   - 在 `dataomni cli` 外面套一层 stdio MCP，工具一一对应 CLI 第一、二批命令，沿用它的权限模型（`rfcs/agent-cli.md` §5）。
   - 先写设计说明。验收门里两条该红的用例：「写语句被拒」与「生产连接不可见」。

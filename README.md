@@ -284,6 +284,8 @@ MySQL 一组 42 条、PostgreSQL 一组 39 条；只在设了专门的环境变�
   SeaORM 实体或 sqlx 的 `FromRow` 结构体，不用 AI；映射不了的类型、生成不了的表在开头列出来，见 `rfcs/codegen.md`
 - 结构比对：ER 图工具栏的「比对结构…」，和另一个连接（或同一个库里的另一个 schema）比表、列、主键、索引、外键，
   逐项勾选后生成同步脚本；脚本放进编辑器由你执行，照常按连接环境确认。同种数据库之间才出脚本，见 `rfcs/schema-diff.md`
+- 绑定参数：编辑器里写 `:name`，运行前弹框填值，由驱动绑定、不拼进 SQL；值按标签记住，关掉应用就没了。
+  ClickHouse 与执行计划暂不支持，见 `rfcs/bind-parameters.md`
 - ER 关系图：整库的表都画出来（含没有外键的），每张列出全部字段与类型，
   有外键的表之间按具体字段连线；可搜索表名与列名、缩放平移、自由拖动卡片、
   导出为 SVG / PNG / PDF，或导出成数据字典（Markdown）与 Agent Skill（`SKILL.md`）；执行 DDL 后自动刷新
@@ -591,6 +593,13 @@ bun install
   - 两边是不同种类的数据库时只出差异报告。
 
   在 SQLite、PostgreSQL、MySQL、SQL Server 的真库上做过往返验收：执行脚本后再比一次为空，见 `scripts/schema-diff-verify.sh`。
+- 绑定参数：编辑器里的语句可以写 `:name`，运行前弹框填值，值由驱动绑定，不拼进 SQL，文本不用加引号：
+  - 每个参数可选「文本」或「数字」，也可以勾 NULL。SQL Server 的 `TOP (@P1)` 只收数字；PostgreSQL 不用选，按语句里的类型转换；
+  - 值按标签记住，下次运行时预填，不写进工作区快照；
+  - 引号、注释里的不算，`::type`、`:=`、Oracle 触发器里的 `:new.col` 也不算；
+  - ClickHouse 与执行计划暂不支持，会直接说明。
+
+  在 PostgreSQL、MySQL、SQL Server、SQLite、DuckDB 上验过（见各家的真库用例）。
 - 修正：MySQL 结构编辑把默认值改成 `CURRENT_TIMESTAMP` 时报语法错误（1064）。
 - 修正：另开一个 SQLite 连接再关掉时，当前的 SQLite 连接会跟着断开。
 
