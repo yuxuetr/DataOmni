@@ -1052,3 +1052,52 @@ async fn duckdb_runs_the_object_ddl_corpus() {
     run_all(&pool, &case.cleanup.iter().map(String::as_str).collect::<Vec<_>>()).await;
   }
 }
+
+/// 编辑器里的绑定参数（rfcs/bind-parameters.md）：`?` 按位置绑，文本是文本、数字是数字
+#[tokio::test]
+async fn duckdb_binds_editor_parameters() {
+  let pool = pool("params").await;
+  let mut connection = session(&pool).await;
+  let mut run = async |sql: &str, params: Vec<JsonValue>| {
+    let mut rows: Vec<QueryRow> = Vec::new();
+    let summary = connection
+      .execute_streaming_with_params(
+        sql,
+        &params,
+        StreamOptions::limited(100, 1 << 20, 100),
+        &mut |batch| {
+          rows.extend(batch.rows);
+          Ok(())
+        },
+      )
+      .await;
+    summary.map(|summary| (summary, rows))
+  };
+  run("CREATE TABLE codes (id INTEGER, code VARCHAR)", vec![]).await.expect("create");
+  let (inserted, _) = run(
+    "INSERT INTO codes VALUES (?, ?), (?, ?)",
+    vec![json!(1), json!("007"), json!(2), json!("7")],
+  )
+  .await
+  .expect("insert");
+  assert!(matches!(inserted, QueryExecutionSummary::Affected { rows_affected: 2 }));
+
+  let (_, rows) =
+    run("SELECT id FROM codes WHERE code = ?", vec![json!("007")]).await.expect("text");
+  assert_eq!(rows.len(), 1, "文本 007 不能被当成 7");
+  let (_, rows) = run("SELECT id FROM codes WHERE id = ? OR id = ?", vec![json!(1), json!(2)])
+    .await
+    .expect("twice");
+  assert_eq!(rows.len(), 2);
+  let (_, rows) =
+    run("SELECT id FROM codes ORDER BY id LIMIT ?", vec![json!(1)]).await.expect("limit");
+  assert_eq!(rows.len(), 1);
+  // 文本绑到整数列上：DuckDB 自己转
+  let (_, rows) = run("SELECT id FROM codes WHERE id = ?", vec![json!("2")]).await.expect("cast");
+  assert_eq!(rows.len(), 1);
+  let (_, rows) =
+    run("SELECT id FROM codes ORDER BY id LIMIT ?", vec![json!("1")]).await.expect("text limit");
+  assert_eq!(rows.len(), 1, "LIMIT 绑文本也收");
+  let (_, rows) = run("SELECT ? IS NULL AS missing", vec![JsonValue::Null]).await.expect("null");
+  assert_eq!(rows[0]["missing"], json!(true));
+}

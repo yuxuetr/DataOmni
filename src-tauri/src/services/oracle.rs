@@ -639,6 +639,17 @@ impl OracleConnection {
     options: StreamOptions,
     sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
   ) -> Result<QueryExecutionSummary, QueryError> {
+    self.execute_streaming_with_params(sql, &[], options, sink).await
+  }
+
+  /// 带编辑器里的参数（`:1`…），按位置绑
+  pub async fn execute_streaming_with_params(
+    &mut self,
+    sql: &str,
+    params: &[JsonValue],
+    options: StreamOptions,
+    sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+  ) -> Result<QueryExecutionSummary, QueryError> {
     if options.explain_plan != crate::services::ExplainPlan::Off {
       return self.explain(sql, options, sink).await;
     }
@@ -649,6 +660,7 @@ impl OracleConnection {
     let connection = self.take_connection().await?;
     let mut guard = BreakOnDrop { connection: Arc::clone(&connection), finished: false };
     let statement = statement_text(sql);
+    let binds = bind_values(params)?;
     let refuse_non_query = options.non_query == crate::services::NonQueryHandling::Refuse;
 
     // 通道留几批的余量：阻塞那一侧可以先读着，异步这一侧到了上限就丢掉接收端，
@@ -657,7 +669,8 @@ impl OracleConnection {
       tokio::sync::mpsc::channel::<Fetched>(options.batch_size.max(1) * 2);
     let worker = Arc::clone(&connection);
     let task = tokio::task::spawn_blocking(move || {
-      let outcome = run_statement(&worker, &statement, refuse_non_query, commit_after, &sender);
+      let outcome =
+        run_statement(&worker, &statement, &binds, refuse_non_query, commit_after, &sender);
       // 成功失败都要问：失败的那一条也可能结束了事务（死锁回滚）
       (outcome, open_transaction(&worker))
     });
@@ -957,10 +970,13 @@ pub fn controls_transaction(sql: &str) -> bool {
 fn run_statement(
   connection: &Connection,
   statement: &str,
+  binds: &[Bind],
   refuse_non_query: bool,
   commit_after: bool,
   sender: &tokio::sync::mpsc::Sender<Fetched>,
 ) -> Result<Option<u64>, QueryError> {
+  let bind_refs: Vec<&dyn oracle::sql_type::ToSql> =
+    binds.iter().map(|value| value as &dyn oracle::sql_type::ToSql).collect();
   let mut prepared = connection
     .statement(statement)
     .fetch_array_size(FETCH_ARRAY_SIZE)
@@ -970,7 +986,7 @@ fn run_statement(
     if refuse_non_query {
       return Err(QueryError::message(crate::services::query_executor::NON_QUERY_MESSAGE));
     }
-    prepared.execute(&[]).map_err(|error| query_error(&error, Some(statement)))?;
+    prepared.execute(&bind_refs).map_err(|error| query_error(&error, Some(statement)))?;
     // 块用 `DBMS_SQL.RETURN_RESULT` 交回的结果集：先全部取出来好报个数，再读第一个
     let mut implicit = Vec::new();
     if prepared.is_plsql() {
@@ -999,7 +1015,7 @@ fn run_statement(
     let rows = first.query().map_err(|error| query_error(&error, Some(statement)))?;
     return send_rows(rows, statement, sender);
   }
-  let rows = prepared.query(&[]).map_err(|error| query_error(&error, Some(statement)))?;
+  let rows = prepared.query(&bind_refs).map_err(|error| query_error(&error, Some(statement)))?;
   send_rows(rows, statement, sender)
 }
 

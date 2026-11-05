@@ -301,7 +301,19 @@ impl DuckDbConnection {
     options: StreamOptions,
     sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
   ) -> Result<QueryExecutionSummary, QueryError> {
+    self.execute_streaming_with_params(sql, &[], options, sink).await
+  }
+
+  /// 带编辑器里的参数（`?`），按位置绑
+  pub async fn execute_streaming_with_params(
+    &mut self,
+    sql: &str,
+    params: &[JsonValue],
+    options: StreamOptions,
+    sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+  ) -> Result<QueryExecutionSummary, QueryError> {
     let statement = sql.trim().to_string();
+    let binds = bind_values(params)?;
     let kind = statement_kind(&statement);
     if kind == StatementKind::NonQuery
       && options.non_query == crate::services::NonQueryHandling::Refuse
@@ -317,7 +329,7 @@ impl DuckDbConnection {
     let worker = Arc::clone(&self.connection);
     let task = tokio::task::spawn_blocking(move || {
       let connection = worker.lock().map_err(|_| QueryError::message(CONNECTION_POISONED))?;
-      run_statement(&connection, &statement, kind, &sender)
+      run_statement(&connection, &statement, &binds, kind, &sender)
     });
 
     let mut header: Option<(Vec<QueryColumnMetadata>, Vec<String>)> = None;
@@ -586,17 +598,24 @@ fn has_returning(sql: &str) -> bool {
 fn run_statement(
   connection: &Connection,
   statement: &str,
+  binds: &[Value],
   kind: StatementKind,
   sender: &tokio::sync::mpsc::Sender<Fetched>,
 ) -> Result<Option<u64>, QueryError> {
   let mut prepared =
     connection.prepare(statement).map_err(|error| query_error(&error, Some(statement)))?;
   if kind == StatementKind::NonQuery {
-    let affected =
-      prepared.execute([]).map_err(|error| query_error(&error, Some(statement)))? as u64;
+    let affected = prepared
+      .execute(duckdb::params_from_iter(binds.iter()))
+      .map_err(|error| query_error(&error, Some(statement)))? as u64;
     return Ok(Some(affected));
   }
-  drop(prepared.stream_arrow([]).map_err(|error| query_error(&error, Some(statement)))?);
+  // 参数在这里绑上，下面的 `raw_query` 照着绑好的再执行一遍
+  drop(
+    prepared
+      .stream_arrow(duckdb::params_from_iter(binds.iter()))
+      .map_err(|error| query_error(&error, Some(statement)))?,
+  );
   let (metadata, names) = column_header(&prepared);
   let type_ids: Vec<LogicalTypeId> =
     (0..names.len()).map(|index| prepared.column_logical_type(index).id()).collect();

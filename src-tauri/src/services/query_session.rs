@@ -467,6 +467,16 @@ impl QuerySessionState {
     options: StreamingQueryOptions<'_>,
     sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
   ) -> Result<QueryExecutionSummary, QueryError> {
+    self.execute_streaming_with_params(options, &[], sink).await
+  }
+
+  /// 带编辑器里的绑定参数。`params` 为空时与 [`Self::execute_streaming`] 一样
+  pub async fn execute_streaming_with_params(
+    &self,
+    options: StreamingQueryOptions<'_>,
+    params: &[serde_json::Value],
+    sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+  ) -> Result<QueryExecutionSummary, QueryError> {
     if options.session_id.trim().is_empty() {
       return Err(QueryError::message(SESSION_ID_EMPTY));
     }
@@ -491,8 +501,9 @@ impl QuerySessionState {
       let guard = runtime.statement_started(options.sql);
       let result = runtime
         .connection
-        .execute_streaming(
+        .execute_streaming_with_params(
           options.sql,
+          params,
           StreamOptions::limited(options.row_limit, options.byte_limit, options.batch_size)
             .with_explain_plan(options.explain_plan),
           sink,

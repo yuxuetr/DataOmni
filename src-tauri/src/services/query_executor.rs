@@ -10,6 +10,8 @@ use sqlx::{
   SqliteConnection, Statement, TypeInfo, Value, ValueRef,
 };
 use std::future::Future;
+
+use crate::services::query_parameters;
 use tauri_plugin_sql::DbPool;
 use time::{Date, PrimitiveDateTime, Time};
 use tokio::time::{timeout, Duration};
@@ -426,7 +428,7 @@ impl SessionConnection {
       Self::Sqlite(connection) => describe_sqlite_columns(connection, sql).await,
       Self::MySql(connection) => describe_mysql_columns(connection, sql).await,
       Self::Postgres(connection) => {
-        describe_postgres_columns(connection, sql).await.map(|(columns, _)| columns)
+        describe_postgres_columns(connection, sql).await.map(|(columns, _, _)| columns)
       }
       Self::SqlServer(connection) => connection.describe_columns(sql).await,
       Self::Oracle(connection) => connection.describe_columns(sql).await,
@@ -599,19 +601,37 @@ impl SessionConnection {
     options: StreamOptions,
     sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
   ) -> Result<QueryExecutionSummary, QueryError> {
+    self.execute_streaming_with_params(sql, &[], options, sink).await
+  }
+
+  /// 带编辑器里的绑定参数执行（rfcs/bind-parameters.md）。`params` 为空时与不带参数完全一样
+  pub async fn execute_streaming_with_params(
+    &mut self,
+    sql: &str,
+    params: &[JsonValue],
+    options: StreamOptions,
+    sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+  ) -> Result<QueryExecutionSummary, QueryError> {
     match self {
       Self::Sqlite(connection) => {
-        execute_sqlite_connection_streaming(connection, sql, options, sink).await
+        execute_sqlite_connection_streaming(connection, sql, params, options, sink).await
       }
       Self::MySql(connection) => {
-        execute_mysql_connection_streaming(connection, sql, options, sink).await
+        execute_mysql_connection_streaming(connection, sql, params, options, sink).await
       }
       Self::Postgres(connection) => {
-        execute_postgres_connection_streaming(connection, sql, options, sink).await
+        execute_postgres_connection_streaming(connection, sql, params, options, sink).await
       }
-      Self::SqlServer(connection) => connection.execute_streaming(sql, options, sink).await,
-      Self::Oracle(connection) => connection.execute_streaming(sql, options, sink).await,
-      Self::DuckDb(connection) => connection.execute_streaming(sql, options, sink).await,
+      Self::SqlServer(connection) => {
+        connection.execute_streaming_with_params(sql, params, options, sink).await
+      }
+      Self::Oracle(connection) => {
+        connection.execute_streaming_with_params(sql, params, options, sink).await
+      }
+      Self::DuckDb(connection) => {
+        connection.execute_streaming_with_params(sql, params, options, sink).await
+      }
+      Self::ClickHouse(_) if !params.is_empty() => Err(query_parameters::unsupported("clickhouse")),
       Self::ClickHouse(connection) => connection.execute_streaming(sql, options, sink).await,
     }
   }
@@ -665,6 +685,7 @@ async fn execute_sqlite_connection_with_limits(
   let summary = execute_sqlite_connection_streaming(
     connection,
     sql,
+    &[],
     StreamOptions::limited(row_limit, byte_limit, row_limit.max(1)),
     &mut |batch| {
       rows.extend(batch.rows);
@@ -705,6 +726,7 @@ async fn describe_sqlite_columns(
 async fn execute_sqlite_connection_streaming(
   connection: &mut SqliteConnection,
   sql: &str,
+  params: &[JsonValue],
   options: StreamOptions,
   sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
 ) -> Result<QueryExecutionSummary, QueryError> {
@@ -719,11 +741,17 @@ async fn execute_sqlite_connection_streaming(
 
   if columns.is_empty() && options.explain_plan == ExplainPlan::Off {
     refuse_non_query(options.non_query)?;
-    let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
+    let result = if params.is_empty() {
+      (&mut *connection).execute(sql).await
+    } else {
+      (&mut *connection).execute(query_parameters::bind_sqlite(sqlx::query(sql), params)?).await
+    }
+    .map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let mut stream = (&mut *connection).fetch(sqlx::query(sql));
+  let mut stream =
+    (&mut *connection).fetch(query_parameters::bind_sqlite(sqlx::query(sql), params)?);
   let mut rows = Vec::with_capacity(options.batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
@@ -792,6 +820,7 @@ async fn execute_mysql_connection_with_limits(
   let summary = execute_mysql_connection_streaming(
     connection,
     sql,
+    &[],
     StreamOptions::limited(row_limit, byte_limit, row_limit.max(1)),
     &mut |batch| {
       rows.extend(batch.rows);
@@ -852,6 +881,7 @@ fn unsupported_by_prepared_protocol(error: &sqlx::Error) -> bool {
 async fn execute_mysql_connection_streaming(
   connection: &mut MySqlConnection,
   sql: &str,
+  params: &[JsonValue],
   options: StreamOptions,
   sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
 ) -> Result<QueryExecutionSummary, QueryError> {
@@ -862,14 +892,21 @@ async fn execute_mysql_connection_streaming(
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
+  // 参数只能经预处理协议绑；文本协议那条退路走不了
   if refused_by_prepared_protocol(sql) {
+    if !params.is_empty() {
+      return Err(query_parameters::unsupported("text-protocol"));
+    }
     refuse_non_query(options.non_query)?;
-    return stream_mysql_undescribed(connection, sql, options, sink, false).await;
+    return stream_mysql_undescribed(connection, sql, &[], options, sink, false).await;
   }
   let column_metadata = match (&mut *connection).describe(sql).await {
     Err(error) if unsupported_by_prepared_protocol(&error) => {
+      if !params.is_empty() {
+        return Err(query_parameters::unsupported("text-protocol"));
+      }
       refuse_non_query(options.non_query)?;
-      return stream_mysql_undescribed(connection, sql, options, sink, false).await;
+      return stream_mysql_undescribed(connection, sql, &[], options, sink, false).await;
     }
     described => mysql_column_metadata(&described.map_err(QueryError::from)?),
   };
@@ -877,10 +914,11 @@ async fn execute_mysql_connection_streaming(
 
   if columns.is_empty() && options.explain_plan == ExplainPlan::Off {
     refuse_non_query(options.non_query)?;
-    return stream_mysql_undescribed(connection, sql, options, sink, true).await;
+    return stream_mysql_undescribed(connection, sql, params, options, sink, true).await;
   }
 
-  let mut stream = (&mut *connection).fetch(sqlx::query(sql));
+  let mut stream =
+    (&mut *connection).fetch(query_parameters::bind_mysql(sqlx::query(sql), params)?);
   let mut rows = Vec::with_capacity(options.batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
@@ -930,12 +968,13 @@ async fn execute_mysql_connection_streaming(
 async fn stream_mysql_undescribed(
   connection: &mut MySqlConnection,
   sql: &str,
+  params: &[JsonValue],
   options: StreamOptions,
   sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
   prepared: bool,
 ) -> Result<QueryExecutionSummary, QueryError> {
   let mut stream = if prepared {
-    (&mut *connection).fetch_many(sqlx::query(sql))
+    (&mut *connection).fetch_many(query_parameters::bind_mysql(sqlx::query(sql), params)?)
   } else {
     (&mut *connection).fetch_many(sqlx::raw_sql(sql))
   };
@@ -1065,6 +1104,7 @@ async fn execute_postgres_connection_with_limits(
   let summary = execute_postgres_connection_streaming(
     connection,
     sql,
+    &[],
     StreamOptions::limited(row_limit, byte_limit, row_limit.max(1)),
     &mut |batch| {
       rows.extend(batch.rows);
@@ -1092,9 +1132,13 @@ async fn execute_postgres_connection_with_limits(
 async fn describe_postgres_columns(
   connection: &mut PgConnection,
   sql: &str,
-) -> Result<(Vec<QueryColumnMetadata>, bool), QueryError> {
+) -> Result<(Vec<QueryColumnMetadata>, bool, Vec<sqlx::postgres::PgTypeInfo>), QueryError> {
   connection.clear_cached_statements().await.map_err(QueryError::from)?;
   let statement = (&mut *connection).prepare(sql).await.map_err(QueryError::from)?;
+  let parameter_types = match statement.parameters() {
+    Some(sqlx::Either::Left(types)) => types.to_vec(),
+    _ => Vec::new(),
+  };
   let binary = statement.columns().iter().all(|column| pg_decodes_binary(column.type_info()));
   let names = number_duplicate_columns(statement.columns().iter().map(|column| column.name()));
   Ok((
@@ -1112,12 +1156,14 @@ async fn describe_postgres_columns(
       })
       .collect(),
     binary,
+    parameter_types,
   ))
 }
 
 async fn execute_postgres_connection_streaming(
   connection: &mut PgConnection,
   sql: &str,
+  params: &[JsonValue],
   options: StreamOptions,
   sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
 ) -> Result<QueryExecutionSummary, QueryError> {
@@ -1127,19 +1173,35 @@ async fn execute_postgres_connection_streaming(
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
   }
 
-  let (column_metadata, binary) = describe_postgres_columns(connection, sql).await?;
+  let (column_metadata, binary, parameter_types) =
+    describe_postgres_columns(connection, sql).await?;
   let columns = column_metadata.iter().map(|column| column.name.clone()).collect::<Vec<_>>();
+  let bound = |sql| query_parameters::bind_postgres(sqlx::query(sql), params, &parameter_types);
+  if !params.is_empty() {
+    // sqlx 按 SQL 文本缓存预备语句：留着 describe 那一份，绑的值会按服务端推断的类型读，
+    // 没写时区的 timestamptz 就被当成 UTC。清掉，让它按绑定的类型重新准备
+    connection.clear_cached_statements().await.map_err(QueryError::from)?;
+  }
 
   if columns.is_empty() && options.explain_plan == ExplainPlan::Off {
     refuse_non_query(options.non_query)?;
-    let result = (&mut *connection).execute(sql).await.map_err(QueryError::from)?;
+    let result = if params.is_empty() {
+      (&mut *connection).execute(sql).await
+    } else {
+      (&mut *connection).execute(bound(sql)?).await
+    }
+    .map_err(QueryError::from)?;
     return Ok(QueryExecutionSummary::Affected { rows_affected: result.rows_affected() });
+  }
+  // 带参数只能走扩展协议，结果按二进制读；只有文本格式读得了的列就读不了
+  if !binary && !params.is_empty() {
+    return Err(query_parameters::unsupported("text-results"));
   }
 
   // 不带参数的 `&str` 走简单查询协议，结果是文本格式。能 describe 的只会是一条语句，
   // 所以这里不会顺带执行别的
   let mut stream =
-    if binary { (&mut *connection).fetch(sqlx::query(sql)) } else { (&mut *connection).fetch(sql) };
+    if binary { (&mut *connection).fetch(bound(sql)?) } else { (&mut *connection).fetch(sql) };
   let mut rows = Vec::with_capacity(options.batch_size);
   let mut row_count = 0;
   let mut batch_count = 0;
@@ -2188,6 +2250,7 @@ mod tests {
       );
     }
   }
+  use serde_json::json;
   use sqlx::sqlite::SqlitePoolOptions;
   use std::future::pending;
 
@@ -2453,6 +2516,52 @@ mod tests {
     }
   }
 
+  /// 编辑器里的参数（rfcs/bind-parameters.md）：值照种类绑，写语句与查询都走得通
+  #[tokio::test]
+  async fn binds_editor_parameters_on_sqlite() {
+    let pool = SqlitePoolOptions::new()
+      .max_connections(1)
+      .connect("sqlite::memory:")
+      .await
+      .expect("connect to SQLite");
+    let mut connection = pool.acquire().await.expect("acquire SQLite connection");
+    let mut run = async |sql: &str, params: Vec<JsonValue>| {
+      let mut rows = Vec::new();
+      let summary = execute_sqlite_connection_streaming(
+        &mut connection,
+        sql,
+        &params,
+        StreamOptions::limited(100, DEFAULT_QUERY_BYTE_LIMIT, 100),
+        &mut |batch| {
+          rows.extend(batch.rows);
+          Ok(())
+        },
+      )
+      .await
+      .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+      (summary, rows)
+    };
+    run("CREATE TABLE codes (id INTEGER PRIMARY KEY, code TEXT)", vec![]).await;
+    let (inserted, _) = run(
+      "INSERT INTO codes VALUES (?, ?), (?, ?)",
+      vec![json!(1), json!("007"), json!(2), json!("7")],
+    )
+    .await;
+    assert!(matches!(inserted, QueryExecutionSummary::Affected { rows_affected: 2 }));
+
+    let (_, rows) = run("SELECT id FROM codes WHERE code = ?", vec![json!("007")]).await;
+    assert_eq!(rows.len(), 1, "文本 007 不能被当成 7");
+    let (_, rows) =
+      run("SELECT id FROM codes WHERE id = ? OR id = ?", vec![json!(1), json!(2)]).await;
+    assert_eq!(rows.len(), 2);
+    let (_, rows) = run("SELECT id FROM codes ORDER BY id LIMIT ?", vec![json!(1)]).await;
+    assert_eq!(rows.len(), 1);
+    let (_, rows) = run("SELECT id FROM codes ORDER BY id LIMIT ?", vec![json!("1")]).await;
+    assert_eq!(rows.len(), 1, "LIMIT 绑文本也收（SQL Server 的 TOP 不收，见它的真库用例）");
+    let (_, rows) = run("SELECT ? IS NULL AS missing", vec![JsonValue::Null]).await;
+    assert_eq!(rows[0]["missing"]["value"], json!("1"));
+  }
+
   #[tokio::test]
   async fn streams_ordered_result_batches() {
     let pool = SqlitePoolOptions::new()
@@ -2465,6 +2574,7 @@ mod tests {
     let summary = execute_sqlite_connection_streaming(
       &mut connection,
       "SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5",
+      &[],
       StreamOptions::limited(5, DEFAULT_QUERY_BYTE_LIMIT, 2),
       &mut |batch| {
         batches.push(batch);
@@ -2498,6 +2608,7 @@ mod tests {
     let summary = execute_sqlite_connection_streaming(
       &mut connection,
       "SELECT 'a value larger than the budget' AS value",
+      &[],
       StreamOptions::limited(100, 1, 10),
       &mut |batch| {
         batches.push(batch);

@@ -1903,3 +1903,62 @@ async fn sql_server_runs_the_object_ddl_corpus() {
     run_all(&pool, &case.cleanup.iter().map(String::as_str).collect::<Vec<_>>()).await;
   }
 }
+
+/// 编辑器里的绑定参数（rfcs/bind-parameters.md）：`@P1`… 经 `sp_executesql` 按位置绑。
+/// 文本照文本比，绑到整数列上由服务端隐式转换；`TOP (@P1)` 却只收整数（1060）——
+/// 弹框里「数字」那一项就是为它
+#[tokio::test]
+async fn sql_server_binds_editor_parameters() {
+  let Some(pool) = pool().await else { return };
+  let mut connection = session(&pool).await;
+  let mut run = async |sql: &str, params: Vec<JsonValue>| {
+    let mut rows: Vec<QueryRow> = Vec::new();
+    connection
+      .execute_streaming_with_params(
+        sql,
+        &params,
+        StreamOptions::limited(100, 1 << 20, 100),
+        &mut |batch| {
+          rows.extend(batch.rows);
+          Ok(())
+        },
+      )
+      .await
+      .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    rows
+  };
+  run("IF OBJECT_ID('bp_smoke') IS NOT NULL DROP TABLE bp_smoke", vec![]).await;
+  run("CREATE TABLE bp_smoke (id int PRIMARY KEY, code nvarchar(10))", vec![]).await;
+  run(
+    "INSERT INTO bp_smoke VALUES (@P1, @P2), (@P3, @P4)",
+    vec![json!(1), json!("007"), json!(2), json!("7")],
+  )
+  .await;
+
+  assert_eq!(
+    run("SELECT id FROM bp_smoke WHERE code = @P1", vec![json!("007")]).await.len(),
+    1,
+    "文本 007 不能被当成 7"
+  );
+  assert_eq!(run("SELECT id FROM bp_smoke WHERE id = @P1", vec![json!("2")]).await.len(), 1);
+  assert_eq!(run("SELECT TOP (@P1) id FROM bp_smoke ORDER BY id", vec![json!(1)]).await.len(), 1);
+  assert_eq!(
+    run("SELECT id FROM bp_smoke WHERE id = @P1 OR id = @P2", vec![json!(1), json!(2)]).await.len(),
+    2
+  );
+  let rows =
+    run("SELECT CASE WHEN @P1 IS NULL THEN 1 ELSE 0 END AS missing", vec![JsonValue::Null]).await;
+  assert_eq!(rows[0]["missing"], json!(1));
+  run("DROP TABLE bp_smoke", vec![]).await;
+
+  let error = connection
+    .execute_streaming_with_params(
+      "SELECT TOP (@P1) 1 AS one",
+      &[json!("1")],
+      StreamOptions::limited(10, 1 << 20, 10),
+      &mut |_| Ok(()),
+    )
+    .await
+    .expect_err("TOP 不收文本");
+  assert_eq!(error.code.as_deref(), Some("1060"), "{error:?}");
+}

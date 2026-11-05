@@ -23,6 +23,7 @@ pub mod plugin_decode;
 pub mod pool_registry;
 pub mod query_error;
 pub mod query_executor;
+pub mod query_parameters;
 pub mod query_session;
 pub mod read_only_gate;
 pub mod redis;

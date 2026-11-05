@@ -284,6 +284,17 @@ impl SqlServerConnection {
     options: StreamOptions,
     sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
   ) -> Result<QueryExecutionSummary, QueryError> {
+    self.execute_streaming_with_params(sql, &[], options, sink).await
+  }
+
+  /// 带编辑器里的参数（`@P1`…）。有参数时经 `sp_executesql` 发，没有时照旧整批直发
+  pub async fn execute_streaming_with_params(
+    &mut self,
+    sql: &str,
+    params: &[JsonValue],
+    options: StreamOptions,
+    sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
+  ) -> Result<QueryExecutionSummary, QueryError> {
     // 导出要求「不返回结果集就别执行」，而执行之后才知道就晚了——那条 DELETE
     // 已经删了。先描述一遍（只编译不执行），0 列就不执行
     if options.non_query == NonQueryHandling::Refuse && self.describe_columns(sql).await?.is_empty()
@@ -298,7 +309,7 @@ impl SqlServerConnection {
       crate::services::ExplainPlan::Actual => return self.actual_plan(sql, options, sink).await,
     }
     let mut client = self.take_client().await?;
-    let outcome = guarded(stream_first_result(&mut client, sql, options, sink)).await;
+    let outcome = guarded(stream_first_result(&mut client, sql, params, options, sink)).await;
     self
       .finish(client, outcome, |summary, rows_affected| match summary {
         QueryExecutionSummary::Affected { .. } => QueryExecutionSummary::Affected { rows_affected },
@@ -444,7 +455,7 @@ impl SqlServerConnection {
       }
       return Err(error);
     }
-    let outcome = guarded(stream_first_result(&mut client, sql, options, sink)).await;
+    let outcome = guarded(stream_first_result(&mut client, sql, &[], options, sink)).await;
     // 连接断了、或者关不掉：`client` 不放回，随之丢掉
     if !keeps_connection(&outcome) {
       return outcome;
@@ -782,10 +793,18 @@ fn untagged(value: JsonValue) -> JsonValue {
 async fn stream_first_result(
   client: &mut SqlServerClient,
   sql: &str,
+  params: &[JsonValue],
   options: StreamOptions,
   sink: &mut (dyn FnMut(QueryResultBatch) -> Result<(), QueryError> + Send),
 ) -> Result<QueryExecutionSummary, QueryError> {
-  let mut stream = client.simple_query(sql).await.map_err(|error| query_error(error, Some(sql)))?;
+  let mut stream = if params.is_empty() {
+    client.simple_query(sql).await
+  } else {
+    let mut query = tiberius::Query::new(sql);
+    bind_params(&mut query, params)?;
+    query.query(client).await
+  }
+  .map_err(|error| query_error(error, Some(sql)))?;
 
   // 第一个结果集流式交出去；之后的收进 `extra` 随摘要带回。每个结果集先来一份列定义，空的也有
   let mut first: Option<(usize, Vec<QueryColumnMetadata>, Vec<String>)> = None;

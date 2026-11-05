@@ -126,6 +126,9 @@ pub struct QueryExecutionRequest {
   /// 的调用方悄悄开始攒事务，而没有任何地方会提交它们。
   #[serde(default = "default_autocommit")]
   autocommit: bool,
+  /// 编辑器里的绑定参数，按占位符出现的次序（rfcs/bind-parameters.md）。只有 null、字符串、数字
+  #[serde(default)]
+  params: Vec<serde_json::Value>,
 }
 
 fn default_autocommit() -> bool {
@@ -218,7 +221,7 @@ pub async fn execute_query(
     |batch| on_batch.send(batch).map_err(|error| QueryError::message(error.to_string()));
 
   let result = tokio::select! {
-    result = query_session_state.execute_streaming(
+    result = query_session_state.execute_streaming_with_params(
       StreamingQueryOptions {
         session_id: &request.session_id,
         pool_key: &connection_string,
@@ -231,6 +234,7 @@ pub async fn execute_query(
         batch_size: DEFAULT_QUERY_BATCH_SIZE,
         timeout_duration: Duration::from_millis(request.timeout_ms),
       },
+      &request.params,
       &mut send_batch
     ) => result,
     _ = receiver => Err(QueryError::with_code(QUERY_CANCELLED_CODE, QUERY_CANCELLED)),

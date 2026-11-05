@@ -7182,3 +7182,211 @@ async fn sqlite_exported_inserts_carry_every_value_back() {
     sqlx::query_scalar(&cells("dst")).fetch_all(&pool).await.expect("read copy");
   assert_eq!(copied, source, "{script}");
 }
+
+/// 编辑器里的绑定参数（rfcs/bind-parameters.md）跑一条，出错原样交回
+async fn run_with_params(
+  connection: &mut dataomni_lib::services::SessionConnection,
+  sql: &str,
+  params: Vec<serde_json::Value>,
+) -> Result<Vec<dataomni_lib::services::QueryRow>, QueryError> {
+  let mut rows = Vec::new();
+  connection
+    .execute_streaming_with_params(
+      sql,
+      &params,
+      dataomni_lib::services::StreamOptions::limited(100, 1 << 20, 100),
+      &mut |batch| {
+        rows.extend(batch.rows);
+        Ok(())
+      },
+    )
+    .await?;
+  Ok(rows)
+}
+
+/// PostgreSQL 的参数按二进制发，类型由 prepare 定：文本值要转成整数、uuid、时间、jsonb、枚举。
+/// 没写时区的 timestamptz 按会话时区读（与写字面量一样），不是按 UTC
+#[tokio::test]
+async fn postgres_binds_editor_parameters_by_the_described_type() {
+  use serde_json::json;
+  let Some(url) = network_database_url(POSTGRES_URL_ENV) else {
+    return;
+  };
+  let pool =
+    PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to PostgreSQL");
+  let db_pool = DbPool::Postgres(pool);
+  let mut connection = dataomni_lib::services::SessionConnection::acquire(
+    dataomni_lib::services::PoolRef::from(&db_pool),
+  )
+  .await
+  .expect("session connection");
+  let connection = &mut connection;
+  for sql in [
+    "DROP TABLE IF EXISTS bp_smoke",
+    "DROP TYPE IF EXISTS bp_smoke_mood",
+    "CREATE TYPE bp_smoke_mood AS ENUM ('happy', 'sad')",
+    "CREATE TABLE bp_smoke (id int PRIMARY KEY, code varchar(10), tag uuid, at timestamptz, doc jsonb, mood bp_smoke_mood)",
+    "SET TIME ZONE 'Asia/Shanghai'",
+  ] {
+    run_with_params(connection, sql, vec![]).await.unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+  }
+  let insert = "INSERT INTO bp_smoke VALUES ($1, $2, $3, $4, $5, $6)";
+  run_with_params(
+    connection,
+    insert,
+    vec![
+      json!("1"),
+      json!("007"),
+      json!("6f1c2d3e-0000-4000-8000-000000000001"),
+      json!("2026-11-06 08:30:00+08"),
+      json!("{\"a\": 1}"),
+      json!("happy"),
+    ],
+  )
+  .await
+  .expect("insert typed row");
+  run_with_params(
+    connection,
+    insert,
+    vec![
+      json!(2),
+      json!("7"),
+      serde_json::Value::Null,
+      serde_json::Value::Null,
+      serde_json::Value::Null,
+      json!("sad"),
+    ],
+  )
+  .await
+  .expect("insert row with NULLs");
+
+  let ids = |rows: Vec<dataomni_lib::services::QueryRow>| {
+    rows.iter().map(|row| row["id"].clone()).collect::<Vec<_>>()
+  };
+  let cases: [(&str, serde_json::Value); 8] = [
+    ("SELECT id FROM bp_smoke WHERE code = $1", json!("007")),
+    ("SELECT id FROM bp_smoke WHERE id = $1", json!("1")),
+    ("SELECT id FROM bp_smoke WHERE tag = $1", json!("6f1c2d3e-0000-4000-8000-000000000001")),
+    ("SELECT id FROM bp_smoke WHERE at = $1", json!("2026-11-06T00:30:00Z")),
+    // 没写时区：按会话的 Asia/Shanghai 读，是同一个时刻
+    ("SELECT id FROM bp_smoke WHERE at = $1", json!("2026-11-06 08:30")),
+    ("SELECT id FROM bp_smoke WHERE doc @> $1", json!("{\"a\": 1}")),
+    ("SELECT id FROM bp_smoke WHERE mood = $1", json!("happy")),
+    ("SELECT id FROM bp_smoke ORDER BY id LIMIT $1", json!("1")),
+  ];
+  for (sql, value) in cases {
+    let rows = run_with_params(connection, sql, vec![value.clone()])
+      .await
+      .unwrap_or_else(|error| panic!("{sql} ← {value}: {error:?}"));
+    assert_eq!(ids(rows), vec![json!(1)], "{sql} ← {value}");
+  }
+  let rows = run_with_params(
+    connection,
+    "SELECT id FROM bp_smoke WHERE id = $1 OR id = $2 ORDER BY id",
+    vec![json!("1"), json!("2")],
+  )
+  .await
+  .expect("two parameters");
+  assert_eq!(ids(rows), vec![json!(1), json!(2)]);
+  let rows =
+    run_with_params(connection, "SELECT $1::int IS NULL AS missing", vec![serde_json::Value::Null])
+      .await
+      .expect("typed NULL");
+  assert_eq!(rows[0]["missing"], json!(true));
+
+  let error =
+    run_with_params(connection, "SELECT id FROM bp_smoke WHERE id = $1", vec![json!("abc")])
+      .await
+      .expect_err("abc 不是整数");
+  assert!(
+    error.message.starts_with("DATAOMNI_PARAMETER_NOT_CONVERTIBLE: 1 · INT4 · abc"),
+    "{error:?}"
+  );
+  let error = run_with_params(
+    connection,
+    "SELECT 1 AS one WHERE $1::inet IS NOT NULL",
+    vec![json!("127.0.0.1")],
+  )
+  .await
+  .expect_err("inet 参数还不能绑");
+  assert!(error.message.starts_with("DATAOMNI_PARAMETER_TYPE_UNSUPPORTED: 1 · INET"), "{error:?}");
+  // 结果里有只能按文本读的列：带参数只能走扩展协议、按二进制读，说清楚而不是解码失败
+  let error =
+    run_with_params(connection, "SELECT '10.0.0.1'::inet AS ip, $1::int AS n", vec![json!("1")])
+      .await
+      .expect_err("inet 结果列读不了");
+  assert_eq!(error.message, "DATAOMNI_PARAMETERS_UNSUPPORTED: text-results");
+  // 枚举结果列照常：二进制就是标签本身
+  let rows = run_with_params(connection, "SELECT * FROM bp_smoke WHERE id = $1", vec![json!("1")])
+    .await
+    .expect("select * with an enum column");
+  assert_eq!(rows[0]["mood"], json!("happy"));
+
+  for sql in ["DROP TABLE bp_smoke", "DROP TYPE bp_smoke_mood"] {
+    run_with_params(connection, sql, vec![])
+      .await
+      .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+  }
+}
+
+/// MySQL：文本照文本比（`'007'` 不等于 7）。`LIMIT ?` 绑文本也收：命令行里 `SET @a = '1'` 再
+/// `EXECUTE … USING @a` 报 1210，经驱动的二进制协议却不报（8.4 上实测），两条路不一样
+#[tokio::test]
+async fn mysql_binds_editor_parameters_by_their_kind() {
+  use serde_json::json;
+  let Some(url) = network_database_url(MYSQL_URL_ENV) else {
+    return;
+  };
+  let pool =
+    MySqlPoolOptions::new().max_connections(1).connect(&url).await.expect("connect to MySQL");
+  let db_pool = DbPool::MySql(pool);
+  let mut connection = dataomni_lib::services::SessionConnection::acquire(
+    dataomni_lib::services::PoolRef::from(&db_pool),
+  )
+  .await
+  .expect("session connection");
+  let connection = &mut connection;
+  for sql in [
+    "DROP TABLE IF EXISTS bp_smoke",
+    "CREATE TABLE bp_smoke (id int PRIMARY KEY, code varchar(10), at datetime)",
+  ] {
+    run_with_params(connection, sql, vec![])
+      .await
+      .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+  }
+  let insert = "INSERT INTO bp_smoke VALUES (?, ?, ?)";
+  run_with_params(connection, insert, vec![json!(1), json!("007"), json!("2026-11-06 08:30:00")])
+    .await
+    .expect("insert");
+  run_with_params(connection, insert, vec![json!(2), json!("7"), serde_json::Value::Null])
+    .await
+    .expect("insert NULL");
+
+  let count = |rows: Vec<dataomni_lib::services::QueryRow>| rows.len();
+  let text =
+    run_with_params(connection, "SELECT id FROM bp_smoke WHERE code = ?", vec![json!("007")]);
+  assert_eq!(count(text.await.expect("text")), 1, "文本 007 不能被当成 7");
+  let cast = run_with_params(connection, "SELECT id FROM bp_smoke WHERE id = ?", vec![json!("2")]);
+  assert_eq!(count(cast.await.expect("text against int")), 1);
+  let at = run_with_params(
+    connection,
+    "SELECT id FROM bp_smoke WHERE at = ?",
+    vec![json!("2026-11-06 08:30:00")],
+  );
+  assert_eq!(count(at.await.expect("datetime")), 1);
+  let limit =
+    run_with_params(connection, "SELECT id FROM bp_smoke ORDER BY id LIMIT ?", vec![json!(1)]);
+  assert_eq!(count(limit.await.expect("numeric limit")), 1);
+  let limit = run_with_params(connection, "SELECT id FROM bp_smoke LIMIT ?", vec![json!("1")]);
+  assert_eq!(count(limit.await.expect("text limit")), 1);
+  let missing =
+    run_with_params(connection, "SELECT ? IS NULL AS missing", vec![serde_json::Value::Null]);
+  assert_eq!(missing.await.expect("NULL")[0]["missing"]["value"], json!("1"));
+
+  let error = run_with_params(connection, "SHOW WARNINGS", vec![json!(1)])
+    .await
+    .expect_err("文本协议那条路绑不了参数");
+  assert_eq!(error.message, "DATAOMNI_PARAMETERS_UNSUPPORTED: text-protocol");
+
+  run_with_params(connection, "DROP TABLE bp_smoke", vec![]).await.expect("drop");
+}

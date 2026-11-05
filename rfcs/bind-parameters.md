@@ -23,11 +23,14 @@
    文本值绑成 `TEXT`，`WHERE id = $1`（`id` 是 `int`）报 `operator does not exist: integer = text`；
    声明成 `unknown` 让服务端推断也不行，推断出 `int4` 后会拿 int4 的二进制格式去读那几个 UTF-8 字节。
    **结论：PostgreSQL 必须先 describe 拿到每个参数的类型，再按类型把文本值转成对应的 Rust 类型去绑。**
-2. **MySQL 的 `LIMIT ?` 不收字符串。** 8.4.11 上 `PREPARE s FROM 'SELECT … LIMIT ?'`，
-   `SET @a = '1'`，`EXECUTE s USING @a` 报 `1210 Incorrect arguments to EXECUTE`。
-   同一库上 `? + 1` 与 `? = 7` 拿字符串 `'41'` / `'007'` 都正常（隐式转换）。
-   **结论：「一律按文本绑」在 MySQL 上撞 `LIMIT` / `OFFSET`；需要「数字」这一种。**
-   反过来，「长得像整数就按整数绑」是错的语义：`varchar` 列 `code = '007'` 会变成按数值比较，`'7'` 也匹配，还用不上索引。
+2. **有的库在某些位置不收文本值，所以要有「数字」这一种。**
+   - 评估时在 MySQL 8.4.11 的命令行里试：`PREPARE s FROM 'SELECT … LIMIT ?'`、`SET @a = '1'`、`EXECUTE s USING @a`，
+     报 `1210 Incorrect arguments to EXECUTE`，据此推断 MySQL 要数字。
+   - **实现时用真库验，这个推断不成立**：经驱动的二进制协议绑字符串 `'1'`，MySQL 8.4 的 `LIMIT ?` 照收。
+     命令行里的用户变量与驱动不是同一条路。SQLite、DuckDB 的 `LIMIT ?` 也收文本。
+   - **但 SQL Server 不收**：`SELECT TOP (@P1) …` 绑 nvarchar 报 `1060 The number of rows provided for a TOP or FETCH clauses
+     row count parameter must be an integer`。结论不变，只是例子换了一家。真库用例两边都钉住了（`sql_server_smoke.rs` 与 `database_smoke.rs`）。
+   - 反过来，「长得像整数就按整数绑」是错的语义：`varchar` 列 `code = '007'` 会变成按数值比较，`'7'` 也匹配，还用不上索引。
 3. **其余几家后端都已经有绑定的代码。** 导入（`execute_with_params`）与目录查询（`sqlx_select`、`sql_server_select`、
    `oracle_select`、`duckdb_select`）各自都在绑 `JsonValue` 标量。前端的 SQL 词法（`sqlStatements.ts`）已经认得
    单双引号、反引号、方括号、`$tag$`、Oracle `q'[…]'`、`E'…'`、嵌套块注释，找占位符不用另写一套。
