@@ -48,21 +48,19 @@ interface CodegenTable {
 }
 ```
 
-- **已有的库**：读 ER 图那两段整库查询（`services/er_diagram.rs`）。列查询要多给两项，
-  其中 `is_auto_increment` 是必须的：没有它，Prisma 的 `@default(autoincrement())`、TypeORM 的
-  `@PrimaryGeneratedColumn` 都给不出来，新增一行时就得自己填主键。
-  - `is_auto_increment`：
-    - PostgreSQL：`attidentity <> ''`，或者默认值是 `nextval(…)`（`serial`）。
-    - MySQL：`EXTRA` 含 `auto_increment`。
-    - SQLite：唯一的 `INTEGER PRIMARY KEY` 列（rowid 别名）。
-    - SQL Server：`is_identity`。
-    - Oracle：`identity_column = 'YES'`。
-  - `column_default`：默认值的原文，给 Prisma 的 `@default` 用。
-  - ER 图与数据字典不读这两项，多两列不影响它们。
+- **已有的库**：表的清单与外键取自 ER 图已经读到的整库数据（`services/er_diagram.rs`）。
+  每张表的列和唯一索引**逐表**读单表结构查询（`services/schema_metadata.rs`，就是结构页用的那一份，并发 4 路）。
+  - 当初的想法是往 ER 查询里加自增、默认值两列，一次往返就够。改成逐表读，是因为单表查询在七种方言上
+    已经处理好了，而且都测过：
+    - 默认值：MariaDB 的引号，MySQL 的 `DEFAULT_GENERATED`，TiDB 的 `CURRENT_TIMESTAMP`。
+    - 自增：`identity_generation`，PostgreSQL 的 `serial` 另从 `nextval(` 认。
+    - SQLite 的 rowid 别名。
+    - 计算列。
 
-  唯一约束这一版**不读**。外键列上有唯一约束时，生成的是一对多而不是一对一。这样写不错，只是不够准。
-  外键列正好是主键时按一对一处理，因为主键本来就在模型里。
-  重估条件：有人要一对一。
+    再写一份等于把这些坑重踩一遍。代价是 N 次往返：生成代码是点一下才做一次的事，
+    不是 ER 图那样每次打开都要画，所以付得起。
+  - 默认值转成 SQL 原文用现成的 `columnDefaultSql`（`tableDdl.ts`）。
+  - 唯一约束取自单表的索引查询（唯一、非部分、已验证的那些）。外键列正好构成主键或唯一约束时，按一对一生成。
 - **AI 设计的新表**：`SchemaDraft` 直接转成这份模型。默认值、唯一约束都有，自增没有（AI 给的是类型与默认值原文，
   `serial`、`GENERATED … AS IDENTITY`、`AUTO_INCREMENT` 这些从类型或默认值里认）。
 
