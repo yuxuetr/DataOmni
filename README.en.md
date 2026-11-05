@@ -92,6 +92,10 @@ not from protocol compatibility on paper. The last full run was on 2026-10-16. T
 - Code generation from the ER diagram (or an AI design): a Prisma schema, TypeORM or MikroORM entities
   (for NestJS), SeaORM entities, or sqlx `FromRow` structs. It is deterministic, without AI. Types it
   cannot map and tables it cannot generate are listed at the top.
+- Schema compare: diff tables, columns, primary keys, indexes and foreign keys against another
+  connection, tick what to sync, and get a script that makes the target match. The script opens in the
+  editor and runs through the usual per-environment confirmation; across different kinds of database you
+  get the report only.
 - Quick bar and line charts of the current result.
 
 ### MongoDB, Redis, Neo4j and Elasticsearch

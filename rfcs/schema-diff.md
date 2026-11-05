@@ -132,3 +132,14 @@ Oracle 与 DuckDB 的往返没有现成的测试库，只靠单测，写进「�
 | 视图、触发器、过程的定义比较与同步 | 定义原文跨版本写法飘，比较噪音大，要先有往返验收的数据 | 往返门稳定之后有人要 |
 | 一键在目标库直接执行 | 见 §5「执行」 | 不重估：这是安全取舍 |
 | 存成快照文件、和快照比 | 能用两个连接比就够了 | 有人要「和上个版本的结构比」 |
+
+## 8. 实现时的发现（2026-11-06）
+
+- **索引要知道自己是不是约束建的。** PostgreSQL、SQL Server、Oracle 里唯一约束背后的索引不能 `DROP INDEX`，要删约束；
+  SQLite 自动建的、DuckDB 的约束根本删不掉。目录的索引查询加了 `is_constraint`。
+- **`serial` 的序列名带 schema。** 表不在 search_path 上时默认值是 `nextval('dev.t_id_seq'::regclass)`：
+  忽略 schema 比时比较也忽略它，换 schema 建表时跟着换，再先建序列、建完挂到列上。
+- **往返验收抓到的旧错**：MySQL 的 `ALTER COLUMN … SET DEFAULT` 不收 `CURRENT_TIMESTAMP`（1064），结构编辑同样受影响，
+  改成用 `MODIFY` 重述。
+- **真应用抓到的旧错**：插件的 SQLite `close()` 不带库名会关掉所有 SQLite 池子，另开的句柄一关，当前连接也断了。
+- §2 写的「`ALTER` 复用 `schemaChanges.ts`」不对：那个文件只判断语句改不改结构，复用的是 `tableDdl.ts` 的 `buildTableDdl`。

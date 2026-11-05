@@ -275,9 +275,19 @@
     - 保存到目录没在真应用里点过：原生的选目录框驱动不了，写文件的命令有单测。
     - 没连 PG / MySQL / SQL Server / Oracle 的真库生成过：单表结构查询是结构页那一份，各库都跑过。
     - sqlx 只验到编译，整数宽度由类型语料钉住。
-- [-] D3 两个库的结构比对与同步脚本（设计说明 `rfcs/schema-diff.md`，待确认）
+- [x] D3 两个库的结构比对与同步脚本（设计 `rfcs/schema-diff.md`，用户 2026-11-05 确认：脚本只放进编辑器、删表默认不勾）
   - 先写设计说明：比哪些（表、列、主键、索引、外键；视图、触发器等列出来但不比）；只在同一方言之间生成脚本，
     跨方言只给差异报告；`ALTER` 复用结构编辑的生成（`schemaChanges.ts`）；脚本只预览、复制，或在目标库上走现有的风险确认执行。
+  - 做了（`fb33f6e`、`55e9d15`、`abbfa2e`）：`schemaDiff.ts` 比、`schemaSync.ts` 出脚本、`schemaSnapshot.ts` 读两侧，
+    ER 图工具栏的「比对结构…」对话框。ALTER 实际复用的是 `tableDdl.ts` 的 `buildTableDdl`（`schemaChanges.ts` 只判断语句改不改结构）。
+    目录的索引查询加了 `is_constraint`（约束背后的索引要删约束）。
+  - 验收：`scripts/schema-diff-verify.sh` 在真库上往返——SQLite、PostgreSQL（两个 schema）、MySQL（两个库）、
+    SQL Server（两个 schema）执行脚本后再比都为空；`--skip-kind=column-changed` 时三个网络库都留下 3 项、退出码 1。
+    真应用：两个 SQLite 库，比对 → 编辑器 → 事务里执行 → 再比只剩没勾的删表。
+  - 顺带修的（各自单独提交）：MySQL 把默认值改成 `CURRENT_TIMESTAMP` 报 1064（`698f79b`，结构编辑同样受影响）；
+    关掉另开的 SQLite 句柄会把当前 SQLite 连接一起关掉（`d218679`）。
+  - 没验到：Oracle、DuckDB 没有往返（只有单测；Oracle 的 `is_constraint` 查询没在真库上跑过）；
+    网络库只验了往返脚本，没在真应用里点过（读目录与执行都是已有路径）；没试过用经 SSH 隧道的连接作源。
 - [ ] D2 `execute_query` 支持绑定参数
   - 解锁：4.4 的查询模板；2.4 剩下的「表结构查询离开 `tauri-plugin-sql`」。
   - 先评估：编辑器里参数怎么写（`?` / `$1` / `:name`）、各驱动怎么绑、类型怎么定。
