@@ -1359,7 +1359,7 @@ export const en: Translations = {
   'codegen.note.danglingForeignKey': '{table}: foreign key {constraint} references {target}, which is not among the generated tables; the relation was left out (the column is kept)',
   'codegen.note.relationNotUnique': '{table}: foreign key {constraint}: the referenced columns are not a primary key or unique constraint, which this target cannot express, so the relation was left out',
   'codegen.note.relationSkippedTable': '{table}: a table on one side of foreign key {constraint} was not generated, so the relation was left out too',
-  'codegen.note.relationSharedColumn': '{table}: foreign key {constraint} uses columns that already belong to another relation (this target maps a column only once), so it was left out',
+  'codegen.note.relationSharedColumn': '{table}: foreign key {constraint} was left out: another relation already maps its columns, and this target maps a column only once',
   'aiDesign.documentTitle': "New table design for {connection} (not created)",
   'dictionary.summary': "{dialect} · tables: {tables} · foreign-key links: {links} · exported from DataOmni on {date}",
   'dictionary.coverage': "From the database catalog: columns, types, nullability, primary and foreign keys. Column comments, defaults, indexes and unique constraints are not included.",
