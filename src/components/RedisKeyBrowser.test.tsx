@@ -110,8 +110,37 @@ describe('RedisKeyBrowser', () => {
     expect(container.querySelector('pre')?.textContent).toBe("{'a': 1}");
     expect(container.textContent).toContain('Python pickle (protocol 4)');
 
-    await click(button('Raw bytes'));
+    await click(button('As stored'));
     expect(container.querySelector('pre')?.textContent).toBe(escaped);
+  });
+
+  it('JSON 文字排版上色，大整数照原文，原样切得回去；hash 里的 JSON 元素也一样', async () => {
+    const json = '{"id":9437637786419209,"tags":["a"]}';
+    invoke.mockImplementation(async (command: string, args?: { key?: string }) => {
+      if (command === 'redis_scan') {
+        return { keys: [{ key: text('j'), kind: 'string', ttlMs: -1 }, { key: text('h'), kind: 'hash', ttlMs: -1 }], cursor: null };
+      }
+      if (command === 'redis_read_value' && args?.key === btoa('j')) {
+        return { kind: 'string', size: json.length, value: text(json), truncated: false };
+      }
+      if (command === 'redis_read_value') return { kind: 'hash', length: 2, entries: [[text('f'), text(json)], [text('g'), text('[oops')]], next: null };
+      throw new Error(`没料到的命令 ${command}`);
+    });
+    await act(async () => {
+      root.render(<RedisKeyBrowser database={0} />);
+    });
+    await click(button('stringj'));
+    const pretty = '{\n  "id": 9437637786419209,\n  "tags": [\n    "a"\n  ]\n}';
+    expect(container.querySelector('pre')?.textContent).toBe(pretty);
+    expect(container.querySelector('pre .code-property')?.textContent).toBe('"id"');
+    expect(container.textContent).toContain('JSON, laid out and coloured');
+    await click(button('As stored'));
+    expect(container.querySelector('pre')?.textContent).toBe(json);
+
+    await click(button('hashh'));
+    await click(button('Formatted'));
+    // 不是合法 JSON 的照原样
+    expect(cellTexts()).toEqual(expect.arrayContaining([pretty, '[oops']));
   });
 
   it('hash 与 list 里是 pickle 的元素也解出来显示，一个开关切回原始字节', async () => {
@@ -134,14 +163,14 @@ describe('RedisKeyBrowser', () => {
     await click(button('hashh'));
     expect(cellTexts()).toEqual(expect.arrayContaining(["{'a': 1}", '\\xff']));
     expect(container.querySelector('.code-property')?.textContent).toBe("'a'");
-    expect(container.textContent).toContain('Some elements are Python pickles');
+    expect(container.textContent).toContain('Some elements are JSON or Python pickles');
 
-    await click(button('Raw bytes'));
+    await click(button('As stored'));
     expect(cellTexts()).toContain(pickled.text);
     expect(container.querySelector('.code-property')).toBeNull();
 
     await click(button('listl'));
-    await click(button('Decoded'));
+    await click(button('Formatted'));
     expect(cellTexts()).toContain("{'a': 1}");
   });
 

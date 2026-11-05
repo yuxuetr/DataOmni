@@ -1,3 +1,7 @@
+import { highlightSegments, type CodeSegment } from './codeHighlight';
+import { parseJson, stringifyJson } from './esJson';
+import { pickleView } from './pickle';
+
 /** 与后端 `RedisBytes` 一致：`raw` 是 base64，拿去定位；`text` 给人看 */
 export interface RedisBytes {
   raw: string;
@@ -109,6 +113,27 @@ export function redisElements(value: RedisValue): RedisBytes[] {
     default:
       return [];
   }
+}
+
+/** 一个值能按结构排版上色时的样子：pickle 解出来的结构，或排过版的 JSON */
+export type FormattedRedisBytes =
+  | { kind: 'pickle'; protocol: number; segments: CodeSegment[] }
+  | { kind: 'json'; segments: CodeSegment[] };
+
+/**
+ * 认得出结构就排版上色：二进制的试 pickle，文字的以 `{` / `[` 开头才试 JSON——
+ * `123`、`"x"`、`true` 也是合法 JSON，但排版之后和原文一个样，不值得多一个开关。
+ * JSON 用不丢精度的解析：雪花 id 这类超过 2^53 的整数照原文显示，键也按原来的次序
+ */
+export function formattedRedisBytes(bytes: RedisBytes): FormattedRedisBytes | null {
+  if (bytes.binary) {
+    const view = pickleView(bytes.raw);
+    return view && { kind: 'pickle', protocol: view.protocol, segments: view.segments };
+  }
+  const start = bytes.text.trimStart()[0];
+  if (start !== '{' && start !== '[') return null;
+  const parsed = parseJson(bytes.text);
+  return parsed && { kind: 'json', segments: highlightSegments(stringifyJson(parsed, 2), 'json') };
 }
 
 export function nextPosition(value: RedisValue): string | null {

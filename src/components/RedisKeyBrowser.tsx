@@ -9,7 +9,6 @@ import { RedisValueTable, type ElementChange } from './RedisValueTable';
 import { RedisNewKeyDialog } from './RedisNewKeyDialog';
 import { useConfirmPrompt } from './ConfirmPrompt';
 import { bytesToBase64 } from '../utils/redisCommandLine';
-import { pickleView } from '../utils/pickle';
 import { CodeSegments } from './HighlightedCode';
 import { useLanguageStore } from '../stores/languageStore';
 import { useQueryStore } from '../stores/queryStore';
@@ -18,6 +17,7 @@ import { parseBackendError } from '../utils/backendError';
 import {
   REDIS_KEY_KINDS,
   appendValuePage,
+  formattedRedisBytes,
   nextPosition,
   parseTtlSeconds,
   ttlView,
@@ -591,37 +591,39 @@ function Bytes({ bytes }: { bytes: RedisBytes }) {
 }
 
 function StringValueView({ value, t }: { value: Extract<RedisValue, { kind: 'string' }>; t: Translate }) {
-  // 截断的 pickle 必然解不完整，不去试；解得出来默认看结构，原始字节随时切回去对照
-  const pickled = useMemo(
-    () => (value.value.binary && !value.truncated ? pickleView(value.value.raw) : null),
+  // 截断的值解不完整，不去试；认得出结构（pickle、JSON）默认看排好版的，原样随时切回去对照
+  const formatted = useMemo(
+    () => (value.truncated ? null : formattedRedisBytes(value.value)),
     [value.value, value.truncated],
   );
-  const [view, setView] = useState<'decoded' | 'raw'>('decoded');
-  const decoded = pickled !== null && view === 'decoded';
+  const [view, setView] = useState<'formatted' | 'stored'>('formatted');
+  const showFormatted = formatted !== null && view === 'formatted';
+  const note = !formatted
+    ? null
+    : formatted.kind === 'pickle'
+      ? t('redis.value.pickle', { protocol: formatted.protocol })
+      : t('redis.value.json');
   return (
     <div className="space-y-2">
-      {pickled ? (
+      {formatted && (
         <div className="flex flex-wrap items-center gap-3">
           <SegmentedControl
             value={view}
             options={[
-              { value: 'decoded', label: t('redis.value.pickle.decoded') },
-              { value: 'raw', label: t('redis.value.pickle.raw') },
+              { value: 'formatted', label: t('redis.value.view.formatted') },
+              { value: 'stored', label: t('redis.value.view.stored') },
             ]}
             onChange={setView}
           />
-          <p className="text-xs text-fg-muted">
-            {decoded ? t('redis.value.pickle', { protocol: pickled.protocol }) : t('redis.value.binary')}
-          </p>
+          {showFormatted && <p className="text-xs text-fg-muted">{note}</p>}
         </div>
-      ) : (
-        value.value.binary && <p className="text-xs text-warning">{t('redis.value.binary')}</p>
       )}
+      {value.value.binary && !showFormatted && <p className="text-xs text-warning">{t('redis.value.binary')}</p>}
       {value.truncated && <p className="text-xs text-fg-muted">{t('redis.value.truncated', { count: value.size })}</p>}
       <pre className="rounded-control border border-line bg-surface-sunken px-3 py-2">
-        {decoded ? (
+        {showFormatted ? (
           <span className="select-text whitespace-pre-wrap break-all font-mono text-[13px] text-fg">
-            <CodeSegments segments={pickled.segments} />
+            <CodeSegments segments={formatted.segments} />
           </span>
         ) : (
           <Bytes bytes={value.value} />

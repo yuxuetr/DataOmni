@@ -4,9 +4,8 @@ import { clsx } from 'clsx';
 import { PLAIN_TEXT_INPUT, SegmentedControl } from './FormControls';
 import { CodeSegments } from './HighlightedCode';
 import { useLanguageStore } from '../stores/languageStore';
-import { isRedisScore as validScore, redisElements, type RedisBytes, type RedisValue } from '../utils/redisKeys';
+import { formattedRedisBytes, isRedisScore as validScore, redisElements, type RedisBytes, type RedisValue } from '../utils/redisKeys';
 import type { CodeSegment } from '../utils/codeHighlight';
-import { pickleView } from '../utils/pickle';
 import { isImeKeyEvent } from '../utils/shortcuts';
 
 type Translate = ReturnType<typeof useLanguageStore.getState>['t'];
@@ -45,7 +44,7 @@ const inputClass = 'min-w-0 flex-1 rounded-control border bg-surface px-2 py-0.5
 const inputState = (valid: boolean) => (valid ? 'border-line-strong focus:ring-accent' : 'border-danger-line focus:ring-danger');
 const iconButton = 'rounded-control p-1 text-fg-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40';
 
-/** `decoded` 是这一格解出来的 pickle；有就画上了色的结构，没有就是原样（二进制的转义成警示色） */
+/** `decoded` 是这一格排好版的结构（pickle 或 JSON）；有就画上了色的结构，没有就是原样（二进制的转义成警示色） */
 function Bytes({ bytes, decoded }: { bytes: RedisBytes; decoded?: CodeSegment[] }) {
   return (
     <span className={clsx('select-text whitespace-pre-wrap break-all font-mono text-[13px]', bytes.binary && !decoded ? 'text-warning' : 'text-fg')}>
@@ -63,17 +62,17 @@ export function RedisValueTable({ value, encode, onChange, onCancel }: RedisValu
   // 正在改哪一行（hash 的字段 / list 的下标 / zset 的成员），和框里的字
   const [editing, setEditing] = useState<{ row: string; draft: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  // 这一页里是 pickle 的格子，按原始字节记下解出的片段：每格只解一次，翻到原始字节再翻回来也不重解
-  const pickles = useMemo(() => {
+  // 这一页里认得出结构的格子（pickle、JSON），按原始字节记下排好的片段：每格只解一次，切到原样再切回来也不重解
+  const formatted = useMemo(() => {
     const decoded = new Map<string, CodeSegment[]>();
     for (const bytes of redisElements(value)) {
-      const view = bytes.binary && !decoded.has(bytes.raw) ? pickleView(bytes.raw) : null;
+      const view = decoded.has(bytes.raw) ? null : formattedRedisBytes(bytes);
       if (view) decoded.set(bytes.raw, view.segments);
     }
     return decoded;
   }, [value]);
-  const [pickleMode, setPickleMode] = useState<'decoded' | 'raw'>('decoded');
-  const cell = (bytes: RedisBytes) => <Bytes bytes={bytes} decoded={pickleMode === 'decoded' ? pickles.get(bytes.raw) : undefined} />;
+  const [mode, setMode] = useState<'formatted' | 'stored'>('formatted');
+  const cell = (bytes: RedisBytes) => <Bytes bytes={bytes} decoded={mode === 'formatted' ? formatted.get(bytes.raw) : undefined} />;
 
   /** 成功与否告诉调用方：失败时（调用方已经显示了原因）框里的字要留着，改一下再试 */
   const submit = async (change: ElementChange, destructive?: string): Promise<boolean> => {
@@ -321,17 +320,17 @@ export function RedisValueTable({ value, encode, onChange, onCancel }: RedisValu
 
   return (
     <>
-      {pickles.size > 0 && (
+      {formatted.size > 0 && (
         <div className="mb-2 flex flex-wrap items-center gap-3">
           <SegmentedControl
-            value={pickleMode}
+            value={mode}
             options={[
-              { value: 'decoded', label: t('redis.value.pickle.decoded') },
-              { value: 'raw', label: t('redis.value.pickle.raw') },
+              { value: 'formatted', label: t('redis.value.view.formatted') },
+              { value: 'stored', label: t('redis.value.view.stored') },
             ]}
-            onChange={setPickleMode}
+            onChange={setMode}
           />
-          <p className="text-xs text-fg-muted">{pickleMode === 'decoded' ? t('redis.value.pickle.elements') : t('redis.value.binary')}</p>
+          {mode === 'formatted' && <p className="text-xs text-fg-muted">{t('redis.value.formatted.elements')}</p>}
         </div>
       )}
       {body()}

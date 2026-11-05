@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendValuePage, isRedisScore, nextPosition, redisElements, parseTtlSeconds, redisDatabaseIndex, ttlView, type RedisBytes } from './redisKeys';
+import { appendValuePage, formattedRedisBytes, isRedisScore, nextPosition, redisElements, parseTtlSeconds, redisDatabaseIndex, ttlView, type RedisBytes } from './redisKeys';
 
 const bytes = (text: string): RedisBytes => ({ raw: btoa(text), text, binary: false });
 
@@ -13,6 +13,16 @@ describe('redisKeys', () => {
     // stream 的字段名不算：它显示成名字，不按值解码
     expect(redisElements({ kind: 'stream', length: 1, entries: [{ id: '1-0', fields: [[a, b], [c, d]] }], next: null })).toEqual([b, d]);
     expect(redisElements({ kind: 'string', size: 1, value: a, truncated: false })).toEqual([]);
+  });
+
+  it('认得出结构的才排版：pickle、以 { [ 开头的 JSON；其余（含 123 这样的合法 JSON）照原样', () => {
+    const text = (segments: { text: string }[] | undefined) => segments?.map((segment) => segment.text).join('');
+    expect(formattedRedisBytes({ raw: 'gASVCgAAAAAAAAB9lIwBYZRLAXMu', text: '…', binary: true })).toMatchObject({ kind: 'pickle', protocol: 4 });
+    const json = formattedRedisBytes(bytes(' [1, 18446744073709551616] '));
+    expect(json?.kind).toBe('json');
+    expect(text(json?.segments)).toBe('[\n  1,\n  18446744073709551616\n]');
+    for (const plain of ['123', '"x"', '{nope', '[1,]', 'hello']) expect(formattedRedisBytes(bytes(plain))).toBeNull();
+    expect(formattedRedisBytes({ raw: btoa('\xff'), text: '\\xff', binary: true })).toBeNull();
   });
 
   it('树上的库名换成库号', () => {
