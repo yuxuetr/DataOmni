@@ -260,10 +260,10 @@
   - 中英两份顶上互相链接；更新日志不翻译，指向中文那份。截图在打包版上截，顺带看 rc.2 之后那批上色改动。
 - [ ] C1 代码生成（A7 的重估条件满足：用户要）
   - 能不能生成别的库：能。Prisma、TypeORM、SeaORM、sqlx 都是「表、列、类型、主外键 → 文本」的确定性映射，不用 AI。
-  - 首批目标：Prisma schema；TypeORM 实体（NestJS 官方文档的首选）；SeaORM 实体；sqlx 的 `#[derive(FromRow)]` 结构体。
+  - 首批目标：Prisma schema；TypeORM 与 MikroORM 实体（NestJS）；SeaORM 实体；sqlx 的 `#[derive(FromRow)]` 结构体。
     Sequelize、MikroORM、Drizzle、JPA 有人要再加。
   - 输入：ER 图读出的整库模型（与数据字典同源），以及 AI 设计的 `SchemaDraft`。类型对照按「方言 × 目标」一张表，用语料钉住。
-  - 设计说明：`rfcs/codegen.md`（2026-11-05），等用户确认再动手。
+  - 设计说明：`rfcs/codegen.md`（2026-11-05，用户已确认；NestJS 一档加 MikroORM）。
 - [ ] D3 两个库的结构比对与同步脚本
   - 先写设计说明：比哪些（表、列、主键、索引、外键；视图、触发器等列出来但不比）；只在同一方言之间生成脚本，
     跨方言只给差异报告；`ALTER` 复用结构编辑的生成（`schemaChanges.ts`）；脚本只预览、复制，或在目标库上走现有的风险确认执行。

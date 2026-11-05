@@ -1,7 +1,7 @@
 # 代码生成（ORM 实体与结构体）设计说明
 
 > 2026-11-05。TODOs「1.x」的 C1；A7 的重估条件满足（用户要，并且不只 Prisma）。
-> 本文跟代码走。
+> 本文跟代码走。用户 2026-11-05 确认照此动手；NestJS 一档做 TypeORM 与 MikroORM；命名按语言惯例并映射回原名。
 
 ## 1. 要回答的问题
 
@@ -22,13 +22,14 @@
 | --- | --- | --- |
 | Prisma | `schema.prisma` 一个文件 | PostgreSQL、MySQL、SQLite、SQL Server（CockroachDB 走 PostgreSQL） |
 | TypeORM | 每张表一个 `*.entity.ts`（NestJS 官方文档的首选 ORM） | PostgreSQL、MySQL、SQLite、SQL Server、Oracle |
+| MikroORM | 每张表一个 `*.entity.ts`（装饰器写法，NestJS 的另一个常用选择） | PostgreSQL、MySQL、SQLite、SQL Server |
 | SeaORM | 每张表一个模块，外加 `mod.rs` 与 `prelude.rs`（与 `sea-orm-cli generate entity` 同布局） | PostgreSQL、MySQL、SQLite |
 | sqlx | 一个 `.rs` 文件，每张表一个 `#[derive(sqlx::FromRow)]` 结构体 | PostgreSQL、MySQL、SQLite |
 
 MariaDB、TiDB、OceanBase 存下来就是 MySQL 连接，按 MySQL 生成；openGauss 同理按 PostgreSQL。
 DuckDB、ClickHouse 这四个目标都不支持，入口不出现。
 
-Sequelize、MikroORM、Drizzle、JPA 等先不做：有人要再加，一种目标只是多一个渲染函数。
+NestJS 那一档做 TypeORM 与 MikroORM 两种（用户 2026-11-05 定）。Sequelize、Drizzle、JPA 等先不做：有人要再加，一种目标只是多一个渲染函数。
 
 ## 3. 输入：一份模型，两个来源
 
@@ -76,7 +77,7 @@ uuid / json / bytes / date / time / timestamp / timestamptz / unknown(原文)`�
 - 带长度、精度的保留下来，Prisma 要写 `@db.VarChar(64)`、`@db.Decimal(10, 2)`。
 - **认不出的不猜**：映射成 `unknown`。
   - Prisma 有现成的写法 `Unsupported("原文")`。
-  - TypeORM 写原文类型，TS 类型用 `string`。
+  - TypeORM、MikroORM 写原文类型，TS 类型用 `string`。
   - SeaORM 写 `custom("原文")`，Rust 类型用 `String`。
   - sqlx 用 `String`。
   - 无论哪种，生成结果的开头都列出这些列，对话框里也列出来。**不悄悄略过**。
@@ -86,7 +87,7 @@ uuid / json / bytes / date / time / timestamp / timestamptz / unknown(原文)`�
 ## 5. 名字
 
 - 类型名（Prisma model、TS class、Rust struct）用 PascalCase，字段名按目标语言的惯例：TS 用 camelCase，Rust 用 snake_case。
-  **和原名不同就显式映射回原名**：`@@map` / `@map`、`@Entity("原名")` / `@Column({ name })`、
+  **和原名不同就显式映射回原名**：`@@map` / `@map`、`@Entity("原名")` / `@Column({ name })`（MikroORM 是 `tableName` / `fieldName`）、
   `#[sea_orm(table_name, column_name)]`、`#[sqlx(rename)]`。
 - **不做单复数转换**：没有词典就会把 `status` 变成 `statu`，变错了比不变更糟。
 - 名字变成非法标识符时要处理：以数字开头的加 `_` 前缀，转换后撞上关键字的另行处理，同一张表里两列转成同一个名字的加序号区分，
@@ -105,6 +106,8 @@ uuid / json / bytes / date / time / timestamp / timestamptz / unknown(原文)`�
   - 有外键的一侧写 `@ManyToOne` 加 `@JoinColumn`（复合外键用数组），对面写 `@OneToMany`。
   - 外键列同时保留成普通的 `@Column`，因为读写外键 id 是常见用法。
   - 没有主键的表 TypeORM 不收：跳过，写明原因。
+- **MikroORM**：外键一侧写 `@ManyToOne`（复合外键用 `joinColumns`），对面写 `@OneToMany` 加 `Collection`。
+  外键列不另写成普通属性（MikroORM 里一列只映射一个属性）。没有主键的表跳过，写明原因。
 - **SeaORM**：`Relation` 枚举用 `belongs_to` 和 `has_many`，加上 `Related<…>` 实现；同一对表之间有多条外键时，
   不生成 `Related` 实现（SeaORM 要求唯一），只留 `Relation`。没有主键的表跳过并写明原因（SeaORM 要求主键）。
 - **sqlx**：只生成结构体，没有关系。
@@ -113,7 +116,7 @@ uuid / json / bytes / date / time / timestamp / timestamptz / unknown(原文)`�
 
 - **ER 图的导出菜单加「生成代码…」**：对话框里选目标，带预览（只读编辑器，带高亮），可以复制，也可以保存。
   - 单文件的目标存为一个文件。
-  - 多文件的（TypeORM、SeaORM）选一个目录，只写新文件、不覆盖已有的，与 CLI 的 `export` 同一个规矩。
+  - 多文件的（TypeORM、MikroORM、SeaORM）选一个目录，只写新文件、不覆盖已有的，与 CLI 的 `export` 同一个规矩。
   - ER 图当前有筛选时，只生成筛出来的那些表。外键指向筛掉的表时，这一端的关系不生成，并在开头的说明里列出来。
 - **AI 设计的结果页**同样有这个入口，来源是当前的设计。
 - CLI 这一版不加：Agent 自己就能写代码。重估条件：有人要在脚本里批量生成。
@@ -128,7 +131,7 @@ uuid / json / bytes / date / time / timestamp / timestamptz / unknown(原文)`�
 - **生成出来的代码真的能用**：这些工具太重，不进 `bun run check`，写成脚本 `scripts/codegen-verify.sh`。
   它把语料的输出写到临时目录，然后分别跑：
   - `prisma validate`；
-  - 带 `typeorm` 和 `reflect-metadata` 的 `tsc --noEmit`；
+  - 带 `typeorm`、`@mikro-orm/core` 和 `reflect-metadata` 的 `tsc --noEmit`；
   - 带 `sea-orm`、`sqlx` 依赖的 `cargo check`。
 
   另外用 `prisma db pull` 与 `sea-orm-cli` 在真库上生成一份当参照，比对类型映射。这一步只在动手前做一次，结果记在本文。
