@@ -25,7 +25,8 @@ import {
 import { identifierDialectFor } from '../utils/sqlIdentifiers';
 import { serverLabel } from '../utils/serverPresets';
 import { DdlPreviewDialog } from './DdlPreviewDialog';
-import { ErDiagramCanvas } from './ErDiagramView';
+import { ErDiagramCanvas, type ErCodegen } from './ErDiagramView';
+import { draftToCodegenSchema, isCodegenDialect } from '../utils/codegenModel';
 import { AiRequestPanel } from './AiRequestPanel';
 
 interface AiDesignViewProps {
@@ -100,6 +101,19 @@ export function AiDesignView({ tabId, connection }: AiDesignViewProps) {
     [draft, dialect, errors.length]
   );
   const diagram = useMemo(() => (draft ? draftToEr(draft) : null), [draft]);
+  // 设计还没建出来，生成的是这份设计的代码；只生成图上看得到的那些表（筛选过就是筛选后的）
+  const codegen = useMemo((): ErCodegen | undefined => {
+    if (!draft || !isCodegenDialect(dialect)) return undefined;
+    return {
+      dialect,
+      source: t('aiDesign.documentTitle', { connection: connection.name }),
+      load: async (visibleTables) => {
+        const keys = new Set(visibleTables.map((table) => table.name));
+        const schema = draftToCodegenSchema(dialect, draft);
+        return { ...schema, tables: schema.tables.filter((table) => keys.has(table.name)) };
+      }
+    };
+  }, [draft, dialect, connection.name, t]);
   const configured = aiConfigured(settings);
 
   const generate = async () => {
@@ -246,6 +260,7 @@ export function AiDesignView({ tabId, connection }: AiDesignViewProps) {
             tables={diagram.tables}
             links={diagram.links}
             document={{ title: t('aiDesign.documentTitle', { connection: connection.name }), dialect: serverLabel(connection), origin: 'design' }}
+            codegen={codegen}
           />
         ) : (
           <div className="flex h-full items-center justify-center p-8 text-center text-sm text-fg-muted">

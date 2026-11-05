@@ -50,6 +50,14 @@ import type { ConnectionProfile } from '../contracts';
 import type { TranslationKey } from '../i18n/translate';
 import { requireDatabase } from '../utils/requireDatabase';
 import { SegmentedControl, PLAIN_TEXT_INPUT } from './FormControls';
+import { CodegenDialog } from './CodegenDialog';
+import type { SqlDialect } from '../contracts/queryExecution';
+import type { CodegenSchema } from '../utils/codegenModel';
+import { codegenTargetsFor } from '../utils/codegenTargets';
+import { loadCatalogCodegenSchema } from '../utils/codegenCatalog';
+import { isCodegenDialect } from '../utils/codegenModel';
+import { identifierDialectFor } from '../utils/sqlIdentifiers';
+import type { SchemaMetadataQueries } from '../utils/catalogQueries';
 
 interface ErDiagramQueries {
   columns: string;
@@ -80,6 +88,16 @@ const EXPORT_FORMATS: Array<{ format: ExportFormat; labelKey: TranslationKey }> 
   { format: 'markdown', labelKey: 'er.exportDictionary' },
   { format: 'skill', labelKey: 'er.exportSkill' }
 ];
+
+/**
+ * 「生成代码…」要的东西：方言、写进文件开头的来源、按图上看得到的表读出模型。
+ * 不给（或者这个方言没有能生成的目标）就没有这一项
+ */
+export interface ErCodegen {
+  dialect: SqlDialect;
+  source: string;
+  load: (tables: ErTable[], links: ErLink[]) => Promise<CodegenSchema>;
+}
 
 /** 字典与 Skill 要说得出这是哪个库；不给就只有图的三种 */
 export interface ErDocument {
@@ -157,6 +175,20 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
     };
   }, [connection, database, t, schemaVersion, reloadToken]);
 
+  const codegen = useMemo((): ErCodegen => {
+    const dialect = identifierDialectFor(connection.db_type);
+    return {
+      dialect,
+      source: connection.database ? `${connection.name} / ${connection.database}` : connection.name,
+      load: async (visibleTables, visibleLinks) => {
+        if (!isCodegenDialect(dialect)) throw new Error(dialect);
+        const queries = await invoke<SchemaMetadataQueries>('get_schema_metadata_queries', { dbType: connection.db_type });
+        const handle = requireDatabase(database);
+        return loadCatalogCodegenSchema((sql, params) => handle.select(sql, params), queries, dialect, visibleTables, visibleLinks);
+      }
+    };
+  }, [connection, database]);
+
   if (error) {
     return (
       <p className="flex items-start gap-2 px-4 py-3 text-xs text-danger">
@@ -191,6 +223,7 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
       links={links}
       onRefresh={() => setReloadToken(token => token + 1)}
       document={{ title: connection.name, dialect: serverLabel(connection), origin: 'catalog' }}
+      codegen={codegen}
     />
   );
 }
@@ -203,11 +236,13 @@ export function ErDiagramCanvas({
   tables,
   links,
   onRefresh,
-  document: source
+  document: source,
+  codegen
 }: {
   tables: ErTable[];
   links: ErLink[];
   document?: ErDocument;
+  codegen?: ErCodegen;
   /** 外部改了结构时用：数据库不会推送这件事，只能主动再查一遍 */
   onRefresh?: () => void;
 }) {
@@ -228,6 +263,8 @@ export function ErDiagramCanvas({
   const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  /** 打开时拍下图上看得到的表：对话框开着的时候再改筛选，不该换掉正在看的代码 */
+  const [codegenLoad, setCodegenLoad] = useState<(() => Promise<CodegenSchema>) | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -532,6 +569,19 @@ export function ErDiagramCanvas({
                       {t(labelKey)}
                     </button>
                   ))}
+                  {codegen && codegenTargetsFor(codegen.dialect).length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExportMenuOpen(false);
+                        const snapshot = { tables: visible.tables, links: visible.links };
+                        setCodegenLoad(() => () => codegen.load(snapshot.tables, snapshot.links));
+                      }}
+                      className="block w-full border-t border-line px-3 py-1.5 text-left text-xs text-fg hover:bg-surface-hover"
+                    >
+                      {t('er.exportCode')}
+                    </button>
+                  )}
                 </div>
               </>
             )}
@@ -591,6 +641,14 @@ export function ErDiagramCanvas({
           ))}
         </svg>
       </div>
+      {codegen && codegenLoad && (
+        <CodegenDialog
+          dialect={codegen.dialect}
+          source={codegen.source}
+          load={codegenLoad}
+          onClose={() => setCodegenLoad(null)}
+        />
+      )}
     </div>
   );
 }

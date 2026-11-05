@@ -197,7 +197,8 @@ describe('单复数', () => {
       /\{count\}[^{]*\b(rows|entries|statements|tabs|items|matches|days|files|columns|tables|bytes|characters|hits|documents)\b/;
     // 调用点用 `statementCount > 1` 守着，count 永远不会是 1。补一个单数形式
     // 只会多出一条永远取不到的文案，而下一个人读到它会以为它在用
-    const NEVER_ONE = ['risk.batchNote'];
+    // 代码生成的两条只在多文件目标（files.length > 1）时出现
+    const NEVER_ONE = ['risk.batchNote', 'codegen.saveToFolder', 'codegen.savedFiles'];
     for (const key of KEYS) {
       if (key.endsWith('.one') || NEVER_ONE.includes(key) || !PLURAL_NOUN.test(en[key])) {
         continue;

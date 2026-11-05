@@ -1,7 +1,8 @@
-import { StreamLanguage, type Language } from '@codemirror/language';
+import { StreamLanguage, type Language, type StreamParser } from '@codemirror/language';
 import { StandardSQL } from '@codemirror/lang-sql';
 import { cypher } from '@codemirror/legacy-modes/mode/cypher';
-import { javascript, json } from '@codemirror/legacy-modes/mode/javascript';
+import { javascript, json, typescript } from '@codemirror/legacy-modes/mode/javascript';
+import { rust } from '@codemirror/legacy-modes/mode/rust';
 import { classHighlighter, highlightCode } from '@lezer/highlight';
 
 /**
@@ -11,7 +12,7 @@ import { classHighlighter, highlightCode } from '@lezer/highlight';
  * 太重，而这里只要颜色。切出来的片段拼回去就是原文，一个字不改，所以复制出去的也还是原文。
  */
 
-export type CodeLanguage = 'sql' | 'json' | 'javascript' | 'cypher';
+export type CodeLanguage = 'sql' | 'json' | 'javascript' | 'cypher' | 'typescript' | 'rust' | 'prisma';
 
 /** 只给这几类上色；变量名、运算符、标点保持正文颜色，满屏都是颜色就等于没有颜色 */
 export type CodeTone = 'keyword' | 'type' | 'string' | 'number' | 'atom' | 'property' | 'comment';
@@ -27,11 +28,38 @@ export interface CodeSegment {
  */
 export const MAX_HIGHLIGHTED_CHARS = 200_000;
 
+/**
+ * `schema.prisma`：没有现成的词法器，生成的代码预览只要几类颜色——块关键字、类型名（大写开头）、
+ * `@` / `@@` 属性、字符串、数字、注释
+ */
+const prisma: StreamParser<null> = {
+  name: 'prisma',
+  startState: () => null,
+  token(stream) {
+    if (stream.eatSpace()) return null;
+    if (stream.match('//')) {
+      stream.skipToEnd();
+      return 'comment';
+    }
+    if (stream.match(/^"(?:[^"\\]|\\.)*"/)) return 'string';
+    if (stream.match(/^@@?[\w.]+/)) return 'atom';
+    if (stream.match(/^\d+(?:\.\d+)?/)) return 'number';
+    if (stream.match(/^(?:model|enum|generator|datasource|view|type)\b/)) return 'keyword';
+    if (stream.match(/^[A-Z]\w*/)) return 'type';
+    if (stream.match(/^\w+/)) return null;
+    stream.next();
+    return null;
+  }
+};
+
 const LANGUAGES: Record<CodeLanguage, Language> = {
   sql: StandardSQL.language,
   json: StreamLanguage.define(json),
   javascript: StreamLanguage.define(javascript),
-  cypher: StreamLanguage.define(cypher)
+  cypher: StreamLanguage.define(cypher),
+  typescript: StreamLanguage.define(typescript),
+  rust: StreamLanguage.define(rust),
+  prisma: StreamLanguage.define(prisma)
 };
 
 // classHighlighter 给的是 `tok-string` 这样的类名，有时一个片段带好几个

@@ -69,6 +69,8 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_LOG_REVEAL_FAILED: 'error.backend.logRevealFailed',
   DATAOMNI_UPDATE_CHECK_FAILED: 'error.backend.updateCheckFailed',
   DATAOMNI_DIRECTORY_MISSING: 'error.backend.directoryMissing',
+  DATAOMNI_FILES_EXIST: 'error.backend.filesExist',
+  DATAOMNI_RELATIVE_PATH_INVALID: 'error.backend.relativePathInvalid',
   DATAOMNI_FILE_WRITE_FAILED: 'error.backend.fileWriteFailed',
   DATAOMNI_FILE_READ_FAILED: 'error.backend.fileReadFailed',
   DATAOMNI_FILE_OPEN_FAILED: 'error.backend.fileOpenFailed',

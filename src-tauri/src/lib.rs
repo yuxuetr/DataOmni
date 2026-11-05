@@ -161,6 +161,7 @@ pub fn run() {
       ai_has_key,
       // 文件写入
       write_text_file,
+      write_new_text_files,
       write_binary_file,
       read_text_file,
     ])

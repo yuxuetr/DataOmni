@@ -13,6 +13,10 @@ pub const BASE64_INVALID: &str = "DATAOMNI_BASE64_INVALID";
 pub const FILE_NOT_UTF8: &str = "DATAOMNI_FILE_NOT_UTF8";
 /// 文件超过读取上限。数据是 `路径 · 实际大小 · 上限`
 pub const FILE_TOO_LARGE: &str = "DATAOMNI_FILE_TOO_LARGE";
+/// 要写的文件已经有了，一个都没写。数据是已有的那些路径，用 `, ` 隔开
+pub const FILES_EXIST: &str = "DATAOMNI_FILES_EXIST";
+/// 相对路径不合规矩（绝对路径、带 `..`、空的）。数据里带的是那条路径
+pub const RELATIVE_PATH_INVALID: &str = "DATAOMNI_RELATIVE_PATH_INVALID";
 
 /// 把导出内容写到用户在保存对话框里选定的路径。
 ///
@@ -147,9 +151,109 @@ pub async fn read_text_file(path: String) -> Result<TextFile, String> {
   Ok(TextFile { contents, encoding })
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct NewTextFile {
+  /// 相对 `directory` 的路径，`/` 分隔，可以带子目录
+  pub path: String,
+  pub contents: String,
+}
+
+/// 把一组生成的文件（代码生成的实体，一张表一个）写进用户选的目录。
+///
+/// **只写新文件**：有任何一个已经存在就一个都不写，报出是哪几个。生成的实体常常被人改过，
+/// 悄悄盖掉就丢了改动；写一半停下又会留下一套对不上的文件。先全部查过再动手。
+/// 路径只收相对的、不带 `..` 的：文件名来自表名，表名是库里的数据，不能让它把文件写到目录外面去。
+#[tauri::command]
+pub async fn write_new_text_files(
+  directory: String,
+  files: Vec<NewTextFile>,
+) -> Result<Vec<String>, String> {
+  let root = PathBuf::from(&directory);
+  if !root.is_dir() {
+    return Err(format!("{DIRECTORY_MISSING}: {}", root.display()));
+  }
+  let mut targets = Vec::with_capacity(files.len());
+  for file in &files {
+    let relative = Path::new(&file.path);
+    let safe = !file.path.is_empty()
+      && relative.components().all(|part| matches!(part, std::path::Component::Normal(_)));
+    if !safe {
+      return Err(format!("{RELATIVE_PATH_INVALID}: {}", file.path));
+    }
+    targets.push(root.join(relative));
+  }
+  let existing: Vec<String> = targets
+    .iter()
+    .filter(|target| target.exists())
+    .map(|target| target.display().to_string())
+    .collect();
+  if !existing.is_empty() {
+    return Err(format!("{FILES_EXIST}: {}", existing.join(", ")));
+  }
+  for (target, file) in targets.iter().zip(&files) {
+    if let Some(parent) = target.parent() {
+      std::fs::create_dir_all(parent)
+        .map_err(|e| format!("{FILE_WRITE_FAILED}: {} · {e}", parent.display()))?;
+    }
+    std::fs::write(target, file.contents.as_bytes())
+      .map_err(|e| format!("{FILE_WRITE_FAILED}: {} · {e}", target.display()))?;
+  }
+  Ok(targets.iter().map(|target| target.display().to_string()).collect())
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  fn new_file(path: &str, contents: &str) -> NewTextFile {
+    NewTextFile { path: path.to_string(), contents: contents.to_string() }
+  }
+
+  #[tokio::test]
+  async fn writes_new_files_into_subdirectories() {
+    let dir = std::env::temp_dir().join(format!("dataomni-new-files-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let written = write_new_text_files(
+      dir.to_string_lossy().to_string(),
+      vec![new_file("users.entity.ts", "a"), new_file("entities/mod.rs", "b")],
+    )
+    .await
+    .expect("write");
+    assert_eq!(written.len(), 2);
+    assert_eq!(std::fs::read_to_string(dir.join("entities/mod.rs")).expect("read"), "b");
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[tokio::test]
+  async fn writes_nothing_when_any_file_already_exists() {
+    let dir = std::env::temp_dir().join(format!("dataomni-existing-files-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    std::fs::write(dir.join("b.ts"), "edited by hand").expect("seed");
+    let error = write_new_text_files(
+      dir.to_string_lossy().to_string(),
+      vec![new_file("a.ts", "new"), new_file("b.ts", "new")],
+    )
+    .await
+    .expect_err("must refuse");
+    assert!(error.starts_with(FILES_EXIST), "{error}");
+    assert!(!dir.join("a.ts").exists(), "前面那个也不能写：写一半会留下一套对不上的文件");
+    assert_eq!(std::fs::read_to_string(dir.join("b.ts")).expect("read"), "edited by hand");
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  #[tokio::test]
+  async fn refuses_paths_that_leave_the_directory() {
+    let dir = std::env::temp_dir().join(format!("dataomni-escape-files-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    for path in ["../x.ts", "/tmp/x.ts", "", "a/../../x.ts"] {
+      let error =
+        write_new_text_files(dir.to_string_lossy().to_string(), vec![new_file(path, "x")])
+          .await
+          .expect_err("must refuse");
+      assert!(error.starts_with(RELATIVE_PATH_INVALID), "{path}: {error}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+  }
 
   #[tokio::test]
   async fn writes_utf8_contents_and_reports_byte_length() {
