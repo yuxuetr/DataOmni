@@ -574,6 +574,94 @@
       "renameByChange": true
     },
     {
+      "name": "mysql-sets-a-current-timestamp-default-by-restating",
+      "why": "`ALTER COLUMN … SET DEFAULT` 只收字面量与括起来的表达式，`SET DEFAULT CURRENT_TIMESTAMP` 报 1064（MySQL 8.4，结构比对的往返验收撞上的）。这种默认值改用 MODIFY 重述；字面量照旧用 SET DEFAULT",
+      "dialect": "mysql",
+      "schema": null,
+      "table": "ddl_conf_myts",
+      "newTableName": "ddl_conf_myts",
+      "fixture": [
+        "DROP TABLE IF EXISTS ddl_conf_myts",
+        "CREATE TABLE ddl_conf_myts (id INT NOT NULL PRIMARY KEY, created_at TIMESTAMP NULL DEFAULT NULL, n INT DEFAULT 1)"
+      ],
+      "origin": [
+        {
+          "name": "id",
+          "dataType": "int",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": false,
+          "extra": ""
+        },
+        {
+          "name": "created_at",
+          "dataType": "timestamp",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": null,
+          "generated": false,
+          "extra": ""
+        },
+        {
+          "name": "n",
+          "dataType": "int",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "1",
+          "generated": false,
+          "extra": ""
+        }
+      ],
+      "draft": [
+        {
+          "origin": "created_at",
+          "defaultValue": "CURRENT_TIMESTAMP"
+        },
+        {
+          "origin": "n",
+          "defaultValue": "2"
+        }
+      ],
+      "statements": [
+        "ALTER TABLE `ddl_conf_myts` MODIFY COLUMN `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP, ALTER COLUMN `n` SET DEFAULT 2"
+      ],
+      "refusals": [],
+      "impacts": [],
+      "after": [
+        {
+          "name": "id",
+          "dataType": "int",
+          "nullable": false,
+          "primaryKeyOrdinal": 1,
+          "defaultValue": null,
+          "generated": false,
+          "extra": ""
+        },
+        {
+          "name": "created_at",
+          "dataType": "timestamp",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "CURRENT_TIMESTAMP",
+          "generated": false,
+          "extra": "DEFAULT_GENERATED"
+        },
+        {
+          "name": "n",
+          "dataType": "int",
+          "nullable": true,
+          "primaryKeyOrdinal": null,
+          "defaultValue": "2",
+          "generated": false,
+          "extra": ""
+        }
+      ],
+      "cleanup": [
+        "DROP TABLE IF EXISTS ddl_conf_myts"
+      ]
+    },
+    {
       "name": "sqlite-only-the-four-forms-it-really-has",
       "dialect": "sqlite",
       "schema": null,

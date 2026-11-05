@@ -299,6 +299,13 @@ function mysqlRestatementRefusal(column: ColumnDraft): TranslationKey | null {
 }
 
 /**
+ * `ALTER COLUMN … SET DEFAULT` 只收字面量与括起来的表达式：`SET DEFAULT CURRENT_TIMESTAMP` 是语法错误
+ * （MySQL 8.4 上 1064，结构比对的往返验收撞上的）。别的写法改用 `MODIFY COLUMN` 重述，
+ * 列定义里的 `DEFAULT CURRENT_TIMESTAMP` 各家 MySQL 系都认
+ */
+const MYSQL_SET_DEFAULT_VALUE = /^(?:[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?|'(?:[^'\\]|''|\\.)*'|null|true|false|[bx]'[0-9a-f]*'|\(.*\))$/i;
+
+/**
  * 空间列的 SRID 是列定义的一部分，重述时不写就被删掉（语句成功；列上有空间索引时
  * 报 3644）。它在 `COLUMNS.SRS_ID` 里，而这一列 TiDB 与 MariaDB 都没有，TiDB 又不看
  * 版本注释的版本号，共用的列目录查询读不了它——所以拒绝，不重述一条可能丢掉 SRID 的定义。
@@ -412,7 +419,8 @@ export function buildTableDdl(request: TableDdlRequest): DdlPlan {
       // `MODIFY` 依赖同一条 ALTER 里前后动作的生效次序，那是没有保证的
       const needsRestatement =
         change.typeChanged || change.nullabilityChanged
-        || (change.renamed && (change.defaultChanged || request.renameByChange === true));
+        || (change.renamed && (change.defaultChanged || request.renameByChange === true))
+        || (change.defaultChanged && column.defaultValue != null && !MYSQL_SET_DEFAULT_VALUE.test(column.defaultValue.trim()));
       if (needsRestatement) {
         const refusal = mysqlRestatementRefusal(column);
         if (refusal) {
