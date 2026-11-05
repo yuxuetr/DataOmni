@@ -21,5 +21,7 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"],
+  /* 代码生成的语料（生成出来的实体），由 scripts/codegen-verify.sh 对着真的 typeorm 编译 */
+  "exclude": ["src/**/__snapshots__"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

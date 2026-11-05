@@ -2,10 +2,11 @@ import type { SqlDialect } from '../contracts/queryExecution';
 import type { CodeLanguage } from './codeHighlight';
 import { isCodegenDialect, type CodegenDialect, type CodegenSchema, type GeneratedCode } from './codegenModel';
 import { generatePrisma, isPrismaDialect } from './codegenPrisma';
+import { generateTypeorm } from './codegenTypeorm';
 
 /** 代码生成的目标：对话框里的选项、预览用的语言、各自支持的方言（rfcs/codegen.md §2） */
 export interface CodegenTarget {
-  id: 'prisma';
+  id: 'prisma' | 'typeorm';
   label: string;
   language: CodeLanguage;
   supports: (dialect: CodegenDialect) => boolean;
@@ -23,6 +24,13 @@ export const CODEGEN_TARGETS: CodegenTarget[] = [
       if (!isPrismaDialect(dialect)) throw new Error(`Prisma does not support ${dialect}`);
       return generatePrisma({ ...schema, dialect }, source);
     }
+  },
+  {
+    id: 'typeorm',
+    label: 'TypeORM',
+    language: 'typescript',
+    supports: () => true,
+    generate: generateTypeorm
   }
 ];
 

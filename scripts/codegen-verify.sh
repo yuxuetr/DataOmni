@@ -5,8 +5,10 @@
 #
 #   scripts/codegen-verify.sh
 #
-# 反向验证（2026-11-05）：从 Prisma 快照里删掉一条反向关系，`prisma validate` 报
-# 「missing an opposite relation field」。
+# 反向验证（2026-11-05）：
+# - 从 Prisma 快照里删掉一条反向关系，`prisma validate` 报「missing an opposite relation field」；
+# - TypeORM 把一个 referencedColumnName 改成不存在的属性，建元数据报「Referenced column nope was not found」；
+#   不写列类型时（早先的写法）五种驱动都报「Data type "Object" … is not supported」。
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -35,5 +37,52 @@ for file in "$snapshots"/prisma-*.prisma; do
     failed=1
   fi
 done
+
+# --- TypeORM：tsc 严格模式编译，再交给五种驱动各建一次元数据 ---
+# 建元数据时 TypeORM 按驱动的 supportedDataTypes 校验列类型、按属性名找关系的对面，tsc 查不出这两样。
+# 不连库：buildMetadatas 只要驱动包装得上
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+cp -R "$snapshots"/typeorm-* "$work/"
+(
+  cd "$work"
+  echo '{"name":"codegen-verify","private":true}' > package.json
+  bun add typeorm@0.3 reflect-metadata typescript@5 @types/node pg mysql2 sqlite3 mssql oracledb >/dev/null 2>&1
+  cat > tsconfig.json <<'JSON'
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "commonjs", "moduleResolution": "node", "strict": true,
+    "experimentalDecorators": true, "emitDecoratorMetadata": true, "skipLibCheck": true,
+    "outDir": "dist", "types": ["node"]
+  },
+  "include": ["typeorm-*/**/*.ts"]
+}
+JSON
+  cat > metadata.js <<'JS'
+require('reflect-metadata');
+const { DataSource } = require('typeorm');
+const drivers = { postgresql: 'postgres', mysql: 'mysql', sqlite: 'sqlite', sqlserver: 'mssql', oracle: 'oracle' };
+(async () => {
+  let failed = 0;
+  for (const [dialect, type] of Object.entries(drivers)) {
+    try {
+      const { entities } = require(`./dist/typeorm-${dialect}/index.js`);
+      const dataSource = new DataSource({ type, entities, database: type === 'sqlite' ? ':memory:' : 'db' });
+      await dataSource.buildMetadatas();
+      console.log(`ok    typeorm ${dialect} (${dataSource.entityMetadatas.length} entities)`);
+    } catch (error) {
+      failed = 1;
+      console.log(`FAIL  typeorm ${dialect}: ${error.message}`);
+    }
+  }
+  process.exit(failed);
+})();
+JS
+  if ! node_modules/.bin/tsc -p .; then
+    echo "FAIL  typeorm tsc"
+    exit 1
+  fi
+  node metadata.js
+) || failed=1
 
 exit "$failed"
