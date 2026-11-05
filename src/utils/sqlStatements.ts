@@ -514,7 +514,43 @@ export interface SqlWord {
  * 在顶层只看得到 SELECT，而那条 DELETE 的 WHERE 只在同一对括号里才限制它
  */
 export function sqlWords(sql: string, dialect?: SqlDialect): SqlWord[] {
+  return lexSql(sql, dialect).words;
+}
+
+/** 编辑器里的一个绑定参数 `:name`：`from` 是冒号的位置，`to` 是名字后面那一位 */
+export interface SqlParameter {
+  name: string;
+  from: number;
+  to: number;
+}
+
+/**
+ * 语句里的绑定参数 `:name`，按出现次序（rfcs/bind-parameters.md §4.1）。
+ *
+ * 引号、注释里的不算；`::type`、`:=`、`:1` 不算；冒号前面紧挨着标识符的不算（数组切片
+ * `arr[lo:hi]`、MySQL 的标签 `l:LOOP`、ClickHouse 的 `{name:Type}`）；名字后面跟着 `.` 的不算
+ * （Oracle 触发器里的 `:new.col`）
+ */
+export function sqlParameters(sql: string, dialect?: SqlDialect): SqlParameter[] {
+  return lexSql(sql, dialect).parameters;
+}
+
+function matchParameter(sql: string, index: number): string | null {
+  if (sql[index] !== ':' || /[\w$:]/.test(sql[index - 1] ?? '')) {
+    return null;
+  }
+  const name = sql.slice(index + 1).match(/^[A-Za-z_][A-Za-z0-9_]*/)?.[0];
+  if (!name || sql[index + 1 + name.length] === '.') {
+    return null;
+  }
+  return name;
+}
+
+function lexSql(sql: string, dialect?: SqlDialect): { words: SqlWord[]; parameters: SqlParameter[] } {
   const keywords: SqlWord[] = [];
+  const parameters: SqlParameter[] = [];
+  // 方括号是标识符的只有这两家；别家的 `[` 是数组下标，`ARRAY[:a, :b]` 里的参数要认
+  const identifierBrackets = dialect === undefined || dialect === 'sqlserver' || dialect === 'sqlite';
   const nestedComments = nestsBlockComments(dialect);
   // 规则与切分时相同。不知道方言时 `#` 算注释、反斜杠算转义：认错了只会把后面的 WHERE
   // 藏起来，判定往更危险那边偏；知道方言就按那一家读，SQL Server 的 `DELETE FROM #tmp WHERE …`
@@ -531,6 +567,20 @@ export function sqlWords(sql: string, dialect?: SqlDialect): SqlWord[] {
       if (dollarQuoteTag) {
         state = { type: 'dollar-quote', tag: dollarQuoteTag };
         index += dollarQuoteTag.length;
+        continue;
+      }
+
+      const qQuote = dialect === 'oracle' ? matchOracleQQuote(sql, index) : null;
+      if (qQuote) {
+        state = { type: 'q-quote', terminator: qQuote.terminator };
+        index += qQuote.opening.length;
+        continue;
+      }
+
+      const parameter = matchParameter(sql, index);
+      if (parameter) {
+        parameters.push({ name: parameter, from: index, to: index + 1 + parameter.length });
+        index += 1 + parameter.length;
         continue;
       }
 
@@ -605,12 +655,26 @@ export function sqlWords(sql: string, dialect?: SqlDialect): SqlWord[] {
     }
 
     if (state.type === 'bracket') {
-      if (sql[index] === ']' && sql[index + 1] === ']') {
+      const parameter = identifierBrackets ? null : matchParameter(sql, index);
+      if (parameter) {
+        parameters.push({ name: parameter, from: index, to: index + 1 + parameter.length });
+        index += 1 + parameter.length;
+      } else if (sql[index] === ']' && sql[index + 1] === ']') {
         index += 2;
       } else {
         if (sql[index] === ']') {
           state = NORMAL_STATE;
         }
+        index += 1;
+      }
+      continue;
+    }
+
+    if (state.type === 'q-quote') {
+      if (sql.startsWith(state.terminator, index)) {
+        index += state.terminator.length;
+        state = NORMAL_STATE;
+      } else {
         index += 1;
       }
       continue;
@@ -658,5 +722,5 @@ export function sqlWords(sql: string, dialect?: SqlDialect): SqlWord[] {
     }
   }
 
-  return keywords;
+  return { words: keywords, parameters };
 }
