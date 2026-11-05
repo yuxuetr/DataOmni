@@ -5,7 +5,7 @@
 <div align="center">
 
 ![DataOmni Logo](https://img.shields.io/badge/DataOmni-数据库管理工具-blue?style=for-the-badge&logo=database)
-![Platform](https://img.shields.io/badge/已验证平台-macOS-green?style=for-the-badge)
+![Platform](https://img.shields.io/badge/已验证平台-macOS%20%7C%20Windows%20%7C%20Linux-green?style=for-the-badge)
 ![License](https://img.shields.io/badge/许可证-MIT-yellow?style=for-the-badge)
 
 **让数据操作变得简单高效**
@@ -191,7 +191,7 @@ MySQL 一组 42 条、PostgreSQL 一组 39 条；只在设了专门的环境变�
   的写法转义并标出）、命令行（写法与回答都同 redis-cli；会阻塞或改连接状态的命令拒跑，
   清库、`KEYS`、改服务端的先确认）；界面上删键、改名（不覆盖已有的）、设或去过期、改字符串
   （别处改过就不覆盖，剩余时间不变）、改 hash / list / set / zset 的元素（同样先比对再写）、
-  新建键、stream 加条目与按 ID 删条目。还没有的：集群与 Sentinel。
+  新建键、stream 加条目与按 ID 删条目。
   详见 [用户手册](docs/user-manual.md#redis)。
 - **Neo4j**：连接（用户名口令或不认证；库空着就是用户的主库；TLS 与 CA；SSH 隧道；可按集群路由连（`neo4j://`），结果下方写出跑在哪个成员上，不能走隧道）、对象树按库
   列出标签与关系类型（点开是一条 `MATCH` 查询，开出来就跑）、Cypher 查询标签（多条按分号依次
@@ -204,6 +204,8 @@ MySQL 一组 42 条、PostgreSQL 一组 39 条；只在设了专门的环境变�
   工具栏上「新建节点」，节点上「从这个节点建关系」（再在结果里点终点，填类型与属性，可换方向）。按 `elementId` 定位，一次只动一个，要跑的语句一直摆在下面。
   以 `EXPLAIN` / `PROFILE` 开头的，结果里多一个「计划」：与 SQL 同一棵树，每一步带估算行数，
   `PROFILE` 还带实际行数与 DbHits，估错最多的那一步会被指出来；「计划原文」是服务端自己的那张表。
+  `EXPLAIN` 什么也不执行，不走确认。
+  详见 [用户手册](docs/user-manual.md#neo4j)。
 - **Elasticsearch**：连接（用户名口令、API Key 或不认证；TLS 与 CA；SSH 隧道，经隧道仍按原主机名校验证书）、
   对象树列出索引、别名、数据流（点开是一条 `GET 名字/_search`，开出来就发）、控制台标签（写法同
   Kibana Dev Tools：一行方法与路径，下面跟 JSON 请求体；`_bulk` 这类多份 JSON 按 NDJSON 发；依次发，
@@ -214,9 +216,6 @@ MySQL 一组 42 条、PostgreSQL 一组 39 条；只在设了专门的环境变�
   对象树上右键删索引、删数据流（确认框写明现在有几份文档）。建索引、改别名在控制台里写。
   聚合（`terms`、`date_histogram`……）另有表格：嵌套的桶展开成行，指标并成一张。OpenSearch 用同一个连接类型。
   详见 [用户手册](docs/user-manual.md#elasticsearch)。
-  `EXPLAIN` 什么也不执行，不走确认。
-  还没有的：在界面上建关系、集群路由（`neo4j://`）。
-  详见 [用户手册](docs/user-manual.md#neo4j)。
 - 在编辑器里用 `USE` 切库在 MySQL 类服务端上一律拒绝：它会让侧边栏的对象树
   悄悄换成另一个库。MySQL 本来就拒，MariaDB 与 TiDB 不拒，所以由应用来挡。
 
@@ -399,9 +398,9 @@ Tauri 本身跨平台，但**本项目只在下表记录的环境上实际验证
 
 | 平台 | 产出安装包 | 状态 | 依据 |
 |---|---|---|---|
-| macOS (Apple Silicon / aarch64) | `DataOmni.app`、`DataOmni_0.4.0_aarch64.dmg` | ✅ 已验证 | 2026-09-25 于 macOS 27.0 / arm64 执行 `bun run package`（带 Oracle Instant Client），退出码 0；装上后逐库回归，见 TODOs「发布里程碑」 |
+| macOS (Apple Silicon / aarch64) | `DataOmni.app`、`DataOmni_<版本>_aarch64.dmg` | ✅ 已验证 | 2026-09-25 于 macOS 27.0 / arm64 执行 `bun run package`（带 Oracle Instant Client），退出码 0；装上后逐库回归，见 TODOs「发布里程碑」 |
 | macOS (Intel / x86_64) | — | ⚠️ 未验证 | 无 x86_64 机器，也未做交叉编译 |
-| Linux (Ubuntu 22.04 / x86_64) | `DataOmni_0.4.0_amd64.deb`、`DataOmni-0.4.0-1.x86_64.rpm` | ✅ 已验证（容器内） | 2026-09-25 执行 `bun tauri build --bundles deb,rpm --config src-tauri/tauri.oracle.conf.json`，退出码 0，包里的 Instant Client 与原件逐字节相同。**不发 AppImage**：打包工具会改 Instant Client 的 .so，而它的许可只许原样分发（TODOs 5.4）。以下为 2026-09-23 的验证记录：`.deb` 在干净的 Ubuntu 22.04 容器里装、升级、卸载都验过，在 Xvfb + openbox 里跑通界面、Ctrl+W 与 gnome-keyring 存取密码；AppImage 只以 `--appimage-extract-and-run` 跑过（容器里没有 FUSE）；`.rpm` 没装过。**没有在真实桌面会话（GNOME / Wayland）里验过** |
+| Linux (Ubuntu 22.04 / x86_64) | `DataOmni_<版本>_amd64.deb`、`DataOmni-<版本>-1.x86_64.rpm` | ✅ 已验证（容器内） | 2026-09-25 执行 `bun tauri build --bundles deb,rpm --config src-tauri/tauri.oracle.conf.json`，退出码 0，包里的 Instant Client 与原件逐字节相同。**不发 AppImage**：打包工具会改 Instant Client 的 .so，而它的许可只许原样分发（TODOs 5.4）。以下为 2026-09-23 的验证记录：`.deb` 在干净的 Ubuntu 22.04 容器里装、升级、卸载都验过，在 Xvfb + openbox 里跑通界面、Ctrl+W 与 gnome-keyring 存取密码；AppImage 只以 `--appimage-extract-and-run` 跑过（容器里没有 FUSE）；`.rpm` 没装过。**没有在真实桌面会话（GNOME / Wayland）里验过** |
 | Windows (x86_64) | `DataOmni_<版本>_x64_en-US.msi`、`DataOmni_<版本>_x64-setup.exe` | ✅ 已验证（NSIS 逐项；MSI 人工装过） | 2026-10-06 起由 GitHub Actions（`release.yml`，windows-latest）打包，带 Oracle Instant Client。2026-10 在 Windows 11（非管理员）上走了 `docs/windows-checklist.md`：NSIS 安装、升级、降级、卸载、重装，凭据管理器，中文与 UNC 路径，SSH 隧道，MySQL / PostgreSQL / DuckDB / Oracle 冒烟都过；MSI 用户人工装过。之后十种库的连真库冒烟用例也在 Windows 上全跑过。打包版界面回归（R7-windows）：PostgreSQL 走满，其余各库走方言项，都过。**没测**：SmartScreen、多屏与缩放、真键盘快捷键与输入法。已知限制：DuckDB 库文件放在超过 260 字符的路径下打不开（SQLite 的已在 rc.1 之后修好） |
 
 安装包由 GitHub Actions 打（`.github/workflows/release.yml`）：推 `v*` tag 时 macOS（Apple Silicon）、Linux、Windows
