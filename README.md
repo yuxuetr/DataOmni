@@ -1,5 +1,7 @@
 # DataOmni - 现代化的数据库管理工具
 
+[English](README.en.md) | **中文**
+
 <div align="center">
 
 ![DataOmni Logo](https://img.shields.io/badge/DataOmni-数据库管理工具-blue?style=for-the-badge&logo=database)
