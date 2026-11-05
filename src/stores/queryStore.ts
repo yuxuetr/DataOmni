@@ -48,6 +48,7 @@ import type { WriteStatementPayload } from '../utils/pendingChanges';
 import { executeSequentially } from '../utils/queryExecutionPolicy';
 import { transactionStatement, type TransactionCommand } from '../utils/transactionDisplay';
 import { translateNow } from './languageStore';
+import { bindParameters, nameParameterError, type ParameterInput } from '../utils/queryParameters';
 import { changesSchema } from '../utils/schemaChanges';
 import { useAppStore } from './appStore';
 import { useConnectionStore } from './connectionStore';
@@ -69,17 +70,20 @@ export interface SqlDocument {
   sqlInput: string;
   statements: SqlStatement[];
   latestExecutionIdByStatement: Record<string, string>;
+  /** 编辑器参数 `:name` 上次填的值。只在内存里：不进工作区快照，值里可能有敏感数据 */
+  parameters: Record<string, ParameterInput>;
 }
 
 /** 未知文档统一返回这一个常量，保证选择器的引用相等、不触发重渲染 */
 const EMPTY_SQL_DOCUMENT: SqlDocument = Object.freeze({
   sqlInput: '',
   statements: [],
-  latestExecutionIdByStatement: {}
+  latestExecutionIdByStatement: {},
+  parameters: {}
 });
 
 function createSqlDocument(): SqlDocument {
-  return { sqlInput: '', statements: [], latestExecutionIdByStatement: {} };
+  return { sqlInput: '', statements: [], latestExecutionIdByStatement: {}, parameters: {} };
 }
 
 // 查询状态
@@ -145,6 +149,9 @@ interface QueryActions {
   cancelExecution: (executionId: string) => Promise<void>;
   setQueryTimeoutMs: (timeoutMs: number) => void;
   setQueryResultRowLimit: (rowLimit: number) => void;
+
+  /** 当前标签的参数值，与已有的合并：这次没出现的参数也留着，下次又写上时还在 */
+  setParameters: (inputs: Record<string, ParameterInput>) => void;
 
   // 事务
   setAutocommit: (autocommit: boolean) => void;
@@ -520,7 +527,7 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
         Object.entries(drafts).map(([documentId, sqlInput]) => [
           documentId,
           // 结果不持久化，恢复出来的文档只有草稿；语句由 parseStatements 重新解析
-          { sqlInput: normalizeLineBreaks(sqlInput), statements: [], latestExecutionIdByStatement: {} }
+          { sqlInput: normalizeLineBreaks(sqlInput), statements: [], latestExecutionIdByStatement: {}, parameters: {} }
         ])
       )
     });
@@ -579,6 +586,16 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
 
   setQueryResultRowLimit: (queryResultRowLimit: number) => {
     set({ queryResultRowLimit });
+  },
+
+  setParameters: (inputs) => {
+    const documentId = get().activeDocumentId;
+    if (!documentId) {
+      return;
+    }
+    set((state) => writeSqlDocument(state, documentId, (document) => ({
+      parameters: { ...document.parameters, ...inputs }
+    })));
   },
 
   setAutocommit: (autocommit: boolean) => {
@@ -750,6 +767,8 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       executions: [...state.executions.slice(-99), execution]
     }));
 
+    // 这次绑上的参数名，按占位符次序。后端报「第几个参数」时换回名字
+    let boundNames: string[] = [];
     try {
       const startTime = Date.now();
       // 不打印语句原文：WebKitGTK 打印长字符串是平方级的，一条 200KB 的 INSERT
@@ -791,13 +810,22 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
           resolveBatches?.();
         }
       });
+      // 参数在这里换成占位符；执行记录、历史、风险判定看的都还是带 `:name` 的原文
+      const bound = bindParameters(statement.sql, dialect, readSqlDocument(get(), documentId).parameters);
+      if (!bound.ok) {
+        throw new Error(bound.reason === 'unsupported-dialect'
+          ? translateNow('params.unsupportedDialect')
+          : translateNow(bound.reason === 'not-a-number' ? 'params.notANumber' : 'params.outOfRange', { name: bound.name }));
+      }
+      boundNames = bound.names;
       const driverResult = await invoke<DriverQueryResult>('execute_query', {
         onBatch,
         request: {
           connectionId,
           sessionId: session.id,
           executionId: execution.id,
-          sql: statement.sql,
+          sql: bound.sql,
+          params: bound.params,
           timeoutMs: queryTimeoutMs,
           rowLimit: queryResultRowLimit,
           byteLimit: QUERY_RESULT_BACKEND_BYTE_LIMIT,
@@ -919,7 +947,9 @@ export const useQueryStore = create<QueryStore>((set, get) => ({
       return true;
     } catch (error) {
       console.error('❌ SQL执行失败:', error);
-      const queryError = toQueryExecutionError(error);
+      const reported = toQueryExecutionError(nameParameterError(error, boundNames));
+      // PostgreSQL 报的位置是按换成 `$1` 之后的文本算的，`:customer` 比 `$1` 长，跳过去会指错地方
+      const queryError = boundNames.length > 0 ? { ...reported, position: undefined } : reported;
       // 按 code 判断而不是按消息前缀：消息要跟着语言变，按前缀匹配等于把
       // 「这是超时」的判断绑在某一种语言上
       const timedOut = queryError.code === QUERY_TIMEOUT_CODE;

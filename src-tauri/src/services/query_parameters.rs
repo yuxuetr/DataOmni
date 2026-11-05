@@ -16,16 +16,16 @@ use sqlx::{Encode, Type, TypeInfo};
 
 use crate::services::QueryError;
 
-/// 这条语句或这种库不能带参数。细节是原因：`text-protocol`、`text-results`、`clickhouse`
-pub const PARAMETERS_UNSUPPORTED: &str = "DATAOMNI_PARAMETERS_UNSUPPORTED";
+/// MySQL 只能按文本协议执行的那几类语句（`SHOW WARNINGS`、`LOCK TABLES`……）：参数只能经预处理协议绑
+pub const PARAMETERS_NEED_PREPARED: &str = "DATAOMNI_PARAMETERS_NEED_PREPARED";
+/// PostgreSQL 结果里有只能按文本读的列：带参数只能走扩展协议，结果按二进制读
+pub const PARAMETERS_TEXT_RESULTS: &str = "DATAOMNI_PARAMETERS_TEXT_RESULTS";
+/// ClickHouse 的服务端参数要在 SQL 里写类型（`{name:UInt64}`），对不上编辑器的 `:name`
+pub const PARAMETERS_UNSUPPORTED_DIALECT: &str = "DATAOMNI_PARAMETERS_UNSUPPORTED_DIALECT";
 /// PostgreSQL 上参数的类型还不能绑。细节是「第几个 · 类型」
 pub const PARAMETER_TYPE_UNSUPPORTED: &str = "DATAOMNI_PARAMETER_TYPE_UNSUPPORTED";
 /// 值转不成参数的类型。细节是「第几个 · 类型 · 值」
 pub const PARAMETER_NOT_CONVERTIBLE: &str = "DATAOMNI_PARAMETER_NOT_CONVERTIBLE";
-
-pub(crate) fn unsupported(reason: &str) -> QueryError {
-  QueryError::message(format!("{PARAMETERS_UNSUPPORTED}: {reason}"))
-}
 
 /// 整数按 `i64` 绑：MySQL 的 `LIMIT ?` 收 `f64` 也报 1210
 macro_rules! bind_scalars {

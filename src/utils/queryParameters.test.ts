@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SqlDialect } from '../contracts/queryExecution';
-import { bindParameters, parameterNames, type ParameterInput } from './queryParameters';
+import { bindParameters, nameParameterError, parameterNames, type ParameterInput } from './queryParameters';
 import { sqlParameters, topLevelKeywords } from './sqlStatements';
 
 const names = (sql: string, dialect: SqlDialect = 'postgresql') => sqlParameters(sql, dialect).map((parameter) => parameter.name);
@@ -54,7 +54,7 @@ describe('bindParameters', () => {
   it('writes each dialect\'s placeholders, one value per occurrence', () => {
     const inputs = { a: text('x'), b: text('y') };
     expect(bindParameters(sql, 'postgresql', inputs)).toEqual({
-      ok: true, sql: 'SELECT * FROM t WHERE a = $1 AND b = $2 OR a = $3', params: ['x', 'y', 'x']
+      ok: true, sql: 'SELECT * FROM t WHERE a = $1 AND b = $2 OR a = $3', params: ['x', 'y', 'x'], names: ['a', 'b', 'a']
     });
     expect(bindParameters(sql, 'mysql', inputs)).toMatchObject({ sql: 'SELECT * FROM t WHERE a = ? AND b = ? OR a = ?' });
     expect(bindParameters(sql, 'sqlserver', inputs)).toMatchObject({ sql: 'SELECT * FROM t WHERE a = @P1 AND b = @P2 OR a = @P3' });
@@ -82,6 +82,19 @@ describe('bindParameters', () => {
 
   it('refuses ClickHouse and leaves a statement without parameters untouched', () => {
     expect(bindParameters('SELECT :x', 'clickhouse', { x: text('1') })).toEqual({ ok: false, reason: 'unsupported-dialect' });
-    expect(bindParameters("SELECT ':x'", 'clickhouse', {})).toEqual({ ok: true, sql: "SELECT ':x'", params: [] });
+    expect(bindParameters("SELECT ':x'", 'clickhouse', {})).toEqual({ ok: true, sql: "SELECT ':x'", params: [], names: [] });
+  });
+});
+
+describe('nameParameterError', () => {
+  it('puts the parameter name where the backend only knew the position', () => {
+    const error = { message: 'DATAOMNI_PARAMETER_NOT_CONVERTIBLE: 2 · INT4 · abc', code: null };
+    expect(nameParameterError(error, ['since', 'id'])).toEqual({ message: 'DATAOMNI_PARAMETER_NOT_CONVERTIBLE: :id · INT4 · abc', code: null });
+  });
+
+  it('leaves every other error alone', () => {
+    const error = { message: 'syntax error at or near "FORM"' };
+    expect(nameParameterError(error, ['id'])).toBe(error);
+    expect(nameParameterError('plain text', ['id'])).toBe('plain text');
   });
 });

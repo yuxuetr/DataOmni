@@ -36,6 +36,8 @@ import { PanelResizeHandle } from './PanelResizeHandle';
 import { SHORTCUTS, formatShortcut, matchesShortcut } from '../utils/shortcuts';
 import { DestructiveStatementPrompt } from './DestructiveStatementPrompt';
 import { QueryPlanDialog } from './QueryPlanDialog';
+import { QueryParametersDialog } from './QueryParametersDialog';
+import { dialectSupportsParameters, parameterNames } from '../utils/queryParameters';
 import { highestRiskNeedingConfirmation, type StatementRisk } from '../utils/statementRisk';
 import { statementReversibility } from '../utils/statementReversibility';
 import { identifierDialectFor } from '../utils/sqlIdentifiers';
@@ -119,8 +121,10 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
     setError,
     autocommit,
     setAutocommit,
+    setParameters,
     session
   } = useQueryStore();
+  const parameterValues = useQueryStore((state) => selectActiveSqlDocument(state).parameters);
 
   const shownResults = statements.filter((statement) => statement.result || statement.error);
   const anyResultShown = shownResults.length > 0;
@@ -129,6 +133,11 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
   const [autoParseEnabled, setAutoParseEnabled] = useState(true);
   // 切语句要按方言：SQL Server 的 `GO`、`#临时表` 与 `[标识符]`
   const statementDialect = identifierDialectFor(connection.db_type);
+
+  // 等着填参数的一次执行
+  const [pendingParameters, setPendingParameters] = useState<
+    { names: string[]; statements: string[]; run: () => void } | null
+  >(null);
 
   // 等待确认的一次执行。run 留着原本要做的事，确认后原样放行。
   const [pendingRun, setPendingRun] = useState<
@@ -140,6 +149,16 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
    * 不需要确认时直接执行，不额外加一次点击。
    */
   const runGuarded = (candidates: string[], run: () => void) => {
+    // 带 `:name` 的先填值，再过风险确认（判定看的是带 `:name` 的原文，与不带参数时一样）
+    const names = dialectSupportsParameters(statementDialect) ? parameterNames(candidates, statementDialect) : [];
+    if (names.length > 0) {
+      setPendingParameters({ names, statements: candidates, run });
+      return;
+    }
+    confirmRisk(candidates, run);
+  };
+
+  const confirmRisk = (candidates: string[], run: () => void) => {
     const worst = highestRiskNeedingConfirmation(
       candidates,
       environment,
@@ -257,7 +276,13 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
     const view = editorViewRef.current;
     const cursor = view?.state.selection.main.head ?? 0;
     const current = findSqlStatementAtOffset(sqlInput, cursor, statementDialect);
-    setExplaining(current?.sql ?? statements[0]?.sql ?? null);
+    const target = current?.sql ?? statements[0]?.sql ?? null;
+    // 执行计划那条路还不绑参数：原样发出去，数据库只会在 `:` 上报语法错
+    if (target && parameterNames([target], statementDialect).length > 0) {
+      setError(t('params.explainUnsupported'));
+      return;
+    }
+    setExplaining(target);
   };
 
   const executeSelectedSql = () => {
@@ -437,6 +462,20 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
   return (
     <div className="h-full flex flex-col bg-surface">
       {confirmPrompt}
+      {pendingParameters && (
+        <QueryParametersDialog
+          names={pendingParameters.names}
+          initial={parameterValues}
+          dialect={statementDialect}
+          onClose={() => setPendingParameters(null)}
+          onSubmit={(inputs) => {
+            const { statements: candidates, run } = pendingParameters;
+            setPendingParameters(null);
+            setParameters(inputs);
+            confirmRisk(candidates, run);
+          }}
+        />
+      )}
       {pendingRun && (
         <DestructiveStatementPrompt
           sql={pendingRun.sql}

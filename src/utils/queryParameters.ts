@@ -17,7 +17,8 @@ export interface ParameterInput {
 export type BoundValue = string | number | null;
 
 export type BindResult =
-  | { ok: true; sql: string; params: BoundValue[] }
+  /** `names` 是每个占位符对应的参数名，后端报「第几个」时换回名字用 */
+  | { ok: true; sql: string; params: BoundValue[]; names: string[] }
   | { ok: false; reason: 'not-a-number' | 'out-of-range'; name: string }
   | { ok: false; reason: 'unsupported-dialect' };
 
@@ -62,7 +63,7 @@ export function bindParameters(
 ): BindResult {
   const found = sqlParameters(sql, dialect);
   if (found.length === 0) {
-    return { ok: true, sql, params: [] };
+    return { ok: true, sql, params: [], names: [] };
   }
 
   const params: BoundValue[] = [];
@@ -82,7 +83,33 @@ export function bindParameters(
     rewritten += sql.slice(copied, parameter.from) + marker;
     copied = parameter.to;
   }
-  return { ok: true, sql: rewritten + sql.slice(copied), params };
+  return { ok: true, sql: rewritten + sql.slice(copied), params, names: found.map((parameter) => parameter.name) };
+}
+
+/** ClickHouse 以外都能绑 */
+export const dialectSupportsParameters = (dialect: SqlDialect): boolean => placeholder(dialect, 1) !== null;
+
+/** 弹框里一格填得对不对：选了「数字」却不是数字，或者整数大到 JSON 里传不准 */
+export function parameterProblem(input: ParameterInput, dialect: SqlDialect): 'not-a-number' | 'out-of-range' | null {
+  const value = boundValue(input, dialect);
+  return typeof value === 'object' && value !== null ? value.reason : null;
+}
+
+/**
+ * 后端按占位符的位置报参数的错（它不知道名字），换成 `:name`。
+ * 只认那两个带位置的码，别的错误原样返回
+ */
+export function nameParameterError(error: unknown, names: string[]): unknown {
+  if (typeof error !== 'object' || error === null) {
+    return error;
+  }
+  const { message } = error as { message?: unknown };
+  if (typeof message !== 'string') {
+    return error;
+  }
+  const match = /^(DATAOMNI_PARAMETER_(?:NOT_CONVERTIBLE|TYPE_UNSUPPORTED)): (\d+) · /.exec(message);
+  const name = match ? names[Number(match[2]) - 1] : undefined;
+  return match && name ? { ...error, message: `${match[1]}: :${name} · ${message.slice(match[0].length)}` } : error;
 }
 
 function boundValue(

@@ -7315,7 +7315,7 @@ async fn postgres_binds_editor_parameters_by_the_described_type() {
     run_with_params(connection, "SELECT '10.0.0.1'::inet AS ip, $1::int AS n", vec![json!("1")])
       .await
       .expect_err("inet 结果列读不了");
-  assert_eq!(error.message, "DATAOMNI_PARAMETERS_UNSUPPORTED: text-results");
+  assert_eq!(error.message, "DATAOMNI_PARAMETERS_TEXT_RESULTS");
   // 枚举结果列照常：二进制就是标签本身
   let rows = run_with_params(connection, "SELECT * FROM bp_smoke WHERE id = $1", vec![json!("1")])
     .await
@@ -7386,7 +7386,7 @@ async fn mysql_binds_editor_parameters_by_their_kind() {
   let error = run_with_params(connection, "SHOW WARNINGS", vec![json!(1)])
     .await
     .expect_err("文本协议那条路绑不了参数");
-  assert_eq!(error.message, "DATAOMNI_PARAMETERS_UNSUPPORTED: text-protocol");
+  assert_eq!(error.message, "DATAOMNI_PARAMETERS_NEED_PREPARED");
 
   run_with_params(connection, "DROP TABLE bp_smoke", vec![]).await.expect("drop");
 }

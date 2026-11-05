@@ -631,7 +631,9 @@ impl SessionConnection {
       Self::DuckDb(connection) => {
         connection.execute_streaming_with_params(sql, params, options, sink).await
       }
-      Self::ClickHouse(_) if !params.is_empty() => Err(query_parameters::unsupported("clickhouse")),
+      Self::ClickHouse(_) if !params.is_empty() => {
+        Err(QueryError::message(query_parameters::PARAMETERS_UNSUPPORTED_DIALECT))
+      }
       Self::ClickHouse(connection) => connection.execute_streaming(sql, options, sink).await,
     }
   }
@@ -895,7 +897,7 @@ async fn execute_mysql_connection_streaming(
   // 参数只能经预处理协议绑；文本协议那条退路走不了
   if refused_by_prepared_protocol(sql) {
     if !params.is_empty() {
-      return Err(query_parameters::unsupported("text-protocol"));
+      return Err(QueryError::message(query_parameters::PARAMETERS_NEED_PREPARED));
     }
     refuse_non_query(options.non_query)?;
     return stream_mysql_undescribed(connection, sql, &[], options, sink, false).await;
@@ -903,7 +905,7 @@ async fn execute_mysql_connection_streaming(
   let column_metadata = match (&mut *connection).describe(sql).await {
     Err(error) if unsupported_by_prepared_protocol(&error) => {
       if !params.is_empty() {
-        return Err(query_parameters::unsupported("text-protocol"));
+        return Err(QueryError::message(query_parameters::PARAMETERS_NEED_PREPARED));
       }
       refuse_non_query(options.non_query)?;
       return stream_mysql_undescribed(connection, sql, &[], options, sink, false).await;
@@ -1195,7 +1197,7 @@ async fn execute_postgres_connection_streaming(
   }
   // 带参数只能走扩展协议，结果按二进制读；只有文本格式读得了的列就读不了
   if !binary && !params.is_empty() {
-    return Err(query_parameters::unsupported("text-results"));
+    return Err(QueryError::message(query_parameters::PARAMETERS_TEXT_RESULTS));
   }
 
   // 不带参数的 `&str` 走简单查询协议，结果是文本格式。能 describe 的只会是一条语句，
