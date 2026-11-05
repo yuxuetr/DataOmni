@@ -107,6 +107,13 @@ describe('diffSchemas', () => {
       .toEqual(['table-added', 'table-added', 'table-removed']);
   });
 
+  it("ignores the schema in a serial column's sequence when schemas are ignored", () => {
+    const counter = (schema: string) => table('t', [id(), column('n', 'integer', { default_value: `nextval('${schema}.t_n_seq'::regclass)` })], { schema });
+    expect(diffSchemas(snapshot('postgresql', [counter('dev')]), snapshot('postgresql', [counter('prod')])).differences).toEqual([]);
+    const plain = table('t', [id(), column('n', 'integer', { default_value: "nextval('t_n_seq'::regclass)" })], { schema: 'prod' });
+    expect(diffSchemas(snapshot('postgresql', [counter('dev')]), snapshot('postgresql', [plain])).differences).toEqual([]);
+  });
+
   it('matches table names regardless of case and column names exactly', () => {
     const upper = table('USERS', [id(), column('Email', 'varchar(64)', { is_nullable: false })], { indexes: [index('x', ['Email'], { isUnique: true })] });
     const kinds = diffSchemas(snapshot('postgresql', [users()]), snapshot('postgresql', [upper])).differences.map((d) => d.kind);
@@ -166,6 +173,14 @@ describe('buildSyncScript', () => {
       expect.stringContaining('"n" integer DEFAULT nextval(\'counters_n_seq\'::regclass)'),
       'ALTER SEQUENCE counters_n_seq OWNED BY "counters"."n"'
     ]);
+  });
+
+  it('moves a serial column and its sequence into the target schema', () => {
+    const tags = table('tags', [id(), column('n', 'integer', { default_value: "nextval('dev.tags_n_seq'::regclass)" })], { schema: 'dev' });
+    const plan = script(snapshot('postgresql', [tags]), snapshot('postgresql', [table('users', [id()], { schema: 'prod' })]));
+    expect(plan.statements[0]).toBe('CREATE SEQUENCE IF NOT EXISTS prod.tags_n_seq');
+    expect(plan.statements[1]).toContain("DEFAULT nextval('prod.tags_n_seq'::regclass)");
+    expect(plan.statements[2]).toBe('ALTER SEQUENCE prod.tags_n_seq OWNED BY "prod"."tags"."n"');
   });
 
   it('drops and re-adds the MySQL foreign keys around a column whose type changes', () => {

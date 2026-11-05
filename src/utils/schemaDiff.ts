@@ -71,11 +71,23 @@ export function comparableType(dataType: string, dialect: SchemaDiffDialect): st
     : compact;
 }
 
-function comparableDefault(column: ColumnInfo, dialect: SchemaDiffDialect): string | null {
-  return columnDefaultSql(column, dialect)?.trim() ?? null;
+/**
+ * `serial` 的默认值里序列名带着 schema（表不在 search_path 上时 `nextval('dev.t_id_seq'::regclass)`）。
+ * 忽略 schema 比的时候它也该忽略：`dev` 与 `prod` 各自的序列是各自的
+ */
+const QUALIFIED_NEXTVAL = /nextval\('(?:"(?:[^"]|"")+"|[^'".]+)\./gi;
+
+function comparableDefault(column: ColumnInfo, dialect: SchemaDiffDialect, ignoreSchema: boolean): string | null {
+  const value = columnDefaultSql(column, dialect)?.trim() ?? null;
+  return value != null && ignoreSchema && dialect === 'postgresql' ? value.replace(QUALIFIED_NEXTVAL, "nextval('") : value;
 }
 
-function columnChanges(source: ColumnInfo, target: ColumnInfo, sameDialect: boolean, dialect: SchemaDiffDialect): ColumnChange[] {
+function columnChanges(
+  source: ColumnInfo,
+  target: ColumnInfo,
+  options: { sameDialect: boolean; ignoreSchema: boolean; dialect: SchemaDiffDialect }
+): ColumnChange[] {
+  const { sameDialect, ignoreSchema, dialect } = options;
   const changes: ColumnChange[] = [];
   if (sameDialect && comparableType(source.data_type, dialect) !== comparableType(target.data_type, dialect)) {
     changes.push('type');
@@ -83,7 +95,7 @@ function columnChanges(source: ColumnInfo, target: ColumnInfo, sameDialect: bool
   if (source.is_nullable !== target.is_nullable) {
     changes.push('nullable');
   }
-  if (sameDialect && comparableDefault(source, dialect) !== comparableDefault(target, dialect)) {
+  if (sameDialect && comparableDefault(source, dialect, ignoreSchema) !== comparableDefault(target, dialect, ignoreSchema)) {
     changes.push('default');
   }
   return changes;
@@ -183,7 +195,7 @@ function diffTable(
       differences.push({ kind: 'column-added', table: pair, column });
       continue;
     }
-    const changes = columnChanges(column, other, options.sameDialect, options.dialect);
+    const changes = columnChanges(column, other, options);
     if (changes.length > 0) {
       differences.push({ kind: 'column-changed', table: pair, source: column, target: other, changes });
     }

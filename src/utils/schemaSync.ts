@@ -95,6 +95,9 @@ export function buildSyncScript(diff: SchemaDiff, selected: ReadonlySet<number>,
     return {
       ...source,
       schema,
+      columns: dialect === 'postgresql' && schema !== source.schema
+        ? source.columns.map((column) => ({ ...column, default_value: moveSequence(column.default_value, source.schema, schema) }))
+        : source.columns,
       foreignKeys: source.foreignKeys.map((key) => ({
         ...key,
         referencedSchema: diff.ignoreSchema ? schema : key.referencedSchema
@@ -346,4 +349,16 @@ function withSequences(table: TableCatalog, ddl: string): string[] {
     ...sequences.map((sequence) =>
       `ALTER SEQUENCE ${sequence.name} OWNED BY ${qualifiedTable(table, 'postgresql')}.${quoteSqlIdentifier(sequence.column, 'postgresql')}`)
   ];
+}
+
+/**
+ * 表换了 schema，`serial` 默认值里写着 schema 的序列名也跟着换，不然新表用的是源 schema 里的序列。
+ * 没写 schema 的（表在 search_path 上）不动
+ */
+function moveSequence(defaultValue: string | undefined, from: string | null, to: string | null): string | undefined {
+  if (!defaultValue || !from) return defaultValue;
+  const quotedFrom = quoteSqlIdentifier(from, 'postgresql');
+  const prefix = to ? `${/^[a-z_][a-z0-9_$]*$/.test(to) ? to : quoteSqlIdentifier(to, 'postgresql')}.` : '';
+  return defaultValue.replace(/nextval\('((?:"(?:[^"]|"")+"|[^'".]+))\./gi, (match, schema: string) =>
+    schema === from || schema === quotedFrom ? `nextval('${prefix}` : match);
 }
