@@ -10,6 +10,8 @@
  * 解析失败（截断、不认识的操作码、栈不对）一律返回 null，调用方退回转义的原始字节。
  */
 
+import type { CodeSegment, CodeTone } from './codeHighlight';
+
 export type PickleValue =
   | { kind: 'none' }
   | { kind: 'bool'; value: boolean }
@@ -573,7 +575,7 @@ function utcOffset(tz: PickleValue | undefined): string | null {
  * datetime / date / time 的 pickle 参数是打包好的字节（年两字节、月、日……），
  * 原样显示成 `datetime(b'\x07\xea…')` 没法看，这里还原成 ISO 写法。
  */
-function temporal(node: Extract<PickleValue, { kind: 'object' }>): string | null {
+function temporal(node: Extract<PickleValue, { kind: 'object' }>): Doc | null {
   if (node.callable.kind !== 'global' || node.callable.module !== 'datetime') return null;
   const [packed, tz] = node.args;
   if (packed?.kind !== 'bytes') return null;
@@ -584,105 +586,146 @@ function temporal(node: Extract<PickleValue, { kind: 'object' }>): string | null
   };
   const zone = () => {
     if (tz === undefined) return '';
-    return utcOffset(tz) ?? ` ${format(tz, '', new Set())}`;
+    return utcOffset(tz) ?? ` ${docText(format(tz, '', new Set()))}`;
   };
+  // 类名一种颜色，ISO 写法的日期时间当数值上色
+  const call = (name: string, iso: string): Doc => [...piece(name, 'type'), ...piece('('), ...piece(iso, 'number'), ...piece(')')];
   switch (node.callable.name) {
     case 'datetime':
       if (b.length !== 10) return null;
-      return `datetime(${pad(b[0] * 256 + b[1], 4)}-${pad(b[2] & 0x7f)}-${pad(b[3])} ${pad(b[4])}:${pad(b[5])}:${pad(b[6])}${micro(7)}${zone()})`;
+      return call('datetime', `${pad(b[0] * 256 + b[1], 4)}-${pad(b[2] & 0x7f)}-${pad(b[3])} ${pad(b[4])}:${pad(b[5])}:${pad(b[6])}${micro(7)}${zone()}`);
     case 'date':
       if (b.length !== 4) return null;
-      return `date(${pad(b[0] * 256 + b[1], 4)}-${pad(b[2])}-${pad(b[3])})`;
+      return call('date', `${pad(b[0] * 256 + b[1], 4)}-${pad(b[2])}-${pad(b[3])}`);
     case 'time':
       if (b.length !== 6) return null;
-      return `time(${pad(b[0] & 0x7f)}:${pad(b[1])}:${pad(b[2])}${micro(3)}${zone()})`;
+      return call('time', `${pad(b[0] & 0x7f)}:${pad(b[1])}:${pad(b[2])}${micro(3)}${zone()}`);
     default:
       return null;
   }
 }
 
-function sequence(open: string, close: string, parts: string[], indent: string): string {
-  const inline = `${open}${parts.join(', ')}${close}`;
-  if (inline.length <= INLINE_LIMIT && !inline.includes('\n')) return inline;
-  const inner = `${indent}  `;
-  return `${open}\n${parts.map((part) => `${inner}${part},`).join('\n')}\n${indent}${close}`;
+// 片段直接带上颜色：结构树里本来就知道哪段是键、哪段是类名，不必让词法器回头去猜
+// （通用的 Python 词法器会把 `datetime(2026-09-01 …)` 里的 `09` 认成非法数字）
+type Doc = CodeSegment[];
+
+const piece = (text: string, tone: CodeTone | null = null): Doc => [{ text, tone }];
+const docText = (doc: Doc) => doc.map((segment) => segment.text).join('');
+
+function joinDocs(docs: Doc[], separator: string): Doc {
+  return docs.flatMap((doc, index) => (index === 0 ? doc : [...piece(separator), ...doc]));
 }
 
-function format(value: PickleValue, indent: string, open: Set<PickleValue>): string {
+function sequence(open: string, close: string, parts: Doc[], indent: string, name: Doc = []): Doc {
+  const inline = [...name, ...piece(open), ...joinDocs(parts, ', '), ...piece(close)];
+  const text = docText(inline);
+  if (text.length <= INLINE_LIMIT && !text.includes('\n')) return inline;
+  const inner = `${indent}  `;
+  return [
+    ...name,
+    ...piece(`${open}\n`),
+    ...parts.flatMap((part) => [...piece(inner), ...part, ...piece(',\n')]),
+    ...piece(`${indent}${close}`),
+  ];
+}
+
+function entries(pairs: Array<[PickleValue, PickleValue]>, child: (node: PickleValue) => Doc): Doc[] {
+  // 字符串键换成「属性」色，和 JSON 视图一样一眼分出哪边是名字
+  return pairs.map(([key, item]) => [
+    ...(key.kind === 'str' ? piece(pythonString(key.value), 'property') : child(key)),
+    ...piece(': '),
+    ...child(item),
+  ]);
+}
+
+function format(value: PickleValue, indent: string, open: Set<PickleValue>): Doc {
   switch (value.kind) {
     case 'none':
-      return 'None';
+      return piece('None', 'atom');
     case 'bool':
-      return value.value ? 'True' : 'False';
+      return piece(value.value ? 'True' : 'False', 'atom');
     case 'int':
-      return value.value.toString();
+      return piece(value.value.toString(), 'number');
     case 'float':
-      return pythonFloat(value.value);
+      return piece(pythonFloat(value.value), 'number');
     case 'str':
-      return pythonString(value.value);
+      return piece(pythonString(value.value), 'string');
     case 'bytes':
-      return value.mutable ? `bytearray(${pythonBytes(value.value)})` : pythonBytes(value.value);
+      return value.mutable
+        ? [...piece('bytearray', 'type'), ...piece('('), ...piece(pythonBytes(value.value), 'string'), ...piece(')')]
+        : piece(pythonBytes(value.value), 'string');
     case 'global':
-      return `${value.module}.${value.name}`;
+      return piece(`${value.module}.${value.name}`, 'type');
     default:
       break;
   }
   // 容器可能引用自己（memo 里拿回正在构造的那个），与 Python repr 一样画成省略号
-  if (open.has(value)) return value.kind === 'dict' ? '{...}' : '[...]';
+  if (open.has(value)) return piece(value.kind === 'dict' ? '{...}' : '[...]');
   open.add(value);
   const inner = `${indent}  `;
   const child = (node: PickleValue) => format(node, inner, open);
-  let text: string;
+  let doc: Doc;
   switch (value.kind) {
     case 'list':
-      text = sequence('[', ']', value.items.map(child), indent);
+      doc = sequence('[', ']', value.items.map(child), indent);
       break;
     case 'tuple':
-      text =
-        value.items.length === 1 ? `(${child(value.items[0])},)` : sequence('(', ')', value.items.map(child), indent);
+      doc =
+        value.items.length === 1
+          ? [...piece('('), ...child(value.items[0]), ...piece(',)')]
+          : sequence('(', ')', value.items.map(child), indent);
       break;
     case 'set':
-      text = value.items.length === 0 ? 'set()' : sequence('{', '}', value.items.map(child), indent);
+      doc = value.items.length === 0 ? [...piece('set', 'type'), ...piece('()')] : sequence('{', '}', value.items.map(child), indent);
       break;
     case 'frozenset':
-      text = `frozenset(${value.items.length === 0 ? '' : sequence('{', '}', value.items.map(child), indent)})`;
+      doc = [
+        ...piece('frozenset', 'type'),
+        ...piece('('),
+        ...(value.items.length === 0 ? [] : sequence('{', '}', value.items.map(child), indent)),
+        ...piece(')'),
+      ];
       break;
     case 'dict':
-      text = sequence(
-        '{',
-        '}',
-        value.entries.map(([key, item]) => `${child(key)}: ${child(item)}`),
-        indent,
-      );
+      doc = sequence('{', '}', entries(value.entries, child), indent);
       break;
     case 'object': {
       const special = temporal(value);
       if (special !== null) {
-        text = special;
+        doc = special;
         break;
       }
       const parts = value.args.map(child);
-      if (value.dictItems) {
-        parts.push(sequence('{', '}', value.dictItems.map(([key, item]) => `${child(key)}: ${child(item)}`), inner));
-      }
+      if (value.dictItems) parts.push(sequence('{', '}', entries(value.dictItems, child), inner));
       if (value.listItems) parts.push(sequence('[', ']', value.listItems.map(child), inner));
       // 没有参数只有状态的（pydantic 模型、普通类实例），写成 `模块.类 {状态}` 比空括号好读
       const name = format(value.callable, indent, open);
-      const call = parts.length === 0 && value.state ? name : sequence(`${name}(`, ')', parts, indent);
-      text = value.state ? `${call} ${format(value.state, indent, open)}` : call;
+      const call = parts.length === 0 && value.state ? name : sequence('(', ')', parts, indent, name);
+      doc = value.state ? [...call, ...piece(' '), ...format(value.state, indent, open)] : call;
       break;
     }
   }
   open.delete(value);
-  return text;
+  return doc;
 }
 
-export function formatPickle(value: PickleValue): string {
-  return format(value, '', new Set());
+/** 相邻同色的片段并成一段，渲染出来的 span 少一个数量级 */
+function merge(doc: Doc): Doc {
+  const merged: Doc = [];
+  for (const segment of doc) {
+    const last = merged[merged.length - 1];
+    if (last && last.tone === segment.tone) last.text += segment.text;
+    else merged.push({ ...segment });
+  }
+  return merged;
 }
 
-/** 给界面用：base64 的原始字节 → 能解就给出 protocol 与排好版的文字 */
-export function pickleView(base64: string): { protocol: number; text: string } | null {
+export function formatPickle(value: PickleValue): CodeSegment[] {
+  return merge(format(value, '', new Set()));
+}
+
+/** 给界面用：base64 的原始字节 → 能解就给出 protocol、排好版的文字与上好色的片段 */
+export function pickleView(base64: string): { protocol: number; text: string; segments: CodeSegment[] } | null {
   let bytes: Uint8Array;
   try {
     bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
@@ -690,5 +733,7 @@ export function pickleView(base64: string): { protocol: number; text: string } |
     return null;
   }
   const decoded = decodePickle(bytes);
-  return decoded && { protocol: decoded.protocol, text: formatPickle(decoded.value) };
+  if (!decoded) return null;
+  const segments = formatPickle(decoded.value);
+  return { protocol: decoded.protocol, text: docText(segments), segments };
 }

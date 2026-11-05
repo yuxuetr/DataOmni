@@ -99,6 +99,50 @@ describe('pickleView', () => {
     );
   });
 
+  it('colours by what each piece is, and the pieces join back to the text exactly', () => {
+    // {'a': shared, 'b': shared, 'r': rec}，以及上面那份含 datetime / Decimal / 自定义类的
+    const dict = pickleView('gASVHQAAAAAAAAB9lCiMAWGUXZRLAWGMAWKUaAKMAXKUXZRoBWF1Lg==');
+    expect(dict?.segments).toEqual([
+      { text: '{', tone: null },
+      { text: "'a'", tone: 'property' },
+      { text: ': [', tone: null },
+      { text: '1', tone: 'number' },
+      { text: '], ', tone: null },
+      { text: "'b'", tone: 'property' },
+      { text: ': [', tone: null },
+      { text: '1', tone: 'number' },
+      { text: '], ', tone: null },
+      { text: "'r'", tone: 'property' },
+      { text: ': [[...]]}', tone: null },
+    ]);
+
+    const objects = pickleView(
+      'gASVkQAAAAAAAABdlCiMCGRhdGV0aW1llIwIZGF0ZXRpbWWUk5RDCgfqCQEDAAAAAHuUhZRSlGgBjARkYXRllJOUQwQH6ggflIWUUpSMB2RlY2ltYWyUjAdEZWNpbWFslJOUjAQxLjUwlIWUUpSMCWFwcG1vZGVsc5SMBVBvaW50lJOUKYGUfZQojAF4lEsBjAF5lIwBYZR1YmUu',
+    );
+    const toned = objects?.segments.filter((segment) => segment.tone !== null);
+    expect(toned).toEqual([
+      { text: 'datetime', tone: 'type' },
+      { text: '2026-09-01 03:00:00.000123', tone: 'number' },
+      { text: 'date', tone: 'type' },
+      { text: '2026-08-31', tone: 'number' },
+      { text: 'decimal.Decimal', tone: 'type' },
+      { text: "'1.50'", tone: 'string' },
+      { text: 'appmodels.Point', tone: 'type' },
+      { text: "'x'", tone: 'property' },
+      { text: '1', tone: 'number' },
+      { text: "'y'", tone: 'property' },
+      { text: "'a'", tone: 'string' },
+    ]);
+    for (const view of [dict, objects, pickleView(TASKIQ[4])]) {
+      expect(view?.segments.map((segment) => segment.text).join('')).toBe(view?.text);
+    }
+    expect(pickleView(TASKIQ[4])?.segments.filter((segment) => segment.tone === 'atom').map((s) => s.text)).toEqual([
+      'False',
+      'None',
+      'None',
+    ]);
+  });
+
   it('appends a fixed UTC offset to an aware datetime', () => {
     // datetime(2026, 9, 1, 3, 0, tzinfo=timezone.utc)
     expect(

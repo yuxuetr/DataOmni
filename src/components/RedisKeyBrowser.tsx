@@ -10,6 +10,7 @@ import { RedisNewKeyDialog } from './RedisNewKeyDialog';
 import { useConfirmPrompt } from './ConfirmPrompt';
 import { bytesToBase64 } from '../utils/redisCommandLine';
 import { pickleView } from '../utils/pickle';
+import { CodeSegments } from './HighlightedCode';
 import { useLanguageStore } from '../stores/languageStore';
 import { useQueryStore } from '../stores/queryStore';
 import { describeError } from '../utils/describeError';
@@ -619,7 +620,9 @@ function StringValueView({ value, t }: { value: Extract<RedisValue, { kind: 'str
       {value.truncated && <p className="text-xs text-fg-muted">{t('redis.value.truncated', { count: value.size })}</p>}
       <pre className="rounded-control border border-line bg-surface-sunken px-3 py-2">
         {decoded ? (
-          <span className="select-text whitespace-pre-wrap break-all font-mono text-[13px] text-fg">{pickled.text}</span>
+          <span className="select-text whitespace-pre-wrap break-all font-mono text-[13px] text-fg">
+            <CodeSegments segments={pickled.segments} />
+          </span>
         ) : (
           <Bytes bytes={value.value} />
         )}
