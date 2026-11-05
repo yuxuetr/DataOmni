@@ -106,8 +106,10 @@ uuid / json / bytes / date / time / timestamp / timestamptz / unknown(原文)`�
   - 没有主键的表 TypeORM 不收：跳过，写明原因。
 - **MikroORM**：外键一侧写 `@ManyToOne`（复合外键用 `joinColumns`），对面写 `@OneToMany` 加 `Collection`。
   外键列不另写成普通属性（MikroORM 里一列只映射一个属性）。没有主键的表跳过，写明原因。
-- **SeaORM**：`Relation` 枚举用 `belongs_to` 和 `has_many`，加上 `Related<…>` 实现；同一对表之间有多条外键时，
-  不生成 `Related` 实现（SeaORM 要求唯一），只留 `Relation`。没有主键的表跳过并写明原因（SeaORM 要求主键）。
+- **SeaORM**：`Relation` 枚举用 `belongs_to` 和 `has_many` / `has_one`，加上 `Related<…>` 实现。
+  `Related<T>` 对同一个 T 只能实现一次（两次是 E0119），`has_many` 又要求对面实现了 `Related<本表>`。
+  所以两张表之间不止一条关系时只留外键一侧的 `belongs_to`，不写反向与 `Related`。「不止一条」包括同向两条、
+  一来一回、自引用三种情况，实现时比当初只写「同一对表多条外键」更宽。没有主键的表跳过并写明原因（SeaORM 要求主键）。
 - **sqlx**：只生成结构体，没有关系。
 
 ## 7. 入口
@@ -136,6 +138,15 @@ uuid / json / bytes / date / time / timestamp / timestamptz / unknown(原文)`�
 - **反向验证**：
   - 去掉 Prisma 反向关系的生成，`prisma validate` 要变红；
   - 把 SeaORM 的 `Related` 生成成重复的，`cargo check` 要变红。
+
+## 8.1 实现时补上的（2026-11-05）
+
+- **TypeORM、MikroORM 每一列都写 `type`。** 不写时它们拿装饰器元数据推断，而 `string | null` 在元数据里只剩 `Object`，
+  启动就报错，五种驱动都是这样（codegen-verify 实测）。映射不了的类型，TypeORM 照驱动认的原文写，否则写长文本；
+  MikroORM 把原文写进 `columnType`。
+- **64 位整数在 TS 里是什么由驱动定。** pg、mysql2、mssql 给字符串，SQLite 的驱动与 oracledb 给 number。
+  Prisma 在 SQLite 上照 `db pull` 写 `Int`。这一条是在真应用里看出来的，语料用例没抓到。
+- **sqlx 只验到编译。** `FromRow` 的类型宽度要到读值时才核对，由 `codegenModel` 的类型语料钉住。
 
 ## 9. 不做（当前版本）
 

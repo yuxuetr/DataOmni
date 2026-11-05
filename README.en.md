@@ -89,6 +89,9 @@ not from protocol compatibility on paper. The last full run was on 2026-10-16. T
   local `pg_dump`, `mysqldump` and `mongodump`.
 - ER diagram of a whole database: search, filter by schema or by distance from a table, export to
   SVG, PNG or PDF, or to a data dictionary (Markdown) and an Agent Skill (`SKILL.md`).
+- Code generation from the ER diagram (or an AI design): a Prisma schema, TypeORM or MikroORM entities
+  (for NestJS), SeaORM entities, or sqlx `FromRow` structs. It is deterministic, without AI. Types it
+  cannot map and tables it cannot generate are listed at the top.
 - Quick bar and line charts of the current result.
 
 ### MongoDB, Redis, Neo4j and Elasticsearch

@@ -258,12 +258,23 @@
 - [-] U1 英文 README（`README.en.md`）与截图
   - 文字已做（`cc2ee53`；中文 README 顺带去掉几处过时的「还没有」，`4b0aef6`）。截图等 v1.0.0 发布后在打包版上截（英文界面、示例库，不露真实主机名）。
   - 中英两份顶上互相链接；更新日志不翻译，指向中文那份。截图在打包版上截，顺带看 rc.2 之后那批上色改动。
-- [ ] C1 代码生成（A7 的重估条件满足：用户要）
-  - 能不能生成别的库：能。Prisma、TypeORM、SeaORM、sqlx 都是「表、列、类型、主外键 → 文本」的确定性映射，不用 AI。
-  - 首批目标：Prisma schema；TypeORM 与 MikroORM 实体（NestJS）；SeaORM 实体；sqlx 的 `#[derive(FromRow)]` 结构体。
-    Sequelize、MikroORM、Drizzle、JPA 有人要再加。
-  - 输入：ER 图读出的整库模型（与数据字典同源），以及 AI 设计的 `SchemaDraft`。类型对照按「方言 × 目标」一张表，用语料钉住。
-  - 设计说明：`rfcs/codegen.md`（2026-11-05，用户已确认；NestJS 一档加 MikroORM）。
+- [x] C1 代码生成（A7 的重估条件满足：用户要）（`1b34d1f`、`e7a0a56`、`a754fd8`、`5987b23`、`4cc0e7f`、`aed0310`，2026-11-05）
+  - 设计：`rfcs/codegen.md`（用户已确认；NestJS 一档做 TypeORM 与 MikroORM，命名按语言惯例并映射回原名）。
+  - 五个目标：Prisma（PG / MySQL / SQLite / SQL Server）、TypeORM（另加 Oracle）、MikroORM（PG / MySQL / SQLite / SQL Server）、
+    SeaORM 与 sqlx（PG / MySQL / SQLite）。入口：ER 图导出菜单「生成代码…」、AI 设计页同一处；只生成图上看得到的表。
+  - 验证：
+    - 语料快照：`src/utils/__snapshots__/codegen/`。
+    - `scripts/codegen-verify.sh`：
+      - `prisma validate`；
+      - `tsc` 严格编译，再在 TypeORM 五种驱动上各建一次元数据、在 MikroORM 四种驱动上各跑一次实体发现；
+      - sea-orm 1.1 / sqlx 0.8 的 `cargo check -D warnings`。
+
+      全过。每种都做过一次反向验证（写在脚本开头）。
+    - 真应用：SQLite 库 → ER 图 → 生成代码，五个目标都渲染过。看出 SQLite 整数被当成 bigint 的错，已修（`aed0310`）。
+  - 没做：
+    - 保存到目录没在真应用里点过：原生的选目录框驱动不了，写文件的命令有单测。
+    - 没连 PG / MySQL / SQL Server / Oracle 的真库生成过：单表结构查询是结构页那一份，各库都跑过。
+    - sqlx 只验到编译，整数宽度由类型语料钉住。
 - [ ] D3 两个库的结构比对与同步脚本
   - 先写设计说明：比哪些（表、列、主键、索引、外键；视图、触发器等列出来但不比）；只在同一方言之间生成脚本，
     跨方言只给差异报告；`ALTER` 复用结构编辑的生成（`schemaChanges.ts`）；脚本只预览、复制，或在目标库上走现有的风险确认执行。
@@ -520,9 +531,7 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
 - [ ] ~~A2b 整库结构导出~~ **当前版本不做**
   - 理由：用 ER 查询拼出来的脚本和原库不等价。
   - 重估条件：有人要整库建表脚本。届时 MySQL / SQLite 用原生 DDL，PostgreSQL 等用 `pg_dump --schema-only`。
-- [ ] ~~A7 框架代码生成~~ **当前版本不做**
-  - 重估条件：到时先只做 Prisma 一种。
-  - 2026-11-05：用户要，并且不只 Prisma，见「1.x」的 C1。
+- [x] A7 框架代码生成：2026-11-05 用户要，已做成「1.x」的 C1（五个目标）。
 - [ ] ~~A8 DataOmni 作为 MCP 服务~~ **当前版本不做**
   - 重估条件：确认「让 Agent 直接查自己配好的库」是日常工作流。届时先单独写设计说明，验收门里要有两条该红的用例：
     「写语句被拒」和「生产连接不可见」。
