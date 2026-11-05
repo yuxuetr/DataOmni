@@ -114,6 +114,37 @@ describe('RedisKeyBrowser', () => {
     expect(container.querySelector('pre')?.textContent).toBe(escaped);
   });
 
+  it('hash 与 list 里是 pickle 的元素也解出来显示，一个开关切回原始字节', async () => {
+    // pickle.dumps({'a': 1}, protocol=4)；另放一个不是 pickle 的二进制值，它照旧转义显示
+    const pickled = { raw: 'gASVCgAAAAAAAAB9lIwBYZRLAXMu', text: '\\x80\\x04\\x95\\n...', binary: true };
+    const junk = { raw: btoa('\xff'), text: '\\xff', binary: true };
+    invoke.mockImplementation(async (command: string, args?: { key?: string }) => {
+      if (command === 'redis_scan') {
+        return { keys: [{ key: text('h'), kind: 'hash', ttlMs: -1 }, { key: text('l'), kind: 'list', ttlMs: -1 }], cursor: null };
+      }
+      if (command === 'redis_read_value' && args?.key === btoa('h')) {
+        return { kind: 'hash', length: 2, entries: [[text('f'), pickled], [text('g'), junk]], next: null };
+      }
+      if (command === 'redis_read_value') return { kind: 'list', length: 1, offset: 0, items: [pickled], next: null };
+      throw new Error(`没料到的命令 ${command}`);
+    });
+    await act(async () => {
+      root.render(<RedisKeyBrowser database={0} />);
+    });
+    await click(button('hashh'));
+    expect(cellTexts()).toEqual(expect.arrayContaining(["{'a': 1}", '\\xff']));
+    expect(container.querySelector('.code-property')?.textContent).toBe("'a'");
+    expect(container.textContent).toContain('Some elements are Python pickles');
+
+    await click(button('Raw bytes'));
+    expect(cellTexts()).toContain(pickled.text);
+    expect(container.querySelector('.code-property')).toBeNull();
+
+    await click(button('listl'));
+    await click(button('Decoded'));
+    expect(cellTexts()).toContain("{'a': 1}");
+  });
+
   it('按下标删列表元素撞上别处的改动：什么也没删，并且立刻显示现在的内容', async () => {
     // 删除没有草稿可留，「草稿还在，取消后看得到」对它是句空话——表里照旧印着打开时那份
     listShiftedElsewhere(() => {

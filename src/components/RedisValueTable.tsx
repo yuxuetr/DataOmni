@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Check, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { clsx } from 'clsx';
-import { PLAIN_TEXT_INPUT } from './FormControls';
+import { PLAIN_TEXT_INPUT, SegmentedControl } from './FormControls';
+import { CodeSegments } from './HighlightedCode';
 import { useLanguageStore } from '../stores/languageStore';
-import { isRedisScore as validScore, type RedisBytes, type RedisValue } from '../utils/redisKeys';
+import { isRedisScore as validScore, redisElements, type RedisBytes, type RedisValue } from '../utils/redisKeys';
+import type { CodeSegment } from '../utils/codeHighlight';
+import { pickleView } from '../utils/pickle';
 import { isImeKeyEvent } from '../utils/shortcuts';
 
 type Translate = ReturnType<typeof useLanguageStore.getState>['t'];
@@ -42,10 +45,11 @@ const inputClass = 'min-w-0 flex-1 rounded-control border bg-surface px-2 py-0.5
 const inputState = (valid: boolean) => (valid ? 'border-line-strong focus:ring-accent' : 'border-danger-line focus:ring-danger');
 const iconButton = 'rounded-control p-1 text-fg-subtle hover:bg-surface-hover hover:text-fg disabled:opacity-40';
 
-function Bytes({ bytes }: { bytes: RedisBytes }) {
+/** `decoded` 是这一格解出来的 pickle；有就画上了色的结构，没有就是原样（二进制的转义成警示色） */
+function Bytes({ bytes, decoded }: { bytes: RedisBytes; decoded?: CodeSegment[] }) {
   return (
-    <span className={clsx('select-text whitespace-pre-wrap break-all font-mono text-[13px]', bytes.binary ? 'text-warning' : 'text-fg')}>
-      {bytes.text}
+    <span className={clsx('select-text whitespace-pre-wrap break-all font-mono text-[13px]', bytes.binary && !decoded ? 'text-warning' : 'text-fg')}>
+      {decoded ? <CodeSegments segments={decoded} /> : bytes.text}
     </span>
   );
 }
@@ -59,6 +63,17 @@ export function RedisValueTable({ value, encode, onChange, onCancel }: RedisValu
   // 正在改哪一行（hash 的字段 / list 的下标 / zset 的成员），和框里的字
   const [editing, setEditing] = useState<{ row: string; draft: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  // 这一页里是 pickle 的格子，按原始字节记下解出的片段：每格只解一次，翻到原始字节再翻回来也不重解
+  const pickles = useMemo(() => {
+    const decoded = new Map<string, CodeSegment[]>();
+    for (const bytes of redisElements(value)) {
+      const view = bytes.binary && !decoded.has(bytes.raw) ? pickleView(bytes.raw) : null;
+      if (view) decoded.set(bytes.raw, view.segments);
+    }
+    return decoded;
+  }, [value]);
+  const [pickleMode, setPickleMode] = useState<'decoded' | 'raw'>('decoded');
+  const cell = (bytes: RedisBytes) => <Bytes bytes={bytes} decoded={pickleMode === 'decoded' ? pickles.get(bytes.raw) : undefined} />;
 
   /** 成功与否告诉调用方：失败时（调用方已经显示了原因）框里的字要留着，改一下再试 */
   const submit = async (change: ElementChange, destructive?: string): Promise<boolean> => {
@@ -132,175 +147,196 @@ export function RedisValueTable({ value, encode, onChange, onCancel }: RedisValu
     </td>
   );
 
-  switch (value.kind) {
-    case 'hash':
-      return (
-        <>
-          <table className="w-full table-auto border-collapse">
-            <thead className="bg-surface-sunken">
-              <tr><th className={headClass}>{t('redis.column.field')}</th><th className={headClass}>{t('redis.column.value')}</th><th className="w-16 border-b border-line" /></tr>
-            </thead>
-            <tbody>
-              {value.entries.map(([field, item], index) => (
-                <tr key={`${field.raw}-${index}`} className="group">
-                  <td className={cellClass}><Bytes bytes={field} /></td>
-                  <td className={cellClass}>
-                    {editor(field.raw, (draft) => void submit({ kind: 'hashSet', field: field.raw, expected: item.raw, value: encode(draft) }))
-                      ?? <Bytes bytes={item} />}
-                  </td>
-                  {actions(field.raw, item.text, !item.binary, () => void submit({ kind: 'hashDelete', field: field.raw }, t('redis.element.deleteField', { name: field.text })))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <AddRow
-            t={t}
-            busy={busy}
-            fields={[{ label: t('redis.column.field') }, { label: t('redis.column.value') }]}
-            onAdd={([field, item]) => submit({ kind: 'hashSet', field: encode(field), expected: null, value: encode(item) })}
-          />
-        </>
-      );
-    case 'list':
-      return (
-        <>
-          <table className="w-full table-auto border-collapse">
-            <thead className="bg-surface-sunken">
-              <tr><th className={clsx(headClass, 'w-16')}>{t('redis.column.index')}</th><th className={headClass}>{t('redis.column.value')}</th><th className="w-16 border-b border-line" /></tr>
-            </thead>
-            <tbody>
-              {value.items.map((item, position) => {
-                const index = value.offset + position;
-                return (
-                  <tr key={index} className="group">
-                    <td className={clsx(cellClass, 'font-mono text-xs text-fg-subtle')}>{index}</td>
+  const body = () => {
+    switch (value.kind) {
+      case 'hash':
+        return (
+          <>
+            <table className="w-full table-auto border-collapse">
+              <thead className="bg-surface-sunken">
+                <tr><th className={headClass}>{t('redis.column.field')}</th><th className={headClass}>{t('redis.column.value')}</th><th className="w-16 border-b border-line" /></tr>
+              </thead>
+              <tbody>
+                {value.entries.map(([field, item], index) => (
+                  <tr key={`${field.raw}-${index}`} className="group">
+                    <td className={cellClass}>{cell(field)}</td>
                     <td className={cellClass}>
-                      {editor(String(index), (draft) => void submit({ kind: 'listSet', index, expected: item.raw, value: encode(draft) }))
-                        ?? <Bytes bytes={item} />}
+                      {editor(field.raw, (draft) => void submit({ kind: 'hashSet', field: field.raw, expected: item.raw, value: encode(draft) }))
+                        ?? cell(item)}
                     </td>
-                    {actions(String(index), item.text, !item.binary, () => void submit({ kind: 'listDelete', index, expected: item.raw }, t('redis.element.deleteItem', { index })))}
+                    {actions(field.raw, item.text, !item.binary, () => void submit({ kind: 'hashDelete', field: field.raw }, t('redis.element.deleteField', { name: field.text })))}
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <AddRow
-            t={t}
-            busy={busy}
-            fields={[{ label: t('redis.column.value') }]}
-            choices={[{ value: 'tail', label: t('redis.element.pushTail') }, { value: 'head', label: t('redis.element.pushHead') }]}
-            onAdd={([item], choice) => submit({ kind: 'listPush', value: encode(item), head: choice === 'head' })}
-          />
-        </>
-      );
-    case 'set':
-      return (
-        <>
-          <table className="w-full table-auto border-collapse">
-            <thead className="bg-surface-sunken">
-              <tr><th className={headClass}>{t('redis.column.member')}</th><th className="w-16 border-b border-line" /></tr>
-            </thead>
-            <tbody>
-              {value.members.map((member, index) => (
-                <tr key={`${member.raw}-${index}`} className="group">
-                  <td className={cellClass}><Bytes bytes={member} /></td>
-                  {/* 集合的成员没有「改」：改就是删一个加一个，那样写更清楚 */}
-                  <td className={clsx(cellClass, 'w-16 text-right')}>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void submit({ kind: 'setDelete', member: member.raw }, t('redis.element.deleteMember', { name: member.text }))}
-                      className={clsx(iconButton, 'opacity-0 group-hover:opacity-100 hover:text-danger focus:opacity-100')}
-                      aria-label={t('redis.action.delete')}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </td>
+                ))}
+              </tbody>
+            </table>
+            <AddRow
+              t={t}
+              busy={busy}
+              fields={[{ label: t('redis.column.field') }, { label: t('redis.column.value') }]}
+              onAdd={([field, item]) => submit({ kind: 'hashSet', field: encode(field), expected: null, value: encode(item) })}
+            />
+          </>
+        );
+      case 'list':
+        return (
+          <>
+            <table className="w-full table-auto border-collapse">
+              <thead className="bg-surface-sunken">
+                <tr><th className={clsx(headClass, 'w-16')}>{t('redis.column.index')}</th><th className={headClass}>{t('redis.column.value')}</th><th className="w-16 border-b border-line" /></tr>
+              </thead>
+              <tbody>
+                {value.items.map((item, position) => {
+                  const index = value.offset + position;
+                  return (
+                    <tr key={index} className="group">
+                      <td className={clsx(cellClass, 'font-mono text-xs text-fg-subtle')}>{index}</td>
+                      <td className={cellClass}>
+                        {editor(String(index), (draft) => void submit({ kind: 'listSet', index, expected: item.raw, value: encode(draft) }))
+                          ?? cell(item)}
+                      </td>
+                      {actions(String(index), item.text, !item.binary, () => void submit({ kind: 'listDelete', index, expected: item.raw }, t('redis.element.deleteItem', { index })))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <AddRow
+              t={t}
+              busy={busy}
+              fields={[{ label: t('redis.column.value') }]}
+              choices={[{ value: 'tail', label: t('redis.element.pushTail') }, { value: 'head', label: t('redis.element.pushHead') }]}
+              onAdd={([item], choice) => submit({ kind: 'listPush', value: encode(item), head: choice === 'head' })}
+            />
+          </>
+        );
+      case 'set':
+        return (
+          <>
+            <table className="w-full table-auto border-collapse">
+              <thead className="bg-surface-sunken">
+                <tr><th className={headClass}>{t('redis.column.member')}</th><th className="w-16 border-b border-line" /></tr>
+              </thead>
+              <tbody>
+                {value.members.map((member, index) => (
+                  <tr key={`${member.raw}-${index}`} className="group">
+                    <td className={cellClass}>{cell(member)}</td>
+                    {/* 集合的成员没有「改」：改就是删一个加一个，那样写更清楚 */}
+                    <td className={clsx(cellClass, 'w-16 text-right')}>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void submit({ kind: 'setDelete', member: member.raw }, t('redis.element.deleteMember', { name: member.text }))}
+                        className={clsx(iconButton, 'opacity-0 group-hover:opacity-100 hover:text-danger focus:opacity-100')}
+                        aria-label={t('redis.action.delete')}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <AddRow t={t} busy={busy} fields={[{ label: t('redis.column.member') }]} onAdd={([member]) => submit({ kind: 'setAdd', member: encode(member) })} />
+          </>
+        );
+      case 'zset':
+        return (
+          <>
+            <table className="w-full table-auto border-collapse">
+              <thead className="bg-surface-sunken">
+                <tr>
+                  <th className={clsx(headClass, 'w-16')}>{t('redis.column.rank')}</th>
+                  <th className={headClass}>{t('redis.column.member')}</th>
+                  <th className={clsx(headClass, 'text-right')}>{t('redis.column.score')}</th>
+                  <th className="w-16 border-b border-line" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          <AddRow t={t} busy={busy} fields={[{ label: t('redis.column.member') }]} onAdd={([member]) => submit({ kind: 'setAdd', member: encode(member) })} />
-        </>
-      );
-    case 'zset':
-      return (
-        <>
-          <table className="w-full table-auto border-collapse">
-            <thead className="bg-surface-sunken">
-              <tr>
-                <th className={clsx(headClass, 'w-16')}>{t('redis.column.rank')}</th>
-                <th className={headClass}>{t('redis.column.member')}</th>
-                <th className={clsx(headClass, 'text-right')}>{t('redis.column.score')}</th>
-                <th className="w-16 border-b border-line" />
-              </tr>
-            </thead>
-            <tbody>
-              {value.entries.map(([member, score], index) => (
-                <tr key={`${member.raw}-${index}`} className="group">
-                  <td className={clsx(cellClass, 'font-mono text-xs text-fg-subtle')}>{value.offset + index}</td>
-                  <td className={cellClass}><Bytes bytes={member} /></td>
-                  <td className={clsx(cellClass, 'text-right font-mono text-[13px] tabular-nums text-fg')}>
-                    {editor(member.raw, (draft) => void submit({ kind: 'zsetSet', member: member.raw, expected: score, score: draft.trim() }), validScore) ?? score}
-                  </td>
-                  {/* 分数是数字，成员是二进制也照样能改分数 */}
-                  {actions(member.raw, score, true, () => void submit({ kind: 'zsetDelete', member: member.raw }, t('redis.element.deleteMember', { name: member.text })))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <AddRow
-            t={t}
-            busy={busy}
-            fields={[{ label: t('redis.column.member') }, { label: t('redis.column.score'), valid: validScore }]}
-            onAdd={([member, score]) => submit({ kind: 'zsetSet', member: encode(member), expected: null, score: score.trim() })}
+              </thead>
+              <tbody>
+                {value.entries.map(([member, score], index) => (
+                  <tr key={`${member.raw}-${index}`} className="group">
+                    <td className={clsx(cellClass, 'font-mono text-xs text-fg-subtle')}>{value.offset + index}</td>
+                    <td className={cellClass}>{cell(member)}</td>
+                    <td className={clsx(cellClass, 'text-right font-mono text-[13px] tabular-nums text-fg')}>
+                      {editor(member.raw, (draft) => void submit({ kind: 'zsetSet', member: member.raw, expected: score, score: draft.trim() }), validScore) ?? score}
+                    </td>
+                    {/* 分数是数字，成员是二进制也照样能改分数 */}
+                    {actions(member.raw, score, true, () => void submit({ kind: 'zsetDelete', member: member.raw }, t('redis.element.deleteMember', { name: member.text })))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <AddRow
+              t={t}
+              busy={busy}
+              fields={[{ label: t('redis.column.member') }, { label: t('redis.column.score'), valid: validScore }]}
+              onAdd={([member, score]) => submit({ kind: 'zsetSet', member: encode(member), expected: null, score: score.trim() })}
+            />
+          </>
+        );
+      case 'stream':
+        // 条目只有加和删：stream 本来就是只追加的日志，Redis 也没有改一条的命令
+        return (
+          <>
+            <table className="w-full table-auto border-collapse">
+              <thead className="bg-surface-sunken">
+                <tr><th className={clsx(headClass, 'w-48')}>{t('redis.column.id')}</th><th className={headClass}>{t('redis.column.fields')}</th><th className="w-16 border-b border-line" /></tr>
+              </thead>
+              <tbody>
+                {value.entries.map((entry) => (
+                  <tr key={entry.id} className="group">
+                    <td className={clsx(cellClass, 'whitespace-nowrap font-mono text-xs text-fg-muted')}>{entry.id}</td>
+                    <td className={cellClass}>
+                      {entry.fields.map(([field, item], index) => (
+                        <div key={index}>
+                          <span className="font-mono text-[13px] text-fg-muted">{field.text}</span>
+                          <span className="text-fg-subtle"> = </span>
+                          {cell(item)}
+                        </div>
+                      ))}
+                    </td>
+                    <td className={clsx(cellClass, 'w-16 text-right')}>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void submit({ kind: 'streamDelete', id: entry.id }, t('redis.element.deleteEntry', { id: entry.id }))}
+                        className={clsx(iconButton, 'opacity-0 group-hover:opacity-100 hover:text-danger focus:opacity-100')}
+                        aria-label={t('redis.action.delete')}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <StreamAddRow
+              t={t}
+              busy={busy}
+              onAdd={(pairs) => submit({ kind: 'streamAdd', fields: pairs.map(([field, item]) => [encode(field), encode(item)]) })}
+            />
+          </>
+        );
+    }
+  };
+
+  return (
+    <>
+      {pickles.size > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-3">
+          <SegmentedControl
+            value={pickleMode}
+            options={[
+              { value: 'decoded', label: t('redis.value.pickle.decoded') },
+              { value: 'raw', label: t('redis.value.pickle.raw') },
+            ]}
+            onChange={setPickleMode}
           />
-        </>
-      );
-    case 'stream':
-      // 条目只有加和删：stream 本来就是只追加的日志，Redis 也没有改一条的命令
-      return (
-        <>
-          <table className="w-full table-auto border-collapse">
-            <thead className="bg-surface-sunken">
-              <tr><th className={clsx(headClass, 'w-48')}>{t('redis.column.id')}</th><th className={headClass}>{t('redis.column.fields')}</th><th className="w-16 border-b border-line" /></tr>
-            </thead>
-            <tbody>
-              {value.entries.map((entry) => (
-                <tr key={entry.id} className="group">
-                  <td className={clsx(cellClass, 'whitespace-nowrap font-mono text-xs text-fg-muted')}>{entry.id}</td>
-                  <td className={cellClass}>
-                    {entry.fields.map(([field, item], index) => (
-                      <div key={index}>
-                        <span className="font-mono text-[13px] text-fg-muted">{field.text}</span>
-                        <span className="text-fg-subtle"> = </span>
-                        <Bytes bytes={item} />
-                      </div>
-                    ))}
-                  </td>
-                  <td className={clsx(cellClass, 'w-16 text-right')}>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void submit({ kind: 'streamDelete', id: entry.id }, t('redis.element.deleteEntry', { id: entry.id }))}
-                      className={clsx(iconButton, 'opacity-0 group-hover:opacity-100 hover:text-danger focus:opacity-100')}
-                      aria-label={t('redis.action.delete')}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <StreamAddRow
-            t={t}
-            busy={busy}
-            onAdd={(pairs) => submit({ kind: 'streamAdd', fields: pairs.map(([field, item]) => [encode(field), encode(item)]) })}
-          />
-        </>
-      );
-  }
+          <p className="text-xs text-fg-muted">{pickleMode === 'decoded' ? t('redis.value.pickle.elements') : t('redis.value.binary')}</p>
+        </div>
+      )}
+      {body()}
+    </>
+  );
 }
 
 /**

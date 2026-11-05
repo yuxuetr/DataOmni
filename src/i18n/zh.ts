@@ -1815,6 +1815,7 @@ export const zh = {
   'redis.value.more': '再读一页',
   'redis.value.binary': '不是能直接显示的文字（不是 UTF-8，或带控制字符）：按 redis-cli 的写法转义显示（\\xff 是一个字节）。',
   'redis.value.pickle': 'Python pickle（protocol {protocol}），按 Python 的写法显示解出的结构。只读数据，不导入、不执行其中引用的任何类或函数。',
+  'redis.value.pickle.elements': '有元素是 Python pickle，按 Python 的写法显示解出的结构。只读数据，不导入、不执行其中引用的任何类或函数。',
   'redis.value.pickle.decoded': '解码',
   'redis.value.pickle.raw': '原始字节',
   'redis.value.truncated': '只显示前 512 KiB，整个值 {count} 字节。',

@@ -93,6 +93,24 @@ export function appendValuePage(previous: RedisValue, next: RedisValue): RedisVa
 }
 
 /** 这个值还有没有下一页 */
+/** 一页集合里所有显示成字节的格子（hash 的字段与值、list 的项、zset 的成员、stream 的值），按出现次序 */
+export function redisElements(value: RedisValue): RedisBytes[] {
+  switch (value.kind) {
+    case 'hash':
+      return value.entries.flat();
+    case 'list':
+      return value.items;
+    case 'set':
+      return value.members;
+    case 'zset':
+      return value.entries.map(([member]) => member);
+    case 'stream':
+      return value.entries.flatMap((entry) => entry.fields.map(([, item]) => item));
+    default:
+      return [];
+  }
+}
+
 export function nextPosition(value: RedisValue): string | null {
   return value.kind === 'string' || value.kind === 'unsupported' ? null : value.next;
 }

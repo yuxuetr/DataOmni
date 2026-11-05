@@ -1804,6 +1804,7 @@ export const en: Translations = {
   'redis.value.more': 'Read another page',
   'redis.value.binary': 'Not plain text (not UTF-8, or has control characters): shown escaped the way redis-cli does (\\xff is one byte).',
   'redis.value.pickle': 'Python pickle (protocol {protocol}), decoded and shown the way Python writes it. Only the data is read: no class or function it names is imported or run.',
+  'redis.value.pickle.elements': 'Some elements are Python pickles, decoded and shown the way Python writes them. Only the data is read: no class or function they name is imported or run.',
   'redis.value.pickle.decoded': 'Decoded',
   'redis.value.pickle.raw': 'Raw bytes',
   'redis.value.truncated': 'Showing the first 512 KiB of {count} bytes.',

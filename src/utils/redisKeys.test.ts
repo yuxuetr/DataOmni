@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { appendValuePage, isRedisScore, nextPosition, parseTtlSeconds, redisDatabaseIndex, ttlView, type RedisBytes } from './redisKeys';
+import { appendValuePage, isRedisScore, nextPosition, redisElements, parseTtlSeconds, redisDatabaseIndex, ttlView, type RedisBytes } from './redisKeys';
 
 const bytes = (text: string): RedisBytes => ({ raw: btoa(text), text, binary: false });
 
 describe('redisKeys', () => {
+  it('一页集合里显示成字节的格子：hash 的字段与值、zset 的成员、stream 的值', () => {
+    const [a, b, c, d] = ['a', 'b', 'c', 'd'].map(bytes);
+    expect(redisElements({ kind: 'hash', length: 2, entries: [[a, b], [c, d]], next: null })).toEqual([a, b, c, d]);
+    expect(redisElements({ kind: 'list', length: 2, offset: 0, items: [a, b], next: null })).toEqual([a, b]);
+    expect(redisElements({ kind: 'set', length: 1, members: [c], next: null })).toEqual([c]);
+    expect(redisElements({ kind: 'zset', length: 2, offset: 0, entries: [[a, '1'], [b, '2']], next: null })).toEqual([a, b]);
+    // stream 的字段名不算：它显示成名字，不按值解码
+    expect(redisElements({ kind: 'stream', length: 1, entries: [{ id: '1-0', fields: [[a, b], [c, d]] }], next: null })).toEqual([b, d]);
+    expect(redisElements({ kind: 'string', size: 1, value: a, truncated: false })).toEqual([]);
+  });
+
   it('树上的库名换成库号', () => {
     expect(redisDatabaseIndex('db0')).toBe(0);
     expect(redisDatabaseIndex('db15')).toBe(15);
