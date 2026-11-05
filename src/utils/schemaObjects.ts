@@ -103,6 +103,11 @@ export interface IndexInfo {
   isValid: boolean;
   /** btree / hash 等；SQLite 没有 */
   method: string | null;
+  /**
+   * 背后是主键或唯一约束：删它要删约束，SQLite 与 DuckDB 删不掉。
+   * 查询没给这一列（ClickHouse）时是 false
+   */
+  isConstraint: boolean;
 }
 
 export interface ForeignKeyInfo {
@@ -150,7 +155,8 @@ export function groupIndexRows(
     isPrimary: boolean(group.row.is_primary),
     isPartial: boolean(group.row.is_partial),
     isValid: boolean(group.row.is_valid),
-    method: text(group.row.method) || null
+    method: text(group.row.method) || null,
+    isConstraint: boolean(group.row.is_constraint)
   }));
 
   // 主键 → 唯一 → 其它，同类按名字。找「这张表靠什么唯一」是最常见的问题，

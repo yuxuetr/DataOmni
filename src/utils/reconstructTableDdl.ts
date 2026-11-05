@@ -1,7 +1,8 @@
 import type { TranslationKey, TranslationParams } from '../i18n/translate';
 import type { ColumnInfo } from '../contracts';
-import type { CheckConstraintInfo, ForeignKeyInfo, IndexInfo } from './schemaObjects';
-import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from './sqlIdentifiers';
+import { createIndexSql } from './objectDdl';
+import { DEFAULT_EXPRESSION_COLUMN_PLACEHOLDER, type CheckConstraintInfo, type ForeignKeyInfo, type IndexInfo } from './schemaObjects';
+import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier, type SqlIdentifierDialect } from './sqlIdentifiers';
 
 type Translate = (key: TranslationKey, params?: TranslationParams) => string;
 
@@ -102,32 +103,62 @@ export function reconstructTableDdl(
       notes.push(t(skipped, { index: index.name, kind: index.method ?? '' }));
       continue;
     }
-    const columns = dialect === 'postgresql' ? index.columns.join(', ') : index.columns.map(quote).join(', ');
-    const using = dialect === 'postgresql' && index.method && index.method !== 'btree' ? ` USING ${index.method}` : '';
-    const clustering = dialect === 'sqlserver' ? sqlServerClustering(index.method) : '';
-    statements.push(
-      `CREATE ${index.isUnique ? 'UNIQUE ' : ''}${clustering.trim() ? `${clustering.trim()} ` : ''}INDEX ${quote(index.name)} ON ${target}${using} (${columns});`
-    );
+    statements.push(`${createIndexStatement(table, index, dialect)};`);
   }
 
-  const foreignKeys = table.foreignKeys.flatMap((key) => {
-    // 只有 SQLite 会省略被引用列，这两家不会；真缺了宁可不写，也不写一条指错列的外键
-    if (key.referencedColumns.some((column) => column === null)) {
-      return [];
-    }
-    const rules = [
-      key.onDelete && key.onDelete !== 'NO ACTION' ? ` ON DELETE ${key.onDelete}` : '',
-      key.onUpdate && key.onUpdate !== 'NO ACTION' ? ` ON UPDATE ${key.onUpdate}` : ''
-    ].join('');
-    return [
-      `ALTER TABLE ${target} ADD CONSTRAINT ${quote(key.name)} FOREIGN KEY (${key.columns.map(quote).join(', ')})`
-      + ` REFERENCES ${qualified(key.referencedSchema ?? table.schema, key.referencedTable)}`
-      + ` (${key.referencedColumns.map((column) => quote(column ?? '')).join(', ')})${rules};`
-    ];
-  });
+  // 只有 SQLite 会省略被引用列，这两家不会；真缺了宁可不写，也不写一条指错列的外键
+  const foreignKeys = table.foreignKeys
+    .filter((key) => key.referencedColumns.every((column) => column !== null))
+    .map((key) => `${addForeignKeyStatement(table, key, dialect)};`);
 
   const comments = notes.map((note) => `-- ${note.replace(/\s*\r?\n\s*/g, ' ')}`);
   return { ddl: [...comments, ...statements].join('\n'), foreignKeys };
+}
+
+/**
+ * 一个索引的 CREATE INDEX（不带分号）。前提是 `skippedIndexReason` 为 null。
+ *
+ * PostgreSQL 的列照抄（`pg_get_indexdef` 已经按需加了引号，表达式也在里面）并写出非 btree 的方法；
+ * SQL Server 写出聚集与否；其余几家与对象树建索引同一条（`createIndexSql`）
+ */
+export function createIndexStatement(
+  table: { schema: string | null; name: string },
+  index: IndexInfo,
+  dialect: SqlIdentifierDialect
+): string {
+  if (dialect !== 'postgresql' && dialect !== 'sqlserver') {
+    return createIndexSql(
+      { schema: table.schema, table: table.name, name: index.name, columns: index.columns, unique: index.isUnique },
+      dialect
+    );
+  }
+  const quote = (name: string) => quoteSqlIdentifier(name, dialect);
+  const target = quoteQualifiedSqlIdentifier(table.schema ? [table.schema, table.name] : [table.name], dialect);
+  const columns = dialect === 'postgresql' ? index.columns.join(', ') : index.columns.map(quote).join(', ');
+  const using = dialect === 'postgresql' && index.method && index.method !== 'btree' ? ` USING ${index.method}` : '';
+  const clustering = dialect === 'sqlserver' ? sqlServerClustering(index.method).trim() : '';
+  return `CREATE ${index.isUnique ? 'UNIQUE ' : ''}${clustering ? `${clustering} ` : ''}INDEX ${quote(index.name)} ON ${target}${using} (${columns})`;
+}
+
+/**
+ * 加一条外键（不带分号）。被引用表没写 schema 时与本表同一个。NO ACTION 是默认行为，不写出来；
+ * 被引用列不能是 null（只有 SQLite 会省略），调用方先排掉
+ */
+export function addForeignKeyStatement(
+  table: { schema: string | null; name: string },
+  key: ForeignKeyInfo,
+  dialect: SqlIdentifierDialect
+): string {
+  const quote = (name: string) => quoteSqlIdentifier(name, dialect);
+  const qualified = (schema: string | null, name: string) =>
+    quoteQualifiedSqlIdentifier(schema ? [schema, name] : [name], dialect);
+  const rules = [
+    key.onDelete && key.onDelete !== 'NO ACTION' ? ` ON DELETE ${key.onDelete}` : '',
+    key.onUpdate && key.onUpdate !== 'NO ACTION' ? ` ON UPDATE ${key.onUpdate}` : ''
+  ].join('');
+  return `ALTER TABLE ${qualified(table.schema, table.name)} ADD CONSTRAINT ${quote(key.name)} FOREIGN KEY (${key.columns.map(quote).join(', ')})`
+    + ` REFERENCES ${qualified(key.referencedSchema ?? table.schema, key.referencedTable)}`
+    + ` (${key.referencedColumns.map((column) => quote(column ?? '')).join(', ')})${rules}`;
 }
 
 /** SQL Server 的聚集与否要写出来：主键默认聚集，另一个索引已经是聚集的就建不出来 */
@@ -137,7 +168,10 @@ function sqlServerClustering(method: string | null): string {
   return '';
 }
 
-function skippedIndexReason(index: IndexInfo, dialect: ReconstructedDialect): TranslationKey | null {
+/**
+ * 读得到、建不出来的索引，以及为什么。SQL Server 以外的几家，列里有表达式占位（目录给不出表达式的那几家）也建不出来
+ */
+export function skippedIndexReason(index: IndexInfo, dialect: SqlIdentifierDialect): TranslationKey | null {
   if (!index.isValid) {
     return 'schemaExport.note.invalidIndex';
   }
@@ -147,6 +181,9 @@ function skippedIndexReason(index: IndexInfo, dialect: ReconstructedDialect): Tr
   // 列存储、XML、空间索引的语法各自不同，不按普通索引拼
   if (dialect === 'sqlserver' && index.method !== 'clustered' && index.method !== 'nonclustered') {
     return 'schemaExport.note.indexKind';
+  }
+  if (dialect !== 'postgresql' && index.columns.includes(DEFAULT_EXPRESSION_COLUMN_PLACEHOLDER)) {
+    return 'schemaExport.note.indexExpression';
   }
   return null;
 }

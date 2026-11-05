@@ -344,6 +344,10 @@ ORDER BY p.cid
 /// 表达式索引在 `indkey` 里的位置是 0，join 不上任何列，那一列会凭空消失。
 /// `k.ord <= ix.indnkeyatts` 排掉 INCLUDE 的附加列——它们不参与键。
 ///
+/// `is_constraint`：索引是不是主键、唯一约束（或排除约束）背后的那一个。这种索引不能 `DROP INDEX`，
+/// 要删约束（PostgreSQL、SQL Server、Oracle），SQLite 与 DuckDB 则根本删不掉——结构同步按它选语句。
+/// MySQL 的唯一键就是索引本身，恒假；ClickHouse 不用它，不给。
+///
 /// `is_partial` / `is_valid` 是给「拿哪个键定位一行」用的，不是给索引列表看的。
 /// 部分索引（`CREATE UNIQUE INDEX ... WHERE`）只在满足谓词的子集上唯一，
 /// 拿它拼 `WHERE u = ?` 会命中谓词外的重复行；`indisvalid = false` 的索引则是
@@ -360,7 +364,11 @@ SELECT
   ix.indisprimary AS is_primary,
   (ix.indpred IS NOT NULL) AS is_partial,
   ix.indisvalid AS is_valid,
-  am.amname::text AS method
+  am.amname::text AS method,
+  EXISTS (
+    SELECT 1 FROM pg_constraint pc
+    WHERE pc.conindid = ix.indexrelid AND pc.conrelid = t.oid AND pc.contype IN ('p', 'u', 'x')
+  ) AS is_constraint
 FROM pg_class t
 JOIN pg_namespace n ON n.oid = t.relnamespace
 JOIN (
@@ -516,7 +524,8 @@ SELECT
   (il.origin = 'pk') AS is_primary,
   il.partial AS is_partial,
   1 AS is_valid,
-  NULL AS method
+  NULL AS method,
+  (il.origin <> 'c') AS is_constraint
 FROM pragma_index_list(?1) il
 JOIN pragma_index_info(il.name) ii
 ORDER BY il.name, ii.seqno
@@ -698,7 +707,8 @@ SELECT
   i.is_primary_key AS is_primary,
   i.has_filter AS is_partial,
   CAST(CASE WHEN i.is_disabled = 1 THEN 0 ELSE 1 END AS bit) AS is_valid,
-  LOWER(i.type_desc) AS method
+  LOWER(i.type_desc) AS method,
+  CAST(CASE WHEN i.is_unique_constraint = 1 OR i.is_primary_key = 1 THEN 1 ELSE 0 END AS bit) AS is_constraint
 FROM sys.indexes i
 JOIN sys.objects o ON o.object_id = i.object_id
 JOIN sys.schemas s ON s.schema_id = o.schema_id
@@ -846,7 +856,11 @@ SELECT
   CAST(CASE WHEN k.constraint_name IS NULL THEN 0 ELSE 1 END AS NUMBER(1)) AS "is_primary",
   CAST(0 AS NUMBER(1)) AS "is_partial",
   CAST(CASE WHEN i.status IN ('VALID', 'N/A') THEN 1 ELSE 0 END AS NUMBER(1)) AS "is_valid",
-  LOWER(i.index_type) AS "method"
+  LOWER(i.index_type) AS "method",
+  CAST(CASE WHEN EXISTS (
+    SELECT 1 FROM all_constraints u
+    WHERE u.owner = i.table_owner AND u.index_name = i.index_name AND u.constraint_type IN ('P', 'U')
+  ) THEN 1 ELSE 0 END AS NUMBER(1)) AS "is_constraint"
 FROM all_indexes i
 JOIN all_ind_columns ic ON ic.index_owner = i.owner AND ic.index_name = i.index_name
 LEFT JOIN all_constraints k
@@ -988,7 +1002,7 @@ ORDER BY c.column_index
 /// 表达式索引，唯一键只有这个索引的表在网格里就成了「没有唯一键、不能编辑」
 const DUCKDB_INDEXES: &str = r#"
 SELECT x.index_name, COALESCE(c.column_name, x.column_name) AS column_name, x.ordinal, x.is_unique,
-  x.is_primary, x.is_partial, x.is_valid, x.method
+  x.is_primary, x.is_partial, x.is_valid, x.method, x.is_constraint
 FROM (
   SELECT
     k.constraint_name AS index_name,
@@ -998,7 +1012,8 @@ FROM (
     (k.constraint_type = 'PRIMARY KEY') AS is_primary,
     false AS is_partial,
     true AS is_valid,
-    'ART' AS method
+    'ART' AS method,
+    true AS is_constraint
   FROM duckdb_constraints() k
   WHERE k.constraint_type IN ('PRIMARY KEY', 'UNIQUE')
     AND lower(k.table_name) = lower($1)
@@ -1013,7 +1028,8 @@ FROM (
     i.is_primary,
     false,
     true,
-    'ART'
+    'ART',
+    false
   FROM duckdb_indexes() i,
     LATERAL (SELECT list_transform(
       CASE

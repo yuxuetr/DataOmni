@@ -22,6 +22,7 @@ const index = (name: string, columns: string[], extra: Partial<IndexInfo> = {}):
   isPartial: false,
   isValid: true,
   method: 'btree',
+  isConstraint: false,
   ...extra
 });
 

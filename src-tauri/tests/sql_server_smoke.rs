@@ -859,6 +859,14 @@ async fn sql_server_catalog_queries_describe_the_fixture() {
   // INCLUDE 的列不是键的一部分
   assert_eq!(columns_of(&child_indexes, "ix_child_big"), ["ref_a"]);
   assert_eq!(find(&child_indexes, "index_name", "ix_child_big")[0]["is_partial"], json!(true));
+  // 唯一约束背后的索引要删约束，不能 DROP INDEX
+  assert_eq!(
+    (
+      unique["is_constraint"].clone(),
+      find(&child_indexes, "index_name", "ix_child_big")[0]["is_constraint"].clone()
+    ),
+    (json!(true), json!(false))
+  );
   assert_eq!(find(&child_indexes, "index_name", "pk_child")[0]["is_valid"], json!(true));
 
   // 外键：按键内次序配对，不是按列在表里的次序

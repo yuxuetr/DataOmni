@@ -130,7 +130,7 @@ function column(name: string, dataType: string, extra: Partial<ColumnInfo> = {})
 }
 
 function index(name: string, columns: string[], extra: Partial<IndexInfo> = {}): IndexInfo {
-  return { name, columns, isUnique: true, isPrimary: false, isPartial: false, isValid: true, method: null, ...extra };
+  return { name, columns, isUnique: true, isPrimary: false, isPartial: false, isValid: true, method: null, isConstraint: false, ...extra };
 }
 
 describe('catalogToCodegenSchema', () => {

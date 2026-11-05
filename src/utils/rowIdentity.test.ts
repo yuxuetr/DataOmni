@@ -22,6 +22,7 @@ function index(name: string, columns: string[], overrides: Partial<IndexInfo> = 
     isPartial: false,
     isValid: true,
     method: 'btree',
+    isConstraint: false,
     ...overrides
   };
 }

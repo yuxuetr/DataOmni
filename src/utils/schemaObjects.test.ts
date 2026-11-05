@@ -31,7 +31,7 @@ describe('groupIndexRows', () => {
     expect(indexes).toEqual([
       {
         name: 'uq_ab', columns: ['a', 'b'], isUnique: true, isPrimary: false,
-        isPartial: false, isValid: true, method: null
+        isPartial: false, isValid: true, method: null, isConstraint: false
       }
     ]);
   });
@@ -281,7 +281,7 @@ describe('collectSchemaObjects', () => {
     // CockroachDB 没有 pg_get_triggerdef()：只有触发器那段失败。此前整页五段一起
     // 清空，索引也跟着「不可用」，于是每张表都成了只读
     const index: IndexInfo = {
-      name: 'pk', columns: ['id'], isUnique: true, isPrimary: true, isPartial: false, isValid: true, method: null
+      name: 'pk', columns: ['id'], isUnique: true, isPrimary: true, isPartial: false, isValid: true, method: null, isConstraint: false
     };
     const objects = collectSchemaObjects(
       {

@@ -1573,6 +1573,20 @@ async fn postgres_reports_indexes_foreign_keys_and_checks() {
     vec![("label", 1, true), ("score", 2, true)],
     "复合唯一键的列顺序必须是建表时的顺序: {indexes:?}"
   );
+  // 唯一约束背后的索引要删约束，不能 DROP INDEX；普通索引（这里是表达式索引）不是
+  let constraint_of = |name: String| {
+    index_rows
+      .iter()
+      .find(|row| row.get::<String, _>("index_name") == name)
+      .map(|row| row.get::<bool, _>("is_constraint"))
+  };
+  assert_eq!(
+    (
+      constraint_of(format!("uq_meta_child_{}", fixture.suffix)),
+      constraint_of(format!("ix_meta_child_expr_{}", fixture.suffix)),
+    ),
+    (Some(true), Some(false))
+  );
   assert!(
     indexes.contains(&(
       format!("ix_meta_child_label_{}", fixture.suffix),
@@ -1816,6 +1830,20 @@ async fn sqlite_reports_indexes_and_foreign_keys() {
   assert!(
     indexes.contains(&(format!("ix_meta_child_label_{}", fixture.suffix), "label".into(), 1, 0, 0)),
     "普通索引应被标为非 unique: {indexes:?}"
+  );
+  // 约束自动建的索引（主键、UNIQUE）删不掉，`CREATE INDEX` 建的可以
+  let constraint_of = |name: String| {
+    index_rows
+      .iter()
+      .find(|row| row.get::<String, _>("index_name") == name)
+      .map(|row| row.get::<i64, _>("is_constraint"))
+  };
+  assert_eq!(
+    (
+      constraint_of(format!("sqlite_autoindex_{}_2", fixture.child)),
+      constraint_of(format!("ix_meta_child_label_{}", fixture.suffix)),
+    ),
+    (Some(1), Some(0))
   );
   // SQLite 对表达式索引不给列名，也不给表达式原文（pragma_index_info 返回
   // NULL）。这里把这个事实钉住：前端据此把空列名显示成「(表达式)」，
