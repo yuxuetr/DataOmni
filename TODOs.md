@@ -21,10 +21,10 @@
 | 阶段 | 目标 | 状态 |
 |---|---|---|
 | P0–P4 | 质量基线、连接与查询内核、日常工作闭环、管理与数据工程、外围与扩展 | [x] |
-| P5 | 统一桌面 UI 与交互 | [ ]（只差 5.4 的 Windows 安装验证） |
+| P5 | 统一桌面 UI 与交互 | [x]（5.4 的 Windows 验证 2026-11-05 完成） |
 | P6 | AI 设计、导出与备份 | [x] A0–A6c、A9 完成（A2b / A7 / A8 当前版本不做） |
 | P7 | 更多数据库：国产库与云库 | [-] OceanBase、openGauss 完成；KingbaseES 缺安装包；B3 不做；B4 按触发条件 |
-| v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [-] v0.6.0 已发布（2026-10-07，tag 重打在 2b62b5f，含 R6、R7-mac 的修正）；v0.6.1 已发布（2026-10-07，2bf2499，R7-linux 的修正；CI 里 Windows 0.6.0 → 0.6.1 升级通过）；R5 的 CI 部分与 R6 完成；R7 的 macOS 与 Linux 部分完成；R7 Windows 2026-10-14 完成，R5 只剩要真人的项 |
+| v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [-] v0.6.0 已发布（2026-10-07，tag 重打在 2b62b5f，含 R6、R7-mac 的修正）；v0.6.1 已发布（2026-10-07，2bf2499，R7-linux 的修正；CI 里 Windows 0.6.0 → 0.6.1 升级通过）；R5 的 CI 部分与 R6 完成；R7 的 macOS 与 Linux 部分完成；R7 Windows 2026-10-14 完成；R5 人工项 2026-11-05 完成，只差打 `v1.0.0` |
 
 ---
 
@@ -103,14 +103,14 @@
     2026-10-29 已发布为 prerelease（Latest 仍是 0.6.1，按设计不顶替正式版）。
   - 接下来：在这批包上走 R5 人工项与 R7 回归，修完打 `v1.0.0`。
 
-- [ ] R5 Windows 验证
+- [x] R5 Windows 验证（2026-11-05 用户在 Windows 上人工验完）
   - [x] CI 跑静默的安装、升级、卸载（`1825cd5`、`30fef3b`）
     - `scripts/windows-install-smoke.ps1`；`release.yml` 里打完包先跑 `windows-install`，过了才建草稿 Release；`windows-install.yml` 可对已发布的 tag 手动跑。
     - 查：「应用」里恰好一条且版本对、开始菜单项、主程序与 `instantclient\oci.dll`、启动 20 秒后进程还在、日志里有启动那一行；卸载后注册项、主程序、开始菜单都没了。
     - MSI 装在 `C:\Program Files\DataOmni`；NSIS 按用户装在 `%LOCALAPPDATA%\DataOmni`，静默卸载要轮询（`uninstall.exe` 自己会再起一个进程）。用户配置 `%APPDATA%\com.dataomni.app` 卸载后保留，这是有意的。
     - 结果：已发布的 v0.5.1 上除「日志」外都过（那时还没有日志）；新代码打的包（run 37484423539）全部通过，Windows 日志在 `%LOCALAPPDATA%\com.dataomni.app\logs`，联网检查也写进了日志。
     - 升级那一步只在新包版本高于已发布版本时跑，这次两边都是 0.5.1 所以跳过；推 `v0.6.0` 时第一次真跑（run 37489377113）：先装 0.5.1 的 MSI、新版直接装在上面，「应用」里仍只有一条且版本是 0.6.0，其余各项全部通过。
-  - [ ] 人工走一遍 SmartScreen、界面与 Oracle，按 `docs/windows-checklist.md`。
+  - [x] 人工走一遍 SmartScreen、界面与 Oracle，按 `docs/windows-checklist.md`。
     - 2026-10 在一台 Windows 11（非干净、非管理员）上走了 NSIS 与大部分平台项，结果记在清单末尾「记录」：
       NSIS 安装 / 升级 / 降级 / 卸载 / 重装、凭据、中文路径、隧道、Oracle 都过；顺带修了 Windows 上「拒绝连接」
       判不出来（探测超时 1 秒短于 Windows 的 SYN 重试）与 `~\` 私钥路径。
@@ -123,7 +123,7 @@
     - MSI：用户 2026-10-14 在 Windows 上人工验过安装，没问题（逐项结果没单独记；1.7 混装未说明）。
     - 还没测：SmartScreen、缩放与多屏、真键盘快捷键、输入法、拖入、真 `C:\Program Files`
       下的备份工具查找（要管理员）、干净机器上的 7.1。
-  - 需要一台干净的 Windows。本机 Parallels 的虚拟机开着交易软件，不在上面做自动化。
+    - 2026-11-05：用户在 Windows 上把余下的人工项验完，告知「已经验证通过」（逐项结果没单独记）。
 - [x] R6 兼容库与 SSH 隧道的打包版回归
   - [x] SSH 隧道（CI 打的 rpm 0.6.0，GNOME 容器；修复在本地 rpm 0.6.1–0.6.3 上复验）
     - 环境：本地一次性跳板机（alpine + openssh，只认一把现生成的带口令 ed25519 钥匙），MySQL 8.4 放在只有跳板机够得着的内网（`--internal`），应用所在的容器直连不到它。以前写的「经 SSH 隧道」是在 Mac 上 `ssh -L`，应用自己的隧道这是第一次连真跳板机。
@@ -145,7 +145,7 @@
       - `postgres_exported_inserts_carry_every_value_back`（后加的导出语料）在 CockroachDB 与 openGauss 上建夹具就失败：`INT[][]`、`XML`（openGauss-lite 没带 libxml）它们不支持。是用例夹具的缺口，不是导出的缺陷；`postgres_abandoned_statement_stops_on_the_server` 在 openGauss 上并发跑时偶发超过 8 秒，单独跑两次都过。重估条件：下次动这两条用例，或 B2b 再推进时，把夹具按库裁剪。
       - 本地新起的 CockroachDB 要先开 `sql.defaults.experimental_temporary_tables.enabled`，两条用例的夹具用了临时表；cu 上那台早就开着。
     - 测试残留：MariaDB、TiDB（`test` 库）、openGauss、OceanBase 上各留一张 `om_r6`。
-- [ ] R7 拿 CI 产出的三平台包，按 `docs/release-regression.md` 完整回归 → 勾下面两条 → 打 `v1.0.0`
+- [x] R7 拿 CI 产出的三平台包，按 `docs/release-regression.md` 完整回归 → 勾下面两条
   - 2026-10-07 定：先把 macOS 做完整，Windows 之后再说（R5 人工部分与 R7 的 Windows 部分都后放）。2026-10-14 R7-windows 补完。
   - [x] R7-mac：CI 从 `main` 手动打的 macOS 包（含 v0.6.0 之后的三处修复），PostgreSQL 走满第一到第八节，其余各库走方言项；
     另补 macOS 上没验过的：日志路径与「在访达中显示」、新版本提示、从 0.5.1 升上来连接 / 标签 / 历史 / 设置都在。
@@ -226,11 +226,14 @@
     - 修了：两条配置算出同一个连接串时，切过去后对象树报未连接（新池子被断开旧配置时摘掉）；打包版复验过。
     - 没测（要真人）：系统级快捷键、输入法、多屏与缩放、拖入文件、Excel 打开导出的 CSV。
 
+- [ ] 打 `v1.0.0`
+  - rc.2（`c30f983`）之后 main 上多了 Redis 值的 pickle / JSON 解码上色、几处控制台与预览上色等提交，打包版上都没看过。
+
 ### 里程碑条目
 
-- [ ] 完成 P5
-  - 只剩 5.4 的 Windows 安装验证（R5）。5.1 结果区拖动、5.2 间距与字号 token 属「当前版本不做」，不算欠账。
-- [ ] P0–P3 无阻塞级缺陷
+- [x] 完成 P5
+  - 5.4 的 Windows 安装验证随 R5 于 2026-11-05 完成。5.1 结果区拖动、5.2 间距与字号 token 属「当前版本不做」，不算欠账。
+- [x] P0–P3 无阻塞级缺陷（R5、R6 于 2026-11-05 前全部完成）
   - 2026-09-24 至 10-06，在 macOS 与 Linux 打包版上做了多轮回归。2026-10-06 发版前按 `docs/release-regression.md` 完整走了一遍：
     PostgreSQL 走满，其余各库走方言项。修过的每一处都在新包上复验过，记录在归档的同名条目里。
   - 还不能勾：Windows 的安装、升级、卸载，以及带 Instant Client 的 Oracle（R5）；兼容库与隧道的打包版回归（R6）。
@@ -466,8 +469,8 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
     tauri 那份用 iconutil 原样重打仍有底板，所以是像素（小尺寸不透明铺到边角）。`scripts/macos-icns.sh` 重出。
   - 验法：NSWorkspace.icon(forFile:) 在 scratchpad 的 .app 副本上按尺寸画出来看；重装后 /Applications 那份同样画过，五档都没有底板（2026-10-16）。
 
-- [-] 三平台安装、升级、卸载验证
-  - 已验：Linux（rpm、deb；X11、Wayland、真实输入法、密钥环）与 macOS。Windows 见 R5。
+- [x] 三平台安装、升级、卸载验证
+  - 已验：Linux（rpm、deb；X11、Wayland、真实输入法、密钥环）、macOS 与 Windows（R5，2026-11-05）。
   - macOS 的缺口：
     - 没有 Developer ID，只能 ad-hoc 签名，首次打开要手动放行
     - 只有 arm64
