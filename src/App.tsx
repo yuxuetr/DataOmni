@@ -893,7 +893,13 @@ function App() {
     }
 
     if (activeTab.kind === 'er-diagram') {
-      return <ErDiagramView key={activeTab.id} connection={activeConnection.config} />;
+      return (
+        <ErDiagramView
+          key={activeTab.id}
+          connection={activeConnection.config}
+          onOpenSql={activeHasQueryEditor ? (sql, title) => { openSqlTab(sql, title); } : undefined}
+        />
+      );
     }
 
     if (activeTab.kind === 'ai-design') {

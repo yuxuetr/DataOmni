@@ -3,6 +3,7 @@ import {
   AlertCircle,
   Download,
   Filter,
+  GitCompareArrows,
   Loader2,
   Maximize2,
   Minus,
@@ -51,6 +52,8 @@ import type { TranslationKey } from '../i18n/translate';
 import { requireDatabase } from '../utils/requireDatabase';
 import { SegmentedControl, PLAIN_TEXT_INPUT } from './FormControls';
 import { CodegenDialog } from './CodegenDialog';
+import { SchemaCompareDialog } from './SchemaCompareDialog';
+import { schemaDiffDialectFor } from '../utils/schemaDiff';
 import type { SqlDialect } from '../contracts/queryExecution';
 import type { CodegenSchema } from '../utils/codegenModel';
 import { codegenTargetsFor } from '../utils/codegenTargets';
@@ -67,6 +70,8 @@ interface ErDiagramQueries {
 
 interface ErDiagramViewProps {
   connection: ConnectionProfile;
+  /** 结构比对出的脚本放进当前连接的新 SQL 标签 */
+  onOpenSql?: (sql: string, title: string) => void;
 }
 
 const MIN_SCALE = 0.25;
@@ -116,8 +121,9 @@ const TYPE_BUDGET = 16;
  * 并处理缩放与平移。连线接的是**列自己那一行**，不是框的中心——否则只看得出
  * 「这两张表有关系」，看不出是哪两个字段在关联。
  */
-export function ErDiagramView({ connection }: ErDiagramViewProps) {
+export function ErDiagramView({ connection, onOpenSql }: ErDiagramViewProps) {
   const { database } = useQueryStore();
+  const [comparing, setComparing] = useState(false);
   const t = useLanguageStore((state) => state.t);
   // 我们自己执行过 DDL 就会 +1，图跟着重拉。外部改动靠刷新按钮。
   const schemaVersion = useAppStore((state) => state.schemaVersion);
@@ -221,13 +227,24 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
   }
 
   return (
-    <ErDiagramCanvas
-      tables={tables}
-      links={links}
-      onRefresh={() => setReloadToken(token => token + 1)}
-      document={{ title: connection.name, dialect: serverLabel(connection), origin: 'catalog' }}
-      codegen={codegen}
-    />
+    <>
+      <ErDiagramCanvas
+        tables={tables}
+        links={links}
+        onRefresh={() => setReloadToken(token => token + 1)}
+        document={{ title: connection.name, dialect: serverLabel(connection), origin: 'catalog' }}
+        codegen={codegen}
+        onCompare={schemaDiffDialectFor(connection.db_type) ? () => setComparing(true) : undefined}
+      />
+      {comparing && (
+        <SchemaCompareDialog
+          current={connection}
+          currentHandle={requireDatabase(database)}
+          onOpenSql={onOpenSql}
+          onClose={() => setComparing(false)}
+        />
+      )}
+    </>
   );
 }
 
@@ -240,12 +257,15 @@ export function ErDiagramCanvas({
   links,
   onRefresh,
   document: source,
-  codegen
+  codegen,
+  onCompare
 }: {
   tables: ErTable[];
   links: ErLink[];
   document?: ErDocument;
   codegen?: ErCodegen;
+  /** 与另一个库比对结构（只有已有库的图才有） */
+  onCompare?: () => void;
   /** 外部改了结构时用：数据库不会推送这件事，只能主动再查一遍 */
   onRefresh?: () => void;
 }) {
@@ -589,6 +609,11 @@ export function ErDiagramCanvas({
               </>
             )}
           </div>
+          {onCompare && (
+            <ToolButton label={t('er.compare')} onClick={onCompare}>
+              <GitCompareArrows size={13} />
+            </ToolButton>
+          )}
           {onRefresh && (
             <ToolButton label={t('er.refresh')} onClick={onRefresh}>
               <RefreshCw size={13} />

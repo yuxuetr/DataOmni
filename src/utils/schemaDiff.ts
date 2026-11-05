@@ -14,6 +14,21 @@ import { columnDefaultSql } from './tableDdl';
 /** ClickHouse 不能结构编辑，同理不比 */
 export type SchemaDiffDialect = Exclude<SqlDialect, 'clickhouse'>;
 
+/** 连接类型对应的比对方言；文档库、图库、搜索与 ClickHouse 不比，是 null */
+export function schemaDiffDialectFor(dbType: string): SchemaDiffDialect | null {
+  switch (dbType) {
+    case 'postgresql':
+    case 'mysql':
+    case 'sqlite':
+    case 'sqlserver':
+    case 'oracle':
+    case 'duckdb':
+      return dbType;
+    default:
+      return null;
+  }
+}
+
 export interface SchemaSnapshot {
   dialect: SchemaDiffDialect;
   tables: TableCatalog[];
