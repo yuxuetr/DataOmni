@@ -1,6 +1,12 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
-import { opensOwnPool } from './databaseHandle';
+import { describe, expect, it, vi } from 'vitest';
+
+const pluginClose = vi.fn(async () => true);
+vi.mock('@tauri-apps/plugin-sql', () => ({
+  default: { load: async (path: string) => ({ path, select: vi.fn(), close: pluginClose }) }
+}));
+
+const { openDatabase, opensOwnPool } = await import('./databaseHandle');
 
 /** 后端 `sqlx_pool::handles` 认的那几个 scheme，直接从源码里读 */
 function backendSchemes(): string[] {
@@ -22,5 +28,13 @@ describe('哪些连接的池子由后端开', () => {
     expect(opensOwnPool('sqlite:/tmp/a.db')).toBe(false);
     expect(opensOwnPool('sqlserver://h')).toBe(false);
     expect(opensOwnPool('oracle://h')).toBe(false);
+  });
+});
+
+describe('SQLite 句柄', () => {
+  it('关的时候只关自己：插件的 close() 不带库名会关掉所有 SQLite 池子', async () => {
+    const handle = await openDatabase('sqlite:/tmp/other.db');
+    await handle.close();
+    expect(pluginClose).toHaveBeenCalledWith('sqlite:/tmp/other.db');
   });
 });

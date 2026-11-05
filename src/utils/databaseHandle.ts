@@ -83,7 +83,13 @@ export async function openDatabase(connectionString: string): Promise<DatabaseHa
     await invoke('open_database_pool', { connectionString });
     return backendHandle(connectionString, 'sqlx_select', 'close_sqlx_pool');
   }
-  return Database.load(connectionString);
+  // 插件的 `close()` 不带库名时关掉**它管着的所有** SQLite 池子：结构比对另开一个 SQLite 句柄、
+  // 用完关掉，当前连接的池子也跟着没了（真应用里撞上的）。只关自己这一个
+  const db = await Database.load(connectionString);
+  return {
+    select: (sql, params) => db.select(sql, params),
+    close: () => db.close(db.path)
+  };
 }
 
 /**
