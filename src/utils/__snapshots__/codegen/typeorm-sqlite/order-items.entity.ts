@@ -7,7 +7,7 @@ import { Products } from './products.entity';
 @Entity({ name: 'order_items' })
 export class OrderItems {
   @PrimaryColumn({ name: 'order_id', type: 'integer' })
-  orderId!: string;
+  orderId!: number;
 
   @PrimaryColumn({ type: 'varchar', length: 120 })
   sku!: string;
@@ -16,7 +16,7 @@ export class OrderItems {
   region!: string;
 
   @Column({ type: 'integer', default: () => '1' })
-  qty!: string;
+  qty!: number;
 
   @ManyToOne(() => Orders, (orders) => orders.orderItems, { nullable: false })
   @JoinColumn({ name: 'order_id', referencedColumnName: 'id' })

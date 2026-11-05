@@ -5,8 +5,8 @@ import { Users } from './users.entity';
 
 @Entity({ tableName: '2fa codes' })
 export class T2faCodes {
-  @PrimaryKey({ type: 'bigint', columnType: 'INTEGER', autoincrement: true })
-  id!: string;
+  @PrimaryKey({ type: 'integer', columnType: 'INTEGER', autoincrement: true })
+  id!: number;
 
   @Property({ type: 'string', columnType: 'VARCHAR(120)', nullable: true })
   class!: string | null;

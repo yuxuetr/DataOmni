@@ -6,8 +6,8 @@ import { Products } from './products.entity';
 
 @Entity({ tableName: 'order_items' })
 export class OrderItems {
-  @Property({ type: 'bigint', columnType: 'INTEGER', defaultRaw: '1' })
-  qty!: string;
+  @Property({ type: 'integer', columnType: 'INTEGER', defaultRaw: '1' })
+  qty!: number;
 
   @ManyToOne({ entity: () => Orders, inversedBy: 'orderItems', fieldName: 'order_id', primary: true })
   order!: Rel<Orders>;

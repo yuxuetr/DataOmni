@@ -13,7 +13,7 @@ export class Products {
   region!: string;
 
   @Column({ name: 'category_id', type: 'integer', nullable: true })
-  categoryId!: string | null;
+  categoryId!: number | null;
 
   @Column({ type: 'real', nullable: true })
   price!: number | null;

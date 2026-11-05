@@ -6,11 +6,11 @@ import { Users } from './users.entity';
 
 @Entity({ tableName: 'orders' })
 export class Orders {
-  @PrimaryKey({ type: 'bigint', columnType: 'INTEGER', autoincrement: true })
-  id!: string;
+  @PrimaryKey({ type: 'integer', columnType: 'INTEGER', autoincrement: true })
+  id!: number;
 
-  @Property({ fieldName: 'coupon_id', type: 'bigint', columnType: 'INTEGER', nullable: true })
-  couponId!: string | null;
+  @Property({ fieldName: 'coupon_id', type: 'integer', columnType: 'INTEGER', nullable: true })
+  couponId!: number | null;
 
   @Property({ type: 'decimal', columnType: 'DECIMAL(10,2)', defaultRaw: '0' })
   total!: string;

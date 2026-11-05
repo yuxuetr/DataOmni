@@ -81,6 +81,13 @@ describe('generatePrisma', () => {
   });
 });
 
+describe('SQLite integers', () => {
+  it('are Int, as prisma db pull writes them', () => {
+    const { files } = generatePrisma(codegenFixture('sqlite') as CodegenSchema & { dialect: 'sqlite' }, 'x');
+    expect(files[0].contents).toMatch(/model Users \{\n {2}id +Int +@id @default\(autoincrement\(\)\)/);
+  });
+});
+
 describe('prismaDefault', () => {
   it.each([
     ["'new'::text", 'String', '"new"'],

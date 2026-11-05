@@ -13,7 +13,7 @@ export class Products {
   region!: string;
 
   @Column({ name: 'category_id', type: 'number', precision: 10, nullable: true })
-  categoryId!: string | null;
+  categoryId!: number | null;
 
   @Column({ type: 'double precision', nullable: true })
   price!: number | null;

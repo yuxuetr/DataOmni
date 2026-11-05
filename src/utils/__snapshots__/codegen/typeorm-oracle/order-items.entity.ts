@@ -16,7 +16,7 @@ export class OrderItems {
   region!: string;
 
   @Column({ type: 'number', precision: 10, default: () => '1' })
-  qty!: string;
+  qty!: number;
 
   @ManyToOne(() => Orders, (orders) => orders.orderItems, { nullable: false })
   @JoinColumn({ name: 'order_id', referencedColumnName: 'id' })

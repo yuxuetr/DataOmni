@@ -5,8 +5,8 @@ import { Products } from './products.entity';
 
 @Entity({ tableName: 'categories' })
 export class Categories {
-  @PrimaryKey({ type: 'bigint', columnType: 'INTEGER', autoincrement: true })
-  id!: string;
+  @PrimaryKey({ type: 'integer', columnType: 'INTEGER', autoincrement: true })
+  id!: number;
 
   @Property({ type: 'string', columnType: 'VARCHAR(120)' })
   name!: string;

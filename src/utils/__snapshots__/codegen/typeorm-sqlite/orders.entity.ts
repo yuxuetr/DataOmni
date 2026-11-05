@@ -7,16 +7,16 @@ import { Users } from './users.entity';
 @Entity({ name: 'orders' })
 export class Orders {
   @PrimaryGeneratedColumn({ type: 'integer' })
-  id!: string;
+  id!: number;
 
   @Column({ name: 'buyer_id', type: 'integer' })
-  buyerId!: string;
+  buyerId!: number;
 
   @Column({ name: 'seller_id', type: 'integer', nullable: true })
-  sellerId!: string | null;
+  sellerId!: number | null;
 
   @Column({ name: 'coupon_id', type: 'integer', nullable: true })
-  couponId!: string | null;
+  couponId!: number | null;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: () => '0' })
   total!: string;

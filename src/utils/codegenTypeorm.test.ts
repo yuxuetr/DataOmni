@@ -37,3 +37,12 @@ describe('generateTypeorm', () => {
     );
   });
 });
+
+describe('SQLite integers', () => {
+  it('are numbers, not strings: the SQLite drivers return numbers for every INTEGER', () => {
+    // 在真应用里看到的：SQLite 的 INTEGER 都是 64 位，按 bigint 给成 string，每个 id 的类型都错了
+    const { files } = generateTypeorm(codegenFixture('sqlite'), 'x');
+    const users = files.find((file) => file.path === 'users.entity.ts')?.contents ?? '';
+    expect(users).toContain("@PrimaryGeneratedColumn({ type: 'integer' })\n  id!: number;");
+  });
+});

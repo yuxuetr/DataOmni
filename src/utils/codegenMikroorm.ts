@@ -15,7 +15,7 @@ import {
   type LogicalType,
   type RelationPlan
 } from './codegenModel';
-import { entityFileName, TS_RESERVED_PROPERTIES, tsObject, tsString, tsType } from './codegenTs';
+import { bigIntAsString, entityFileName, TS_RESERVED_PROPERTIES, tsObject, tsString, tsType } from './codegenTs';
 
 /**
  * MikroORM 实体（装饰器写法）：一张表一个 `*.entity.ts`，外加 `index.ts`。Oracle 不在 MikroORM 支持的库里。
@@ -131,10 +131,10 @@ export function generateMikroorm(schema: CodegenSchema & { dialect: MikroormDial
 }
 
 /** `type` 管读出来的 JS 值；与 `tsType` 一一对应 */
-function mikroType(logical: LogicalType): string {
+function mikroType(logical: LogicalType, dialect: MikroormDialect): string {
   switch (logical.kind) {
     case 'int':
-      return logical.bytes === 8 ? 'bigint' : 'integer';
+      return logical.bytes === 8 && bigIntAsString(dialect) ? 'bigint' : 'integer';
     case 'decimal':
       return 'decimal';
     case 'float':
@@ -176,7 +176,7 @@ function scalarMember(
   const isPrimary = table.primaryKey.includes(column.name);
   const options: Array<[string, string]> = [];
   if (property !== column.name) options.push(['fieldName', tsString(column.name)]);
-  options.push(['type', tsString(mikroType(logical))]);
+  options.push(['type', tsString(mikroType(logical, dialect))]);
   if (column.dataType.trim()) options.push(['columnType', tsString(column.dataType.trim())]);
   if (isPrimary && logical.kind === 'int') options.push(['autoincrement', String(column.autoIncrement && table.primaryKey.length === 1)]);
   const nullable = column.nullable && !isPrimary;
@@ -187,7 +187,7 @@ function scalarMember(
   const decorator = isPrimary ? 'PrimaryKey' : 'Property';
   entity.imports.add(decorator);
   const lines = column.computed ? ['/** Computed by the database; do not set it. */'] : [];
-  lines.push(`@${decorator}(${tsObject(options)})`, `${property}!: ${tsType(logical)}${nullable ? ' | null' : ''};`);
+  lines.push(`@${decorator}(${tsObject(options)})`, `${property}!: ${tsType(logical, dialect)}${nullable ? ' | null' : ''};`);
   return lines;
 }
 

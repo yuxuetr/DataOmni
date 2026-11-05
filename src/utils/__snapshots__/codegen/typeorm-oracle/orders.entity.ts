@@ -10,13 +10,13 @@ export class Orders {
   id!: string;
 
   @Column({ name: 'buyer_id', type: 'number', precision: 10 })
-  buyerId!: string;
+  buyerId!: number;
 
   @Column({ name: 'seller_id', type: 'number', precision: 10, nullable: true })
-  sellerId!: string | null;
+  sellerId!: number | null;
 
   @Column({ name: 'coupon_id', type: 'number', precision: 10, nullable: true })
-  couponId!: string | null;
+  couponId!: number | null;
 
   @Column({ type: 'number', precision: 10, scale: 2, default: () => '0' })
   total!: string;

@@ -1,14 +1,22 @@
-import { NameScope, nameWords, type LogicalType } from './codegenModel';
+import { NameScope, nameWords, type CodegenDialect, type LogicalType } from './codegenModel';
 
 /**
  * TypeORM 与 MikroORM 共用的 TypeScript 部分：属性的 TS 类型、文件名、字面量。
- * 两个 ORM 读出来的值形状一致（bigint 与 decimal 是字符串，免得丢精度；date 与 time 是字符串）
+ * 两个 ORM 读出来的值形状一致（decimal 是字符串，免得丢精度；date 与 time 是字符串）
  */
 
-export function tsType(logical: LogicalType): string {
+/**
+ * 64 位整数读出来是什么取决于驱动：pg、mysql2、mssql 给字符串（免得丢精度），
+ * SQLite 的驱动与 oracledb 给 number（SQLite 的 INTEGER 都是 64 位，给字符串就全错了）
+ */
+export function bigIntAsString(dialect: CodegenDialect): boolean {
+  return dialect === 'postgresql' || dialect === 'mysql' || dialect === 'sqlserver';
+}
+
+export function tsType(logical: LogicalType, dialect: CodegenDialect): string {
   switch (logical.kind) {
     case 'int':
-      return logical.bytes === 8 ? 'string' : 'number';
+      return logical.bytes === 8 && bigIntAsString(dialect) ? 'string' : 'number';
     case 'decimal':
       return 'string';
     case 'float':

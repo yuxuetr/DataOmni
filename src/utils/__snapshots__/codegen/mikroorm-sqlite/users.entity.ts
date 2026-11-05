@@ -7,8 +7,8 @@ import { UserProfiles } from './user-profiles.entity';
 
 @Entity({ tableName: 'users' })
 export class Users {
-  @PrimaryKey({ type: 'bigint', columnType: 'INTEGER', autoincrement: true })
-  id!: string;
+  @PrimaryKey({ type: 'integer', columnType: 'INTEGER', autoincrement: true })
+  id!: number;
 
   @Property({ type: 'string', columnType: 'VARCHAR(120)', unique: true })
   email!: string;

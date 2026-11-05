@@ -6,7 +6,7 @@ import { Users } from './users.entity';
 @Entity({ name: 'user_profiles' })
 export class UserProfiles {
   @PrimaryColumn({ name: 'user_id', type: 'number', precision: 10 })
-  userId!: string;
+  userId!: number;
 
   @Column({ type: 'clob', nullable: true })
   bio!: string | null;

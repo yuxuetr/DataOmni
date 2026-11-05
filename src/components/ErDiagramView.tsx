@@ -179,7 +179,10 @@ export function ErDiagramView({ connection }: ErDiagramViewProps) {
     const dialect = identifierDialectFor(connection.db_type);
     return {
       dialect,
-      source: connection.database ? `${connection.name} / ${connection.database}` : connection.name,
+      // 文件库的 database 是整条路径，开头那行说明里只要文件名
+      source: connection.database
+        ? `${connection.name} / ${connection.database.split(/[\\/]/).pop() ?? connection.database}`
+        : connection.name,
       load: async (visibleTables, visibleLinks) => {
         if (!isCodegenDialect(dialect)) throw new Error(dialect);
         const queries = await invoke<SchemaMetadataQueries>('get_schema_metadata_queries', { dbType: connection.db_type });

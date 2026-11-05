@@ -6,10 +6,10 @@ import { Products } from './products.entity';
 @Entity({ name: 'categories' })
 export class Categories {
   @PrimaryGeneratedColumn({ type: 'integer' })
-  id!: string;
+  id!: number;
 
   @Column({ name: 'parent_id', type: 'integer', nullable: true })
-  parentId!: string | null;
+  parentId!: number | null;
 
   @Column({ type: 'varchar', length: 120 })
   name!: string;

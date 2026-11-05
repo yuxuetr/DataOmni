@@ -126,7 +126,7 @@ function columnMember(entity: Entity, column: CodegenColumn, dialect: CodegenDia
   const lines = column.computed ? ['/** Computed by the database; read only. */'] : [];
   lines.push(
     `@${decorator}(${options.length ? tsObject(options) : ''})`,
-    `${property}!: ${tsType(logical)}${nullable ? ' | null' : ''};`
+    `${property}!: ${tsType(logical, dialect)}${nullable ? ' | null' : ''};`
   );
   return lines;
 }

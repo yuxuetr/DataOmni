@@ -8,7 +8,7 @@ import { UserProfiles } from './user-profiles.entity';
 @Entity({ name: 'users' })
 export class Users {
   @PrimaryGeneratedColumn({ type: 'integer' })
-  id!: string;
+  id!: number;
 
   @Column({ type: 'varchar', length: 120, unique: true })
   email!: string;

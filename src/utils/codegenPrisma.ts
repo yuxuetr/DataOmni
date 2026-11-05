@@ -181,7 +181,10 @@ function scalarType(logical: LogicalType, raw: string, dialect: PrismaDialect): 
   const precision = (/\((\d+)\)/.exec(raw) ?? [])[1];
   switch (logical.kind) {
     case 'int': {
-      const type = logical.bytes === 8 || (logical.unsigned && logical.bytes === 4 && dialect !== 'mysql') ? 'BigInt' : 'Int';
+      // SQLite 的 INTEGER 都是 64 位，但 `prisma db pull` 给的是 Int（读成 BigInt 每个 id 都是 bigint 对象）
+      const type = dialect !== 'sqlite' && (logical.bytes === 8 || (logical.unsigned && logical.bytes === 4 && dialect !== 'mysql'))
+        ? 'BigInt'
+        : 'Int';
       if (dialect === 'mysql') {
         const unsigned = logical.unsigned ? 'Unsigned' : '';
         const native = token === 'mediumint' ? 'MediumInt'

@@ -14,7 +14,7 @@ datasource db {
 }
 
 model Users {
-  id             BigInt                   @id @default(autoincrement())
+  id             Int                      @id @default(autoincrement())
   email          String                   @unique
   displayName    String?                  @map("display_name")
   createdAt      DateTime                 @default(now()) @map("created_at")
@@ -33,7 +33,7 @@ model Users {
 }
 
 model UserProfiles {
-  userId BigInt  @id @map("user_id")
+  userId Int     @id @map("user_id")
   bio    String?
   user   Users   @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -41,8 +41,8 @@ model UserProfiles {
 }
 
 model Categories {
-  id                 BigInt       @id @default(autoincrement())
-  parentId           BigInt?      @map("parent_id")
+  id                 Int          @id @default(autoincrement())
+  parentId           Int?         @map("parent_id")
   name               String
   parent             Categories?  @relation("CategoriesParent", fields: [parentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   categoriesByParent Categories[] @relation("CategoriesParent")
@@ -52,10 +52,10 @@ model Categories {
 }
 
 model Orders {
-  id           BigInt       @id @default(autoincrement())
-  buyerId      BigInt       @map("buyer_id")
-  sellerId     BigInt?      @map("seller_id")
-  couponId     BigInt?      @map("coupon_id")
+  id           Int          @id @default(autoincrement())
+  buyerId      Int          @map("buyer_id")
+  sellerId     Int?         @map("seller_id")
+  couponId     Int?         @map("coupon_id")
   total        Decimal      @default(0)
   status       String       @default("new")
   type         String?
@@ -71,7 +71,7 @@ model Orders {
 model Products {
   sku        String
   region     String
-  categoryId BigInt?      @map("category_id")
+  categoryId Int?         @map("category_id")
   price      Float?
   category   Categories?  @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   orderItems OrderItems[]
@@ -81,10 +81,10 @@ model Products {
 }
 
 model OrderItems {
-  orderId  BigInt   @map("order_id")
+  orderId  Int      @map("order_id")
   sku      String
   region   String
-  qty      BigInt   @default(1)
+  qty      Int      @default(1)
   order    Orders   @relation(fields: [orderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   products Products @relation(fields: [sku, region], references: [sku, region], onDelete: NoAction, onUpdate: NoAction)
 
@@ -102,9 +102,9 @@ model AuditLog {
 }
 
 model T2faCodes {
-  id    BigInt  @id @default(autoincrement())
+  id    Int     @id @default(autoincrement())
   class String?
-  user  BigInt?
+  user  Int?
   users Users?  @relation(fields: [user], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@map("2fa codes")

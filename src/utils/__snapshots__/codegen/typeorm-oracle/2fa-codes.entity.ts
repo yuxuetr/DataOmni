@@ -6,13 +6,13 @@ import { Users } from './users.entity';
 @Entity({ name: '2fa codes' })
 export class T2faCodes {
   @PrimaryGeneratedColumn({ type: 'number' })
-  id!: string;
+  id!: number;
 
   @Column({ type: 'varchar2', length: 120, nullable: true })
   class!: string | null;
 
   @Column({ type: 'number', precision: 10, nullable: true })
-  user!: string | null;
+  user!: number | null;
 
   @ManyToOne(() => Users, (users) => users.c2faCodes, { nullable: true })
   @JoinColumn({ name: 'user', referencedColumnName: 'id' })
