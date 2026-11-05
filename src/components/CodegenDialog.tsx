@@ -244,7 +244,11 @@ function describeNote(note: CodegenNote, t: Translate): string {
       return t('codegen.note.danglingForeignKey', { table: note.table, constraint: note.constraint, target: note.referencedTable });
     case 'skipped-relation':
       return t(
-        note.reason === 'target-not-unique' ? 'codegen.note.relationNotUnique' : 'codegen.note.relationSkippedTable',
+        note.reason === 'target-not-unique'
+          ? 'codegen.note.relationNotUnique'
+          : note.reason === 'shared-column'
+            ? 'codegen.note.relationSharedColumn'
+            : 'codegen.note.relationSkippedTable',
         { table: note.table, constraint: note.constraint }
       );
   }

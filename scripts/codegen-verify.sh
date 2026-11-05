@@ -8,7 +8,8 @@
 # 反向验证（2026-11-05）：
 # - 从 Prisma 快照里删掉一条反向关系，`prisma validate` 报「missing an opposite relation field」；
 # - TypeORM 把一个 referencedColumnName 改成不存在的属性，建元数据报「Referenced column nope was not found」；
-#   不写列类型时（早先的写法）五种驱动都报「Data type "Object" … is not supported」。
+#   不写列类型时（早先的写法）五种驱动都报「Data type "Object" … is not supported」；
+# - MikroORM 把一个 mappedBy 改成不存在的属性，实体发现报「has unknown 'mappedBy' reference」。
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -38,16 +39,17 @@ for file in "$snapshots"/prisma-*.prisma; do
   fi
 done
 
-# --- TypeORM：tsc 严格模式编译，再交给五种驱动各建一次元数据 ---
+# --- TypeORM 与 MikroORM：tsc 严格模式编译；TypeORM 在五种驱动上各建一次元数据，MikroORM 在四种驱动上各跑一次实体发现 ---
 # 建元数据时 TypeORM 按驱动的 supportedDataTypes 校验列类型、按属性名找关系的对面，tsc 查不出这两样。
 # 不连库：buildMetadatas 只要驱动包装得上
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-cp -R "$snapshots"/typeorm-* "$work/"
+cp -R "$snapshots"/typeorm-* "$snapshots"/mikroorm-* "$work/"
 (
   cd "$work"
   echo '{"name":"codegen-verify","private":true}' > package.json
-  bun add typeorm@0.3 reflect-metadata typescript@5 @types/node pg mysql2 sqlite3 mssql oracledb >/dev/null 2>&1
+  bun add typeorm@0.3 reflect-metadata typescript@5 @types/node pg mysql2 sqlite3 mssql oracledb \
+    @mikro-orm/core@6 @mikro-orm/postgresql@6 @mikro-orm/mysql@6 @mikro-orm/sqlite@6 @mikro-orm/mssql@6 >/dev/null 2>&1
   cat > tsconfig.json <<'JSON'
 {
   "compilerOptions": {
@@ -55,7 +57,7 @@ cp -R "$snapshots"/typeorm-* "$work/"
     "experimentalDecorators": true, "emitDecoratorMetadata": true, "skipLibCheck": true,
     "outDir": "dist", "types": ["node"]
   },
-  "include": ["typeorm-*/**/*.ts"]
+  "include": ["typeorm-*/**/*.ts", "mikroorm-*/**/*.ts"]
 }
 JSON
   cat > metadata.js <<'JS'
@@ -78,11 +80,38 @@ const drivers = { postgresql: 'postgres', mysql: 'mysql', sqlite: 'sqlite', sqls
   process.exit(failed);
 })();
 JS
+  cat > discovery.js <<'JS'
+require('reflect-metadata');
+const drivers = {
+  postgresql: ['@mikro-orm/postgresql', 'PostgreSqlDriver'],
+  mysql: ['@mikro-orm/mysql', 'MySqlDriver'],
+  sqlite: ['@mikro-orm/sqlite', 'SqliteDriver'],
+  sqlserver: ['@mikro-orm/mssql', 'MsSqlDriver']
+};
+(async () => {
+  let failed = 0;
+  for (const [dialect, [pkg, name]] of Object.entries(drivers)) {
+    try {
+      const { MikroORM, [name]: driver } = require(pkg);
+      const { entities } = require(`./dist/mikroorm-${dialect}/index.js`);
+      const orm = await MikroORM.init({ driver, entities, dbName: dialect === 'sqlite' ? ':memory:' : 'db', connect: false });
+      console.log(`ok    mikroorm ${dialect} (${Object.keys(orm.getMetadata().getAll()).length} entities)`);
+    } catch (error) {
+      failed = 1;
+      console.log(`FAIL  mikroorm ${dialect}: ${error.message}`);
+    }
+  }
+  process.exit(failed);
+})();
+JS
   if ! node_modules/.bin/tsc -p .; then
-    echo "FAIL  typeorm tsc"
+    echo "FAIL  typeorm / mikroorm tsc"
     exit 1
   fi
-  node metadata.js
+  status=0
+  node metadata.js || status=1
+  node discovery.js || status=1
+  exit "$status"
 ) || failed=1
 
 exit "$failed"

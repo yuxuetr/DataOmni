@@ -3,10 +3,11 @@ import type { CodeLanguage } from './codeHighlight';
 import { isCodegenDialect, type CodegenDialect, type CodegenSchema, type GeneratedCode } from './codegenModel';
 import { generatePrisma, isPrismaDialect } from './codegenPrisma';
 import { generateTypeorm } from './codegenTypeorm';
+import { generateMikroorm, isMikroormDialect } from './codegenMikroorm';
 
 /** 代码生成的目标：对话框里的选项、预览用的语言、各自支持的方言（rfcs/codegen.md §2） */
 export interface CodegenTarget {
-  id: 'prisma' | 'typeorm';
+  id: 'prisma' | 'typeorm' | 'mikroorm';
   label: string;
   language: CodeLanguage;
   supports: (dialect: CodegenDialect) => boolean;
@@ -31,6 +32,17 @@ export const CODEGEN_TARGETS: CodegenTarget[] = [
     language: 'typescript',
     supports: () => true,
     generate: generateTypeorm
+  },
+  {
+    id: 'mikroorm',
+    label: 'MikroORM',
+    language: 'typescript',
+    supports: isMikroormDialect,
+    generate: (schema, source) => {
+      const { dialect } = schema;
+      if (!isMikroormDialect(dialect)) throw new Error(`MikroORM does not support ${dialect}`);
+      return generateMikroorm({ ...schema, dialect }, source);
+    }
   }
 ];
 

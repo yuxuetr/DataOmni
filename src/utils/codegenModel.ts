@@ -552,7 +552,7 @@ export type CodegenNote =
   | { kind: 'ignored-table'; table: string; reason: 'no-unique-identifier' }
   | { kind: 'dangling-foreign-key'; table: string; constraint: string; referencedTable: string }
   /** 关系没生成：被引用的列不是主键或唯一约束，或者一端的表生成不了 */
-  | { kind: 'skipped-relation'; table: string; constraint: string; reason: 'target-not-unique' | 'ignored-table' | 'skipped-table' };
+  | { kind: 'skipped-relation'; table: string; constraint: string; reason: 'target-not-unique' | 'ignored-table' | 'skipped-table' | 'shared-column' };
 
 export interface GeneratedCode {
   files: GeneratedFile[];
@@ -575,7 +575,8 @@ export function noteLines(notes: readonly CodegenNote[]): string[] {
         return `${note.table}: relation ${note.constraint} not generated, ${{
           'target-not-unique': 'it references columns that are not a primary key or unique constraint',
           'ignored-table': 'one of its tables is marked @@ignore',
-          'skipped-table': 'one of its tables is skipped'
+          'skipped-table': 'one of its tables is skipped',
+          'shared-column': 'its columns already belong to another relation'
         }[note.reason]}`;
     }
   });

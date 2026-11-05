@@ -1369,6 +1369,7 @@ export const zh = {
   'codegen.note.danglingForeignKey': '{table}：外键 {constraint} 指向的 {target} 不在这次生成的表里，关系没生成（外键列还在）',
   'codegen.note.relationNotUnique': '{table}：外键 {constraint} 指向的列不是主键或唯一约束，这个目标写不了这种关系，没生成',
   'codegen.note.relationSkippedTable': '{table}：外键 {constraint} 一端的表没生成，关系也没生成',
+  'codegen.note.relationSharedColumn': '{table}：外键 {constraint} 的列已经归另一条关系了（这个目标里一列只能映射一次），没生成',
   'aiDesign.documentTitle': "{connection} 的新表设计（未建）",
   'dictionary.summary': "{dialect} · {tables} 张表 · {links} 条外键关联 · {date} 从 DataOmni 导出",
   'dictionary.coverage': "来自数据库目录：列、类型、可空、主键与外键。不含列注释、默认值、索引与唯一约束。",
