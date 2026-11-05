@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseType, type ConnectionProfile } from '../contracts';
 import type { ColumnInfo } from '../contracts';
 import type { SchemaObjects } from '../utils/schemaObjects';
@@ -127,10 +127,16 @@ describe('表结构缓存', () => {
 
   /** 版本号追不上别人改的结构，所以还要一个过期时间兜底 */
   it('过期之后当没有', () => {
-    useAppStore.getState().cacheTableStructure(STRUCTURE_KEY, 'c1', { columns: STRUCTURE_COLUMNS });
-    const now = Date.now();
-    expect(selectTableStructure(useAppStore.getState(), STRUCTURE_KEY, now + METADATA_TTL_MS)).not.toBeNull();
-    expect(selectTableStructure(useAppStore.getState(), STRUCTURE_KEY, now + METADATA_TTL_MS + 1)).toBeNull();
+    // 钟要定住：缓存时自己取一次 Date.now()，这里再取一次，两次之间跨过一毫秒就正好过期一毫秒（偶发失败过）
+    vi.useFakeTimers({ now: 1_700_000_000_000 });
+    try {
+      useAppStore.getState().cacheTableStructure(STRUCTURE_KEY, 'c1', { columns: STRUCTURE_COLUMNS });
+      const now = Date.now();
+      expect(selectTableStructure(useAppStore.getState(), STRUCTURE_KEY, now + METADATA_TTL_MS)).not.toBeNull();
+      expect(selectTableStructure(useAppStore.getState(), STRUCTURE_KEY, now + METADATA_TTL_MS + 1)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('DDL 之后重新写入的那一份又作数了', () => {
