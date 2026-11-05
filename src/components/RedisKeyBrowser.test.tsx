@@ -92,6 +92,28 @@ describe('RedisKeyBrowser', () => {
     expect(container.textContent).not.toContain('opened');
   });
 
+  it('pickle 的字符串值默认显示解出的结构，能切回原始字节', async () => {
+    // pickle.dumps({'a': 1}, protocol=4)
+    const raw = 'gASVCgAAAAAAAAB9lIwBYZRLAXMu';
+    const escaped = '\\x80\\x04\\x95\\n...';
+    invoke.mockImplementation(async (command: string) => {
+      if (command === 'redis_scan') return { keys: [{ key: text('p'), kind: 'string', ttlMs: -1 }], cursor: null };
+      if (command === 'redis_read_value') {
+        return { kind: 'string', size: 21, value: { raw, text: escaped, binary: true }, truncated: false };
+      }
+      throw new Error(`没料到的命令 ${command}`);
+    });
+    await act(async () => {
+      root.render(<RedisKeyBrowser database={0} />);
+    });
+    await click(button('stringp'));
+    expect(container.querySelector('pre')?.textContent).toBe("{'a': 1}");
+    expect(container.textContent).toContain('Python pickle (protocol 4)');
+
+    await click(button('Raw bytes'));
+    expect(container.querySelector('pre')?.textContent).toBe(escaped);
+  });
+
   it('按下标删列表元素撞上别处的改动：什么也没删，并且立刻显示现在的内容', async () => {
     // 删除没有草稿可留，「草稿还在，取消后看得到」对它是句空话——表里照旧印着打开时那份
     listShiftedElsewhere(() => {

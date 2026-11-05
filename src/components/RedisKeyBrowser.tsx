@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Clock, Loader2, Pencil, Plus, RefreshCw, Search, TextCursorInput, Trash2 } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -9,6 +9,7 @@ import { RedisValueTable, type ElementChange } from './RedisValueTable';
 import { RedisNewKeyDialog } from './RedisNewKeyDialog';
 import { useConfirmPrompt } from './ConfirmPrompt';
 import { bytesToBase64 } from '../utils/redisCommandLine';
+import { pickleView } from '../utils/pickle';
 import { useLanguageStore } from '../stores/languageStore';
 import { useQueryStore } from '../stores/queryStore';
 import { describeError } from '../utils/describeError';
@@ -588,21 +589,50 @@ function Bytes({ bytes }: { bytes: RedisBytes }) {
   );
 }
 
+function StringValueView({ value, t }: { value: Extract<RedisValue, { kind: 'string' }>; t: Translate }) {
+  // 截断的 pickle 必然解不完整，不去试；解得出来默认看结构，原始字节随时切回去对照
+  const pickled = useMemo(
+    () => (value.value.binary && !value.truncated ? pickleView(value.value.raw) : null),
+    [value.value, value.truncated],
+  );
+  const [view, setView] = useState<'decoded' | 'raw'>('decoded');
+  const decoded = pickled !== null && view === 'decoded';
+  return (
+    <div className="space-y-2">
+      {pickled ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <SegmentedControl
+            value={view}
+            options={[
+              { value: 'decoded', label: t('redis.value.pickle.decoded') },
+              { value: 'raw', label: t('redis.value.pickle.raw') },
+            ]}
+            onChange={setView}
+          />
+          <p className="text-xs text-fg-muted">
+            {decoded ? t('redis.value.pickle', { protocol: pickled.protocol }) : t('redis.value.binary')}
+          </p>
+        </div>
+      ) : (
+        value.value.binary && <p className="text-xs text-warning">{t('redis.value.binary')}</p>
+      )}
+      {value.truncated && <p className="text-xs text-fg-muted">{t('redis.value.truncated', { count: value.size })}</p>}
+      <pre className="rounded-control border border-line bg-surface-sunken px-3 py-2">
+        {decoded ? (
+          <span className="select-text whitespace-pre-wrap break-all font-mono text-[13px] text-fg">{pickled.text}</span>
+        ) : (
+          <Bytes bytes={value.value} />
+        )}
+      </pre>
+    </div>
+  );
+}
+
 /** 表格之外的两种：字符串与认不出的类型。集合类的都走可编辑的 `RedisValueTable` */
 function ValueView({ value, t }: { value: Extract<RedisValue, { kind: 'string' | 'unsupported' }>; t: Translate }) {
   switch (value.kind) {
     case 'string':
-      return (
-        <div className="space-y-2">
-          {value.value.binary && <p className="text-xs text-warning">{t('redis.value.binary')}</p>}
-          {value.truncated && (
-            <p className="text-xs text-fg-muted">{t('redis.value.truncated', { count: value.size })}</p>
-          )}
-          <pre className="rounded-control border border-line bg-surface-sunken px-3 py-2">
-            <Bytes bytes={value.value} />
-          </pre>
-        </div>
-      );
+      return <StringValueView value={value} t={t} />;
     case 'unsupported':
       return <p className="text-sm text-fg-muted">{t('redis.value.unsupported', { type: value.redisType })}</p>;
   }
