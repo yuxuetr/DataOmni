@@ -10,6 +10,12 @@ fn main() {
     attach_parent_console();
     std::process::exit(dataomni_lib::cli::run(&args[2..]));
   }
+  // `dataomni mcp`：同一套命令包成 stdio 上的 MCP 服务，给不能跑 shell 的 Agent 用
+  if args.get(1).map(String::as_str) == Some("mcp") {
+    #[cfg(windows)]
+    attach_parent_console();
+    std::process::exit(dataomni_lib::cli::serve_mcp(&args[2..]));
+  }
   dataomni_lib::run()
 }
 

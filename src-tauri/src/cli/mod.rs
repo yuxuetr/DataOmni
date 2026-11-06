@@ -11,6 +11,7 @@
 mod audit;
 mod dictionary;
 mod elasticsearch;
+mod mcp;
 mod mongo;
 mod neo4j;
 mod redis;
@@ -214,6 +215,25 @@ pub fn run(args: &[String]) -> i32 {
   run_with(args, &dirs, &mut stdout.lock(), &mut stderr.lock())
 }
 
+/// `dataomni mcp`：stdio 上的 MCP 服务（`rfcs/mcp-server.md`）。工具调用拼成参数后走同一个
+/// `dispatch`，权限门只有一份。读到标准输入结束就退出
+pub fn serve_mcp(args: &[String]) -> i32 {
+  if let Some(extra) = args.first() {
+    eprintln!("dataomni mcp takes no arguments, got {extra}");
+    return Exit::Usage as i32;
+  }
+  if let Some(dir) = bundled_oracle_client() {
+    crate::services::oracle::pin_client_dir(dir);
+  }
+  // 常驻进程里不能因为钥匙串弹框没人点就退出：整个服务会断掉，Agent 那边只看到「服务没了」。
+  // 改为一直等，用户点了「始终允许」这次调用就接着跑
+  KEYCHAIN_DEADLINE_EXITS.store(false, Ordering::SeqCst);
+  let dirs = Dirs { config: app_config_dir(), log: app_log_dir() };
+  let stdin = std::io::stdin();
+  let stdout = std::io::stdout();
+  mcp::serve(&mut stdin.lock(), &mut stdout.lock(), &dirs)
+}
+
 fn run_with(args: &[String], dirs: &Dirs, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
   let result = dispatch(args, dirs);
   // 写不进 stdout / stderr（管道被关了）时也没有别处可说，退出码照样给
@@ -227,17 +247,22 @@ fn run_with(args: &[String], dirs: &Dirs, out: &mut dyn Write, err: &mut dyn Wri
       Exit::Ok as i32
     }
     Err(error) => {
-      let mut body = json!({
-        "schema": OUTPUT_SCHEMA,
-        "error": { "kind": error.kind, "message": error.message },
-      });
-      if let Some(diagnosis) = error.diagnosis {
-        body["error"]["diagnosis"] = diagnosis;
-      }
-      let _ = writeln!(err, "{body}");
+      let _ = writeln!(err, "{}", error_body(&error));
       error.exit as i32
     }
   }
+}
+
+/// 错误在 stderr 上的那份 JSON。MCP 的工具错误里放的也是它，Agent 照样按 `kind` 分
+fn error_body(error: &CliError) -> Value {
+  let mut body = json!({
+    "schema": OUTPUT_SCHEMA,
+    "error": { "kind": error.kind, "message": error.message },
+  });
+  if let Some(diagnosis) = &error.diagnosis {
+    body["error"]["diagnosis"] = diagnosis.clone();
+  }
+  body
 }
 
 enum Output {
@@ -1203,6 +1228,10 @@ fn unsupported(db_type: &crate::models::DatabaseType) -> CliError {
   ))
 }
 
+/// 钥匙串授权等到点时是否退出进程。命令行退出；MCP 服务（`serve_mcp`）关掉它，只在 stderr
+/// 提一句、接着等
+static KEYCHAIN_DEADLINE_EXITS: AtomicBool = AtomicBool::new(true);
+
 /// 读口令可能卡在钥匙串的授权框上。到点还没回来就直接退出并说清楚，框留给人去点——
 /// 卡着不动的命令会让 Agent 一直等下去
 fn with_keychain_deadline<T>(work: impl FnOnce() -> T) -> T {
@@ -1219,7 +1248,9 @@ fn with_keychain_deadline<T>(work: impl FnOnce() -> T) -> T {
         },
       });
       eprintln!("{body}");
-      std::process::exit(Exit::Unavailable as i32);
+      if KEYCHAIN_DEADLINE_EXITS.load(Ordering::SeqCst) {
+        std::process::exit(Exit::Unavailable as i32);
+      }
     }
   });
   let result = work();
@@ -1375,7 +1406,7 @@ mod tests {
   const SECRET: &str = "cli-test-secret-7f3a";
 
   /// 免密的库：不需要开放凭证（`ConnectionService::resolve_for_agents`），测试碰不到钥匙串
-  fn profile(id: &str, name: &str, environment: &str, agent_access: &str) -> Value {
+  pub(super) fn profile(id: &str, name: &str, environment: &str, agent_access: &str) -> Value {
     json!({
       "id": id, "name": name, "db_type": "postgresql", "host": "db.internal", "port": 5432,
       "database": "app", "username": "reader", "password": "", "ssl": false,
@@ -1390,10 +1421,10 @@ mod tests {
     value
   }
 
-  struct ConfigDir(PathBuf);
+  pub(super) struct ConfigDir(pub(super) PathBuf);
 
   impl ConfigDir {
-    fn with(connections: &[Value]) -> Self {
+    pub(super) fn with(connections: &[Value]) -> Self {
       let dir = std::env::temp_dir().join(format!("dataomni-cli-{}", uuid::Uuid::new_v4()));
       if let Err(error) = std::fs::create_dir_all(&dir) {
         panic!("{error}");
@@ -1406,7 +1437,7 @@ mod tests {
       Self(dir)
     }
 
-    fn config_file(&self) -> Vec<u8> {
+    pub(super) fn config_file(&self) -> Vec<u8> {
       std::fs::read(self.0.join("connections.json")).unwrap_or_default()
     }
   }
@@ -1498,7 +1529,13 @@ mod tests {
     assert!(stdout.contains("Usage: dataomni cli"));
   }
 
-  fn file_profile(id: &str, name: &str, db_type: &str, path: &Path, environment: &str) -> Value {
+  pub(super) fn file_profile(
+    id: &str,
+    name: &str,
+    db_type: &str,
+    path: &Path,
+    environment: &str,
+  ) -> Value {
     json!({
       "id": id, "name": name, "db_type": db_type, "host": "", "port": 0,
       "database": path.to_string_lossy(), "username": "", "ssl": false,
@@ -1507,7 +1544,7 @@ mod tests {
   }
 
   /// 临时目录里一个 1000 行的 SQLite 库
-  fn seeded_sqlite(dir: &Path) -> PathBuf {
+  pub(super) fn seeded_sqlite(dir: &Path) -> PathBuf {
     let path = dir.join("app.db");
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
     runtime.block_on(async {
@@ -1527,7 +1564,7 @@ mod tests {
     path
   }
 
-  fn sqlite_count(path: &Path) -> i64 {
+  pub(super) fn sqlite_count(path: &Path) -> i64 {
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
     runtime.block_on(async {
       let pool =
@@ -1539,7 +1576,7 @@ mod tests {
     })
   }
 
-  fn json_of(text: &str) -> Value {
+  pub(super) fn json_of(text: &str) -> Value {
     serde_json::from_str(text).unwrap_or_default()
   }
 
