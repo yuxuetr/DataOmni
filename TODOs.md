@@ -308,7 +308,8 @@
   - 评估里的一条事实实测不成立：MySQL 的 `LIMIT ?` 经驱动绑文本照收（命令行用户变量才报 1210），SQL Server 的 `TOP` 才不收。设计说明已改。
   - 没验到：Oracle 没有真库（本机已无 Docker，cu 上跑不动），只有与目录查询共用的绑定代码；MariaDB、MySQL 5.7 没试；
     PostgreSQL 结果里有 inet、money 这类只能按文本读的列时，带参数会报不支持（提示加 `::text`）。
-- [x] C2 DataOmni 作为 MCP 服务（设计 `rfcs/mcp-server.md`，用户 2026-11-06 确认）（`67a49d8`、`4352a26`）
+- [-] C2 DataOmni 作为 MCP 服务（设计 `rfcs/mcp-server.md`，用户 2026-11-06 确认）（`67a49d8`、`4352a26`）
+  - **还差**：真客户端验收（用户 2026-11-06 定先留着）。代码已进 `main`，验完把这条勾掉、在下面补记结果。
   - 做了：`dataomni mcp`，stdio 上手写的 JSON-RPC（不引 rmcp）。11 个工具与命令行只读命令一一对应，入参拼成参数后走同一个
     `dispatch`，MCP 层不碰权限。不给 `export`、`backup`、`csv-preview`。
   - 实现时补的（设计说明 §3.7）：`-`（命令行里读标准输入，MCP 的标准输入是协议本身）与恰好像选项的位置参数报 `usage`；
@@ -330,8 +331,8 @@
     提交办法写在 `packaging/winget/README.md`。
   - 验证：1.0.0 的三个清单对着 winget 官方 1.10.0 JSON Schema 校验通过；把哈希改坏，校验报错。
   - 没验到：`winget validate` / `winget install --manifest` 要在 Windows 上跑；winget-pkgs 的自动校验要提了 PR 才跑。
-  - **发现的问题**：仓库里从来没有 `LICENSE` 文件，README 两份的徽章与「许可证」一节写着 MIT 并链到它（链接是坏的），
-    GitHub 也认不出许可证。清单里因此没写 `LicenseUrl`。要不要补 MIT 的 `LICENSE` 由用户定；补上后在脚本里加 `LicenseUrl`。
+  - 发现的问题（已解决）：仓库里从来没有 `LICENSE` 文件，README 两份写着 MIT 并链到它（链接是坏的），GitHub 也认不出许可证。
+    用户 2026-11-06 定补 MIT：加了 `LICENSE`，脚本与 1.0.0 清单加上 `LicenseUrl`，重新对着 1.10.0 Schema 校验通过（`df9a149`）。
 - 到社区发帖由用户自己做。
 - 路线第 2 条里的「已有库的 ER 图」早已实现（`9b63f19`），路线文档那条是旧的。
 
