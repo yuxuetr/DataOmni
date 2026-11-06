@@ -308,8 +308,14 @@
   - 评估里的一条事实实测不成立：MySQL 的 `LIMIT ?` 经驱动绑文本照收（命令行用户变量才报 1210），SQL Server 的 `TOP` 才不收。设计说明已改。
   - 没验到：Oracle 没有真库（本机已无 Docker，cu 上跑不动），只有与目录查询共用的绑定代码；MariaDB、MySQL 5.7 没试；
     PostgreSQL 结果里有 inet、money 这类只能按文本读的列时，带参数会报不支持（提示加 `::text`）。
-- [-] C2 DataOmni 作为 MCP 服务（设计 `rfcs/mcp-server.md`，用户 2026-11-06 确认）（`67a49d8`、`4352a26`）
-  - **还差**：真客户端验收（用户 2026-11-06 定先留着）。代码已进 `main`，验完把这条勾掉、在下面补记结果。
+- [x] C2 DataOmni 作为 MCP 服务（设计 `rfcs/mcp-server.md`，用户 2026-11-06 确认）（`67a49d8`、`4352a26`）
+  - 真客户端验收（2026-11-06，Codex CLI 0.166.0 + 调试构建）：服务器用 `-c mcp_servers.dataomni.*` 临时挂上（不改
+    `~/.codex/config.toml`），HOME 指向临时目录里的 SQLite 夹具（开发、生产各一个连接）。列连接只见开发那个；
+    `SELECT … limit 2` 出两行并标 `truncated`；`DELETE FROM items` 报 `refused`、`isError: true`；按名字查生产连接报
+    `not_found`；`schema` 列出 `items`。之后库里仍是 5 行，配置逐字节不变，留痕三行（查询、拒绝、结构；`not_found` 不留痕）。
+    要加 `-c features.hooks=false`：本机 Codex 的 agent-archive 插件在会话开始的钩子里注入「先设置」，会劫持整个任务。
+    脚本在会话目录 `scratch/codex_mcp_accept.sh`，没进仓库。
+  - 仍没验到：打包版（本机装的是 1.0.0-rc.2，还没有 `mcp`）、Claude Code、Windows、Linux。
   - 做了：`dataomni mcp`，stdio 上手写的 JSON-RPC（不引 rmcp）。11 个工具与命令行只读命令一一对应，入参拼成参数后走同一个
     `dispatch`，MCP 层不碰权限。不给 `export`、`backup`、`csv-preview`。
   - 实现时补的（设计说明 §3.7）：`-`（命令行里读标准输入，MCP 的标准输入是协议本身）与恰好像选项的位置参数报 `usage`；
@@ -320,8 +326,7 @@
     拼参数那条用例当场抓出 `aggregate` 把管道传了两遍。
   - 调试构建经 stdio 端到端（临时 HOME）：初始化、列工具、列连接、查询截断、`DELETE` 被拒、生产连接 `not_found`、
     `-` 报 usage、ping 都对；库里行数不变、配置不变、留痕两行。
-  - 没验到：真客户端（本机 Claude Code 的组织账号禁用了订阅访问）——留给用户：`claude mcp add` 接打包版，
-    列连接、查一张表、试一条 `DELETE`。打包版、Windows、Linux 上没跑过。
+  - 没验到：Claude Code（本机组织账号禁用了订阅访问；后来改用 Codex 验过，见上）。打包版、Windows、Linux 上没跑过。
 - [-] U2 winget（清单已备好，等用户提 PR）
   - 前提：v1.0.0 已发布。向 `microsoft/winget-pkgs` 提 PR 属于对外操作：用户 2026-11-06 定，仓库里备好清单，PR 由用户自己提。
   - Homebrew Cask 暂不做（用户 2026-11-05 定）。
