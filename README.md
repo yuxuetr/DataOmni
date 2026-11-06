@@ -382,6 +382,9 @@ MySQL 一组 42 条、PostgreSQL 一组 39 条；只在设了专门的环境变�
 - 输出是 JSON，退出码区分「数据库报错 / 参数错 / 被拒 / 连不上」；`dataomni cli guide` 打印一份
   给 Agent 读的说明，存成 `SKILL.md` 就能当 Claude Code 的 Skill 用
 - 每次调用留痕（`dataomni-cli.log`），记语句的摘要，不记原文
+- 不能跑 shell 的 Agent（Claude Desktop 之类）用 `dataomni mcp`：同一套只读命令包成 stdio 上的 MCP 服务，
+  工具与命令一一对应，走同一道门；不给 `export`、`backup`、`csv-preview`（会读写本机文件）。
+  例：`claude mcp add dataomni -- /Applications/DataOmni.app/Contents/MacOS/dataomni mcp`
 
 真正的边界仍是给 Agent 用一个只读的数据库账号：应用的门挡得住写，挡不住 `pg_terminate_backend` 这类
 不改数据的管理函数。SQL Server 还没有会话级只读，暂不开放。
@@ -600,6 +603,10 @@ bun install
   - ClickHouse 与执行计划暂不支持，会直接说明。
 
   在 PostgreSQL、MySQL、SQL Server、SQLite、DuckDB 上验过（见各家的真库用例）。
+- MCP 服务：`dataomni mcp` 把命令行的只读命令包成 stdio 上的 MCP 服务，给 Claude Desktop 这类不能跑 shell 的
+  Agent 用。工具与命令一一对应（`connections`、`query`、`explain`、`schema`、`ddl`、`dictionary`、`test`，
+  以及 `mongo`、`redis`、`neo4j`、`es`），权限门是命令行那一份：只看得到开放为只读的非生产连接，只放行读。
+  会读写本机文件的 `export`、`backup`、`csv-preview` 不给。接法见用户手册「命令行与 Agent」。
 - 修正：MySQL 结构编辑把默认值改成 `CURRENT_TIMESTAMP` 时报语法错误（1064）。
 - 修正：另开一个 SQLite 连接再关掉时，当前的 SQLite 连接会跟着断开。
 

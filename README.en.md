@@ -151,6 +151,10 @@ the app. Passwords are never handed to the caller.
 - Output is JSON, and exit codes distinguish database errors, bad arguments, refusals and
   connection failures. `dataomni cli guide` prints instructions written for agents; save it as
   `SKILL.md` to use it as a Claude Code skill.
+- Agents that cannot run a shell (Claude Desktop and the like) can use `dataomni mcp`, the same
+  read-only commands served as an MCP server over stdio, behind the same access rules. `export`,
+  `backup` and `csv-preview` are left out because they read or write local files. Example:
+  `claude mcp add dataomni -- /Applications/DataOmni.app/Contents/MacOS/dataomni mcp`.
 
 The real boundary is still a read-only database account: the app blocks writes, but not
 administrative functions such as `pg_terminate_backend`.

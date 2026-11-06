@@ -1,6 +1,8 @@
 # DataOmni 作为 MCP 服务（C2）
 
-2026-11-06。状态：评估，待用户确认。任务在 `TODOs.md`「1.x」的 C2；前身是归档里的 A8，命令行（`rfcs/agent-cli.md`）是它的地基。
+2026-11-06。状态：用户 2026-11-06 确认，已实现，跟代码走（`src-tauri/src/cli/mcp.rs`）。任务在 `TODOs.md`「1.x」的 C2；前身是归档里的 A8，命令行（`rfcs/agent-cli.md`）是它的地基。
+
+实现时与下文有出入的几处（§3.7）：`instructions` 不放 `guide.md`；钥匙串到点不退出；`-` 与像选项的值在 MCP 层拒掉。
 
 ## 1. 要回答的问题
 
@@ -90,6 +92,22 @@
 文档里给 Claude Desktop / Claude Code 的配置示例，例如
 `claude mcp add dataomni -- /Applications/DataOmni.app/Contents/MacOS/dataomni mcp`。
 Windows、Linux 给各自安装位置的路径。
+
+### 3.7 实现时补的
+
+- **`instructions` 是单独写的一段**（`mcp.rs` 的 `INSTRUCTIONS`），不是 `guide.md`：那份写的是 `dataomni cli …` 的调用方式，
+  还教 Agent 用 `export`、`backup` 和从标准输入读，在 MCP 里都不成立。
+- **`-` 一律不收**：命令行里 `-` 表示「从标准输入读」（语句、条件、管道、请求体），而 MCP 的标准输入是协议本身，
+  读了就把后面的请求吃掉。报 `usage`。
+- **恰好像选项的位置参数拒掉**：命令行的解析器把恰好等于 `--limit` 这类名字的参数当成选项。位置参数是不带空白、
+  以 `--` 开头的值时报 `usage`（SQL 注释 `-- …` 带空格，不受影响）。选项的值紧跟选项名，解析器原样收，不受影响；
+  Redis `command` 之后的参数原样交给服务器，也不查。
+- **钥匙串到点不退出**：命令行等 10 秒没回来就退出（免得 Agent 一直等）；常驻的服务退出了，客户端只看到「服务没了」。
+  MCP 下只在 stderr 提一句、接着等，用户点了「始终允许」这次调用接着跑。
+- **协议版本**：认 2025-11-25、2025-06-18、2025-03-26、2024-11-05，客户端要的在其中就照回，否则回最新的。
+  `tools/list` 给每个工具标 `readOnlyHint: true`。不认得的工具名回 `-32602`（协议错误），其余入参问题都是 `isError`。
+- **入参多给了也报错**：给了这个工具或这个操作不用的键（例如 `count` 带 `sort`、`collections` 带 `namespace`）报 `usage`，
+  同命令行「给了不认的选项就报错」。
 
 ## 4. 验收门
 

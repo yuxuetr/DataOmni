@@ -1096,6 +1096,20 @@ Agent 本来就经管道调用，不受影响。
 **留痕**：每次调用写一行进 `dataomni-cli.log`（和 `dataomni.log` 同一个目录）：时间、连接、命令、语句的第一个
 关键字、长度与摘要、结果、行数、耗时，不记语句原文。
 
+**MCP 服务**：不能跑 shell 的 Agent（Claude Desktop、一些 IDE 里的助手）接 `dataomni mcp`。它是同一个程序，
+在标准输入输出上说 MCP 协议，工具与上面的命令一一对应：`connections`、`test`、`query`、`explain`、`schema`、
+`ddl`、`dictionary`，以及 `mongo`、`redis`、`neo4j`、`es`。开放规则、只读、留痕都和命令行同一份。
+`export`、`backup`、`csv-preview` 不给：它们会在你的磁盘上写文件或读任意文件。
+
+- Claude Code：`claude mcp add dataomni -- /Applications/DataOmni.app/Contents/MacOS/dataomni mcp`
+- Claude Desktop：在配置文件的 `mcpServers` 里加
+  `"dataomni": { "command": "/Applications/DataOmni.app/Contents/MacOS/dataomni", "args": ["mcp"] }`
+- Windows 的路径是安装目录里的 `dataomni.exe`（安装包默认 `%LOCALAPPDATA%\DataOmni\` 或 `C:\Program Files\DataOmni\`），
+  Linux 是 `/usr/bin/dataomni`。
+
+每次调用都重新读连接设置：在应用里关掉一个连接的访问，下一次调用就看不到它，不用重启服务。
+钥匙串第一次弹框时，这次调用会一直等到你点了「始终允许」。
+
 ## 数据存在哪里
 
 | 什么 | 存在哪里 |
