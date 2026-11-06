@@ -316,9 +316,17 @@
     `-` 报 usage、ping 都对；库里行数不变、配置不变、留痕两行。
   - 没验到：真客户端（本机 Claude Code 的组织账号禁用了订阅访问）——留给用户：`claude mcp add` 接打包版，
     列连接、查一张表、试一条 `DELETE`。打包版、Windows、Linux 上没跑过。
-- [ ] U2 winget
-  - 前提：v1.0.0 已发布。向 `microsoft/winget-pkgs` 提 PR 属于对外操作，提之前先问用户。
+- [-] U2 winget（清单已备好，等用户提 PR）
+  - 前提：v1.0.0 已发布。向 `microsoft/winget-pkgs` 提 PR 属于对外操作：用户 2026-11-06 定，仓库里备好清单，PR 由用户自己提。
   - Homebrew Cask 暂不做（用户 2026-11-05 定）。
+  - 做了：`scripts/winget-manifest.sh <版本>` 从 GitHub 发布页取安装包的 SHA-256（服务端 digest），写出
+    `packaging/winget/manifests/y/yuxuetr/DataOmni/<版本>/` 下的 version / installer / locale 三个清单（1.10.0 格式）。
+    ID `yuxuetr.DataOmni`；NSIS（按用户）与 MSI（按机器）都列上。草稿、预发布与带 `-rc` 的版本号拒绝生成。
+    提交办法写在 `packaging/winget/README.md`。
+  - 验证：1.0.0 的三个清单对着 winget 官方 1.10.0 JSON Schema 校验通过；把哈希改坏，校验报错。
+  - 没验到：`winget validate` / `winget install --manifest` 要在 Windows 上跑；winget-pkgs 的自动校验要提了 PR 才跑。
+  - **发现的问题**：仓库里从来没有 `LICENSE` 文件，README 两份的徽章与「许可证」一节写着 MIT 并链到它（链接是坏的），
+    GitHub 也认不出许可证。清单里因此没写 `LicenseUrl`。要不要补 MIT 的 `LICENSE` 由用户定；补上后在脚本里加 `LicenseUrl`。
 - 到社区发帖由用户自己做。
 - 路线第 2 条里的「已有库的 ER 图」早已实现（`9b63f19`），路线文档那条是旧的。
 
