@@ -133,3 +133,29 @@ jobs:
 
       - name: Run database smoke tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --test database_smoke -- --nocapture
+
+  # 只在 Windows 上成立的路径用例（`#[cfg(windows)]`）：超过 260 字符的 SQLite / DuckDB 库文件能打开、能备份。
+  # 测试二进制没有 longPathAware 清单，所以 runner 上开没开 LongPathsEnabled 都一样要靠 `\\?\`。
+  # 只跑这几条：整套用例在 Windows 上没人维护过，全跑会把别的平台差异混进来（TODOs G13）
+  windows-paths:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # 过滤名写错时 cargo 跑 0 条也算过：数一下真跑了的条数（SQLite 两条改写、SQLite 打开与备份、DuckDB 打开）
+      - name: Run Windows path tests
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --lib -- max_path long_windows --nocapture 2>&1 | tee test.log
+          test "${PIPESTATUS[0]}" -eq 0
+          grep -q "test result: ok. 4 passed" test.log

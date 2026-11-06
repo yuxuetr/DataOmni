@@ -64,7 +64,7 @@ MySQL 一组 42 条、PostgreSQL 一组 39 条；只在设了专门的环境变�
 | openGauss | 5.0.3（lite，PG 兼容库） | PostgreSQL | ⚠️ 可用，有缺口 | 39 / 39（缺口由用例钉住） |
 | SQL Server | 2022 | SQL Server | ✅ 支持 | 32 / 32（独立用例，`sql_server_smoke.rs`，含改结构语料；几条共用测试表，要 `--test-threads=1`） |
 | Oracle | 23ai Free（23.26） | Oracle（ODPI-C + 随包的 Instant Client） | ✅ 支持 | 29 / 29（独立用例，`oracle_smoke.rs`，含改结构语料；另有一条只计时、不做断言） |
-| DuckDB | 1.5.5（编进应用） | DuckDB（libduckdb） | ✅ 支持 | 18 / 18（独立用例，`duckdb_smoke.rs`，每次都跑，含改结构语料） |
+| DuckDB | 2.0.0（编进应用） | DuckDB（libduckdb） | ✅ 支持 | 19 / 19（独立用例，`duckdb_smoke.rs`，每次都跑，含改结构语料） |
 | ClickHouse | 25.8 | ClickHouse（HTTP 接口，reqwest） | ⚠️ 表格一次改一行，没有事务 | 16 / 16 ＋ 1 / 1（独立用例，`clickhouse_smoke.rs` 与最重的一条 `clickhouse_mutation_smoke.rs`；经 SSH 隧道那一条另要隧道的环境变量） |
 | MongoDB | 8.0 | MongoDB（官方 Rust 驱动） | ⚠️ 文档级，有缺口 | 34 / 34（独立用例，`mongodb_smoke.rs`，含 SRV 与客户端证书） |
 | Redis | 7.4 | Redis（redis-rs） | ✅ 单机、Sentinel、集群（集群与 Sentinel 的 TLS 没测过） | 14 / 14（独立用例，`redis_smoke.rs`） |
@@ -410,7 +410,7 @@ Tauri 本身跨平台，但**本项目只在下表记录的环境上实际验证
 | macOS (Apple Silicon / aarch64) | `DataOmni.app`、`DataOmni_<版本>_aarch64.dmg` | ✅ 已验证 | 2026-09-25 于 macOS 27.0 / arm64 执行 `bun run package`（带 Oracle Instant Client），退出码 0；装上后逐库回归，见 TODOs「发布里程碑」 |
 | macOS (Intel / x86_64) | — | ⚠️ 未验证 | 无 x86_64 机器，也未做交叉编译 |
 | Linux (Ubuntu 22.04 / x86_64) | `DataOmni_<版本>_amd64.deb`、`DataOmni-<版本>-1.x86_64.rpm` | ✅ 已验证（容器内） | 2026-09-25 执行 `bun tauri build --bundles deb,rpm --config src-tauri/tauri.oracle.conf.json`，退出码 0，包里的 Instant Client 与原件逐字节相同。**不发 AppImage**：打包工具会改 Instant Client 的 .so，而它的许可只许原样分发（TODOs 5.4）。以下为 2026-09-23 的验证记录：`.deb` 在干净的 Ubuntu 22.04 容器里装、升级、卸载都验过，在 Xvfb + openbox 里跑通界面、Ctrl+W 与 gnome-keyring 存取密码；AppImage 只以 `--appimage-extract-and-run` 跑过（容器里没有 FUSE）；`.rpm` 没装过。**没有在真实桌面会话（GNOME / Wayland）里验过** |
-| Windows (x86_64) | `DataOmni_<版本>_x64_en-US.msi`、`DataOmni_<版本>_x64-setup.exe` | ✅ 已验证（NSIS 逐项；MSI 人工装过） | 2026-10-06 起由 GitHub Actions（`release.yml`，windows-latest）打包，带 Oracle Instant Client。2026-10 在 Windows 11（非管理员）上走了 `docs/windows-checklist.md`：NSIS 安装、升级、降级、卸载、重装，凭据管理器，中文与 UNC 路径，SSH 隧道，MySQL / PostgreSQL / DuckDB / Oracle 冒烟都过；MSI 用户人工装过。之后十种库的连真库冒烟用例也在 Windows 上全跑过。打包版界面回归（R7-windows）：PostgreSQL 走满，其余各库走方言项，都过。**没测**：SmartScreen、多屏与缩放、真键盘快捷键与输入法。已知限制：DuckDB 库文件放在超过 260 字符的路径下打不开（SQLite 的已在 rc.1 之后修好） |
+| Windows (x86_64) | `DataOmni_<版本>_x64_en-US.msi`、`DataOmni_<版本>_x64-setup.exe` | ✅ 已验证（NSIS 逐项；MSI 人工装过） | 2026-10-06 起由 GitHub Actions（`release.yml`，windows-latest）打包，带 Oracle Instant Client。2026-10 在 Windows 11（非管理员）上走了 `docs/windows-checklist.md`：NSIS 安装、升级、降级、卸载、重装，凭据管理器，中文与 UNC 路径，SSH 隧道，MySQL / PostgreSQL / DuckDB / Oracle 冒烟都过；MSI 用户人工装过。之后十种库的连真库冒烟用例也在 Windows 上全跑过。打包版界面回归（R7-windows）：PostgreSQL 走满，其余各库走方言项，都过。**没测**：SmartScreen、多屏与缩放、真键盘快捷键与输入法。已知限制：DuckDB 库文件放在超过 260 字符的路径下打不开（SQLite 的已在 rc.1 之后修好；DuckDB 的随升级 2.0 在未发布版本里修好，CI 的 Windows 用例验过） |
 
 安装包由 GitHub Actions 打（`.github/workflows/release.yml`）：推 `v*` tag 时 macOS（Apple Silicon）、Linux、Windows
 各打一份，放进一个草稿 Release。都**没有签名**——没有 Apple Developer ID，也没有 Windows 代码签名证书。
@@ -609,6 +609,9 @@ bun install
   会读写本机文件的 `export`、`backup`、`csv-preview` 不给。接法见用户手册「命令行与 Agent」。
 - 修正：MySQL 结构编辑把默认值改成 `CURRENT_TIMESTAMP` 时报语法错误（1064）。
 - 修正：另开一个 SQLite 连接再关掉时，当前的 SQLite 连接会跟着断开。
+- 内带的 DuckDB 从 1.5.5 升到 2.0.0。随之修好：Windows 上 DuckDB 库文件放在超过 260 字符的路径下打不开
+  （没开系统长路径时）。注意：已有的库文件打开、写入后**仍是原来的格式**，1.x 的工具照样能读；
+  **在 DataOmni 里新建的库是 2.0 格式**，1.x 的 DuckDB（如 `pip install duckdb==1.*`）打不开。
 
 ### v1.0.0（2026-11-05）
 

@@ -44,7 +44,7 @@ not from protocol compatibility on paper. The last full run was on 2026-10-16. T
 | openGauss | 5.0.3 | PostgreSQL | ⚠️ Usable, with gaps (sha256-password users supported) |
 | SQL Server | 2022 | SQL Server | ✅ Supported |
 | Oracle | 23ai Free | Oracle (Instant Client bundled) | ✅ Supported (service name or SID; TLS needs a wallet and is not supported, use an SSH tunnel) |
-| DuckDB | 1.5.5, built in | DuckDB | ✅ Supported |
+| DuckDB | 2.0.0, built in | DuckDB | ✅ Supported |
 | ClickHouse | 25.8 | ClickHouse (HTTP) | ⚠️ Edits one row at a time, no transactions |
 | MongoDB | 8.0 | MongoDB | ⚠️ Document-level, with gaps (no `db.coll.find()` JavaScript syntax) |
 | Redis | 7.4 | Redis | ✅ Standalone, Sentinel and Cluster |

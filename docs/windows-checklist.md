@@ -152,12 +152,13 @@ VC++ 运行库已装，账户不是管理员（MSI 要 UAC，没测）。界面�
 | --- | --- | --- | --- | --- |
 | `D:\测试 数据\…`（中文、空格） | 过 | 过 | 过 | 过 |
 | UNC `\\localhost\D$\测试 数据\unc\…` | 过 | 过 | 过 | 过 |
-| 超 260 字符（`LongPathsEnabled` = 0） | 0.6.1 **不过**：`(code: 14) unable to open database file`；rc.1 之后修了（单测：打开、写、备份） | **不过**：「系统找不到指定的路径」 | 过 | 过 |
+| 超 260 字符（`LongPathsEnabled` = 0） | 0.6.1 **不过**：`(code: 14) unable to open database file`；rc.1 之后修了（单测：打开、写、备份） | 1.0.0 **不过**：「系统找不到指定的路径」；升 DuckDB 2.0 后修好（单测在 CI 的 Windows 任务跑） | 过 | 过 |
 
 - 超长路径：Rust 标准库自己加 `\\?\`，所以读写文件没事；SQLite 与 DuckDB 的 C 库不加。sqlx 的连接串里
   `?` 会被当成参数、路径还会被百分号解码，所以直接拼 `\\?\` 不行。现在 SQLite 把过长的路径写成 `\\%3F\C:\…`
   （sqlx 解码回 `\\?\`），路径里的 `%` 写成 `%25`，备份目标与 `dataomni cli` 也一样改写（`services/sqlite_path.rs`）。
-  DuckDB 打开前规范化路径（`CanonicalizePath`）时会剥掉 `\\?\`，加了也没用，仍是已知限制；根因与修法见 `TODOs.md` G13。
+  DuckDB 1.5 打开前规范化路径（`CanonicalizePath`）时会剥掉 `\\?\`，加了也没用；升到 2.0 后打开前会重新加前缀，
+  不用我们改写。单测 `a_database_under_a_path_longer_than_max_path_opens` 在 CI 的 Windows 任务里跑（`TODOs.md` G13）。
 - 中文用户名：把 `USERPROFILE` 指到 `D:\用户 测试` 启动（要先建好 `AppData\Local`、`AppData\Roaming`，
   否则 log 插件取不到目录直接 panic——这是模拟手法本身的问题，真账户不会缺这两个目录）。应用数据、
   `~` 展开、known_hosts 都跟着走，见 5.3、5.4。

@@ -1071,6 +1071,35 @@ fn display_width(c: char) -> usize {
 mod tests {
   use super::*;
 
+  /// TODOs G13：Windows 上没开 `LongPathsEnabled` 时，DuckDB 1.5 打不开超过 260 字符路径下的库
+  /// （打开前规范化把 `\\?\` 剥掉）。2.0 在 `CreateFileW` 前重新加前缀（duckdb#20983）。
+  /// 照 SQLite 那条（`sqlite_path`）：建库、写一行、关掉，再只读打开读回来
+  #[cfg(windows)]
+  #[tokio::test]
+  async fn a_database_under_a_path_longer_than_max_path_opens() {
+    let root = std::env::temp_dir().join(format!("dataomni-duck-long-{}", uuid::Uuid::new_v4()));
+    let dir =
+      ["abcdefghijklmnopqrstuvwxyz"; 12].iter().fold(root.clone(), |dir, part| dir.join(part));
+    std::fs::create_dir_all(&dir).expect("long directory");
+    let file = dir.join("long.duckdb");
+    let path = file.to_string_lossy().into_owned();
+    assert!(path.len() > 260, "{}", path.len());
+    {
+      let pool = open(&path).await.expect("create under a long path");
+      drop(pool);
+      let connection = Connection::open(&file).expect("open under a long path");
+      connection
+        .execute_batch("CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1);")
+        .expect("seed");
+    }
+    let pool = open_read_only(&path).await.expect("reopen under a long path");
+    let mut session = pool.acquire_for_session().expect("session");
+    assert_eq!(count_rows(&mut session, "SELECT * FROM t").await.ok(), Some(1));
+    drop(session);
+    drop(pool);
+    std::fs::remove_dir_all(&root).ok();
+  }
+
   /// §3.1 E4 用应用实际编进去的 DuckDB 复测：只读打开之后改库、写文件、读文件、
   /// 改回外部访问，全都被拒；读照常
   #[tokio::test]

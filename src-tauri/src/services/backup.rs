@@ -451,8 +451,8 @@ pub fn find_tool(name: &str) -> Option<PathBuf> {
 }
 
 /// 在一个空的内存库里重放 EXPORT 写出的 `schema.sql`。DuckDB 1.5 的 EXPORT 把 ENUM 取值里的
-/// 撇号原样写进 `CREATE TYPE`，那份备份 `IMPORT DATABASE` 时才报语法错误。
-/// 只重放建表语句、不读数据，开销与库的大小无关
+/// 撇号原样写进 `CREATE TYPE`，那份备份 `IMPORT DATABASE` 时才报语法错误（2.0 已修；
+/// 检查留着，防下一个同类问题）。只重放建表语句、不读数据，开销与库的大小无关
 fn replay_duckdb_schema(directory: &Path) -> Result<(), QueryError> {
   let schema = std::fs::read_to_string(directory.join("schema.sql")).map_err(|error| {
     QueryError::message(format!("{BACKUP_FAILED}: {} · {error}", directory.display()))
@@ -908,24 +908,62 @@ mod tests {
   }
 
   /// DuckDB 1.5 的 EXPORT DATABASE 把 ENUM 取值里的撇号原样写进 `CREATE TYPE`：
-  /// 备份写成了，`IMPORT DATABASE` 却报语法错误——要恢复的时候才发现备份没用
+  /// 备份写成了，`IMPORT DATABASE` 却报语法错误——要恢复的时候才发现备份没用。
+  /// 2.0 起导出已经对了（下一条用例），这里直接拿 1.5 写出的那份 `schema.sql` 钉住重放这道检查
+  #[test]
+  fn a_duckdb_export_whose_schema_does_not_replay_is_refused() {
+    let dir = temp_dir("duckdb-replay");
+    // DuckDB 1.5.6 对这个库 EXPORT 出的原文
+    std::fs::write(
+      dir.join("schema.sql"),
+      "CREATE TYPE mood AS ENUM ( 'it's', 'b' );;;\nCREATE TABLE t(m ENUM('it''s', 'b'));;\n",
+    )
+    .expect("write schema");
+    let error = replay_duckdb_schema(&dir).expect_err("not restorable");
+    assert!(error.message.starts_with(BACKUP_NOT_RESTORABLE), "{}", error.message);
+    std::fs::remove_dir_all(&dir).ok();
+  }
+
+  /// 2.0 修好了上面那个撇号：同样的库现在备份得成，`IMPORT DATABASE` 也导得回来
   #[tokio::test]
-  async fn a_duckdb_backup_that_would_not_import_back_is_not_kept() {
+  async fn a_duckdb_enum_with_an_apostrophe_backs_up_and_imports_back() {
     let dir = temp_dir("duckdb-enum");
     let file = dir.join("source.duckdb");
     let pool = crate::services::duckdb::open(&file.to_string_lossy()).await.expect("open duckdb");
     let mut connection =
       SessionConnection::acquire(PoolRef::DuckDb(&pool)).await.expect("connection");
     connection
-      .execute_unprepared("CREATE TYPE mood AS ENUM ('it''s', 'b'); CREATE TABLE t (m mood);")
+      .execute_unprepared(
+        "CREATE TYPE mood AS ENUM ('it''s', 'b'); CREATE TABLE t (m mood); INSERT INTO t VALUES ('it''s');",
+      )
       .await
       .expect("seed");
     drop(connection);
 
     let target = dir.join("backup");
-    let error = backup_embedded(PoolRef::DuckDb(&pool), &target).await.expect_err("not restorable");
-    assert!(error.message.starts_with(BACKUP_NOT_RESTORABLE), "{}", error.message);
-    assert!(!target.exists() && !part_path(&target).exists());
+    assert_eq!(
+      backup_embedded(PoolRef::DuckDb(&pool), &target).await.expect("backup"),
+      BackupKind::DuckdbDirectory
+    );
+    assert!(!part_path(&target).exists());
+
+    let restored = crate::services::duckdb::open(&dir.join("restored.duckdb").to_string_lossy())
+      .await
+      .expect("open restored");
+    let mut connection =
+      SessionConnection::acquire(PoolRef::DuckDb(&restored)).await.expect("connection");
+    connection
+      .execute_unprepared(&format!("IMPORT DATABASE {}", quote_literal(&target)))
+      .await
+      .expect("import back");
+    let restored_file = dir.join("restored.duckdb");
+    drop(connection);
+    drop(restored);
+    let check = duckdb::Connection::open(&restored_file).expect("reopen restored");
+    let value: String =
+      check.query_row("SELECT m::VARCHAR FROM t", [], |row| row.get(0)).expect("read back");
+    assert_eq!(value, "it's");
+    drop(check);
     std::fs::remove_dir_all(&dir).ok();
   }
 
