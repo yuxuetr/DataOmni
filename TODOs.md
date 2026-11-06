@@ -442,12 +442,18 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
   - cu 上的 `dataomni-mongo-rs` 自 9-25 起重启就退出（入口脚本重写 `/tmp/key`，被 `protected_regular` 挡住），
     SRV 那 3 条这期间一直没真跑。按原配置与原数据卷重建，启动前先删 key；重启一次验过，3 / 3。
 - [ ] G13 DuckDB：Windows 上库文件放在超 260 字符的路径下打不开（没开系统长路径时；SQLite 的已修，见 R5）
-  - 根因在 DuckDB 自己（`src/common/local_file_system.cpp`，1.5.x 与上游 main 2026-10-19 相同）：打开前 `CanonicalizePath`
+  - 根因在 DuckDB 1.5.x 自己（`src/common/local_file_system.cpp`）：打开前 `CanonicalizePath`
     从整条路径往上逐级找存在的目录，`TryCanonicalizeExistingPath` 的缓冲区只有 `MAX_PATH`，长的几级都失败；退到短的祖先
     （`\\?\C:\Users\…`）成功时把 `\\?\` 剥掉，再拼回剩下的段——又是一条超长的普通路径，`CreateFileW` 报「系统找不到指定的路径」。
     实测：传 `C:\…` 与 `\\?\C:\…` 报一样的错，报错里的路径都不带前缀。所以应用这边加前缀没用。
-  - 修法：给 duckdb/duckdb 提补丁——输入带 `\\?\`（或结果超过 `MAX_PATH`）时保留前缀，缓冲区按需加长。
-    之后等 DuckDB 发版、duckdb-rs 更新内带源码，再升 `Cargo.toml` 的 `duckdb`，Windows 上加一条超长路径用例（照 SQLite 那条）。
+  - **更正（2026-11-06）**：上游已修，不用提补丁或 issue。原先「上游 main 与 1.5.x 相同」只看了规范化那段，漏了打开那一步：
+    [duckdb#20983](https://github.com/duckdb/duckdb/pull/20983)（2026-05-21 合入，只进 2.0，不回移 1.5）让 `OpenFile` 等入口
+    在 `CreateFileW` 前经 `NormalizePathAndConvertToUnicode`，超过 247 字符就重新加 `\\?\`，规范化剥掉前缀也不要紧。
+    对应 issue [duckdb#20384](https://github.com/duckdb/duckdb/issues/20384) 已关。查重搜过 long path、MAX_PATH、
+    CanonicalizePath 等关键词，没有别的未关条目。上游 `TryCanonicalizeExistingPath` 仍是 `MAX_PATH` 缓冲区（长路径不解析符号链接与大小写），
+    `MemoryMapFile` 仍直接转码不加前缀——都不挡打开库文件，没报。以上是读上游源码的结论，Windows 上没验。
+  - 修法改为：升 `duckdb` 到 1.20000.x（内带 DuckDB 2.0.0，2026-10 发布），Windows 上加一条超长路径用例（照 SQLite 那条）。
+    升大版本要另评估：存储格式（2.0 写过的库 1.x 还能不能读）、duckdb-rs 的 API 变化、用到的扩展（parquet、json）。
   - 不做：fork libduckdb-sys 走 `[patch]`（每次升 DuckDB 都要重打）；8.3 短路径（非系统盘常关掉短名，不保证可用）。
   - 用户这边的绕法：开 `LongPathsEnabled`（应用清单还没声明 `longPathAware`，开了也未必够，没验），或者把库放到短一点的目录。
 
