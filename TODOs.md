@@ -258,6 +258,11 @@
 - [-] U1 英文 README（`README.en.md`）与截图
   - 文字已做（`cc2ee53`；中文 README 顺带去掉几处过时的「还没有」，`4b0aef6`）。截图等 v1.0.0 发布后在打包版上截（英文界面、示例库，不露真实主机名）。
   - 中英两份顶上互相链接；更新日志不翻译，指向中文那份。截图在打包版上截，顺带看 rc.2 之后那批上色改动。
+  - 2026-11-06 用户定：截图由用户自己截，这边只留位置与清单。已做：`README.en.md` 里六处 `<!-- screenshot: … -->`
+    占位（图没有时不显示，不留坏图）；`docs/screenshots.md` 写明每张的画面、位置、替换成哪一行，以及语言、主题、窗口大小、
+    压缩与「不露真实信息」的做法；`scripts/screenshot-sample-db.sh` 生成编造数据的 SQLite 示例库（五张表带外键、一个视图、
+    JSON / 日期 / NULL），截图都用它。
+  - 剩下（用户）：按清单在打包版上截六张、换掉占位与旧的 `images/dataomni.png`，在这里记一笔后勾掉。
 - [x] C1 代码生成（A7 的重估条件满足：用户要）（`1b34d1f`、`e7a0a56`、`a754fd8`、`5987b23`、`4cc0e7f`、`aed0310`，2026-11-05）
   - 设计：`rfcs/codegen.md`（用户已确认；NestJS 一档做 TypeORM 与 MikroORM，命名按语言惯例并映射回原名）。
   - 五个目标：Prisma（PG / MySQL / SQLite / SQL Server）、TypeORM（另加 Oracle）、MikroORM（PG / MySQL / SQLite / SQL Server）、

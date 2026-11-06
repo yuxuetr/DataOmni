@@ -6,6 +6,7 @@ A desktop database client for relational databases, MongoDB, Redis, Neo4j and El
 built with Tauri 2, React and Rust. It runs on macOS, Windows and Linux, and the interface is
 available in English and Chinese (the language switch is at the bottom of the sidebar).
 
+<!-- screenshot: images/en/overview.png replaces the image below (docs/screenshots.md) -->
 ![DataOmni](images/dataomni.png)
 
 ## Why DataOmni
@@ -68,6 +69,8 @@ not from protocol compatibility on paper. The last full run was on 2026-10-16. T
   rows. Passwords in statements are replaced with `'***'` before they are written.
 - Save a tab as a `.sql` file, open `.sql` files, and keep drafts across restarts.
 
+<!-- screenshot: images/en/query.png (docs/screenshots.md) -->
+
 ### Browsing and editing data
 
 - Server-side paging with stable ordering; sorting and filtering run in the database against the
@@ -101,6 +104,9 @@ not from protocol compatibility on paper. The last full run was on 2026-10-16. T
   or the execution plan.
 - Quick bar and line charts of the current result.
 
+<!-- screenshot: images/en/table-edit.png (docs/screenshots.md) -->
+<!-- screenshot: images/en/er-diagram.png (docs/screenshots.md) -->
+
 ### MongoDB, Redis, Neo4j and Elasticsearch
 
 - **MongoDB**: databases, collections and views; filter, sort and edit documents in mongosh syntax;
@@ -115,6 +121,9 @@ not from protocol compatibility on paper. The last full run was on 2026-10-16. T
 - **Elasticsearch / OpenSearch**: indices, aliases and data streams, a console in Kibana Dev Tools
   syntax, tables for hits, ES|QL / SQL results and aggregations, a mapping viewer, and editing or
   deleting single documents with optimistic concurrency.
+
+<!-- screenshot: images/en/mongodb.png (docs/screenshots.md) -->
+<!-- screenshot: images/en/redis.png (docs/screenshots.md) -->
 
 ### Connections and security
 
