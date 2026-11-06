@@ -22,7 +22,7 @@
 |---|---|---|
 | P0–P4 | 质量基线、连接与查询内核、日常工作闭环、管理与数据工程、外围与扩展 | [x] |
 | P5 | 统一桌面 UI 与交互 | [x]（5.4 的 Windows 验证 2026-11-05 完成） |
-| P6 | AI 设计、导出与备份 | [x] A0–A6c、A9 完成（A2b / A7 / A8 当前版本不做） |
+| P6 | AI 设计、导出与备份 | [x] A0–A6c、A9 完成（A2b 当前版本不做；A7、A8 已在 1.x 做成 C1、C2） |
 | P7 | 更多数据库：国产库与云库 | [-] OceanBase、openGauss 完成；KingbaseES 缺安装包；B3 不做；B4 按触发条件 |
 | v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [x] v0.6.0 已发布（2026-10-07，tag 重打在 2b62b5f，含 R6、R7-mac 的修正）；v0.6.1 已发布（2026-10-07，2bf2499，R7-linux 的修正；CI 里 Windows 0.6.0 → 0.6.1 升级通过）；R5 的 CI 部分与 R6 完成；R7 的 macOS 与 Linux 部分完成；R7 Windows 2026-10-14 完成；R5 人工项 2026-11-05 完成；`v1.0.0` 2026-11-05 发布 |
 
@@ -243,8 +243,8 @@
   - 2026-10-16 macOS：升级后删旧版本存的连接，报「没能从系统钥匙串删掉这条密码… Invalid attempt to change the owner of this item」，连接删不掉。ad-hoc 签名换了 cdhash，`SecItemDelete` 报 -25244；只在这个码上改用 `/usr/bin/security` 删（`cc22d79`）。真钥匙串单测做过反向验证；装进 /Applications 的新包上，用户删掉了一条由 `security` 写入的口令所属的连接（T1），没报错，钥匙串里那条也没了。
   - 2026-10-16 做 G3 时撞上：PostgreSQL / MySQL 的 TLS 选「校验 CA」一连就 panic。rustls 的 ring 与 aws-lc 两个 feature 都开着（reqwest、neo4j、tiberius 带进 aws-lc），不挑进程级默认的加密实现，sqlx 的 verify-ca 校验器要它。`sqlx_pool::open` 先把 ring 装成默认（`6fbfa9c`）。单测做过反向验证；本机 openGauss 开 TLS，verify-ca 改前 panic、改后握手通过。打包版上没看过。
   - 同日同一台 5.7：结构页「检查约束」段印红字 `Unknown table 'CHECK_CONSTRAINTS'`（8.0.16 起才有）。现在按 SQLSTATE 42S02 当作「没有检查约束目录」，说明 5.7 不执行 CHECK（`2e5227c`）。真库用例与组件渲染测试都做过反向验证；打包版上没看过。
-- [ ] v0.3：三平台基础安装与冒烟测试
-  - macOS 与 Linux（容器）已验。Windows 能构建，GitHub Actions 也出 MSI / NSIS，但还没装过、没做冒烟，与 R5 一起做。
+- [x] v0.3：三平台基础安装与冒烟测试（2026-11-06 补勾：Windows 部分随 R5 于 2026-11-05 完成）
+  - macOS 与 Linux（容器）已验；Windows 的安装、升级、卸载与冒烟见 R5。
   - Windows ARM64 原生包**当前版本不做**（2026-10-06 定）：ARM 上的 Windows 11 靠系统转译跑 x64 包；Oracle 也没有 Windows ARM64 的
     Instant Client。重估条件：有 ARM Windows 用户反馈转译下慢或装不上。
 
@@ -303,9 +303,19 @@
   - 评估里的一条事实实测不成立：MySQL 的 `LIMIT ?` 经驱动绑文本照收（命令行用户变量才报 1210），SQL Server 的 `TOP` 才不收。设计说明已改。
   - 没验到：Oracle 没有真库（本机已无 Docker，cu 上跑不动），只有与目录查询共用的绑定代码；MariaDB、MySQL 5.7 没试；
     PostgreSQL 结果里有 inet、money 这类只能按文本读的列时，带参数会报不支持（提示加 `::text`）。
-- [ ] C2 DataOmni 作为 MCP 服务（A8 的重估条件满足：用户要）
-  - 在 `dataomni cli` 外面套一层 stdio MCP，工具一一对应 CLI 第一、二批命令，沿用它的权限模型（`rfcs/agent-cli.md` §5）。
-  - 先写设计说明。验收门里两条该红的用例：「写语句被拒」与「生产连接不可见」。
+- [x] C2 DataOmni 作为 MCP 服务（设计 `rfcs/mcp-server.md`，用户 2026-11-06 确认）（`67a49d8`、`4352a26`）
+  - 做了：`dataomni mcp`，stdio 上手写的 JSON-RPC（不引 rmcp）。11 个工具与命令行只读命令一一对应，入参拼成参数后走同一个
+    `dispatch`，MCP 层不碰权限。不给 `export`、`backup`、`csv-preview`。
+  - 实现时补的（设计说明 §3.7）：`-`（命令行里读标准输入，MCP 的标准输入是协议本身）与恰好像选项的位置参数报 `usage`；
+    钥匙串到点不退出进程、接着等；`instructions` 单独写，不用 `guide.md`。
+  - 验收：`cli::mcp::tests` 8 条——写语句被拒（`DELETE`、`DROP`、`ATTACH`、多语句，行数不变、没写出附加库文件）、
+    生产连接不可见（按名字与 id 都报 `not_found`）、工具表、协议基础、配置逐字节不变、参数映射。
+    反向验证：工具错误当成功包回去，前两条与 `-` 那条变红；工具表加上 `export`，工具表与协议两条变红。
+    拼参数那条用例当场抓出 `aggregate` 把管道传了两遍。
+  - 调试构建经 stdio 端到端（临时 HOME）：初始化、列工具、列连接、查询截断、`DELETE` 被拒、生产连接 `not_found`、
+    `-` 报 usage、ping 都对；库里行数不变、配置不变、留痕两行。
+  - 没验到：真客户端（本机 Claude Code 的组织账号禁用了订阅访问）——留给用户：`claude mcp add` 接打包版，
+    列连接、查一张表、试一条 `DELETE`。打包版、Windows、Linux 上没跑过。
 - [ ] U2 winget
   - 前提：v1.0.0 已发布。向 `microsoft/winget-pkgs` 提 PR 属于对外操作，提之前先问用户。
   - Homebrew Cask 暂不做（用户 2026-11-05 定）。
@@ -439,6 +449,8 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
   - 剩余：表结构查询仍走 tauri-plugin-sql，因为 `execute_query` 不收绑定参数。
   - PostgreSQL 的 `BIT`、`INET` / `CIDR` 这类解码器白名单以外的类型，表数据页与 SQL 标签都按服务端文本显示，不再报错（`39bb53d`、`039ee4a`）。
   - 重估条件：真需要时给 `execute_query` 补绑定参数（1.0 之后的候选，见路线第四节第 2 条）。
+  - 2026-11-06：上面的条件已满足（D2）。D2 评估时看到 MySQL / PostgreSQL 的目录查询早已走后端 `sqlx_select`，
+    只剩 SQLite 走插件，且没报过缺口。新的重估条件：SQLite 目录查询经插件出了缺陷，或要去掉 tauri-plugin-sql。
 
 ### 3.1 结构与对象管理
 
@@ -472,7 +484,7 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
 ### 4.4 可选外围能力
 
 - [ ] ~~连接和查询模板~~ **当前版本不做**
-  - 重估条件：`execute_query` 补上绑定参数之后。
+  - 重估条件：有人要（前置条件「`execute_query` 补上绑定参数」已由 D2 满足）。
 - [ ] ~~插件或扩展机制~~ **评估完成：不做**
   - 重估条件：出现第一个「想改而改不动」的具体诉求时，先做配置点；同类诉求到第三个，再谈机制。
 - [ ] ~~团队配置同步~~ **当前版本不做**
@@ -554,8 +566,8 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
   - 理由：用 ER 查询拼出来的脚本和原库不等价。
   - 重估条件：有人要整库建表脚本。届时 MySQL / SQLite 用原生 DDL，PostgreSQL 等用 `pg_dump --schema-only`。
 - [x] A7 框架代码生成：2026-11-05 用户要，已做成「1.x」的 C1（五个目标）。
-- [ ] ~~A8 DataOmni 作为 MCP 服务~~ **当前版本不做**
-  - 重估条件：确认「让 Agent 直接查自己配好的库」是日常工作流。届时先单独写设计说明，验收门里要有两条该红的用例：
+- [x] ~~A8 DataOmni 作为 MCP 服务~~ 已做成「1.x」的 C2（2026-11-06）
+  - 原重估条件：确认「让 Agent 直接查自己配好的库」是日常工作流。届时先单独写设计说明，验收门里要有两条该红的用例：
     「写语句被拒」和「生产连接不可见」。
   - 2026-11-05：用户要，见「1.x」的 C2。
 - [x] A8a 命令行接口（给 Agent 与终端用）**1.0 范围已完成**（第三批「写」等有人要再做，见设计文档 §6）
