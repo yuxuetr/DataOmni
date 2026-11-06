@@ -18,6 +18,5 @@
 
 - 两种安装包都列上了：NSIS 按用户装（`%LOCALAPPDATA%\DataOmni`），MSI 按机器装（`C:\Program Files\DataOmni`）。
   `winget install yuxuetr.DataOmni` 默认装哪种由 winget 决定，`--scope user` / `--scope machine` 可以指定。
-- 没写 `LicenseUrl`：仓库里还没有 `LICENSE` 文件（README 写的是 MIT）。补上之后在脚本的 locale 清单里加
-  `LicenseUrl: https://github.com/yuxuetr/DataOmni/blob/main/LICENSE`。
+- `LicenseUrl` 指向 `main` 上的 `LICENSE`（MIT，2026-11-06 补上）。
 - 清单对着 winget 官方的 1.10.0 JSON Schema 校验过（2026-11-06）。

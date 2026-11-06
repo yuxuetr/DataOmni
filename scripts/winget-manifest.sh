@@ -98,6 +98,7 @@ PublisherSupportUrl: https://github.com/$repo/issues
 PackageName: DataOmni
 PackageUrl: https://github.com/$repo
 License: MIT
+LicenseUrl: https://github.com/$repo/blob/main/LICENSE
 ShortDescription: Desktop client for relational databases, MongoDB, Redis, Neo4j and Elasticsearch
 Description: |-
   Browse schemas, edit table data, run queries and export results for MySQL, PostgreSQL, SQLite,

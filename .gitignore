@@ -30,3 +30,6 @@ fix_docs
 
 # scripts/fetch-oracle-client.sh 取下来的 Instant Client：打包时才用，不进仓库
 src-tauri/vendor/
+
+# 本地 Agent 的规则文件：各人自己的，不进仓库（只忽略根目录这一份）
+/AGENTS.md
