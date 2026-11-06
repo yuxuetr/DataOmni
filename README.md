@@ -21,7 +21,7 @@
 
 <div align="center">
 
-![DataOmni Interface](images/dataomni.png)
+![DataOmni](images/zh/overview.png)
 
 *DataOmni 启动后的主界面展示*
 
@@ -219,6 +219,10 @@ MySQL 一组 42 条、PostgreSQL 一组 39 条；只在设了专门的环境变�
 - 在编辑器里用 `USE` 切库在 MySQL 类服务端上一律拒绝：它会让侧边栏的对象树
   悄悄换成另一个库。MySQL 本来就拒，MariaDB 与 TiDB 不拒，所以由应用来挡。
 
+![MongoDB 工作区](images/zh/mongodb.png)
+
+![Redis 工作区](images/zh/redis.png)
+
 ### ⚡ 查询执行
 
 - SQL 编辑器，支持语法高亮
@@ -244,6 +248,8 @@ MySQL 一组 42 条、PostgreSQL 一组 39 条；只在设了专门的环境变�
 - Cypher、Elasticsearch 的请求、Redis 与 MongoDB 的命令同样进历史（带语言标记、按各自的写法脱敏），
   从历史里打开只给同一种语言的连接
 - 多条语句的结果可以逐条或全部收起，收起后标题上留一句摘要（行数、影响行数或错误原文）
+
+![SQL 编辑器、查询结果与图表](images/zh/query.png)
 
 ### 📊 数据浏览与编辑
 
@@ -338,6 +344,10 @@ MySQL 一组 42 条、PostgreSQL 一组 39 条；只在设了专门的环境变�
   勾成那样时会明确提示，但绝不开第二根纵轴。超过 200 个点不画，也不悄悄采样
 
 > 尚未实现：筛选的 OR / IN。
+
+![表数据编辑](images/zh/table-edit.png)
+
+![ER 关系图](images/zh/er-diagram.png)
 
 ### 🛡️ 凭据与传输安全
 
