@@ -115,7 +115,7 @@
       NSIS 安装 / 升级 / 降级 / 卸载 / 重装、凭据、中文路径、隧道、Oracle 都过；顺带修了 Windows 上「拒绝连接」
       判不出来（探测超时 1 秒短于 Windows 的 SYN 重试）与 `~\` 私钥路径。
     - 路径专项也走了：中文空格路径、UNC、中文用户名（模拟）、完整私钥路径、备份工具（中文空格目录、不闪窗）都过。
-      **已知限制**：DuckDB 库文件放在超 260 字符的路径下打不开（DuckDB 打开前规范化路径时剥掉 `\\?\`，加了也没用；见 G13）。
+      DuckDB 库文件放在超 260 字符的路径下在 1.0.0 时打不开（DuckDB 1.5 打开前规范化路径时剥掉 `\\?\`），已在 G13 升到 DuckDB 2.0.0 修好。
       SQLite 原先也打不开，rc.1 之后修了：Windows 上过长的路径改写成 `\\?\`（连接串里写成 `\\%3F\`），
       `%` 编码成 `%25`（`services/sqlite_path.rs`）。
     - 十种库的连真库冒烟用例 rc.1 之后也在这台 Windows 上全跑过（MySQL / PostgreSQL 用测试服务器，其余本地 Docker），全过。
@@ -441,7 +441,7 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
   - VECTOR 导入那条在 TiDB（网格给文本）与 OceanBase（不收 `HEX()`）上原先是夹具错，改了用例（`4fed247`），应用没问题。
   - cu 上的 `dataomni-mongo-rs` 自 9-25 起重启就退出（入口脚本重写 `/tmp/key`，被 `protected_regular` 挡住），
     SRV 那 3 条这期间一直没真跑。按原配置与原数据卷重建，启动前先删 key；重启一次验过，3 / 3。
-- [ ] G13 DuckDB：Windows 上库文件放在超 260 字符的路径下打不开（没开系统长路径时；SQLite 的已修，见 R5）
+- [x] G13 DuckDB：Windows 上库文件放在超 260 字符的路径下打不开（没开系统长路径时；SQLite 的已修，见 R5）（`6f5ac5f`）
   - 根因在 DuckDB 1.5.x 自己（`src/common/local_file_system.cpp`）：打开前 `CanonicalizePath`
     从整条路径往上逐级找存在的目录，`TryCanonicalizeExistingPath` 的缓冲区只有 `MAX_PATH`，长的几级都失败；退到短的祖先
     （`\\?\C:\Users\…`）成功时把 `\\?\` 剥掉，再拼回剩下的段——又是一条超长的普通路径，`CreateFileW` 报「系统找不到指定的路径」。
@@ -451,11 +451,15 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
     在 `CreateFileW` 前经 `NormalizePathAndConvertToUnicode`，超过 247 字符就重新加 `\\?\`，规范化剥掉前缀也不要紧。
     对应 issue [duckdb#20384](https://github.com/duckdb/duckdb/issues/20384) 已关。查重搜过 long path、MAX_PATH、
     CanonicalizePath 等关键词，没有别的未关条目。上游 `TryCanonicalizeExistingPath` 仍是 `MAX_PATH` 缓冲区（长路径不解析符号链接与大小写），
-    `MemoryMapFile` 仍直接转码不加前缀——都不挡打开库文件，没报。以上是读上游源码的结论，Windows 上没验。
-  - 修法改为：升 `duckdb` 到 1.20000.x（内带 DuckDB 2.0.0，2026-10 发布），Windows 上加一条超长路径用例（照 SQLite 那条）。
-    升大版本要另评估：存储格式（2.0 写过的库 1.x 还能不能读）、duckdb-rs 的 API 变化、用到的扩展（parquet、json）。
-  - 不做：fork libduckdb-sys 走 `[patch]`（每次升 DuckDB 都要重打）；8.3 短路径（非系统盘常关掉短名，不保证可用）。
-  - 用户这边的绕法：开 `LongPathsEnabled`（应用清单还没声明 `longPathAware`，开了也未必够，没验），或者把库放到短一点的目录。
+    `MemoryMapFile` 仍直接转码不加前缀——都不挡打开库文件，没报。
+  - **做了（2026-11-06，`6f5ac5f`）**：`duckdb` 从 `1.10505.0` 升到 `1.20000.1`（内带 DuckDB 2.0.0）。
+    - 顺带确认：DuckDB 1.5 导出含撇号 `ENUM` 值时的语法错误在 2.0 已修好；补了端到端备份与 `IMPORT DATABASE` 恢复用例，
+      `replay_duckdb_schema` 的拦截逻辑改用 1.5.6 导出的坏 `schema.sql` 原文钉住（反向验证：把重放改成空操作，该用例精确变红）。
+    - 存储格式实测（Python `duckdb==1.5.6` 与 `2.0.0`）：2.0 打开并写入 1.x 建的库文件后保留原格式版本（64），1.5.6 仍可读写；
+      2.0 新建的库文件是格式版本 69，1.5.6 打不开（README 已写明）。
+    - 新增 `#[cfg(windows)]` 用例 `a_database_under_a_path_longer_than_max_path_opens`（去掉 `cfg` 在 macOS 上编译跑通）；
+      `.github/workflows/ci.yml` 新增 `windows-paths` 任务，在 `windows-latest` 上跑 SQLite 与 DuckDB 的 4 条超长路径用例。
+    - 没验到：本机是 macOS，真 Windows 下的运行要等推送到 GitHub 后由 CI `windows-paths` 任务跑。
 
 ### 要自己实现、当前版本不做
 
