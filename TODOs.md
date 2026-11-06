@@ -256,14 +256,16 @@
 对应 `rfcs/roadmap-1.0.md` 第四节。用户定：第 1 条（让人用上）除 Homebrew 外都做；第 2 条全做；第 3 条全做，
 代码生成不只 Prisma，还要 NestJS 用的 ORM、SeaORM、sqlx。其余几条先不动。按下面的次序做。
 
-- [-] U1 英文 README（`README.en.md`）与截图
+- [x] U1 英文 README（`README.en.md`）与截图（`cc2ee53`、`9fe08c8`、`8beedf9`，2026-11-06）
   - 文字已做（`cc2ee53`；中文 README 顺带去掉几处过时的「还没有」，`4b0aef6`）。截图等 v1.0.0 发布后在打包版上截（英文界面、示例库，不露真实主机名）。
   - 中英两份顶上互相链接；更新日志不翻译，指向中文那份。截图在打包版上截，顺带看 rc.2 之后那批上色改动。
   - 2026-11-06 用户定：截图由用户自己截，这边只留位置与清单。已做：`README.en.md` 里六处 `<!-- screenshot: … -->`
     占位（图没有时不显示，不留坏图）；`docs/screenshots.md` 写明每张的画面、位置、替换成哪一行，以及语言、主题、窗口大小、
     压缩与「不露真实信息」的做法；`scripts/screenshot-sample-db.sh` 生成编造数据的 SQLite 示例库（五张表带外键、一个视图、
     JSON / 日期 / NULL），截图都用它。
-  - 剩下（用户）：按清单在打包版上截六张、换掉占位与旧的 `images/dataomni.png`，在这里记一笔后勾掉。
+  - 2026-11-06 完成（`8beedf9`）：在 macOS v1.0.0 打包版（独立 bundle id 与临时 HOME，连接 `shop (sample)` 与测试机转发的
+    MongoDB / Redis 示例库）上截齐英文（`images/en/`）与中文（`images/zh/`）各 6 张（单张 428～792 KB），补进 `README.en.md` 与
+    `README.md`，删掉旧的 `images/dataomni.png`。Redis 的 JSON 展开上色与 MongoDB 的文档上色显示正常。
 - [x] C1 代码生成（A7 的重估条件满足：用户要）（`1b34d1f`、`e7a0a56`、`a754fd8`、`5987b23`、`4cc0e7f`、`aed0310`，2026-11-05）
   - 设计：`rfcs/codegen.md`（用户已确认；NestJS 一档做 TypeORM 与 MikroORM，命名按语言惯例并映射回原名）。
   - 五个目标：Prisma（PG / MySQL / SQLite / SQL Server）、TypeORM（另加 Oracle）、MikroORM（PG / MySQL / SQLite / SQL Server）、
@@ -459,8 +461,7 @@ TiDB 的触发器与存储过程；openGauss 违反约束时不给约束名；Co
     - 存储格式实测（Python `duckdb==1.5.6` 与 `2.0.0`）：2.0 打开并写入 1.x 建的库文件后保留原格式版本（64），1.5.6 仍可读写；
       2.0 新建的库文件是格式版本 69，1.5.6 打不开（README 已写明）。
     - 新增 `#[cfg(windows)]` 用例 `a_database_under_a_path_longer_than_max_path_opens`（去掉 `cfg` 在 macOS 上编译跑通）；
-      `.github/workflows/ci.yml` 新增 `windows-paths` 任务，在 `windows-latest` 上跑 SQLite 与 DuckDB 的 4 条超长路径用例。
-    - 没验到：本机是 macOS，真 Windows 下的运行要等推送到 GitHub 后由 CI `windows-paths` 任务跑。
+      `.github/workflows/ci.yml` 新增 `windows-paths` 任务，在 `windows-latest` 上跑 SQLite 与 DuckDB 的 4 条超长路径用例（CI run `42227391195` 通过）。
 
 ### 要自己实现、当前版本不做
 
