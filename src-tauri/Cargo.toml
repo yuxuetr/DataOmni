@@ -67,7 +67,7 @@ sha2 = "0.10"
 # 命令行的开放凭证（`rfcs/agent-cli.md` §5.4）。已经是依赖树里的一项
 hmac = "0.12"
 # openGauss 的 sha256 认证（`services/opengauss_relay.rs`）：PBKDF2-HMAC-SHA1。和上面的 hmac、sha2 同一代 digest
-pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
 sha1 = "0.10"
 # `net` 是连接诊断要的：解析主机与试连端口（`services/connection_probe.rs`）
 tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "time", "net"] }
