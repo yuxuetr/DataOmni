@@ -43,7 +43,10 @@ fn profile_from_env() -> Option<ConnectionProfile> {
     _ if std::env::var(REQUIRE_ENV).as_deref() == Ok("1") => {
       panic!("{URL_ENV} must be set when {REQUIRE_ENV}=1")
     }
-    _ => return None,
+    _ => {
+      eprintln!("SKIP: {URL_ENV} is not set");
+      return None;
+    }
   };
   Some(profile_from_url(&url))
 }
@@ -72,7 +75,11 @@ fn profile_from_url(url: &str) -> ConnectionProfile {
 
 /// SRV 那几条：没设就跳过（要本机 27017 上正好是那个副本集）
 fn srv_profile(host: &str) -> Option<ConnectionProfile> {
-  let url = std::env::var("DATAOMNI_MONGODB_SRV_TEST_URL").ok().filter(|url| !url.is_empty())?;
+  let Some(url) = std::env::var("DATAOMNI_MONGODB_SRV_TEST_URL").ok().filter(|url| !url.is_empty())
+  else {
+    eprintln!("SKIP: DATAOMNI_MONGODB_SRV_TEST_URL is not set");
+    return None;
+  };
   let mut profile = profile_from_url(&url);
   profile.host = host.to_string();
   profile.options.insert(dataomni_lib::models::MONGO_SRV_OPTION.to_string(), "true".to_string());
@@ -270,8 +277,15 @@ async fn an_srv_name_without_records_or_pointing_elsewhere_is_refused() {
 
 /// 客户端证书那几条：没设就跳过。TLS 按完整校验，CA 用测试目录里那一份
 fn tls_profile(client_certificate: Option<&str>) -> Option<ConnectionProfile> {
-  let url = std::env::var("DATAOMNI_MONGODB_TLS_TEST_URL").ok().filter(|url| !url.is_empty())?;
-  let directory = std::env::var("DATAOMNI_MONGODB_TLS_TEST_DIR").ok()?;
+  let Some(url) = std::env::var("DATAOMNI_MONGODB_TLS_TEST_URL").ok().filter(|url| !url.is_empty())
+  else {
+    eprintln!("SKIP: DATAOMNI_MONGODB_TLS_TEST_URL is not set");
+    return None;
+  };
+  let Some(directory) = std::env::var("DATAOMNI_MONGODB_TLS_TEST_DIR").ok() else {
+    eprintln!("SKIP: DATAOMNI_MONGODB_TLS_TEST_DIR is not set");
+    return None;
+  };
   let mut profile = profile_from_url(&url);
   profile.ssl = true;
   profile.tls_mode = Some(dataomni_lib::models::TlsMode::VerifyFull);

@@ -153,7 +153,14 @@ jobs:
           workspaces: src-tauri
 
       - name: Run database smoke tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml --test database_smoke -- --nocapture
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --test database_smoke -- --nocapture 2>&1 | tee smoke.log
+          test "${PIPESTATUS[0]}" -eq 0
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            bash scripts/summarize-smoke-log.sh --header >> "$GITHUB_STEP_SUMMARY"
+            bash scripts/summarize-smoke-log.sh "database_smoke (SQLite + PG 16 + MySQL 8.4)" smoke.log >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   # 只在 Windows 上成立的路径用例（`#[cfg(windows)]`）：超过 260 字符的 SQLite / DuckDB 库文件能打开、能备份。
   # 测试二进制没有 longPathAware 清单，所以 runner 上开没开 LongPathsEnabled 都一样要靠 `\\?\`。

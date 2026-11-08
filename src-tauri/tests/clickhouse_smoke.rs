@@ -39,7 +39,10 @@ fn profile_from_env() -> Option<ConnectionProfile> {
     _ if std::env::var(REQUIRE_ENV).as_deref() == Ok("1") => {
       panic!("{URL_ENV} must be set when {REQUIRE_ENV}=1")
     }
-    _ => return None,
+    _ => {
+      eprintln!("SKIP: {URL_ENV} is not set");
+      return None;
+    }
   };
   let (tls, rest) = match url.split_once("://").expect("scheme://") {
     ("https", rest) => ("preferred", rest),
@@ -1100,6 +1103,7 @@ async fn clickhouse_connects_through_an_ssh_tunnel() {
     variable("DATAOMNI_SSH_TUNNEL_KEY"),
     variable("DATAOMNI_CLICKHOUSE_TUNNEL_PORT"),
   ) else {
+    eprintln!("SKIP: DATAOMNI_CLICKHOUSE_TUNNEL_PORT is not set");
     return;
   };
   let port: u16 = port.parse().expect("tunnel port");

@@ -79,9 +79,7 @@ async fn sqlite_supports_basic_read_write() {
 /// 只在设了 `DATAOMNI_POSTGRES_POOLER_TEST_URL` 时跑
 #[tokio::test]
 async fn postgres_queries_run_through_a_transaction_pooler() {
-  let Some(url) =
-    std::env::var("DATAOMNI_POSTGRES_POOLER_TEST_URL").ok().filter(|url| !url.is_empty())
-  else {
+  let Some(url) = optional_database_url("DATAOMNI_POSTGRES_POOLER_TEST_URL") else {
     return;
   };
   let pool = dataomni_lib::services::sqlx_pool::open(&url).await.expect("open through the pooler");
@@ -100,9 +98,7 @@ async fn postgres_queries_run_through_a_transaction_pooler() {
 /// 「禁用」照常连上。只在设了 `DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL`（一台 5.7，串里不带 `ssl-mode`）时跑
 #[tokio::test]
 async fn mysql_57_tls_failure_says_to_change_the_tls_mode() {
-  let Some(url) =
-    std::env::var("DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL").ok().filter(|url| !url.is_empty())
-  else {
+  let Some(url) = optional_database_url("DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL") else {
     return;
   };
   let separator = if url.contains('?') { '&' } else { '?' };
@@ -131,9 +127,7 @@ async fn mysql_57_tls_failure_says_to_change_the_tls_mode() {
 /// 哪天码变了这条会红，界面上就又是原话。同样只在设了 `DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL` 时跑
 #[tokio::test]
 async fn mysql_57_check_constraint_catalog_is_missing_with_42s02() {
-  let Some(url) =
-    std::env::var("DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL").ok().filter(|url| !url.is_empty())
-  else {
+  let Some(url) = optional_database_url("DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL") else {
     return;
   };
   let separator = if url.contains('?') { '&' } else { '?' };
@@ -159,9 +153,7 @@ async fn mysql_57_check_constraint_catalog_is_missing_with_42s02() {
 /// 默认值、注释与 ON UPDATE 都还在。同样只在设了 `DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL` 时跑
 #[tokio::test]
 async fn mysql_57_renames_columns_by_restating_them() {
-  let Some(url) =
-    std::env::var("DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL").ok().filter(|url| !url.is_empty())
-  else {
+  let Some(url) = optional_database_url("DATAOMNI_MYSQL_LEGACY_TLS_TEST_URL") else {
     return;
   };
   let separator = if url.contains('?') { '&' } else { '?' };
@@ -211,9 +203,7 @@ async fn mysql_57_renames_columns_by_restating_them() {
 /// 照它加密与校验。只在设了 `DATAOMNI_OPENGAUSS_SHA256_TEST_URL`（这样一个用户的连接串）时跑
 #[tokio::test]
 async fn opengauss_sha256_user_logs_in_through_the_relay() {
-  let Some(url) =
-    std::env::var("DATAOMNI_OPENGAUSS_SHA256_TEST_URL").ok().filter(|url| !url.is_empty())
-  else {
+  let Some(url) = optional_database_url("DATAOMNI_OPENGAUSS_SHA256_TEST_URL") else {
     return;
   };
   let parsed = url::Url::parse(&url).expect("parse test url");
@@ -729,7 +719,17 @@ fn network_database_url(variable: &str) -> Option<String> {
       panic!("{variable} must be set when {REQUIRE_NETWORK_DATABASES_ENV}=1")
     }
     _ => {
-      eprintln!("skipping network database smoke test because {variable} is not set");
+      eprintln!("SKIP: {variable} is not set");
+      None
+    }
+  }
+}
+
+fn optional_database_url(variable: &str) -> Option<String> {
+  match std::env::var(variable) {
+    Ok(url) if !url.is_empty() => Some(url),
+    _ => {
+      eprintln!("SKIP: {variable} is not set");
       None
     }
   }
@@ -6663,9 +6663,7 @@ async fn assert_abandoned_statement_stops_on_the_server(
 #[tokio::test]
 async fn postgres_abandoning_a_statement_through_a_pooler_leaves_other_clients_alone() {
   use sqlx::Connection;
-  let Some(url) =
-    std::env::var("DATAOMNI_POSTGRES_POOLER_TEST_URL").ok().filter(|url| !url.is_empty())
-  else {
+  let Some(url) = optional_database_url("DATAOMNI_POSTGRES_POOLER_TEST_URL") else {
     return;
   };
   let db_pool =

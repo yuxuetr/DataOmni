@@ -36,7 +36,10 @@ fn profile_from_env() -> Option<ConnectionProfile> {
     _ if std::env::var(REQUIRE_ENV).as_deref() == Ok("1") => {
       panic!("{URL_ENV} must be set when {REQUIRE_ENV}=1")
     }
-    _ => return None,
+    _ => {
+      eprintln!("SKIP: {URL_ENV} is not set");
+      return None;
+    }
   };
   let rest = url.strip_prefix("sqlserver://").expect("sqlserver:// URL");
   let (credentials, address) = rest.rsplit_once('@').expect("user:password@host");

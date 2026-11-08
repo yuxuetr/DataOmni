@@ -64,7 +64,10 @@ fn profile(database: i64) -> Option<ConnectionProfile> {
     _ if std::env::var(REQUIRE_ENV).as_deref() == Ok("1") => {
       panic!("{URL_ENV} must be set when {REQUIRE_ENV}=1")
     }
-    _ => None,
+    _ => {
+      eprintln!("SKIP: {URL_ENV} is not set");
+      None
+    }
   }
 }
 
@@ -411,6 +414,7 @@ async fn binary_keys_large_strings_and_missing_keys() {
 async fn a_read_only_acl_user_can_browse() {
   let Some(reader) = std::env::var("DATAOMNI_REDIS_READER_URL").ok().filter(|url| !url.is_empty())
   else {
+    eprintln!("SKIP: DATAOMNI_REDIS_READER_URL is not set");
     return;
   };
   let Some(profile) = profile(14) else { return };
@@ -441,9 +445,13 @@ async fn a_read_only_acl_user_can_browse() {
 async fn tls_is_verified_against_the_given_ca_and_only_skipped_when_asked() {
   let Some(url) = std::env::var("DATAOMNI_REDIS_TLS_TEST_URL").ok().filter(|url| !url.is_empty())
   else {
+    eprintln!("SKIP: DATAOMNI_REDIS_TLS_TEST_URL is not set");
     return;
   };
-  let Some(ca) = std::env::var("DATAOMNI_REDIS_TLS_TEST_CA").ok() else { return };
+  let Some(ca) = std::env::var("DATAOMNI_REDIS_TLS_TEST_CA").ok() else {
+    eprintln!("SKIP: DATAOMNI_REDIS_TLS_TEST_CA is not set");
+    return;
+  };
   let attempt = |mode: TlsMode, ca: Option<&str>| {
     let mut profile = profile_from_url(&url, 0);
     profile.ssl = mode != TlsMode::Disabled;
@@ -817,7 +825,10 @@ async fn role_and_port(pool: &store::RedisPool) -> (String, u16) {
 
 #[tokio::test]
 async fn a_sentinel_hands_over_the_master_and_a_reconnect_follows_a_failover() {
-  let Ok(url) = std::env::var(SENTINEL_URL_ENV) else { return };
+  let Ok(url) = std::env::var(SENTINEL_URL_ENV) else {
+    eprintln!("SKIP: {SENTINEL_URL_ENV} is not set");
+    return;
+  };
   let (url, master) = url.rsplit_once('/').expect("redis://…/master");
   let mut profile = profile_from_url(url, 0);
   profile.options.insert("redisMode".to_string(), "sentinel".to_string());
@@ -864,7 +875,10 @@ async fn a_sentinel_hands_over_the_master_and_a_reconnect_follows_a_failover() {
 /// 键分散在各个主节点上：只扫一个节点只看得到大约三分之一。翻页要每个恰好一次
 #[tokio::test]
 async fn a_cluster_pages_through_the_keys_of_every_master() {
-  let Ok(url) = std::env::var(CLUSTER_URL_ENV) else { return };
+  let Ok(url) = std::env::var(CLUSTER_URL_ENV) else {
+    eprintln!("SKIP: {CLUSTER_URL_ENV} is not set");
+    return;
+  };
   let mut profile = profile_from_url(&url, 0);
   profile.options.insert("redisMode".to_string(), "cluster".to_string());
   let pool = pool(&profile).await;

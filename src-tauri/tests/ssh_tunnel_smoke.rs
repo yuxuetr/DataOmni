@@ -114,7 +114,7 @@ fn variable(name: &str) -> Option<String> {
       )
     }
     _ => {
-      eprintln!("skipping ssh tunnel smoke test because {name} is not set");
+      eprintln!("SKIP: {name} is not set");
       None
     }
   }

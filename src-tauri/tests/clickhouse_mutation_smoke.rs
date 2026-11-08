@@ -22,7 +22,10 @@ async fn pool() -> Option<Arc<ClickHousePool>> {
     _ if std::env::var(REQUIRE_ENV).as_deref() == Ok("1") => {
       panic!("{URL_ENV} must be set when {REQUIRE_ENV}=1")
     }
-    _ => return None,
+    _ => {
+      eprintln!("SKIP: {URL_ENV} is not set");
+      return None;
+    }
   };
   let (scheme, rest) = url.split_once("://").expect("scheme://");
   let (credentials, address) = rest.rsplit_once('@').expect("user:password@host:port");

@@ -30,7 +30,10 @@ fn profile_from_env() -> Option<ConnectionProfile> {
     _ if std::env::var(REQUIRE_ENV).as_deref() == Ok("1") => {
       panic!("{URL_ENV} must be set when {REQUIRE_ENV}=1")
     }
-    _ => return None,
+    _ => {
+      eprintln!("SKIP: {URL_ENV} is not set");
+      return None;
+    }
   };
   Some(profile_from_url(&url))
 }
@@ -110,7 +113,10 @@ async fn drop_quietly(pool: &Arc<OraclePool>, table: &str) {
 
 #[tokio::test]
 async fn oracle_connects_by_sid_and_an_unknown_sid_is_named_by_the_listener() {
-  let Some(url) = std::env::var(SID_URL_ENV).ok().filter(|url| !url.is_empty()) else { return };
+  let Some(url) = std::env::var(SID_URL_ENV).ok().filter(|url| !url.is_empty()) else {
+    eprintln!("SKIP: {SID_URL_ENV} is not set");
+    return;
+  };
   let sid_profile = profile_from_url(&url);
   let sid = sid_profile.database.clone().unwrap_or_default();
   let by_sid = |name: &str| {
