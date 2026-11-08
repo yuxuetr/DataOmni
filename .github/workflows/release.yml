@@ -65,7 +65,7 @@ jobs:
           workspaces: src-tauri
 
       - name: Cache Oracle Instant Client download
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/dataomni/instantclient
           key: instantclient-${{ matrix.platform }}-${{ hashFiles('scripts/fetch-oracle-client.sh') }}
