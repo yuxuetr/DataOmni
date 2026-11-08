@@ -576,6 +576,7 @@ export default function TableDataViewer({
     };
     
     initializeViewer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 切页由 handlePageChange 直接调 loadTableData，此处仅在表、标签页或连接变化时按当时的 currentPage 加载
   }, [tableName, schema, activeTab, connectionId]); // connectionId：绑定的连接重新激活后自动恢复加载
 
   // 处理分页变化

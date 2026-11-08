@@ -314,6 +314,7 @@ export default function DatabaseExplorer({
       return () => clearTimeout(timeoutId);
     }
     // schemaVersion：我们自己执行过 DDL 之后重新拉一遍，新建的表立刻出现在树里
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅在连接切换、连接就绪或 schemaVersion 变化时强制刷新；loadDatabaseMetadata 写缓存会触发重渲染，放入依赖会循环拉取
   }, [connectionId, connectionReady, schemaVersion]);
   
   // 过期的那一刻不会自己触发渲染；下一次渲染发现过期了就重新拉，旧列表在拉的

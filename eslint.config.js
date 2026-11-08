@@ -23,7 +23,7 @@ export default tseslint.config(
       'no-console': 'off',
       'no-case-declarations': 'off',
       'react-hooks/rules-of-hooks': 'error',
-      'react-hooks/exhaustive-deps': 'warn',
+      'react-hooks/exhaustive-deps': 'error',
       'react-refresh/only-export-components': 'off',
     },
   }

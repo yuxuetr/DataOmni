@@ -79,7 +79,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       console.error('加载连接列表失败:', err);
       setConnectionError(describeError(err, translateNow('connection.loadListFailed')));
     });
-  }, []);
+  }, [loadConnections]);
 
   // 处理新建连接
   const handleCreateConnection = () => {
