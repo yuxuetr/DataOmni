@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const pluginClose = vi.fn(async () => true);
-vi.mock('@tauri-apps/plugin-sql', () => ({
-  default: { load: async (path: string) => ({ path, select: vi.fn(), close: pluginClose }) }
+const invokeMock = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (...args: unknown[]) => invokeMock(...args)
 }));
 
 const { openDatabase, opensOwnPool } = await import('./databaseHandle');
@@ -12,29 +12,35 @@ const { openDatabase, opensOwnPool } = await import('./databaseHandle');
 function backendSchemes(): string[] {
   const source = readFileSync('src-tauri/src/services/sqlx_pool.rs', 'utf8');
   const list = source.match(/pub fn handles[\s\S]*?\[([^\]]+)\]/)?.[1] ?? '';
-  return [...list.matchAll(/"([a-z]+):\/\/"/g)].map((match) => match[1]);
+  return [...list.matchAll(/"([a-z]+:(?:\/\/)?)"/g)].map((match) => match[1]);
 }
 
 describe('哪些连接的池子由后端开', () => {
   it('和后端认的是同一组 scheme', () => {
     const schemes = backendSchemes();
-    expect(schemes.length).toBeGreaterThan(0);
+    expect(schemes).toContain('sqlite:');
     for (const scheme of schemes) {
-      expect(opensOwnPool(`${scheme}://u:p@h/db`), scheme).toBe(true);
+      const sample = scheme.endsWith('://') ? `${scheme}u:p@h/db` : `${scheme}/tmp/a.db`;
+      expect(opensOwnPool(sample), scheme).toBe(true);
     }
   });
 
-  it('SQLite 仍走插件，SQL Server / Oracle 走各自的后端命令', () => {
-    expect(opensOwnPool('sqlite:/tmp/a.db')).toBe(false);
+  it('SQL Server / Oracle 走各自的后端命令', () => {
     expect(opensOwnPool('sqlserver://h')).toBe(false);
     expect(opensOwnPool('oracle://h')).toBe(false);
   });
 });
 
 describe('SQLite 句柄', () => {
-  it('关的时候只关自己：插件的 close() 不带库名会关掉所有 SQLite 池子', async () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+    invokeMock.mockResolvedValue(true);
+  });
+
+  it('走后端 sqlx 池且关的时候只按自身连接串关，不影响其他 SQLite 句柄', async () => {
     const handle = await openDatabase('sqlite:/tmp/other.db');
+    expect(invokeMock).toHaveBeenCalledWith('open_database_pool', { connectionString: 'sqlite:/tmp/other.db' });
     await handle.close();
-    expect(pluginClose).toHaveBeenCalledWith('sqlite:/tmp/other.db');
+    expect(invokeMock).toHaveBeenCalledWith('close_sqlx_pool', { connectionString: 'sqlite:/tmp/other.db' });
   });
 });

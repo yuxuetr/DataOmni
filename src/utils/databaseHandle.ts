@@ -1,12 +1,11 @@
-import Database from '@tauri-apps/plugin-sql';
 import { invoke } from '@tauri-apps/api/core';
 
 /**
  * 前端跑目录查询用的句柄。
  *
- * 只有 SQLite 还是插件的 `Database`。MySQL / PostgreSQL 的池子由后端开，目录
- * 查询和关池子也走后端命令：插件的 `select` / `close` 持着它那张池子表的锁等网络，
- * 一个库断了就把所有连接一起卡住（见 `sqlx_pool::shared`）。SQL Server / Oracle /
+ * MySQL / PostgreSQL / SQLite 的池子由后端开，目录查询和关池子走后端命令：
+ * 插件的 `select` / `close` 持着它那张池子表的锁等网络，且 `load` 会为不存在的路径新建文件，
+ * 前端已撤掉全部 `sql:*` 权限（见 `sqlx_pool::shared`）。SQL Server / Oracle /
  * DuckDB / ClickHouse / MongoDB 的池子本来就在后端。消费方只用得到这两个方法，不需要知道是哪一种。
  */
 export interface DatabaseHandle {
@@ -79,17 +78,11 @@ export async function openDatabase(connectionString: string): Promise<DatabaseHa
   }
   if (opensOwnPool(connectionString)) {
     // 不用插件的 load：它给空闲连接留 10 分钟（经 VPN / NAT 会被悄悄丢掉），
-    // 库不存在时还会替你建一个
+    // 库不存在时还会替你建一个（SQLite 则相当于任意文件创建）
     await invoke('open_database_pool', { connectionString });
     return backendHandle(connectionString, 'sqlx_select', 'close_sqlx_pool');
   }
-  // 插件的 `close()` 不带库名时关掉**它管着的所有** SQLite 池子：结构比对另开一个 SQLite 句柄、
-  // 用完关掉，当前连接的池子也跟着没了（真应用里撞上的）。只关自己这一个
-  const db = await Database.load(connectionString);
-  return {
-    select: (sql, params) => db.select(sql, params),
-    close: () => db.close(db.path)
-  };
+  throw new Error(`Unsupported database connection scheme: ${connectionString}`);
 }
 
 /**
@@ -114,9 +107,9 @@ export function sharesRegisteredPool(previous: string | null | undefined, next: 
   return Boolean(previous) && previous === next && poolRegisteredByTestConnection(previous as string);
 }
 
-/** 与后端 `sqlx_pool::handles` 一致：MySQL / PostgreSQL 的池子由后端开 */
+/** 与后端 `sqlx_pool::handles` 一致：MySQL / PostgreSQL / SQLite 的池子由后端开 */
 export function opensOwnPool(connectionString: string): boolean {
-  return /^(mysql|mariadb|postgres|postgresql):\/\//.test(connectionString);
+  return /^((mysql|mariadb|postgres|postgresql):\/\/|sqlite:)/.test(connectionString);
 }
 
 function backendHandle(connectionString: string, select: string, close: string): DatabaseHandle {

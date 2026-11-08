@@ -249,14 +249,23 @@ pub async fn test_connection(
   Ok(connection_string)
 }
 
-/// 为 MySQL / PostgreSQL 开池子并登记进插件的 `DbInstances`，前端随后用
-/// `Database.get` 拿句柄。为什么不用插件的 `Database.load`，见 `services::sqlx_pool`
+/// 为 MySQL / PostgreSQL / SQLite 开池子并登记进 `DbInstances`。
+/// 为什么不用插件的 `Database.load`，见 `services::sqlx_pool`
 #[tauri::command]
 pub async fn open_database_pool(
   connection_string: String,
+  app_handle: AppHandle,
   database_instances: State<'_, tauri_plugin_sql::DbInstances>,
 ) -> Result<(), String> {
-  let pool = crate::services::sqlx_pool::open(&connection_string).await?;
+  let resolved = match connection_string.strip_prefix("sqlite:") {
+    Some(rest) if rest != ":memory:" && !std::path::Path::new(rest).is_absolute() => {
+      use tauri::Manager;
+      let base = app_handle.path().app_config_dir().map_err(|error| error.to_string())?;
+      crate::services::sqlite_path::sqlite_connection_string(&base.join(rest).to_string_lossy())
+    }
+    _ => connection_string.clone(),
+  };
+  let pool = crate::services::sqlx_pool::open(&resolved).await?;
   crate::services::sqlx_pool::register(&database_instances, connection_string, pool).await;
   Ok(())
 }

@@ -16,7 +16,6 @@
     "core:webview:allow-set-webview-zoom",
     "opener:default",
     "log:default",
-    "sql:default",
     "dialog:default",
     "window-state:default"
   ]

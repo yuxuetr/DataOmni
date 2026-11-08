@@ -39,7 +39,6 @@ const invoke = vi.fn();
 let otherHandle = fakeHandle({});
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args), Channel: class {} }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(), save: vi.fn() }));
-vi.mock('@tauri-apps/plugin-sql', () => ({ default: { load: async () => otherHandle } }));
 
 const { SchemaCompareDialog } = await import('./SchemaCompareDialog');
 
@@ -58,10 +57,19 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   useConnectionStore.setState({ connections: [dev, prod] });
   useAppStore.setState({ activeConnection: { config: dev, connectionString: 'sqlite:/data/dev.db' } } as never);
-  invoke.mockImplementation(async (command: string) => {
+  invoke.mockImplementation(async (...args: unknown[]) => {
+    const command = args[0] as string;
     switch (command) {
       case 'test_connection':
         return 'sqlite:/data/prod.db';
+      case 'open_database_pool':
+        return undefined;
+      case 'sqlx_select': {
+        const payload = args[1] as { sql: string; params: unknown[] };
+        return otherHandle.select(payload.sql, payload.params);
+      }
+      case 'close_sqlx_pool':
+        return otherHandle.close();
       case 'get_er_diagram_queries':
         return { columns: 'ER_COLS', foreign_keys: 'ER_FK', parameter_count: 0 };
       case 'get_schema_metadata_queries':

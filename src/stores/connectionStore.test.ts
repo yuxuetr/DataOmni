@@ -12,10 +12,6 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args)
 }));
 
-vi.mock('@tauri-apps/plugin-sql', () => ({
-  default: { load: vi.fn() }
-}));
-
 const { useConnectionStore } = await import('./connectionStore');
 const { useQueryStore } = await import('./queryStore');
 const { useAppStore } = await import('./appStore');

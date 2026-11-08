@@ -9,7 +9,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * 这里盯的就是 `connectionLost` 这一个标记有没有把两条路都掰过来。
  */
 const invokeMock = vi.fn();
-const loadMock = vi.fn();
 
 class FakeChannel<T> {
   onmessage: ((message: T) => void) | null = null;
@@ -18,10 +17,6 @@ class FakeChannel<T> {
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
   Channel: FakeChannel
-}));
-
-vi.mock('@tauri-apps/plugin-sql', () => ({
-  default: { load: (...args: unknown[]) => loadMock(...args) }
 }));
 
 const { selectActiveSqlDocument, useQueryStore } = await import('./queryStore');
@@ -61,7 +56,6 @@ async function runFailing(rejection: unknown) {
 describe('断线之后', () => {
   beforeEach(() => {
     invokeMock.mockReset();
-    loadMock.mockReset();
     connectedStore();
   });
 
@@ -98,18 +92,17 @@ describe('断线之后', () => {
   it('重连会真的重新连一次，而不是当成「已经连着」直接返回', async () => {
     await runFailing({ code: 'CONNECTION_LOST', message: 'DATAOMNI_CONNECTION_LOST: broken pipe' });
 
-    loadMock.mockResolvedValue({ close: vi.fn() });
+    invokeMock.mockReset();
     invokeMock.mockResolvedValue(undefined);
     await useQueryStore.getState().connectToDatabase('sqlite:memory', 'profile-a', SESSION);
 
-    expect(loadMock).toHaveBeenCalledWith('sqlite:memory');
+    expect(invokeMock).toHaveBeenCalledWith('open_database_pool', { connectionString: 'sqlite:memory' });
     expect(useQueryStore.getState().connectionLost).toBe(false);
   });
 
   it('连着的时候切回同一条连接仍然不重连——那道短路本身是对的', async () => {
-    loadMock.mockResolvedValue({ close: vi.fn() });
     await useQueryStore.getState().connectToDatabase('sqlite:memory', 'profile-a', SESSION);
-    expect(loadMock).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith('open_database_pool', expect.anything());
   });
 
   it('断开连接会把这个标记清掉', async () => {

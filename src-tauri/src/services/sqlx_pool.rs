@@ -8,10 +8,10 @@
 //! - 库不存在时它会 `CREATE DATABASE`：连接表单里库名打错一个字母，服务器上就多出
 //!   一个空库。
 //!
-//! 开好的池子照样登记进插件的 `DbInstances`，前端用 `Database.get` 拿句柄，
-//! 这两家的目录查询与关池子也不走插件，走这里的 [`select`] / [`close`]：插件的
-//! 那两条命令持着 `DbInstances` 的读锁等网络，理由见 [`shared`]。SQLite 仍走插件：
-//! 文件路径的映射和「不存在就建」对本地文件是合适的，本地查询也不会挂在网络上。
+//! 开好的池子照样登记进插件的 `DbInstances`，
+//! 目录查询与关池子也不走插件，走这里的 [`select`] / [`close`]：插件的
+//! 那两条命令持着 `DbInstances` 的读锁等网络，理由见 [`shared`]。SQLite 也走这里：
+//! 插件的 `select` 可执行任意语句、`load` 会替不存在的路径新建文件，撤掉前端 `sql:*` 权限后统一由后端打开。
 use crate::services::opengauss_relay;
 use crate::services::plugin_decode::{mysql_to_json, postgres_to_json};
 use crate::services::QueryError;
@@ -30,7 +30,7 @@ pub const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// 这个连接串归不归这里开
 pub fn handles(connection_string: &str) -> bool {
-  ["mysql://", "mariadb://", "postgres://", "postgresql://"]
+  ["mysql://", "mariadb://", "postgres://", "postgresql://", "sqlite:"]
     .iter()
     .any(|scheme| connection_string.starts_with(scheme))
 }
@@ -157,6 +157,13 @@ pub async fn open(connection_string: &str) -> Result<DbPool, String> {
       Err(error) => return Err(describe_open_error(&error)),
     };
     return Ok(DbPool::Postgres(pool));
+  }
+  if connection_string.starts_with("sqlite:") {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+      .connect(connection_string)
+      .await
+      .map_err(|error| describe_open_error(&error))?;
+    return Ok(DbPool::Sqlite(pool));
   }
   if handles(connection_string) {
     // 会话照服务器的设置，sqlx 改的几处都还回去，它们都是为 sqlx 自己方便：
@@ -370,13 +377,14 @@ mod tests {
   }
 
   #[test]
-  fn only_the_two_network_families_are_opened_here() {
+  fn sqlx_families_are_opened_here() {
     assert!(handles("mysql://u:p@h:3306/db"));
     assert!(handles("postgres://u:p@h:5432/db?sslmode=disable"));
     assert!(handles("postgresql://u:p@h/db"));
-    // SQLite 仍归插件：它要做路径映射
-    assert!(!handles("sqlite:/tmp/a.db"));
+    assert!(handles("sqlite:/tmp/a.db"));
+    assert!(handles("sqlite::memory:"));
     assert!(!handles("sqlserver://h"));
+    assert!(!handles("oracle://h"));
   }
 
   /// R7-mac：主机不回应时，「测试连接」等 30 秒之后印的是驱动原话
@@ -446,10 +454,40 @@ mod tests {
 
   #[test]
   fn an_unsupported_scheme_is_named_without_the_password() {
-    match tauri::async_runtime::block_on(open("sqlite:secret@/tmp/a.db")) {
-      Ok(_) => panic!("sqlite is not opened here"),
+    match tauri::async_runtime::block_on(open("sqlserver://u:secret@127.0.0.1/db")) {
+      Ok(_) => panic!("sqlserver is not opened here"),
       Err(error) => assert!(!error.contains("secret"), "{error}"),
     }
+  }
+
+  #[test]
+  fn sqlite_does_not_create_a_missing_file_and_closes_only_its_own_pool() {
+    tauri::async_runtime::block_on(async {
+      let missing = std::env::temp_dir().join(format!(
+        "dataomni-missing-{}-{}.db",
+        std::process::id(),
+        std::time::SystemTime::now()
+          .duration_since(std::time::UNIX_EPOCH)
+          .unwrap_or_default()
+          .as_nanos()
+      ));
+      let missing_url = format!("sqlite:{}", missing.to_string_lossy());
+      assert!(open(&missing_url).await.is_err(), "missing SQLite file must not be created");
+      assert!(!missing.exists(), "missing SQLite file must not be created on disk");
+
+      let first = open("sqlite::memory:").await.expect("open first sqlite pool");
+      let second = open("sqlite::memory:").await.expect("open second sqlite pool");
+      let instances = DbInstances::default();
+      register(&instances, "sqlite:first".to_string(), first).await;
+      register(&instances, "sqlite:second".to_string(), second).await;
+
+      assert!(close(&instances, "sqlite:second").await);
+      let remaining = shared(&instances, "sqlite:first").await.expect("first pool stays open");
+      let rows = select(&remaining, "SELECT 42 AS answer", vec![]).await.expect("query first pool");
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].get("answer"), Some(&JsonValue::from(42)));
+      assert!(close(&instances, "sqlite:first").await);
+    });
   }
 
   /// 池子要在运行时里建（`connect_lazy` 会起后台任务）
