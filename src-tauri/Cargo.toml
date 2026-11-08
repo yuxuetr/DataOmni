@@ -65,7 +65,7 @@ dirs = "6"
 # 命令行的留痕记语句的摘要，不记原文。已经是依赖树里的一项
 sha2 = "0.10"
 # 命令行的开放凭证（`rfcs/agent-cli.md` §5.4）。已经是依赖树里的一项
-hmac = "0.12"
+hmac = "0.13"
 # openGauss 的 sha256 认证（`services/opengauss_relay.rs`）：PBKDF2-HMAC-SHA1。和上面的 hmac、sha2 同一代 digest
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 sha1 = "0.10"
