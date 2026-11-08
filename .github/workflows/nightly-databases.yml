@@ -37,6 +37,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99.1"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -80,6 +82,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99.1"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -115,6 +119,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99.1"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -152,6 +158,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99.1"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -192,6 +200,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99.1"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -230,6 +240,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99.1"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -273,6 +285,8 @@ jobs:
       - name: Fetch Oracle Instant Client
         run: bash scripts/fetch-oracle-client.sh
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.99.1"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
