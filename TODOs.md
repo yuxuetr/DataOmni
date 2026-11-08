@@ -24,6 +24,7 @@
 | P5 | 统一桌面 UI 与交互 | [x]（5.4 的 Windows 验证 2026-11-05 完成） |
 | P6 | AI 设计、导出与备份 | [x] A0–A6c、A9 完成（A2b 当前版本不做；A7、A8 已在 1.x 做成 C1、C2） |
 | P7 | 更多数据库：国产库与云库 | [-] OceanBase、openGauss 完成；KingbaseES 缺安装包；B3 不做；B4 按触发条件 |
+| 加固 | 依赖与前端安全边界、持续真库回归、发布与文档一致性（2026-11-08 评估） | [ ] QS1–QS6、QT1–QT5、QR1–QR2 |
 | v1.0 | 稳定桌面客户端（`rfcs/roadmap-1.0.md`） | [x] v0.6.0 已发布（2026-10-07，tag 重打在 2b62b5f，含 R6、R7-mac 的修正）；v0.6.1 已发布（2026-10-07，2bf2499，R7-linux 的修正；CI 里 Windows 0.6.0 → 0.6.1 升级通过）；R5 的 CI 部分与 R6 完成；R7 的 macOS 与 Linux 部分完成；R7 Windows 2026-10-14 完成；R5 人工项 2026-11-05 完成；`v1.0.0` 2026-11-05 发布 |
 
 ---
@@ -343,6 +344,104 @@
     用户 2026-11-06 定补 MIT：加了 `LICENSE`，脚本与 1.0.0 清单加上 `LicenseUrl`，重新对着 1.10.0 Schema 校验通过（`df9a149`）。
 - 到社区发帖由用户自己做。
 - 路线第 2 条里的「已有库的 ER 图」早已实现（`9b63f19`），路线文档那条是旧的。
+
+---
+
+## 质量与安全加固（2026-11-08 评估）
+
+来源：对 `f3e9145` 的一次整体评估（读代码、CI 配置、兼容矩阵与本文件；跑了 lint、`cargo audit`、`bun audit`；
+没跑真库与界面回归）。结论：功能不缺，缺的是**依赖与前端的安全边界**和**持续回归的范围**。按下面的次序做。
+
+评估里核过、**不新开条目**的：
+
+- 三个大文件（`TableDataViewer.tsx` 1966 行、`queryStore.ts` 1134 行、`query_executor.rs` 2685 行）：没有缺陷证据，
+  在实际改动里沿编辑提交 / 查询执行 / 元数据读取的边界顺手收窄，不单独重构。
+- 表格提交、导出遇到断线只报错、不切「已断开」：已在 R7 记录（见上「没改」那条），重估条件仍是「有人报」。
+- Rust 非测试代码里的 `unwrap` / `expect`：只有 `lib.rs` 的 Tauri 模板一处（`mongo_shell.rs` 的 `expect` 是解析器自己的方法），不处理。
+
+### QS 安全
+
+- [ ] QS1 Rust 依赖漏洞：`cargo audit` 报 11 条漏洞、16 条警告
+  - 要升的：`rustls` 0.23.45 → ≥0.23.46（4 条：ServerHello 降级到经典密钥交换、证书 Brotli 解压认证前可分配 1 GiB、
+    `Debug` 泄露会话密钥、ECH 拒绝后数据发往外层服务器）；`rustls-webpki` ≥0.103.16（可能接受已被撤信的中间证书）；
+    `webpki-root-certs` ≥1.0.10；`crypto-bigint` ≥0.7.6；`ctutils` ≥0.4.4。应用自己就是 TLS 客户端（MySQL / PG / ClickHouse /
+    ES / Redis / MongoDB），这一组是运行时风险，不是构建期。
+  - 没有修复版本的：`rsa`（RUSTSEC-2023-0071，经 `sqlx-mysql`）。客户端只用公钥加密口令（`caching_sha2_password` 不走 TLS 时），
+    Marvin 攻击针对私钥解密，判断为不可利用——写进 `.cargo/audit.toml` 的 ignore 并附这段理由，不默默忽略。
+  - 16 条警告（`unic-*`、`paste`、`proc-macro-error` 停止维护，`glib` / `tokio` 等 unsound）逐条判定：能升就升，升不了写理由。
+  - 验收：`cargo audit` 只剩写了理由的 ignore；`bun run check` 全绿；MySQL / PG 真库冒烟（CI 那套）过；TLS 连接各库至少手动连一次。
+- [ ] QS2 前端依赖漏洞：`bun audit` 报 48 条（3 critical、23 high）
+  - 先分类：`vite` 6.3.5（dev server 任意文件读）、`rollup`、`tar`、`postcss`、`picomatch`、`nanoid`、`source-map-js`
+    多半只在构建链里，不进安装包；但它们跑在开发机和 CI 上，照样要升。进了打包产物的单列出来优先处理。
+  - 判据：`bun audit` 不剩 critical / high，剩下的每条写明「只在构建期」或理由。
+- [ ] QS3 依赖持续监控：仓库没有 `dependabot.yml`，CI 里也没有 `cargo audit` / `cargo deny` / `bun audit`
+  - 加 `.github/dependabot.yml`（cargo、bun / npm、github-actions，按周）；CI 加一个 audit 任务。新漏洞报出来时 CI 变红，
+    靠 QS1 的 ignore 文件放行写过理由的那几条。
+  - 反向验证：把 `rustls` 钉回 0.23.45，audit 任务变红。
+- [ ] QS4 收紧 SQL 插件权限（小改动，先做）
+  - 事实：前端经插件只用 SQLite 的 `load` / `select` / `close`（`src/utils/databaseHandle.ts`）；MySQL / PG 已走后端
+    `open_database_pool` + `sqlx_select`。`sql:allow-execute` 没有任何前端调用方；`allow-load/select/close` 与 `sql:default` 重复。
+  - 做：删 `sql:allow-execute` 与重复项；`capabilities/` 下 `default.json` 与 `desktop-capability` 两份重复声明合成一份。
+  - 验收：打包版上 SQLite 打开、浏览、结构比对另开句柄再关掉都正常；前端调 `execute` 被拒（写一条测试或手动在 devtools 里试）。
+- [ ] QS5 SQLite 也走后端句柄，撤掉全部 `sql:*` 权限
+  - 为什么 QS4 不够：插件的 `select` 其实执行任意语句（`ATTACH`、写入都行），`load` 能打开并**新建**任意路径的 SQLite 文件。
+    前端一旦被注入脚本，这两项就是一个任意文件写入口。
+  - 做：SQLite 照 MySQL / PG 的样子走 `open_database_pool` / `sqlx_select` / `close_sqlx_pool`（后端已有 `DbInstances`，
+    库不存在时不替用户建），删掉 `@tauri-apps/plugin-sql` 的前端依赖与全部 `sql:*` 权限。
+  - 注意：后端仍用插件的 `DbPool` / `DbInstances` 类型，Rust 侧的插件依赖暂时留着；`database_smoke.rs` 的 SQLite 用例照跑。
+  - 验收：SQLite 全部路径（打开、浏览、编辑提交、导入导出、备份、结构比对、绑定参数）在打包版上过一遍；
+    「关掉另开的 SQLite 句柄不关当前连接」（`d218679`）那条回归用例仍过。
+- [ ] QS6 开启 CSP（`tauri.conf.json` 现在是 `"csp": null`）
+  - 为什么排在权限后面但同样重要：自定义 Tauri 命令（执行查询、写批量、备份……）不受 capability 管，前端被注入脚本就能全调。
+    数据库客户端显示的全是服务端返回的内容（网格、错误原文、对象定义），CSP 是最后一道防线。
+    评估时没找到写入型注入口（只有 `svgExport.ts` 读 `innerHTML`，没有 `dangerouslySetInnerHTML`）。
+  - 起点：`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;
+    connect-src 'self' ipc: http://ipc.localhost; worker-src 'self' blob:`，按实际报错逐项放宽，每放一项写理由。
+  - 验收：三平台打包版（macOS WKWebView、Windows WebView2、Linux WebKitGTK）各走一遍：编辑器与补全、ER 图与 SVG / PNG 导出、
+    AI 设计（`ai` feature 的请求是否走前端）、日志与「在访达中显示」；控制台没有 CSP 违规。
+
+### QT 测试与 CI
+
+- [ ] QT1 修 `SqlWorkbench.tsx` 选表后自动执行的竞态
+  - 现状（约 80–102 行）：`setSqlInput` + `parseStatements` 后用 `setTimeout(…, 100)` 等解析完再执行，按时间赌；
+    依赖数组还漏了 `connection.db_type`。机器慢或文档大时会执行旧语句或不执行。
+  - 做：直接用解析的返回值（或在 store 里提供「设置并执行」的一步动作），去掉定时器。决策放进 store / utils，补单测。
+  - 反向验证：把解析改成异步延迟 200 ms，旧实现的测试变红、新实现不变。
+- [ ] QT2 其余三条 Hook 依赖警告逐条判定，lint 清零
+  - `TableDataViewer.tsx:579`：故意不放 `currentPage`（注释已写原因），加 `eslint-disable-next-line` 并写明理由；
+    再确认 `ensureDatabaseConnection` / `loadTableData` 不会读到旧闭包。
+  - `Sidebar.tsx:82`、`DatabaseExplorer.tsx:317`：确认是「挂载时跑一次」还是漏了依赖，不机械补。
+  - 完成后在 `eslint` 配置里把 `react-hooks/exhaustive-deps` 升为 error，防止新增。
+- [ ] QT3 定时真库回归（CI 里现在没有任何 `schedule`）
+  - 现状：每次提交真跑的只有 MySQL 8.4、PostgreSQL 16（`database-smoke`），以及内嵌的 SQLite、DuckDB（`rust:test`）。
+    SQL Server、Oracle、MongoDB、Redis、Neo4j、Elasticsearch / OpenSearch、ClickHouse 只靠历史专项验收。
+  - 做：新建 `nightly-databases.yml`，`schedule` 每周一次 + `workflow_dispatch`，用 service 容器起 SQL Server 2022、MongoDB 8.0、
+    Redis 7.4、Neo4j 5.26、Elasticsearch 8.19、ClickHouse 25.8，设对应 `DATAOMNI_*_TEST_URL` 跑各自的冒烟文件。
+    Oracle 镜像太重（见 R7 在 cu 上把机器压垮的记录），单独一个手动触发的任务。
+  - 失败时发 issue 或标红，不静默。
+  - 判据：连续四周跑过一次以上，且每一家的通过 / 跳过 / 失败数都能在运行摘要里看到（依赖 QT4）。
+- [ ] QT4 冒烟用例把「跳过」单独计数
+  - 现状：README 矩阵写明「跳过的也计入通过」，所以 `42 / 42` 不等于 42 条都执行过。
+  - 做：用例跳过时打印统一前缀（如 `SKIP: <原因>`），CI 汇总到 job summary；README 矩阵的「用例」列改成「通过 / 跳过 / 失败」。
+  - 反向验证：去掉某个环境变量，摘要里的跳过数相应增加，而不是通过数不变。
+- [ ] QT5 CI 与发布构建可复现
+  - `bun-version: latest`（`ci.yml`、`release.yml`）与 `dtolnay/rust-toolchain@stable`、仓库里没有 `rust-toolchain.toml`：
+    同一个 tag 隔一周重打，工具链可能不同。至少 `release.yml` 钉住 bun 版本与 Rust 版本（加 `rust-toolchain.toml`），
+    由 QS3 的 dependabot 负责往上推。
+  - Actions 按大版本 tag 引用；发布任务带 `contents: write`，可考虑把第三方 action 钉到 commit SHA（低优先级）。
+
+### QR 发布与文档一致性
+
+- [ ] QR1 README 写了已有能力但最新发布版里还没有的
+  - 例：README 功能说明里写了 `dataomni mcp` 与 `claude mcp add … /Applications/DataOmni.app/… mcp`，而 C2 记录写明打包版还没有 `mcp`
+    （1.0.0 发布在 C2 之前）。结构比对（D3）、绑定参数（D2）、代码生成（C1）同理要核对。
+  - 做：README 功能说明里，未发布的能力标「下一版」或移到「未发布」更新日志里；发版时统一摘掉。
+  - 顺带把 D2 / D3 / C2 的「没验到」在发版前清一遍：Oracle 的绑定参数与结构比对往返、Oracle / DuckDB 的 `is_constraint`、
+    MCP 在打包版与 Windows / Linux 上跑通。这些条目本身不重开，发版清单里引用它们。
+- [ ] QR2 前端包体积：主 JS 约 2.05 MB（gzip 约 605 KB），构建有分包警告
+  - 只评估，不先拆：本地资源不走网络，体积不等于慢。先在打包版上测冷启动到首屏可交互、切换工作区的耗时（三平台各 5 次取中位数）。
+  - 重估条件：冷启动中位数明显受 JS 解析拖累（例如 Performance 面板里 script evaluation 占首屏一半以上），或有人报启动慢。
+    届时按工作区（MongoDB / Redis / Neo4j / ES、AI 设计、ER 图）做动态 `import()`。
 
 ---
 
