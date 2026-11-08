@@ -10,8 +10,9 @@ import {
   Info,
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import type { DatabaseType, SqlStatement } from '../contracts';
 import { ConnectionConfig } from '../stores/connectionStore';
-import { selectActiveSqlDocument, useQueryStore } from '../stores/queryStore';
+import { useQueryStore } from '../stores/queryStore';
 import { useAppStore } from '../stores/appStore';
 import { SqlEditor } from './SqlEditor';
 import { ConnectionInfoDialog } from './ConnectionInfoDialog';
@@ -35,6 +36,42 @@ interface SqlWorkbenchProps {
   selectedTable?: { name: string; schema?: string };
   /** 当前标签的标题，透传给编辑器用来给另存出去的 `.sql` 猜文件名 */
   documentTitle?: string;
+}
+
+export interface SelectedTablePreviewRunner {
+  selectTable: (name: string, schema?: string) => void;
+  clearSelectedTable: () => void;
+  setSqlInput: (sql: string) => void;
+  parseStatements: () => SqlStatement[] | Promise<SqlStatement[]>;
+  executeStatement: (statementId: string) => Promise<boolean>;
+}
+
+/**
+ * 选中表后生成预览 SQL、解析并立刻执行第一条语句。
+ * 直接消费 `parseStatements` 的返回值，不用 `setTimeout` 猜解析何时完成。
+ */
+export async function applySelectedTablePreview(
+  selectedTable: { name: string; schema?: string } | undefined,
+  canExecute: boolean,
+  dbType: DatabaseType,
+  runner: SelectedTablePreviewRunner
+): Promise<void> {
+  if (selectedTable && canExecute) {
+    runner.selectTable(selectedTable.name, selectedTable.schema);
+    const query = firstRowsQuery(
+      selectedTable.name,
+      selectedTable.schema,
+      100,
+      identifierDialectFor(dbType)
+    );
+    runner.setSqlInput(query);
+    const parsedStatements = await runner.parseStatements();
+    if (parsedStatements.length > 0) {
+      await runner.executeStatement(parsedStatements[0].id);
+    }
+  } else if (!selectedTable) {
+    runner.clearSelectedTable();
+  }
 }
 
 export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({ 
@@ -73,33 +110,29 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
 
   // 处理选中的表格
   useEffect(() => {
-    if (selectedTable && database && health === 'connected') {
-      // 更新全局状态
-      selectTable(selectedTable.name, selectedTable.schema);
-      
-      // 生成查询表格数据的SQL
-      const query = firstRowsQuery(
-        selectedTable.name,
-        selectedTable.schema,
-        100,
-        identifierDialectFor(connection.db_type)
-      );
-      
-      setSqlInput(query);
-      parseStatements();
-      
-      // 延迟执行，确保语句已经解析
-      setTimeout(() => {
-        const parsedStatements = selectActiveSqlDocument(useQueryStore.getState()).statements;
-        if (parsedStatements.length > 0) {
-          executeStatement(parsedStatements[0].id);
-        }
-      }, 100);
-    } else if (!selectedTable) {
-      // 清除表选择
-      clearSelectedTable();
-    }
-  }, [selectedTable, database, health]);
+    void applySelectedTablePreview(
+      selectedTable,
+      Boolean(database) && health === 'connected',
+      connection.db_type,
+      {
+        selectTable,
+        clearSelectedTable,
+        setSqlInput,
+        parseStatements,
+        executeStatement
+      }
+    );
+  }, [
+    selectedTable,
+    database,
+    health,
+    connection.db_type,
+    selectTable,
+    clearSelectedTable,
+    setSqlInput,
+    parseStatements,
+    executeStatement
+  ]);
 
   // 重新连接
   const handleReconnect = async () => {
