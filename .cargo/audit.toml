@@ -1,0 +1,47 @@
+# cargo-audit 审计策略与忽略说明（QS1）
+#
+# 已通过升级消除的 9 条漏洞与 9 条警告：
+# - rustls 0.23.45 -> 0.23.46（RUSTSEC-2026-0346 / 0347 / 0348 / 0349）
+# - rustls-webpki 0.103.15 -> 0.103.16（RUSTSEC-2026-0382）
+# - webpki-root-certs / webpki-roots 1.0.9 -> 1.0.11（RUSTSEC-2026-0381 / 0383）
+# - crypto-bigint 0.7.5 -> 0.7.10（RUSTSEC-2026-0387 + yanked）
+# - ctutils 0.4.2 -> 0.4.8（RUSTSEC-2026-0385）
+# - tokio 1.53.1 -> 1.54.1（RUSTSEC-2026-0386 unsound）
+# - async-executor 1.14.0 -> 1.14.1（yanked）
+# - yoke / yoke-derive 0.8.3 -> 0.8.4（yanked）
+# - tauri-utils 2.9.3 -> 2.10.2 -> urlpattern 0.3.0 -> 0.6.0（移除 5 个已停更的 unic-* 依赖）
+#
+# 以下为尚无上游替代版本的传递依赖，逐条说明不可利用或不影响本应用的理由：
+
+[advisories]
+ignore = [
+  # rsa 0.9.10（经 sqlx-mysql 0.8.6）与 rsa 0.10.0-rc.18（经 russh 0.63.3）：
+  # Marvin Attack（RUSTSEC-2023-0071）需要攻击者能向目标反复发起 RSA PKCS#1 v1.5 私钥解密并测量耗时。
+  # 1) sqlx-mysql 客户端仅在非 TLS 的 caching_sha2_password 握手中用服务端公钥加密口令，不做私钥解密；
+  # 2) russh 仅在客户端使用本地私钥签名或验签服务端主机公钥，不对外提供解密 oracle。
+  # 上游尚无修复版本，判定在本应用中不可利用。
+  "RUSTSEC-2023-0071",
+
+  # paste 1.0.15（经 oracle 0.6.3，已是 crates.io 最新版）：
+  # 编译期过程宏，仅展开标识符拼接，不进入运行时产物。等 oracle 上游替换后移除。
+  "RUSTSEC-2024-0436",
+
+  # proc-macro-error 1.0.4（经 neo4j 0.2.0 -> duplicate 1.0.0，以及 Linux 侧 gtk / glib 0.18 宏）：
+  # 编译期过程宏错误处理，不进入运行时产物。neo4j 0.2.0 与 wry 依赖的 gtk 0.18 均无更新主版本。
+  "RUSTSEC-2024-0370",
+
+  # rustls-pemfile 2.2.0（经 neo4j 0.2.0 与 rustls-native-certs 0.7.3）：
+  # 功能已合入 rustls-pki-types，原 crate 归档但无安全漏洞。等 neo4j 升级依赖后移除。
+  "RUSTSEC-2025-0134",
+
+  # zbus_names 4.3.4 / zvariant 5.15.0 / zvariant_derive 5.15.0（经 tauri-plugin-opener 2.5.5 与 keyring -> secret-service 5.2.0 -> zbus 5）：
+  # 上游已迁入 zbus 6，仅标记旧版本 unmaintained，无已知漏洞。等 tauri-plugin-opener 与 secret-service 升至 zbus 6 后移除。
+  "RUSTSEC-2026-0370",
+  "RUSTSEC-2026-0371",
+  "RUSTSEC-2026-0372",
+
+  # glib 0.18.5（Linux 侧 wry / webkit2gtk 2.0.2 -> gtk 0.18）：
+  # VariantStrIter 的 Iterator 实现存在 unsound（RUSTSEC-2024-0429），本应用及 Tauri/wry 均不调用 VariantStrIter。
+  # webkit2gtk 2.0 绑定固定在 gtk-rs 0.18 世代。
+  "RUSTSEC-2024-0429",
+]

@@ -32,11 +32,11 @@ indexmap = { version = "2", features = ["serde"] }
 tauri-plugin-sql = { version = "2", features = ["sqlite", "mysql", "postgres"] }
 # sqlx 的 TLS 用的就是它；直接依赖为认出握手失败的告警，以及把 ring 装成进程级默认的加密实现
 # （`sqlx_pool::ensure_tls_provider`），版本跟 sqlx 走
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring"] }
 # openGauss 转发口到服务端那一段的 TLS（`services/opengauss_relay.rs`），配法照 sqlx。两个都已经在依赖树里；
 # 关掉 tokio-rustls 的默认 feature，不带进第二套加密实现（aws-lc）
 tokio-rustls = { version = "0.26", default-features = false }
-webpki-roots = "1"
+webpki-roots = "1.0.10"
 sqlx = { version = "0.8.6", features = ["runtime-tokio-rustls", "mysql", "postgres", "sqlite", "json", "time", "chrono", "bigdecimal", "uuid"] }
 # 只为 `sqlite3_interrupt` / `sqlite3_get_autocommit`：钉死在 sqlx 用的那一版（sqlx 的文档要求直接调它时这么做），
 # 不开任何 feature，构建方式跟着 sqlx 走
@@ -70,7 +70,7 @@ hmac = "0.12"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 sha1 = "0.10"
 # `net` 是连接诊断要的：解析主机与试连端口（`services/connection_probe.rs`）
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net"] }
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "time", "net"] }
 # SQL Server（`services/sql_server.rs`）。sqlx 0.7 起不再带 MSSQL 驱动，插件也就没有；
 # tiberius 是纯 Rust 的 TDS 实现，不带原生依赖。关掉默认的 native-tls 与 winauth：
 # TLS 与 sqlx 一样走 rustls，免得一个应用里两套 TLS 栈。
