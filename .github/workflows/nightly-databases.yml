@@ -1,0 +1,286 @@
+name: Nightly Database Smoke
+
+on:
+  schedule:
+    # 每周一 03:00 UTC 跑一轮全库真库回归
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      include_oracle:
+        description: "同时运行 Oracle 23ai Free 冒烟任务（镜像较重，仅手动触发时按需开启）"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  sql-server:
+    name: SQL Server 2022
+    runs-on: ubuntu-latest
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "DataOmni_StrongPass1!"
+        ports:
+          - 1433:1433
+    env:
+      DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
+      DATAOMNI_SQLSERVER_TEST_URL: "sqlserver://sa:DataOmni_StrongPass1!@127.0.0.1:1433/master"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Wait for SQL Server
+        run: |
+          for _ in $(seq 1 30); do
+            (echo > /dev/tcp/127.0.0.1/1433) >/dev/null 2>&1 && break
+            sleep 2
+          done
+      - name: Run SQL Server smoke tests
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --test sql_server_smoke -- --test-threads=1 --nocapture 2>&1 | tee smoke.log
+          test "${PIPESTATUS[0]}" -eq 0
+          bash scripts/summarize-smoke-log.sh --header >> "$GITHUB_STEP_SUMMARY"
+          bash scripts/summarize-smoke-log.sh "SQL Server 2022" smoke.log >> "$GITHUB_STEP_SUMMARY"
+
+  mongodb:
+    name: MongoDB 8.0
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:8.0
+        env:
+          MONGO_INITDB_ROOT_USERNAME: root
+          MONGO_INITDB_ROOT_PASSWORD: rootpassword
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })' --quiet"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
+      DATAOMNI_MONGODB_TEST_URL: "mongodb://root:rootpassword@127.0.0.1:27017/admin"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Run MongoDB smoke tests
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --test mongodb_smoke -- --nocapture 2>&1 | tee smoke.log
+          test "${PIPESTATUS[0]}" -eq 0
+          bash scripts/summarize-smoke-log.sh --header >> "$GITHUB_STEP_SUMMARY"
+          bash scripts/summarize-smoke-log.sh "MongoDB 8.0" smoke.log >> "$GITHUB_STEP_SUMMARY"
+
+  redis:
+    name: Redis 7.4
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7.4
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli -a redispassword ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+          --requirepass redispassword
+    env:
+      DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
+      DATAOMNI_REDIS_TEST_URL: "redis://default:redispassword@127.0.0.1:6379"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Run Redis smoke tests
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --test redis_smoke -- --nocapture 2>&1 | tee smoke.log
+          test "${PIPESTATUS[0]}" -eq 0
+          bash scripts/summarize-smoke-log.sh --header >> "$GITHUB_STEP_SUMMARY"
+          bash scripts/summarize-smoke-log.sh "Redis 7.4" smoke.log >> "$GITHUB_STEP_SUMMARY"
+
+  neo4j:
+    name: Neo4j 5.26
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        image: neo4j:5.26
+        env:
+          NEO4J_AUTH: neo4j/neo4jpassword
+        ports:
+          - 7687:7687
+          - 7474:7474
+        options: >-
+          --health-cmd "wget -qO- http://localhost:7474 || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
+      DATAOMNI_NEO4J_TEST_URL: "bolt://neo4j:neo4jpassword@127.0.0.1:7687"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Run Neo4j smoke tests
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --test neo4j_smoke -- --nocapture 2>&1 | tee smoke.log
+          test "${PIPESTATUS[0]}" -eq 0
+          bash scripts/summarize-smoke-log.sh --header >> "$GITHUB_STEP_SUMMARY"
+          bash scripts/summarize-smoke-log.sh "Neo4j 5.26" smoke.log >> "$GITHUB_STEP_SUMMARY"
+
+  elasticsearch:
+    name: Elasticsearch 8.19
+    runs-on: ubuntu-latest
+    services:
+      elasticsearch:
+        image: docker.elastic.co/elasticsearch/elasticsearch:8.19.0
+        env:
+          discovery.type: single-node
+          xpack.security.enabled: "true"
+          xpack.security.http.ssl.enabled: "false"
+          ELASTIC_PASSWORD: elasticpassword
+          ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -fsS -u elastic:elasticpassword http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 24
+    env:
+      DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
+      DATAOMNI_ELASTICSEARCH_TEST_URL: "http://elastic:elasticpassword@127.0.0.1:9200"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Run Elasticsearch smoke tests
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --test elasticsearch_smoke -- --nocapture 2>&1 | tee smoke.log
+          test "${PIPESTATUS[0]}" -eq 0
+          bash scripts/summarize-smoke-log.sh --header >> "$GITHUB_STEP_SUMMARY"
+          bash scripts/summarize-smoke-log.sh "Elasticsearch 8.19" smoke.log >> "$GITHUB_STEP_SUMMARY"
+
+  clickhouse:
+    name: ClickHouse 25.8
+    runs-on: ubuntu-latest
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_USER: default
+          CLICKHOUSE_PASSWORD: clickhousepassword
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "wget -qO- http://localhost:8123/ping || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
+      DATAOMNI_CLICKHOUSE_TEST_URL: "http://default:clickhousepassword@127.0.0.1:8123"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Run ClickHouse smoke tests
+        shell: bash
+        run: |
+          cargo test --manifest-path src-tauri/Cargo.toml --test clickhouse_smoke -- --nocapture 2>&1 | tee smoke.log
+          test "${PIPESTATUS[0]}" -eq 0
+          cargo test --manifest-path src-tauri/Cargo.toml --test clickhouse_mutation_smoke -- --nocapture 2>&1 | tee mutation.log
+          test "${PIPESTATUS[0]}" -eq 0
+          bash scripts/summarize-smoke-log.sh --header >> "$GITHUB_STEP_SUMMARY"
+          bash scripts/summarize-smoke-log.sh "ClickHouse 25.8" smoke.log >> "$GITHUB_STEP_SUMMARY"
+          bash scripts/summarize-smoke-log.sh "ClickHouse 25.8 (mutation)" mutation.log >> "$GITHUB_STEP_SUMMARY"
+
+  oracle:
+    name: Oracle 23ai Free (manual)
+    if: github.event_name == 'workflow_dispatch' && inputs.include_oracle
+    runs-on: ubuntu-latest
+    services:
+      oracle:
+        image: gvenzl/oracle-free:23-slim
+        env:
+          ORACLE_PASSWORD: oraclepassword
+        ports:
+          - 1521:1521
+        options: >-
+          --health-cmd "healthcheck.sh"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
+      DATAOMNI_ORACLE_TEST_URL: "oracle://system:oraclepassword@127.0.0.1:1521/FREEPDB1"
+      DATAOMNI_ORACLE_SID_TEST_URL: "oracle://system:oraclepassword@127.0.0.1:1521/FREE"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Tauri and Oracle system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libaio1t64
+      - name: Fetch Oracle Instant Client
+        run: bash scripts/fetch-oracle-client.sh
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Run Oracle smoke tests
+        shell: bash
+        run: |
+          export DATAOMNI_ORACLE_CLIENT_DIR="$PWD/src-tauri/resources/oracle-client"
+          cargo test --manifest-path src-tauri/Cargo.toml --test oracle_smoke -- --test-threads=1 --nocapture 2>&1 | tee smoke.log
+          test "${PIPESTATUS[0]}" -eq 0
+          bash scripts/summarize-smoke-log.sh --header >> "$GITHUB_STEP_SUMMARY"
+          bash scripts/summarize-smoke-log.sh "Oracle 23ai Free" smoke.log >> "$GITHUB_STEP_SUMMARY"
