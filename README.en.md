@@ -91,14 +91,14 @@ not from protocol compatibility on paper. The last full run was on 2026-10-16. T
   local `pg_dump`, `mysqldump` and `mongodump`.
 - ER diagram of a whole database: search, filter by schema or by distance from a table, export to
   SVG, PNG or PDF, or to a data dictionary (Markdown) and an Agent Skill (`SKILL.md`).
-- Code generation from the ER diagram (or an AI design): a Prisma schema, TypeORM or MikroORM entities
+- Code generation *(next release — not in v1.0.0 packages yet)* from the ER diagram (or an AI design): a Prisma schema, TypeORM or MikroORM entities
   (for NestJS), SeaORM entities, or sqlx `FromRow` structs. It is deterministic, without AI. Types it
   cannot map and tables it cannot generate are listed at the top.
-- Schema compare: diff tables, columns, primary keys, indexes and foreign keys against another
+- Schema compare *(next release — not in v1.0.0 packages yet)*: diff tables, columns, primary keys, indexes and foreign keys against another
   connection, tick what to sync, and get a script that makes the target match. The script opens in the
   editor and runs through the usual per-environment confirmation; across different kinds of database you
   get the report only.
-- Bind parameters: write `:name` in the editor and fill in the values before the statement runs. The
+- Bind parameters *(next release — not in v1.0.0 packages yet)*: write `:name` in the editor and fill in the values before the statement runs. The
   driver binds them, so nothing is pasted into the SQL and text needs no quotes. Not yet for ClickHouse
   or the execution plan.
 - Quick bar and line charts of the current result.
@@ -161,7 +161,7 @@ the app. Passwords are never handed to the caller.
 - Output is JSON, and exit codes distinguish database errors, bad arguments, refusals and
   connection failures. `dataomni cli guide` prints instructions written for agents; save it as
   `SKILL.md` to use it as a Claude Code skill.
-- Agents that cannot run a shell (Claude Desktop and the like) can use `dataomni mcp`, the same
+- Agents that cannot run a shell (Claude Desktop and the like) can use `dataomni mcp` *(next release — not in v1.0.0 packages yet; build from source for now)*, the same
   read-only commands served as an MCP server over stdio, behind the same access rules. `export`,
   `backup` and `csv-preview` are left out because they read or write local files. Example:
   `claude mcp add dataomni -- /Applications/DataOmni.app/Contents/MacOS/dataomni mcp`.

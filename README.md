@@ -286,11 +286,11 @@ MySQL 一组 42 条、PostgreSQL 一组 39 条；只在设了专门的环境变�
 - 整表流式导出：行从数据库直接落盘，不受行数上限截断，带进度、可取消、失败可
   重试；中途停下不会留下一份看上去完整的文件
 
-- 生成代码：ER 图导出菜单的「生成代码…」，按图上看得到的表生成 Prisma schema、TypeORM / MikroORM 实体（NestJS）、
+- 生成代码（下一版，v1.0.0 安装包尚未包含）：ER 图导出菜单的「生成代码…」，按图上看得到的表生成 Prisma schema、TypeORM / MikroORM 实体（NestJS）、
   SeaORM 实体或 sqlx 的 `FromRow` 结构体，不用 AI；映射不了的类型、生成不了的表在开头列出来，见 `rfcs/codegen.md`
-- 结构比对：ER 图工具栏的「比对结构…」，和另一个连接（或同一个库里的另一个 schema）比表、列、主键、索引、外键，
+- 结构比对（下一版，v1.0.0 安装包尚未包含）：ER 图工具栏的「比对结构…」，和另一个连接（或同一个库里的另一个 schema）比表、列、主键、索引、外键，
   逐项勾选后生成同步脚本；脚本放进编辑器由你执行，照常按连接环境确认。同种数据库之间才出脚本，见 `rfcs/schema-diff.md`
-- 绑定参数：编辑器里写 `:name`，运行前弹框填值，由驱动绑定、不拼进 SQL；值按标签记住，关掉应用就没了。
+- 绑定参数（下一版，v1.0.0 安装包尚未包含）：编辑器里写 `:name`，运行前弹框填值，由驱动绑定、不拼进 SQL；值按标签记住，关掉应用就没了。
   ClickHouse 与执行计划暂不支持，见 `rfcs/bind-parameters.md`
 - ER 关系图：整库的表都画出来（含没有外键的），每张列出全部字段与类型，
   有外键的表之间按具体字段连线；可搜索表名与列名、缩放平移、自由拖动卡片、
@@ -392,7 +392,7 @@ MySQL 一组 42 条、PostgreSQL 一组 39 条；只在设了专门的环境变�
 - 输出是 JSON，退出码区分「数据库报错 / 参数错 / 被拒 / 连不上」；`dataomni cli guide` 打印一份
   给 Agent 读的说明，存成 `SKILL.md` 就能当 Claude Code 的 Skill 用
 - 每次调用留痕（`dataomni-cli.log`），记语句的摘要，不记原文
-- 不能跑 shell 的 Agent（Claude Desktop 之类）用 `dataomni mcp`：同一套只读命令包成 stdio 上的 MCP 服务，
+- 不能跑 shell 的 Agent（Claude Desktop 之类）用 `dataomni mcp`（下一版，v1.0.0 安装包尚未包含，当前需从源码构建）：同一套只读命令包成 stdio 上的 MCP 服务，
   工具与命令一一对应，走同一道门；不给 `export`、`backup`、`csv-preview`（会读写本机文件）。
   例：`claude mcp add dataomni -- /Applications/DataOmni.app/Contents/MacOS/dataomni mcp`
 
