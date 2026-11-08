@@ -77,7 +77,7 @@ tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "time", "ne
 tiberius = { version = "0.13", default-features = false, features = ["tds73", "rustls", "time"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 # SQL Server 的执行计划是 XML（SHOWPLAN_XML）。零依赖、只读的树，够用
-roxmltree = "0.20"
+roxmltree = "0.21"
 # Oracle（`services/oracle.rs`）。ODPI-C 编译进来，运行时 dlopen Instant Client；
 # 纯 Rust 的 `oracle-rs` 实验过，服务端一报错连接就断、错误码也丢了（TODOs 4.2）
 oracle = "0.6.3"
