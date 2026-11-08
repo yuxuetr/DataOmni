@@ -42,6 +42,11 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # Swatinem/rust-cache 清理 target 时会剥掉 libduckdb-sys 解压目录里的 .complete 标记，
+      # 下次重跑 build.rs 时 rename 到非空目录会报 DirectoryNotEmpty；清掉让它按需从本地 tar.gz 重解
+      - name: Clean cached DuckDB unpacked sources
+        run: rm -rf src-tauri/target/duckdb-sources
+
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
@@ -155,6 +160,9 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Clean cached DuckDB unpacked sources
+        run: rm -rf src-tauri/target/duckdb-sources
+
       - name: Run database smoke tests
         shell: bash
         run: |
@@ -189,6 +197,7 @@ jobs:
       - name: Run Windows path tests
         shell: bash
         run: |
+          rm -rf src-tauri/target/duckdb-sources
           cargo test --manifest-path src-tauri/Cargo.toml --lib -- max_path long_windows --nocapture 2>&1 | tee test.log
           test "${PIPESTATUS[0]}" -eq 0
           grep -q "test result: ok. 4 passed" test.log

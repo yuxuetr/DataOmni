@@ -1,19 +1,21 @@
 version: 2
 updates:
+  # 仅开启 Dependabot 安全更新（open-pull-requests-limit: 0 关闭常规版本升级 PR 轰炸，
+  # 避免越过锁定的主版本或 tauri-plugin-sql 校验版本；每次 push/PR 另有 ci.yml 的 audit 任务兜底）
   - package-ecosystem: "cargo"
     directory: "/src-tauri"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "bun"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0

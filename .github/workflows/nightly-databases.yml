@@ -42,6 +42,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: Clean cached DuckDB unpacked sources
+        run: rm -rf src-tauri/target/duckdb-sources
       - name: Wait for SQL Server
         run: |
           for _ in $(seq 1 30); do
@@ -87,6 +89,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: Clean cached DuckDB unpacked sources
+        run: rm -rf src-tauri/target/duckdb-sources
       - name: Run MongoDB smoke tests
         shell: bash
         run: |
@@ -124,6 +128,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: Clean cached DuckDB unpacked sources
+        run: rm -rf src-tauri/target/duckdb-sources
       - name: Run Redis smoke tests
         shell: bash
         run: |
@@ -163,6 +169,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: Clean cached DuckDB unpacked sources
+        run: rm -rf src-tauri/target/duckdb-sources
       - name: Run Neo4j smoke tests
         shell: bash
         run: |
@@ -205,6 +213,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: Clean cached DuckDB unpacked sources
+        run: rm -rf src-tauri/target/duckdb-sources
       - name: Run Elasticsearch smoke tests
         shell: bash
         run: |
@@ -245,6 +255,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: Clean cached DuckDB unpacked sources
+        run: rm -rf src-tauri/target/duckdb-sources
       - name: Run ClickHouse smoke tests
         shell: bash
         run: |
@@ -290,6 +302,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: Clean cached DuckDB unpacked sources
+        run: rm -rf src-tauri/target/duckdb-sources
       - name: Run Oracle smoke tests
         shell: bash
         run: |

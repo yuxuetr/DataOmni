@@ -64,6 +64,9 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Clean cached DuckDB unpacked sources
+        run: rm -rf src-tauri/target/duckdb-sources
+
       - name: Cache Oracle Instant Client download
         uses: actions/cache@v4
         with:
