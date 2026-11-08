@@ -22,7 +22,7 @@
     "package": "bash scripts/fetch-oracle-client.sh && tauri build --config src-tauri/tauri.oracle.conf.json"
   },
   "dependencies": {
-    "@codemirror/autocomplete": "^6.18.6",
+    "@codemirror/autocomplete": "^6.20.4",
     "@codemirror/commands": "^6.8.1",
     "@codemirror/lang-sql": "^6.9.0",
     "@codemirror/legacy-modes": "^6.5.4",
