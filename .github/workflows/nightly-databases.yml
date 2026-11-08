@@ -31,7 +31,7 @@ jobs:
       DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
       DATAOMNI_SQLSERVER_TEST_URL: "sqlserver://sa:DataOmni_StrongPass1!@127.0.0.1:1433/master"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Tauri system dependencies
         run: |
           sudo apt-get update
@@ -76,7 +76,7 @@ jobs:
       DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
       DATAOMNI_MONGODB_TEST_URL: "mongodb://root:rootpassword@127.0.0.1:27017/admin"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Tauri system dependencies
         run: |
           sudo apt-get update
@@ -113,7 +113,7 @@ jobs:
       DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
       DATAOMNI_REDIS_TEST_URL: "redis://default:redispassword@127.0.0.1:6379"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Tauri system dependencies
         run: |
           sudo apt-get update
@@ -152,7 +152,7 @@ jobs:
       DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
       DATAOMNI_NEO4J_TEST_URL: "bolt://neo4j:neo4jpassword@127.0.0.1:7687"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Tauri system dependencies
         run: |
           sudo apt-get update
@@ -194,7 +194,7 @@ jobs:
       DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
       DATAOMNI_ELASTICSEARCH_TEST_URL: "http://elastic:elasticpassword@127.0.0.1:9200"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Tauri system dependencies
         run: |
           sudo apt-get update
@@ -234,7 +234,7 @@ jobs:
       DATAOMNI_REQUIRE_NETWORK_DATABASE_TESTS: "1"
       DATAOMNI_CLICKHOUSE_TEST_URL: "http://default:clickhousepassword@127.0.0.1:8123"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Tauri system dependencies
         run: |
           sudo apt-get update
@@ -277,7 +277,7 @@ jobs:
       DATAOMNI_ORACLE_TEST_URL: "oracle://system:oraclepassword@127.0.0.1:1521/FREEPDB1"
       DATAOMNI_ORACLE_SID_TEST_URL: "oracle://system:oraclepassword@127.0.0.1:1521/FREE"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Tauri and Oracle system dependencies
         run: |
           sudo apt-get update
