@@ -44,3 +44,19 @@ describe('SQLite 句柄', () => {
     expect(invokeMock).toHaveBeenCalledWith('close_sqlx_pool', { connectionString: 'sqlite:/tmp/other.db' });
   });
 });
+
+describe('Tauri 安全边界配置', () => {
+  it('capabilities 不开放任何 sql:* 前端权限，且 tauri.conf.json 启用了 CSP', () => {
+    const capability = JSON.parse(readFileSync('src-tauri/capabilities/default.json', 'utf8')) as {
+      permissions: string[];
+    };
+    expect(capability.permissions.filter((permission) => permission.startsWith('sql:'))).toEqual([]);
+
+    const tauriConfig = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8')) as {
+      app?: { security?: { csp?: string | null } };
+    };
+    const csp = tauriConfig.app?.security?.csp ?? '';
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("script-src 'self'");
+  });
+});
