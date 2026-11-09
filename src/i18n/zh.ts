@@ -1164,6 +1164,7 @@ export const zh = {
   'error.backend.logRevealFailed': '打不开日志所在的文件夹：{detail}',
   'error.backend.importNewerVersion': '这个文件是更新版本的 DataOmni 导出的（格式版本 {detail}），这一版读不了，请先升级。',
   'error.backend.directoryMissing': '目录不存在：{detail}',
+  'error.backend.pathReserved': '这个位置是 DataOmni 自己存放连接配置的目录，不能在这里读写文件，请换一个位置：{detail}',
   'error.backend.filesExist': '这些文件已经有了，一个都没写（不覆盖）：{detail}',
   'error.backend.relativePathInvalid': '文件路径不合规矩：{detail}',
   'error.backend.aiNotInBuild': '这个版本没有带 AI 功能。',

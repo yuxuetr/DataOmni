@@ -1149,6 +1149,7 @@ export const en: Translations = {
   'error.backend.logRevealFailed': 'Could not open the folder containing the log: {detail}',
   'error.backend.importNewerVersion': 'This file was exported by a newer DataOmni (format version {detail}) and this version cannot read it. Please upgrade first.',
   'error.backend.directoryMissing': 'No such directory: {detail}',
+  'error.backend.pathReserved': 'This folder is where DataOmni keeps its own connection settings, so files cannot be read or written here. Please choose another location: {detail}',
   'error.backend.filesExist': 'These files already exist, so nothing was written (existing files are never overwritten): {detail}',
   'error.backend.relativePathInvalid': 'Invalid file path: {detail}',
   'error.backend.aiNotInBuild': 'This build does not include AI features.',

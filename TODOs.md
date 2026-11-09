@@ -484,8 +484,12 @@
     预览查询（`TOP` / `FETCH FIRST` / `LIMIT`）、建表默认 schema（`tableDdl` `defaultSchemaName`）。输出不变。
   - 没改的：「这家要不要多做一步」的布尔判断（如 `dialect === 'clickhouse'` 时跳过某步）——默认分支本身就是正确的通用行为。
   - 验证：反向——临时给 `SqlDialect` 加 `'fakedb'`，`tsc` 在这五处全部报错；恢复后绿。`src/utils` 130 个文件 1996 条全过。
-- [ ] PA6 `write_text_file` / `write_binary_file` / `read_text_file` 接受任意路径
-  - 做：拒绝应用配置目录（`connections.json` 所在处）。判据：单测，配置目录内路径被拒、普通路径放行。
+- [x] PA6 `write_text_file` / `write_binary_file` / `read_text_file` 接受任意路径
+  - 已做：`file_commands.rs` 新增 `refuse_reserved_path`（先规范化路径解开 `..` 与符号链接，拒绝落在 `app_config_dir` 内的路径，
+    返回 `DATAOMNI_PATH_RESERVED`），接入 `write_text_file`、`write_binary_file`、`read_text_file` 与 `write_new_text_files`；
+    前端 `backendError.ts` 与中英文文案补齐 `error.backend.pathReserved`。
+  - 验证：`refuses_paths_inside_the_reserved_directory_even_through_dot_dot_and_symlinks` 覆盖直接路径、未创建文件、`..` 绕回、
+    符号链接与兄弟目录前缀放行；`backendError.test.ts` 与 i18n 门全过。
 - [ ] PA7 跨层结构体字段只靠手工同步：加 Rust → JSON → TS 契约夹具（`ConnectionProfile` / `QueryError`）
   - 判据：故意改一个字段名测试变红。
 - [ ] PA8 杂项：只读闸门补 `dblink_connect` / `dblink_open` / `pg_sleep` / `BENCHMARK`；mysqldump 库名前加 `--`；
