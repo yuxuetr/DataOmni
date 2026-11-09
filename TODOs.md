@@ -496,8 +496,13 @@
     不用 `..Default::default()` 逐字段构造并双向校对序列化结果；TS 侧 `src/contracts/contractConformance.test.ts` 用
     `satisfies Record<keyof Required<...>, true>` + 差集类型约束与运行时键集合断言双端同步。
   - 验证：反向——将夹具中的 `credential_ref` 改为 `credential_reference`，`vitest` 与 `cargo test` 双双变红；恢复后全绿。
-- [ ] PA8 杂项：只读闸门补 `dblink_connect` / `dblink_open` / `pg_sleep` / `BENCHMARK`；mysqldump 库名前加 `--`；
+- [x] PA8 杂项：只读闸门补 `dblink_connect` / `dblink_open` / `pg_sleep` / `BENCHMARK`；mysqldump 库名前加 `--`；
   `PoolRegistry` 锁中毒时记日志；AGENTS.md 删掉已不存在的 `services/database_service.rs`。
+  - 已做：`read_only_gate.rs` 在 `SIDE_EFFECT_FUNCTIONS` 中补齐 `PG_SLEEP` / `PG_SLEEP_FOR` / `PG_SLEEP_UNTIL` / `SLEEP` / `BENCHMARK`，
+    并在 `SIDE_EFFECT_PREFIXES` 中补齐 `DBLINK_`（拦住 `dblink_connect`、`dblink_open` 等整族），同步扩充 `fixtures/agent-read-only.json`；
+    `backup.rs` 在 `mysqldump_command` 的库名前加入 `--` 分隔符；`pool_registry.rs` 在 `insert` / `get` / `remove` 遇到锁中毒时记 `log::error!`；
+    `AGENTS.md` 替换已删除的 `services/database_service.rs` 说明。
+  - 验证：`bun run check`、`bun run rust:clippy:no-ai`、`bun run rust:audit`、`bun run audit:frontend` 全绿。
 
 ---
 

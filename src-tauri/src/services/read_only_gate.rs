@@ -97,6 +97,9 @@ const SIDE_EFFECT_FUNCTIONS: &[&str] = &[
   "LO_EXPORT",
   "DBLINK",
   "DBLINK_EXEC",
+  "PG_SLEEP",
+  "PG_SLEEP_FOR",
+  "PG_SLEEP_UNTIL",
   "QUERY_TO_XML",
   "QUERY_TO_XMLSCHEMA",
   "QUERY_TO_XML_AND_XMLSCHEMA",
@@ -105,6 +108,8 @@ const SIDE_EFFECT_FUNCTIONS: &[&str] = &[
   "RELEASE_LOCK",
   "RELEASE_ALL_LOCKS",
   "LOAD_FILE",
+  "SLEEP",
+  "BENCHMARK",
   // DuckDB（外部访问另外关掉了，这里是第二层）
   "READ_TEXT",
   "READ_BLOB",
@@ -129,8 +134,8 @@ const SIDE_EFFECT_FUNCTIONS: &[&str] = &[
   "WRITEFILE",
 ];
 
-/// 前缀匹配：`pg_advisory_lock`、`pg_advisory_xact_lock_shared` 之类有一整族
-const SIDE_EFFECT_PREFIXES: &[&str] = &["PG_ADVISORY"];
+/// 前缀匹配：`pg_advisory_lock`、`pg_advisory_xact_lock_shared`、`dblink_connect`、`dblink_open` 等各有一整族
+const SIDE_EFFECT_PREFIXES: &[&str] = &["PG_ADVISORY", "DBLINK_"];
 
 pub fn check(sql: &str) -> Result<(), Refusal> {
   every_lexing().try_for_each(|lexing| check_tokens(&lex(sql, lexing)?))

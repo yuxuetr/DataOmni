@@ -340,7 +340,8 @@ pub(crate) fn mysqldump_command(
       }
     }
   }
-  command.arg(database).env("MYSQL_PWD", &profile.password);
+  // 库名前面加 `--`：万一库名以 `-` 开头，不让 mysqldump 把它当成命令行选项
+  command.arg("--").arg(database).env("MYSQL_PWD", &profile.password);
   command
 }
 
@@ -628,7 +629,11 @@ mod tests {
     assert!(arguments.iter().all(|arg| !arg.contains("s3cret")), "{arguments:?}");
     assert_eq!(env(&command, "MYSQL_PWD"), Some(Some("s3cret pa'ss".into())));
     assert_eq!(arguments.first().map(String::as_str), Some("--no-defaults"));
-    assert_eq!(arguments.last().map(String::as_str), Some("shop"));
+    assert_eq!(
+      arguments.get(arguments.len().saturating_sub(2)..),
+      Some(["--".to_string(), "shop".to_string()].as_slice()),
+      "库名前面要有 `--`，防止 `-` 开头的库名被当成选项: {arguments:?}"
+    );
     for expected in [
       "--host=localhost",
       "--port=3307",
