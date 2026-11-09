@@ -19,6 +19,16 @@ export type QueryExecutionStatus = (typeof QUERY_EXECUTION_STATUSES)[number];
 
 export type SqlDialect = 'mysql' | 'postgresql' | 'sqlite' | 'sqlserver' | 'oracle' | 'duckdb' | 'clickhouse';
 
+/**
+ * 按方言选语法的 `switch` 收尾用：漏了一种方言就编译不过。
+ *
+ * `===` 链的最后一个分支是「其余各家」，新加一种方言会悄悄落进去，生成 MySQL 或 PG 的写法，
+ * 要到连上真库报语法错才发现。只用在「选哪种写法」的地方；「这家要不要多做一步」的判断不需要
+ */
+export function unhandledDialect(dialect: never): never {
+  throw new Error(`unhandled SQL dialect: ${String(dialect)}`);
+}
+
 export interface QueryExecutionSessionSnapshot {
   readonly profileId: string;
   readonly sessionId: string;

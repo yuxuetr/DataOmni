@@ -478,8 +478,12 @@
     前端从没调过它的命令）；`package.json` 删掉无人 import 的 `@tauri-apps/plugin-opener` 与 `@tauri-apps/plugin-cli`。现剩 5 条权限。
   - 验证：`databaseHandle.test.ts` 新增门——每条非 `core:` 权限和每个 `@tauri-apps/plugin-*` 依赖都要在 `src` 里有 import；
     反向验证：删依赖前该门红（报 `cli`、`opener`），删后绿。`cargo check` 过。留待：打包版确认窗口位置大小仍能在重启后恢复。
-- [ ] PA5 前端方言分支不穷尽：新增方言会悄悄走 MySQL / PG 的默认分支
-  - 做：最大的几处（`rowStatements` / `tablePagination` / `tableDdl`）补穷尽检查。判据：反向验证——临时加一个假方言编译报错。
+- [x] PA5 前端方言分支不穷尽：新增方言会悄悄走 MySQL / PG 的默认分支
+  - 已做：`contracts/queryExecution.ts` 新增 `unhandledDialect(never)`；「选哪种写法」的五处改成列全七种方言的 `switch`：
+    绑定占位符（`rowStatements` `createPlaceholderAllocator`）、展示时的占位符正则、分页子句（`tablePagination` `pageClause`）、
+    预览查询（`TOP` / `FETCH FIRST` / `LIMIT`）、建表默认 schema（`tableDdl` `defaultSchemaName`）。输出不变。
+  - 没改的：「这家要不要多做一步」的布尔判断（如 `dialect === 'clickhouse'` 时跳过某步）——默认分支本身就是正确的通用行为。
+  - 验证：反向——临时给 `SqlDialect` 加 `'fakedb'`，`tsc` 在这五处全部报错；恢复后绿。`src/utils` 130 个文件 1996 条全过。
 - [ ] PA6 `write_text_file` / `write_binary_file` / `read_text_file` 接受任意路径
   - 做：拒绝应用配置目录（`connections.json` 所在处）。判据：单测，配置目录内路径被拒、普通路径放行。
 - [ ] PA7 跨层结构体字段只靠手工同步：加 Rust → JSON → TS 契约夹具（`ConnectionProfile` / `QueryError`）

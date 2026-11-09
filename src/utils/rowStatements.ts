@@ -1,4 +1,5 @@
 import type { ColumnInfo } from '../contracts';
+import { unhandledDialect } from '../contracts/queryExecution';
 import { columnTypeToken, isConcurrencyComparable, isNumericColumnType, NUMERIC_LITERAL } from './columnTypes';
 import type { BoundValue, CellInput } from './cellInput';
 import { binaryLiteral, isCompleteHex } from './columnEditors';
@@ -66,17 +67,23 @@ function createPlaceholderAllocator(dialect: SqlIdentifierDialect): PlaceholderA
   let index = 0;
   return (column) => {
     index += 1;
-    if (dialect === 'clickhouse') {
-      return `{p${index}:${column?.data_type || 'String'}}`;
+    switch (dialect) {
+      case 'clickhouse':
+        return `{p${index}:${column?.data_type || 'String'}}`;
+      case 'postgresql':
+        return `$${index}`;
+      // Oracle 按位置绑 `:1`、`:2`
+      case 'oracle':
+        return `:${index}`;
+      case 'sqlserver':
+        return `@P${index}`;
+      case 'mysql':
+      case 'sqlite':
+      case 'duckdb':
+        return '?';
+      default:
+        return unhandledDialect(dialect);
     }
-    if (dialect === 'postgresql') {
-      return `$${index}`;
-    }
-    // Oracle 按位置绑 `:1`、`:2`
-    if (dialect === 'oracle') {
-      return `:${index}`;
-    }
-    return dialect === 'sqlserver' ? `@P${index}` : '?';
   };
 }
 
@@ -463,16 +470,30 @@ const QUOTED_SEGMENT = String.raw`'(?:[^']|'')*'|"(?:[^"]|"")*"|\`(?:[^\`]|\`\`)
  * 只用于**展示**（差异预览、错误信息里的原句）。执行仍然走绑定参数——
  * 这里的转义够用来看，不够用来当唯一的防线。
  */
+/** 展示时要换成值的占位符；与 `createPlaceholderAllocator` 生成的写法一一对应 */
+function displayPlaceholderPattern(dialect: SqlIdentifierDialect): string {
+  switch (dialect) {
+    case 'oracle':
+      return ':\\d+';
+    case 'clickhouse':
+      return '\\{p\\d+:[^}]*\\}';
+    case 'postgresql':
+    case 'sqlserver':
+    case 'mysql':
+    case 'sqlite':
+    case 'duckdb':
+      return '\\$\\d+|@P\\d+|\\?';
+    default:
+      return unhandledDialect(dialect);
+  }
+}
+
 export function renderStatementForDisplay(
   statement: BoundStatement,
   dialect: SqlIdentifierDialect
 ): string {
   let index = 0;
-  const placeholder = dialect === 'oracle'
-    ? ':\\d+'
-    : dialect === 'clickhouse'
-      ? '\\{p\\d+:[^}]*\\}'
-      : '\\$\\d+|@P\\d+|\\?';
+  const placeholder = displayPlaceholderPattern(dialect);
   // 引号里的原样跳过：列名 `ok?`、表达式里的 '?' 不是占位符，当成占位符填进值，后面的参数就全错位了
   const pattern = new RegExp(`${QUOTED_SEGMENT}|${placeholder}`, 'g');
   return statement.sql.replace(pattern, (match) => {

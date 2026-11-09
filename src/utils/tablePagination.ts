@@ -1,4 +1,5 @@
 import type { ColumnInfo } from '../contracts';
+import { unhandledDialect } from '../contracts/queryExecution';
 import type { ColumnSort } from './resultSorting';
 import type { SqlIdentifierDialect } from './sqlIdentifiers';
 import { quoteQualifiedSqlIdentifier, quoteSqlIdentifier } from './sqlIdentifiers';
@@ -204,15 +205,23 @@ export function pageClause(
   offset: number,
   dialect: SqlIdentifierDialect
 ): string {
-  if (dialect === 'sqlserver') {
-    const order = orderClause.trim() || 'ORDER BY (SELECT NULL)';
-    return `${order} OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`;
+  switch (dialect) {
+    case 'sqlserver': {
+      const order = orderClause.trim() || 'ORDER BY (SELECT NULL)';
+      return `${order} OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`;
+    }
+    // Oracle 12c 起有同样的写法，而且不要求 ORDER BY；没有 LIMIT
+    case 'oracle':
+      return `${orderClause} OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`.trim();
+    case 'mysql':
+    case 'postgresql':
+    case 'sqlite':
+    case 'duckdb':
+    case 'clickhouse':
+      return `${orderClause} LIMIT ${limit} OFFSET ${offset}`;
+    default:
+      return unhandledDialect(dialect);
   }
-  // Oracle 12c 起有同样的写法，而且不要求 ORDER BY；没有 LIMIT
-  if (dialect === 'oracle') {
-    return `${orderClause} OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`.trim();
-  }
-  return `${orderClause} LIMIT ${limit} OFFSET ${offset}`;
 }
 
 /**
@@ -377,10 +386,18 @@ export function firstRowsQuery(
   dialect: SqlIdentifierDialect
 ): string {
   const name = quoteQualifiedSqlIdentifier(schema ? [schema, table] : [table], dialect);
-  if (dialect === 'sqlserver') {
-    return `SELECT TOP ${count} * FROM ${name};`;
+  switch (dialect) {
+    case 'sqlserver':
+      return `SELECT TOP ${count} * FROM ${name};`;
+    case 'oracle':
+      return `SELECT * FROM ${name} FETCH FIRST ${count} ROWS ONLY;`;
+    case 'mysql':
+    case 'postgresql':
+    case 'sqlite':
+    case 'duckdb':
+    case 'clickhouse':
+      return `SELECT * FROM ${name} LIMIT ${count};`;
+    default:
+      return unhandledDialect(dialect);
   }
-  return dialect === 'oracle'
-    ? `SELECT * FROM ${name} FETCH FIRST ${count} ROWS ONLY;`
-    : `SELECT * FROM ${name} LIMIT ${count};`;
 }

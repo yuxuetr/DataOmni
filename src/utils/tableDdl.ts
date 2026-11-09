@@ -1,4 +1,5 @@
 import type { ColumnInfo } from '../contracts';
+import { unhandledDialect } from '../contracts/queryExecution';
 import type { TranslationKey } from '../i18n/translate';
 import { columnTypeToken, isNumericColumnType } from './columnTypes';
 import {
@@ -804,20 +805,32 @@ export function buildCreateTable(request: CreateTableRequest): DdlPlan {
  * 排在 `dbo` 前面，PostgreSQL 上 `analytics` 排在 `public` 前面。各家不写 schema
  * 时默认落在哪里，这里就先选哪里；那个 schema 不在列表里再退回第一个。
  */
+function defaultSchemaName(dialect: SqlIdentifierDialect, username?: string | null): string | null {
+  switch (dialect) {
+    case 'sqlserver':
+      return 'dbo';
+    case 'postgresql':
+      return 'public';
+    case 'duckdb':
+      return 'main';
+    case 'oracle':
+      return username ? username.toUpperCase() : null;
+    // 这几家没有「库里的 schema」这一层（库就是 schema），列表里第一个就是
+    case 'mysql':
+    case 'sqlite':
+    case 'clickhouse':
+      return null;
+    default:
+      return unhandledDialect(dialect);
+  }
+}
+
 export function defaultCreateSchema(
   schemas: readonly string[],
   dialect: SqlIdentifierDialect,
   username?: string | null
 ): string {
   // Oracle 的 schema 就是用户：不写 schema 时建在登录用户自己名下，名字是大写的
-  const preferred = dialect === 'sqlserver'
-    ? 'dbo'
-    : dialect === 'postgresql'
-      ? 'public'
-      : dialect === 'duckdb'
-        ? 'main'
-      : dialect === 'oracle' && username
-        ? username.toUpperCase()
-        : null;
+  const preferred = defaultSchemaName(dialect, username);
   return preferred && schemas.includes(preferred) ? preferred : schemas[0] ?? '';
 }
