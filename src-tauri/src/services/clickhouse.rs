@@ -27,9 +27,9 @@ use crate::models::ConnectionProfile;
 use crate::services::http_endpoint::{error_chain, EndpointError, HttpEndpoint};
 use crate::services::query_error::{QueryErrorDetails, CONNECTION_LOST, CONNECTION_LOST_CODE};
 use crate::services::query_executor::{
-  admit_row_bytes, flush_full_batch, flush_remaining_batch, number_duplicate_columns, tagged_value,
-  NonQueryHandling, QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow,
-  QueryTruncationReason, StreamOptions, NON_QUERY_MESSAGE,
+  admit_row_bytes, binary_json, flush_full_batch, flush_remaining_batch, number_duplicate_columns,
+  tagged_value, NonQueryHandling, QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch,
+  QueryRow, QueryTruncationReason, StreamOptions, NON_QUERY_MESSAGE,
 };
 use crate::services::write_batch::{
   WriteBatchError, WriteStatement, ROW_COUNT_MISMATCH, ROW_COUNT_MISMATCH_CODE,
@@ -1148,7 +1148,7 @@ fn text_or_binary(bytes: Vec<u8>) -> JsonValue {
 }
 
 fn binary(bytes: &[u8]) -> JsonValue {
-  tagged_value("binary", bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+  binary_json(bytes)
 }
 
 /// 目录查询给的是裸值（插件的形状）

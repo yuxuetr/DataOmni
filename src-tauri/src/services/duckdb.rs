@@ -21,8 +21,8 @@
 use crate::services::query_error::QueryErrorDetails;
 use crate::services::query_error::{CONNECTION_LOST, CONNECTION_LOST_CODE};
 use crate::services::query_executor::{
-  admit_row_bytes, flush_full_batch, flush_remaining_batch, number_duplicate_columns, tagged_value,
-  widen_f32, QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow,
+  admit_row_bytes, binary_json, flush_full_batch, flush_remaining_batch, number_duplicate_columns,
+  tagged_value, widen_f32, QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow,
   QueryTruncationReason, StreamOptions,
 };
 use crate::services::write_batch::{
@@ -769,9 +769,7 @@ fn decode(value: &Value, type_id: LogicalTypeId) -> JsonValue {
     }
     Value::Text(text) | Value::Enum(text) => JsonValue::from(text.clone()),
     Value::Blob(bytes) if type_id == LogicalTypeId::Bit => JsonValue::from(format_bits(bytes)),
-    Value::Blob(bytes) | Value::Geometry(bytes) => {
-      tagged_value("binary", bytes.iter().map(|byte| format!("{byte:02x}")).collect())
-    }
+    Value::Blob(bytes) | Value::Geometry(bytes) => binary_json(bytes),
     Value::Map(entries) => JsonValue::from(map_text(entries)),
     // 照成员自己的样子显示：写成 JSON 的 `"hi"` 填回去，库里存的就是带引号的五个字
     Value::Union(inner) => decode(inner, type_id),

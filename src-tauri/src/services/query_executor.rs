@@ -1331,8 +1331,22 @@ pub(crate) fn refuse_non_query(handling: NonQueryHandling) -> Result<(), QueryEr
   }
 }
 
+/// 一行序列化之后多少字节。只数不存：原来 `to_vec` 把整行再写一份出来只为取长度，
+/// 一格大 BLOB 就要多占它十六进制的那么多内存
 fn serialized_row_size(row: &QueryRow) -> Result<usize, QueryError> {
-  serde_json::to_vec(row).map(|bytes| bytes.len()).map_err(display_error)
+  struct ByteCounter(usize);
+  impl std::io::Write for ByteCounter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+      self.0 += buf.len();
+      Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+      Ok(())
+    }
+  }
+  let mut counter = ByteCounter(0);
+  serde_json::to_writer(&mut counter, row).map_err(display_error)?;
+  Ok(counter.0)
 }
 
 fn sqlite_logical_type(database_type: &str) -> &'static str {
@@ -2095,20 +2109,28 @@ fn mysql_bytes_value(bytes: Vec<u8>) -> JsonValue {
   }
 }
 
-fn binary_json(bytes: &[u8]) -> JsonValue {
-  tagged_value("binary", bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>())
+/// 二进制单元格：`{ type: "binary", value: <十六进制> }`。各驱动共用这一份，前端只认这一种形状
+pub(crate) fn binary_json(bytes: &[u8]) -> JsonValue {
+  tagged_value("binary", encode_hex(bytes))
+}
+
+/// 小写十六进制。原来逐字节 `format!` 一次——一个 50 MB 的 BLOB 就是五千万次堆分配；
+/// 这里一次分配到位，按表查字符
+pub(crate) fn encode_hex(bytes: &[u8]) -> String {
+  const DIGITS: &[u8; 16] = b"0123456789abcdef";
+  let mut encoded = String::with_capacity(bytes.len() * 2);
+  for byte in bytes {
+    encoded.push(char::from(DIGITS[usize::from(byte >> 4)]));
+    encoded.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+  }
+  encoded
 }
 
 fn tagged_binary_value<E>(value: Result<Vec<u8>, E>) -> Result<JsonValue, QueryError>
 where
   E: std::fmt::Display,
 {
-  value
-    .map(|bytes| {
-      let encoded = bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
-      tagged_value("binary", encoded)
-    })
-    .map_err(display_error)
+  value.map(|bytes| binary_json(&bytes)).map_err(display_error)
 }
 
 /// 解码失败、序列化失败这类：错误来自我们这一侧，没有数据库给的结构可取，
@@ -2155,6 +2177,28 @@ pub(crate) fn tagged_value(value_type: &str, value: String) -> JsonValue {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn hex_encoding_matches_the_per_byte_format_it_replaced() {
+    let bytes: Vec<u8> = (0..=255).collect();
+    let expected: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    assert_eq!(encode_hex(&bytes), expected);
+    assert_eq!(encode_hex(&[]), "");
+    assert_eq!(
+      binary_json(&[0xde, 0xad]),
+      serde_json::json!({ "type": "binary", "value": "dead" })
+    );
+  }
+
+  #[test]
+  fn serialized_row_size_counts_exactly_what_serde_writes() {
+    let mut row = QueryRow::new();
+    row.insert("id".to_string(), JsonValue::from(1));
+    row.insert("blob".to_string(), binary_json(&vec![0xab; 4096]));
+    row.insert("note".to_string(), JsonValue::from("引号\"与换行\n"));
+    let expected = serde_json::to_vec(&row).map(|bytes| bytes.len()).ok();
+    assert_eq!(serialized_row_size(&row).ok(), expected);
+  }
 
   fn one_column(name: &str) -> Vec<QueryColumnMetadata> {
     vec![QueryColumnMetadata {

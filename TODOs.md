@@ -453,8 +453,15 @@
 评估里核过、**不新开条目**的：引入 Driver trait（1.0 不新增数据库，且穷尽 `match` 已在编译期列全改点；
 有人要第 8 种 SQL 驱动时重估）、拆大文件、表格 / 对象树虚拟化、连接心跳（断线按 `CONNECTION_LOST` 在下一次查询发现，可接受）。
 
-- [ ] PA1 二进制单元格：逐字节 `format!` 做 hex 编码、且在字节上限之前整格解码（`query_executor.rs` `binary_json` / `tagged_binary_value`）
-  - 做：查表法编码；单格超过上限时截断并带标记（与 Mongo / Redis 已有的单格截断一致）。判据：单测里超大单元格被截断且带标记。
+- [x] PA1 二进制单元格：逐字节 `format!` 做 hex 编码、且在字节上限之前整格解码（`query_executor.rs` `binary_json` / `tagged_binary_value`）
+  - 已做：新增 `query_executor::encode_hex`（一次分配、查表），MySQL / PG / SQLite / SQL Server / Oracle / DuckDB / ClickHouse、
+    Mongo shell 与 CSV 导入的 hex 编码全部改用它；`serialized_row_size` 改为只计数不落缓冲（原来为取长度把整行再 `to_vec` 一份）。
+    一格 N 字节的 BLOB 在拒行之前的峰值从「原始 + 2N 十六进制 + 2N 序列化副本 + N 次小分配」降为「原始 + 2N」。
+  - **没做单格截断**，原因：驱动在解码前已把整格读进内存，截断省不下这一份；而二进制列会被拿去当行定位条件和编辑初值
+    （`rowStatements.ts` 的 `isCompleteHex`、`editStartValue`），截断值进 WHERE 就是定位错行。整行仍受 12 MB 字节上限拒收。
+    重估条件：有人报单格大 BLOB 查询卡顿或内存告警时，先测 `SELECT` 一行 50 MB BYTEA 的峰值 RSS，再决定是否加「截断 + 禁止编辑」。
+  - 验证：`hex_encoding_matches_the_per_byte_format_it_replaced`（0..=255 全字节与旧实现逐字符一致）、
+    `serialized_row_size_counts_exactly_what_serde_writes`；`cargo test` 全过。
 - [ ] PA2 编辑器每次按键整棵树重渲染：`App.tsx` 订阅三个 store 的全部字段，且每次按键同步写一次工作区快照
   - 做：按字段订阅（`useShallow` / selector）；快照写入防抖。判据：测试断言按键只触发快照防抖后写一次。
 - [ ] PA3 「优先 / 要求 TLS」两档不校验证书，界面没说；旧 `ssl:true` 连接按 Required 处理
