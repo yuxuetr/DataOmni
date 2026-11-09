@@ -469,8 +469,10 @@
   - 验证：新增 `src/App.test.tsx`（第一份根组件渲染测试）——驱动量门：草稿连改四次，根下 Profiler 提交 0 次；
     反向验证：退回旧的 App 与组件代码，同一测试红。`workspacePersistence.test.ts` 新增防抖 / flush / 停止三段断言。
     `bun run test` 185 个文件 2301 条全过，lint 0 警告。留待：`bun tauri dev` 实机打字、切标签、关窗口后重开草稿还在。
-- [ ] PA3 「优先 / 要求 TLS」两档不校验证书，界面没说；旧 `ssl:true` 连接按 Required 处理
-  - 做：表单在这两档下写明「加密但不校验证书」。判据：渲染看过；i18n 门过。
+- [x] PA3 「优先 / 要求 TLS」两档不校验证书，界面没说；旧 `ssl:true` 连接按 Required 处理
+  - 已做：连接表单在这两档（含旧 `ssl:true`、没有 `tls_mode` 的连接）下方显示 `form.tls.unverifiedHint`：只加密、不校验证书，
+    要防中间人选「校验证书和主机名」。行为不改（与 libpq 的 prefer / require 语义一致）。
+  - 验证：`ConnectionForm.test.tsx` 渲染表单逐档切换，断言提示文字（不是文案键）只在 preferred / required 出现；i18n 门过。
 - [ ] PA4 删掉没有消费者的 `opener:default` 与 `@tauri-apps/plugin-opener`（插件未注册，后端直接调 `open_url`）
   - 判据：`databaseHandle.test.ts` 的配置门断言没有 `opener:` 权限。
 - [ ] PA5 前端方言分支不穷尽：新增方言会悄悄走 MySQL / PG 的默认分支

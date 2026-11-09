@@ -1083,6 +1083,7 @@ export const zh = {
   'form.tls.disabled': '禁用',
   'form.tls.preferred': '优先使用 TLS',
   'form.tls.required': '要求 TLS',
+  'form.tls.unverifiedHint': '这一档只加密、不校验服务端证书，挡不住中间人。要校验请选「校验证书和主机名」。',
   'form.tls.verifyCa': '校验证书颁发机构',
   'form.tls.verifyFull': '校验证书和主机名',
   'form.caPath': 'CA 证书路径',

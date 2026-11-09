@@ -1057,6 +1057,7 @@ export const en: Translations = {
   'form.tls.disabled': 'Disabled',
   'form.tls.preferred': 'Prefer TLS',
   'form.tls.required': 'Require TLS',
+  'form.tls.unverifiedHint': 'This mode encrypts the connection but does not verify the server certificate, so it cannot stop a man-in-the-middle. Choose "Verify the certificate and hostname" for that.',
   'form.tls.verifyCa': 'Verify the certificate authority',
   'form.tls.verifyFull': 'Verify the certificate and hostname',
   'form.caPath': 'CA certificate path',

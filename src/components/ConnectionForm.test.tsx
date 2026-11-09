@@ -137,3 +137,21 @@ function type(input: HTMLInputElement | null, value: string) {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
 }
+
+describe('ConnectionForm TLS 模式', () => {
+  // 「要求 TLS」听起来像安全的，其实不校验证书。界面上不写，就是让用户以为防住了中间人
+  it('优先 / 要求两档提示不校验证书，校验档不提示', () => {
+    act(() => root.render(<ConnectionForm mode="create" onClose={() => {}} />));
+    act(() => button('PostgreSQL').click());
+    const hint = 'does not verify the server certificate';
+
+    choose(select('tls-mode'), 'required');
+    expect(container.textContent).toContain(hint);
+    choose(select('tls-mode'), 'preferred');
+    expect(container.textContent).toContain(hint);
+    choose(select('tls-mode'), 'verify-full');
+    expect(container.textContent).not.toContain(hint);
+    choose(select('tls-mode'), 'disabled');
+    expect(container.textContent).not.toContain(hint);
+  });
+});
