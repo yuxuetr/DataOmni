@@ -1,0 +1,50 @@
+{
+  "connection_profile": {
+    "id": "profile-contract-1",
+    "name": "Orders PG",
+    "db_type": "postgresql",
+    "host": "db.internal",
+    "port": 5432,
+    "database": "orders",
+    "username": "readonly_user",
+    "password": "",
+    "ssl": true,
+    "tls_mode": "verify-full",
+    "ca_certificate_path": "/etc/ssl/certs/ca.pem",
+    "client_certificate_path": "/etc/ssl/certs/client.pem",
+    "client_key_path": "/etc/ssl/private/client.key",
+    "save_password": true,
+    "options": {
+      "application_name": "dataomni"
+    },
+    "tags": [
+      "core",
+      "reporting"
+    ],
+    "environment": "staging",
+    "agent_access": "read",
+    "credential_ref": "keychain:profile-contract-1",
+    "ssh_tunnel": {
+      "host": "bastion.internal",
+      "port": 2222,
+      "username": "ops",
+      "private_key_path": "/Users/ops/.ssh/id_ed25519",
+      "auth": "private-key",
+      "secret": "",
+      "secret_ref": "keychain:profile-contract-1#ssh",
+      "remote_host": "10.0.1.15",
+      "remote_port": 5432
+    },
+    "created_at": "2026-11-09T00:00:00Z",
+    "updated_at": "2026-11-09T01:00:00Z"
+  },
+  "query_error": {
+    "message": "duplicate key value violates unique constraint \"users_email_key\"",
+    "code": "23505",
+    "position": 42,
+    "detail": "Key (email)=(alice@example.com) already exists.",
+    "hint": "Use ON CONFLICT DO NOTHING to skip duplicates.",
+    "constraint": "users_email_key",
+    "table": "users"
+  }
+}

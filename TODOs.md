@@ -490,8 +490,12 @@
     前端 `backendError.ts` 与中英文文案补齐 `error.backend.pathReserved`。
   - 验证：`refuses_paths_inside_the_reserved_directory_even_through_dot_dot_and_symlinks` 覆盖直接路径、未创建文件、`..` 绕回、
     符号链接与兄弟目录前缀放行；`backendError.test.ts` 与 i18n 门全过。
-- [ ] PA7 跨层结构体字段只靠手工同步：加 Rust → JSON → TS 契约夹具（`ConnectionProfile` / `QueryError`）
-  - 判据：故意改一个字段名测试变红。
+- [x] PA7 跨层结构体字段只靠手工同步：加 Rust → JSON → TS 契约夹具（`ConnectionProfile` / `QueryError`）
+  - 已做：新增共用夹具 `fixtures/contract-conformance.json`（含全字段 `ConnectionProfile`、`SshTunnelConfig` 与平铺 `QueryError`）；
+    Rust 侧 `models::tests::connection_profile_matches_shared_contract_fixture` 与 `query_error::tests::query_error_matches_shared_contract_fixture`
+    不用 `..Default::default()` 逐字段构造并双向校对序列化结果；TS 侧 `src/contracts/contractConformance.test.ts` 用
+    `satisfies Record<keyof Required<...>, true>` + 差集类型约束与运行时键集合断言双端同步。
+  - 验证：反向——将夹具中的 `credential_ref` 改为 `credential_reference`，`vitest` 与 `cargo test` 双双变红；恢复后全绿。
 - [ ] PA8 杂项：只读闸门补 `dblink_connect` / `dblink_open` / `pg_sleep` / `BENCHMARK`；mysqldump 库名前加 `--`；
   `PoolRegistry` 锁中毒时记日志；AGENTS.md 删掉已不存在的 `services/database_service.rs`。
 

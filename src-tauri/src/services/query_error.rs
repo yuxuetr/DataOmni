@@ -330,4 +330,30 @@ mod tests {
       assert!(json.get(field).is_some(), "缺少 {field}：前端按字段名取值");
     }
   }
+
+  /// 跨层契约：`QueryError` 序列化出来的平铺 JSON 与前端 `QueryExecutionError`
+  /// 共用同一份 `fixtures/contract-conformance.json`，任一侧改了字段名都会直接变红。
+  #[test]
+  fn query_error_matches_shared_contract_fixture() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+      env!("CARGO_MANIFEST_DIR"),
+      "/../fixtures/contract-conformance.json"
+    )))
+    .expect("valid contract fixture json");
+    let expected = &fixture["query_error"];
+
+    let sample = QueryError {
+      message: "duplicate key value violates unique constraint \"users_email_key\"".to_string(),
+      code: Some("23505".to_string()),
+      details: Some(Box::new(QueryErrorDetails {
+        position: Some(42),
+        detail: Some("Key (email)=(alice@example.com) already exists.".to_string()),
+        hint: Some("Use ON CONFLICT DO NOTHING to skip duplicates.".to_string()),
+        constraint: Some("users_email_key".to_string()),
+        table: Some("users".to_string()),
+      })),
+    };
+
+    assert_eq!(serde_json::to_value(&sample).ok().as_ref(), Some(expected));
+  }
 }
