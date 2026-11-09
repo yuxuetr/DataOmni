@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const invokeMock = vi.fn();
@@ -58,5 +59,28 @@ describe('Tauri 安全边界配置', () => {
     const csp = tauriConfig.app?.security?.csp ?? '';
     expect(csp).toContain("default-src 'self'");
     expect(csp).toContain("script-src 'self'");
+  });
+  // 权限和前端依赖都要有消费者：插件的 JS 包在 src 里没人 import，前端就调不到它的命令，
+  // 那条权限只是白白放大一旦脚本注入后能做的事（opener / window-state 都是这样留下来的）
+  it('每条插件权限和每个 @tauri-apps/plugin-* 依赖都在 src 里有 import', () => {
+    const imported = new Set(
+      [...readdirSync('src', { recursive: true, encoding: 'utf8' })]
+        .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file))
+        .flatMap((file) => [...readFileSync(join('src', file), 'utf8').matchAll(/@tauri-apps\/plugin-([a-z-]+)/g)])
+        .map((match) => match[1])
+    );
+    const capability = JSON.parse(readFileSync('src-tauri/capabilities/default.json', 'utf8')) as {
+      permissions: string[];
+    };
+    const pluginsWithPermission = capability.permissions
+      .map((permission) => permission.split(':')[0])
+      .filter((plugin) => plugin !== 'core');
+    expect(pluginsWithPermission.filter((plugin) => !imported.has(plugin))).toEqual([]);
+
+    const manifest = JSON.parse(readFileSync('package.json', 'utf8')) as { dependencies: Record<string, string> };
+    const pluginDependencies = Object.keys(manifest.dependencies)
+      .filter((name) => name.startsWith('@tauri-apps/plugin-'))
+      .map((name) => name.slice('@tauri-apps/plugin-'.length));
+    expect(pluginDependencies.filter((plugin) => !imported.has(plugin))).toEqual([]);
   });
 });

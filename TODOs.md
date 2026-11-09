@@ -473,8 +473,11 @@
   - 已做：连接表单在这两档（含旧 `ssl:true`、没有 `tls_mode` 的连接）下方显示 `form.tls.unverifiedHint`：只加密、不校验证书，
     要防中间人选「校验证书和主机名」。行为不改（与 libpq 的 prefer / require 语义一致）。
   - 验证：`ConnectionForm.test.tsx` 渲染表单逐档切换，断言提示文字（不是文案键）只在 preferred / required 出现；i18n 门过。
-- [ ] PA4 删掉没有消费者的 `opener:default` 与 `@tauri-apps/plugin-opener`（插件未注册，后端直接调 `open_url`）
-  - 判据：`databaseHandle.test.ts` 的配置门断言没有 `opener:` 权限。
+- [x] PA4 删掉没有消费者的 `opener:default` 与 `@tauri-apps/plugin-opener`（插件未注册，后端直接调 `open_url`）
+  - 已做：`capabilities/default.json` 撤掉 `opener:default` 与 `window-state:default`（窗口状态由 Rust 侧插件自动存取，
+    前端从没调过它的命令）；`package.json` 删掉无人 import 的 `@tauri-apps/plugin-opener` 与 `@tauri-apps/plugin-cli`。现剩 5 条权限。
+  - 验证：`databaseHandle.test.ts` 新增门——每条非 `core:` 权限和每个 `@tauri-apps/plugin-*` 依赖都要在 `src` 里有 import；
+    反向验证：删依赖前该门红（报 `cli`、`opener`），删后绿。`cargo check` 过。留待：打包版确认窗口位置大小仍能在重启后恢复。
 - [ ] PA5 前端方言分支不穷尽：新增方言会悄悄走 MySQL / PG 的默认分支
   - 做：最大的几处（`rowStatements` / `tablePagination` / `tableDdl`）补穷尽检查。判据：反向验证——临时加一个假方言编译报错。
 - [ ] PA6 `write_text_file` / `write_binary_file` / `read_text_file` 接受任意路径
