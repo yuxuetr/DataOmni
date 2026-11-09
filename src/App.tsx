@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { clsx } from 'clsx';
 import {
   CLOSE_TAB_MENU_EVENT,
@@ -73,7 +74,7 @@ import {
   type WorkspaceTab
 } from './contracts/workspace';
 import { useSessionManager } from './utils/stateSync';
-import { saveWorkspaceSnapshot } from './utils/workspacePersistence';
+import { type WorkspaceSnapshotWatcher, watchWorkspaceSnapshot } from './utils/workspacePersistence';
 import { useResizablePanel } from './hooks/useResizablePanel';
 import { PanelResizeHandle } from './components/PanelResizeHandle';
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette';
@@ -120,7 +121,12 @@ function sqlTabHasUnsavedWork(
 }
 
 function App() {
-  const { activeConnection, selectedTable, openConnectionForm } = useAppStore();
+  // 只订阅用到的字段：整个 store 解构会让任何一处变化（例如编辑器每个键改一次草稿）都重渲染整棵树
+  const { activeConnection, selectedTable, openConnectionForm } = useAppStore(useShallow((state) => ({
+    activeConnection: state.activeConnection,
+    selectedTable: state.selectedTable,
+    openConnectionForm: state.openConnectionForm
+  })));
   const {
     tabs,
     activeTabId,
@@ -131,8 +137,23 @@ function App() {
     toggleTabPinned,
     retainClosedTab,
     reopenLastClosedTab
-  } = useWorkspaceStore();
-  const { openDocument, closeDocument, setActiveDocument, setSqlInput } = useQueryStore();
+  } = useWorkspaceStore(useShallow((state) => ({
+    tabs: state.tabs,
+    activeTabId: state.activeTabId,
+    closedTabs: state.closedTabs,
+    registerTab: state.registerTab,
+    activateTab: state.activateTab,
+    closeTab: state.closeTab,
+    toggleTabPinned: state.toggleTabPinned,
+    retainClosedTab: state.retainClosedTab,
+    reopenLastClosedTab: state.reopenLastClosedTab
+  })));
+  const { openDocument, closeDocument, setActiveDocument, setSqlInput } = useQueryStore(useShallow((state) => ({
+    openDocument: state.openDocument,
+    closeDocument: state.closeDocument,
+    setActiveDocument: state.setActiveDocument,
+    setSqlInput: state.setSqlInput
+  })));
   // 等待用户在三选一里做决定的标签
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null);
   const [tabMenu, setTabMenu] = useState<
@@ -146,7 +167,6 @@ function App() {
       decide: (choice: LeaveTransactionChoice) => void;
     } | null
   >(null);
-  const documents = useQueryStore((state) => state.documents);
   const connections = useConnectionStore((state) => state.connections);
   const databaseMetadata = useAppStore((state) => state.databaseMetadata);
   const t = useLanguageStore((state) => state.t);
@@ -157,14 +177,11 @@ function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
 
-  const unsavedTabIds = useMemo(
-    () => new Set(
-      Object.keys(documents).filter(
-        (documentId) => sqlTabHasUnsavedWork(tabs, { documents }, documentId)
-      )
-    ),
-    [documents, tabs]
-  );
+  // 选出 id 列表而不是整份草稿：打字只在「未保存」状态翻转时才让这里重渲染
+  const unsavedTabIdList = useQueryStore(useShallow((state) => Object.keys(state.documents).filter(
+    (documentId) => sqlTabHasUnsavedWork(tabs, state, documentId)
+  )));
+  const unsavedTabIds = useMemo(() => new Set(unsavedTabIdList), [unsavedTabIdList]);
 
   const sessionManager = useSessionManager();
   const sidebar = useResizablePanel({
@@ -198,24 +215,29 @@ function App() {
     [connections]
   );
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
+  // 离线标签（绑定的连接不是当前连接）只读展示草稿；在线时不订阅，免得每个键都重渲染这里
+  const offlineDraft = useQueryStore((state) => (
+    activeTab && activeTab.binding.profileId !== activeProfileId
+      ? state.documents[activeTab.id]?.sqlInput ?? ''
+      : ''
+  ));
   const pendingCloseTab = pendingCloseTabId
     ? tabs.find((tab) => tab.id === pendingCloseTabId) ?? null
     : null;
   const menuTab = tabMenu ? tabs.find((tab) => tab.id === tabMenu.tabId) ?? null : null;
 
-  // 标签、最后活动标签和草稿的任一变化都写回快照
-  // （恢复发生在 main.tsx 首次渲染之前，这里不会覆盖掉上次的内容）
+  // 标签与草稿的变化防抖后写回快照；页面卸载时把没写出去的补上
+  const snapshotWatcher = useRef<WorkspaceSnapshotWatcher | null>(null);
   useEffect(() => {
-    const drafts: Record<string, string> = {};
-    for (const tab of tabs) {
-      const draft = documents[tab.id];
-      if (tab.kind === 'sql' && draft) {
-        drafts[tab.id] = draft.sqlInput;
-      }
-    }
-
-    saveWorkspaceSnapshot({ tabs, activeTabId, drafts, closedTabs });
-  }, [tabs, activeTabId, documents, closedTabs]);
+    const watcher = watchWorkspaceSnapshot();
+    snapshotWatcher.current = watcher;
+    window.addEventListener('pagehide', watcher.flush);
+    return () => {
+      window.removeEventListener('pagehide', watcher.flush);
+      watcher.stop();
+      snapshotWatcher.current = null;
+    };
+  }, []);
 
   // 活动标签决定当前编辑的是哪一份 SQL 文档；非 SQL 标签不改变它，
   // 这样在表标签里看数据不会影响后台仍在执行的查询写回哪个文档。
@@ -383,6 +405,7 @@ function App() {
       }
 
       closing = true;
+      snapshotWatcher.current?.flush();
 
       try {
         await sessionManager.shutdown();
@@ -856,7 +879,7 @@ function App() {
           language={boundProfile?.db_type === DatabaseType.Neo4j ? 'cypher'
             : boundProfile?.db_type === DatabaseType.Elasticsearch ? 'json'
               : boundProfile?.db_type === DatabaseType.MongoDB ? 'javascript' : 'sql'}
-          draft={documents[activeTab.id]?.sqlInput ?? ''}
+          draft={offlineDraft}
         />
       );
     }

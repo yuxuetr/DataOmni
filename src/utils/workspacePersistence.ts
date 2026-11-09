@@ -198,6 +198,89 @@ export function clearWorkspaceSnapshot(): void {
 }
 
 /**
+ * 快照写入的防抖间隔。
+ *
+ * 草稿在编辑器里每敲一个键就变一次，而一次写入是把全部标签和草稿整份 `JSON.stringify`
+ * 再同步 `setItem`——跟着每个键跑，草稿越大打字越卡。停手半秒再写，崩溃时最多丢这半秒
+ */
+export const SNAPSHOT_DEBOUNCE_MS = 500;
+
+/** 从两个 store 现取一份快照写出去。只有 SQL 标签有草稿 */
+function saveCurrentWorkspaceSnapshot(): void {
+  const { tabs, activeTabId, closedTabs } = useWorkspaceStore.getState();
+  const { documents } = useQueryStore.getState();
+  const drafts: Record<string, string> = {};
+  for (const tab of tabs) {
+    const draft = documents[tab.id];
+    if (tab.kind === 'sql' && draft) {
+      drafts[tab.id] = draft.sqlInput;
+    }
+  }
+  saveWorkspaceSnapshot({ tabs, activeTabId, drafts, closedTabs });
+}
+
+export interface WorkspaceSnapshotWatcher {
+  /** 有没写出去的改动就立刻写（关窗口之前调） */
+  flush: () => void;
+  /** 退订；没写出去的改动先写掉 */
+  stop: () => void;
+}
+
+/**
+ * 标签、活动标签、关闭的标签与草稿任一变化，防抖后写回快照。
+ *
+ * 直接订阅 store 而不是放在组件的 effect 里：放在 effect 里就得在组件里订阅全部草稿，
+ * 根组件会跟着每个键重渲染一遍。恢复发生在 main.tsx 首次渲染之前，订阅之后才有写入，
+ * 不会把上次的内容盖成空的
+ */
+export function watchWorkspaceSnapshot(delayMs = SNAPSHOT_DEBOUNCE_MS): WorkspaceSnapshotWatcher {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const schedule = () => {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+    timer = setTimeout(() => {
+      timer = null;
+      saveCurrentWorkspaceSnapshot();
+    }, delayMs);
+  };
+
+  const flush = () => {
+    if (timer === null) {
+      return;
+    }
+    clearTimeout(timer);
+    timer = null;
+    saveCurrentWorkspaceSnapshot();
+  };
+
+  const unsubscribeWorkspace = useWorkspaceStore.subscribe((state, previous) => {
+    if (
+      state.tabs !== previous.tabs
+      || state.activeTabId !== previous.activeTabId
+      || state.closedTabs !== previous.closedTabs
+    ) {
+      schedule();
+    }
+  });
+  const unsubscribeQuery = useQueryStore.subscribe((state, previous) => {
+    if (state.documents !== previous.documents) {
+      schedule();
+    }
+  });
+
+  return {
+    flush,
+    stop: () => {
+      unsubscribeWorkspace();
+      unsubscribeQuery();
+      flush();
+    }
+  };
+}
+
+/**
  * 把上次的快照灌回 store。
  *
  * 在 React 渲染之前调用（见 main.tsx）：如果放到 effect 里，首帧的空工作区

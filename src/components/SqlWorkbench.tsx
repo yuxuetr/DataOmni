@@ -1,6 +1,7 @@
 import { identifierDialectFor } from '../utils/sqlIdentifiers';
 import { firstRowsQuery } from '../utils/tablePagination';
 import React, { useEffect, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { 
   Database, 
   Wifi, 
@@ -92,9 +93,23 @@ export const SqlWorkbench: React.FC<SqlWorkbenchProps> = ({
     setSqlInput,
     parseStatements,
     executeStatement,
-  } = useQueryStore();
+  } = useQueryStore(useShallow((state) => ({
+    database: state.database,
+    session: state.session,
+    isConnecting: state.isConnecting,
+    connectionLost: state.connectionLost,
+    error: state.error,
+    setError: state.setError,
+    setSqlInput: state.setSqlInput,
+    parseStatements: state.parseStatements,
+    executeStatement: state.executeStatement
+  })));
 
-  const { selectTable, clearSelectedTable, connectionReady } = useAppStore();
+  const { selectTable, clearSelectedTable, connectionReady } = useAppStore(useShallow((state) => ({
+    selectTable: state.selectTable,
+    clearSelectedTable: state.clearSelectedTable,
+    connectionReady: state.connectionReady
+  })));
 
   // 算出来的，不存在 state 里：存一份就意味着它可能和来源不一致，而这里
   // 要回答的恰恰是「界面说的和实际情况是不是一回事」

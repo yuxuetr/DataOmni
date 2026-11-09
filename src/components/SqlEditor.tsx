@@ -1,5 +1,6 @@
 import { serverLabel } from '../utils/serverPresets';
 import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { clsx } from 'clsx';
 import {
   Play,
@@ -123,7 +124,29 @@ export const SqlEditor: React.FC<SqlEditorProps> = ({ connection, documentTitle 
     setAutocommit,
     setParameters,
     session
-  } = useQueryStore();
+  } = useQueryStore(useShallow((state) => ({
+    executions: state.executions,
+    queryTimeoutMs: state.queryTimeoutMs,
+    queryResultRowLimit: state.queryResultRowLimit,
+    isConnecting: state.isConnecting,
+    error: state.error,
+    setSqlInput: state.setSqlInput,
+    parseStatements: state.parseStatements,
+    executeSql: state.executeSql,
+    executeStatement: state.executeStatement,
+    executeAllStatements: state.executeAllStatements,
+    cancelExecution: state.cancelExecution,
+    setQueryTimeoutMs: state.setQueryTimeoutMs,
+    setQueryResultRowLimit: state.setQueryResultRowLimit,
+    clearResults: state.clearResults,
+    removeStatement: state.removeStatement,
+    setResultsCollapsed: state.setResultsCollapsed,
+    setError: state.setError,
+    autocommit: state.autocommit,
+    setAutocommit: state.setAutocommit,
+    setParameters: state.setParameters,
+    session: state.session
+  })));
   const parameterValues = useQueryStore((state) => selectActiveSqlDocument(state).parameters);
 
   const shownResults = statements.filter((statement) => statement.result || statement.error);

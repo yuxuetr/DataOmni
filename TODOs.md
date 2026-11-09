@@ -462,8 +462,13 @@
     重估条件：有人报单格大 BLOB 查询卡顿或内存告警时，先测 `SELECT` 一行 50 MB BYTEA 的峰值 RSS，再决定是否加「截断 + 禁止编辑」。
   - 验证：`hex_encoding_matches_the_per_byte_format_it_replaced`（0..=255 全字节与旧实现逐字符一致）、
     `serialized_row_size_counts_exactly_what_serde_writes`；`cargo test` 全过。
-- [ ] PA2 编辑器每次按键整棵树重渲染：`App.tsx` 订阅三个 store 的全部字段，且每次按键同步写一次工作区快照
-  - 做：按字段订阅（`useShallow` / selector）；快照写入防抖。判据：测试断言按键只触发快照防抖后写一次。
+- [x] PA2 编辑器每次按键整棵树重渲染：`App.tsx` 订阅三个 store 的全部字段，且每次按键同步写一次工作区快照
+  - 已做：`App.tsx` 与 9 个组件里 13 处整 store 解构（`useXStore()`）改为 `useShallow` 按字段订阅；App 不再订阅整份
+    `documents`，只选「未保存标签 id 列表」与离线标签的草稿；快照写入移到 `watchWorkspaceSnapshot`（直接订阅 store，
+    500 ms 防抖，关窗口前与 `pagehide` 时立刻补写）。
+  - 验证：新增 `src/App.test.tsx`（第一份根组件渲染测试）——驱动量门：草稿连改四次，根下 Profiler 提交 0 次；
+    反向验证：退回旧的 App 与组件代码，同一测试红。`workspacePersistence.test.ts` 新增防抖 / flush / 停止三段断言。
+    `bun run test` 185 个文件 2301 条全过，lint 0 警告。留待：`bun tauri dev` 实机打字、切标签、关窗口后重开草稿还在。
 - [ ] PA3 「优先 / 要求 TLS」两档不校验证书，界面没说；旧 `ssl:true` 连接按 Required 处理
   - 做：表单在这两档下写明「加密但不校验证书」。判据：渲染看过；i18n 门过。
 - [ ] PA4 删掉没有消费者的 `opener:default` 与 `@tauri-apps/plugin-opener`（插件未注册，后端直接调 `open_url`）

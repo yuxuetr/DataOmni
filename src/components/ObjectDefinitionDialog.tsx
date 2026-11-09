@@ -40,7 +40,7 @@ export function ObjectDefinitionDialog({
   connection,
   onClose
 }: ObjectDefinitionDialogProps) {
-  const { database } = useQueryStore();
+  const database = useQueryStore((state) => state.database);
   const t = useLanguageStore((state) => state.t);
   const [definition, setDefinition] = useState<string | null>(null);
   const [properties, setProperties] = useState<Array<[string, string]> | null>(null);

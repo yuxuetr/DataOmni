@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ON_DISK_0_5 from '../../fixtures/on-disk-0.5/workspace.json?raw';
 import { createSqlWorkspaceTab, createTableWorkspaceTab } from '../contracts/workspace';
+import { useQueryStore } from '../stores/queryStore';
+import { useWorkspaceStore } from '../stores/workspaceStore';
 import {
   clearWorkspaceSnapshot,
   loadWorkspaceSnapshot,
-  saveWorkspaceSnapshot
+  saveWorkspaceSnapshot,
+  watchWorkspaceSnapshot
 } from './workspacePersistence';
 
 const STORAGE_KEY = 'dataomni_workspace';
@@ -302,6 +305,37 @@ describe('跨版本的工作区快照', () => {
     });
     expect(sql?.pinned).toBe(true);
     expect(sql?.binding.sessionId).toBeNull();
+  });
+
+  it('草稿连续变化只在停手后写一次快照；关窗前 flush 立刻写；停止后不再写', () => {
+    vi.useFakeTimers();
+    try {
+      const setItem = vi.spyOn(localStorage, 'setItem');
+      useWorkspaceStore.getState().restoreTabs([createSqlWorkspaceTab('profile-a', { id: 'sql-w' })], 'sql-w');
+      const watcher = watchWorkspaceSnapshot(500);
+
+      // 像在编辑器里连敲三个键
+      for (const text of ['S', 'SE', 'SEL']) {
+        useQueryStore.getState().restoreDocuments({ 'sql-w': text });
+        vi.advanceTimersByTime(100);
+      }
+      expect(setItem).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(500);
+      expect(setItem).toHaveBeenCalledTimes(1);
+      expect(loadWorkspaceSnapshot()?.drafts['sql-w']).toBe('SEL');
+
+      useQueryStore.getState().restoreDocuments({ 'sql-w': 'SELECT' });
+      watcher.flush();
+      expect(setItem).toHaveBeenCalledTimes(2);
+      expect(loadWorkspaceSnapshot()?.drafts['sql-w']).toBe('SELECT');
+
+      watcher.stop();
+      useQueryStore.getState().restoreDocuments({ 'sql-w': 'SELECT 1' });
+      vi.advanceTimersByTime(1_000);
+      expect(setItem).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('更新的版本写下的快照不被这一版覆盖：退回旧版再升回去，标签还在', () => {

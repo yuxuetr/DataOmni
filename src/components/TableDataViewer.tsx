@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { invoke } from '@tauri-apps/api/core';
 import { supportsFeature } from '../contracts/databaseSupport';
 import { useLanguageStore } from '../stores/languageStore';
@@ -234,7 +235,10 @@ export default function TableDataViewer({
   const [commitFailure, setCommitFailure] = useState<CommitFailure | null>(null);
   const [commitNotice, setCommitNotice] = useState<string | null>(null);
   
-  const { database, connectionId } = useQueryStore();
+  const { database, connectionId } = useQueryStore(useShallow((state) => ({
+    database: state.database,
+    connectionId: state.connectionId
+  })));
   // 读走的是 SQL 标签那条会话连接。PostgreSQL 的事务一旦失败，这条连接在回滚前
   // 什么都不执行，报出来的却是 sqlx 描述列时的一长串原话，看着像表坏了
   const describeReadError = (err: unknown): string => {

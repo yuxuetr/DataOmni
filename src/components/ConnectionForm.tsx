@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { 
   Database, 
   FileText, 
@@ -203,7 +204,15 @@ export const ConnectionForm: React.FC<ConnectionFormProps> = ({
     error,
     testResult,
     clearTestResult
-  } = useConnectionStore();
+  } = useConnectionStore(useShallow((state) => ({
+    createConnection: state.createConnection,
+    updateConnection: state.updateConnection,
+    testConnection: state.testConnection,
+    isLoading: state.isLoading,
+    error: state.error,
+    testResult: state.testResult,
+    clearTestResult: state.clearTestResult
+  })));
 
   // 表单状态
   const [formData, setFormData] = useState<Partial<ConnectionConfig>>(() => {
