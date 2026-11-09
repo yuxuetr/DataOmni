@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import {
   Plus,
   Database,
@@ -55,8 +56,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCollapse
 }) => {
   const t = useLanguageStore((state) => state.t);
-  const { connections, loadConnections, deleteConnection } = useConnectionStore();
-  const { connectionForm, openConnectionForm, closeConnectionForm } = useAppStore();
+  const { connections, loadConnections, deleteConnection } = useConnectionStore(useShallow((state) => ({
+    connections: state.connections,
+    loadConnections: state.loadConnections,
+    deleteConnection: state.deleteConnection
+  })));
+  const { connectionForm, openConnectionForm, closeConnectionForm } = useAppStore(useShallow((state) => ({
+    connectionForm: state.connectionForm,
+    openConnectionForm: state.openConnectionForm,
+    closeConnectionForm: state.closeConnectionForm
+  })));
   const [showConnectionMenu, setShowConnectionMenu] = useState(false);
   const connectionMenuRef = useRef<HTMLDivElement>(null);
   // 只装本组件自己产生的错误（加载列表、删除连接）；连接过程的错误由 connector 持有

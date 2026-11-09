@@ -70,6 +70,7 @@ const MESSAGES: Readonly<Record<string, TranslationKey>> = {
   DATAOMNI_UPDATE_CHECK_FAILED: 'error.backend.updateCheckFailed',
   DATAOMNI_DIRECTORY_MISSING: 'error.backend.directoryMissing',
   DATAOMNI_FILES_EXIST: 'error.backend.filesExist',
+  DATAOMNI_PATH_RESERVED: 'error.backend.pathReserved',
   DATAOMNI_RELATIVE_PATH_INVALID: 'error.backend.relativePathInvalid',
   DATAOMNI_FILE_WRITE_FAILED: 'error.backend.fileWriteFailed',
   DATAOMNI_FILE_READ_FAILED: 'error.backend.fileReadFailed',

@@ -23,8 +23,8 @@ use crate::models::ConnectionProfile;
 use crate::services::query_error::QueryErrorDetails;
 use crate::services::query_error::{CONNECTION_LOST, CONNECTION_LOST_CODE};
 use crate::services::query_executor::{
-  admit_row_bytes, flush_full_batch, flush_remaining_batch, number_duplicate_columns, tagged_value,
-  widen_f32, QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow,
+  admit_row_bytes, binary_json, flush_full_batch, flush_remaining_batch, number_duplicate_columns,
+  tagged_value, widen_f32, QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow,
   QueryTruncationReason, StreamOptions,
 };
 use crate::services::transaction_state::{TransactionState, TransactionStatus};
@@ -1239,7 +1239,7 @@ fn decode(oracle_type: &OracleType, value: &SqlValue) -> Result<JsonValue, Query
     }
     OracleType::Raw(_) | OracleType::LongRaw | OracleType::BLOB => {
       let bytes = value.get::<Vec<u8>>().map_err(|error| query_error(&error, None))?;
-      tagged_value("binary", bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+      binary_json(&bytes)
     }
     OracleType::Boolean => {
       JsonValue::from(value.get::<bool>().map_err(|error| query_error(&error, None))?)

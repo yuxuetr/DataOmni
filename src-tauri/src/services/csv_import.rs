@@ -724,7 +724,7 @@ fn binary_param(dialect: Dialect, field: String) -> String {
   match (spelled, dialect) {
     (Some(hex), _) => hex.to_string(),
     (None, Dialect::Oracle) => field,
-    (None, _) => field.bytes().map(|byte| format!("{byte:02x}")).collect(),
+    (None, _) => crate::services::query_executor::encode_hex(field.as_bytes()),
   }
 }
 

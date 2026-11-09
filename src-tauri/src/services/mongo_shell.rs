@@ -976,7 +976,7 @@ fn write_string(output: &mut String, text: &str) {
 
 fn write_binary(output: &mut String, binary: &Binary) {
   if binary.subtype == BinarySubtype::Uuid && binary.bytes.len() == 16 {
-    let hex: String = binary.bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    let hex = crate::services::query_executor::encode_hex(&binary.bytes);
     let _ = write!(
       output,
       "UUID('{}-{}-{}-{}-{}')",

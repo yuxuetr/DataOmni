@@ -14,9 +14,7 @@
     "core:default",
     "core:window:allow-destroy",
     "core:webview:allow-set-webview-zoom",
-    "opener:default",
     "log:default",
-    "dialog:default",
-    "window-state:default"
+    "dialog:default"
   ]
 }

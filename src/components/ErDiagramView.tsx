@@ -122,7 +122,7 @@ const TYPE_BUDGET = 16;
  * 「这两张表有关系」，看不出是哪两个字段在关联。
  */
 export function ErDiagramView({ connection, onOpenSql }: ErDiagramViewProps) {
-  const { database } = useQueryStore();
+  const database = useQueryStore((state) => state.database);
   const [comparing, setComparing] = useState(false);
   const t = useLanguageStore((state) => state.t);
   // 我们自己执行过 DDL 就会 +1，图跟着重拉。外部改动靠刷新按钮。

@@ -22,8 +22,8 @@ use crate::models::{ConnectionProfile, TlsMode};
 use crate::services::query_error::QueryErrorDetails;
 use crate::services::query_error::{CONNECTION_LOST, CONNECTION_LOST_CODE};
 use crate::services::query_executor::{
-  admit_row_bytes, flush_full_batch, flush_remaining_batch, format_date, format_datetime,
-  format_time, number_duplicate_columns, tagged_value, widen_f32, ExtraResultSets,
+  admit_row_bytes, binary_json, flush_full_batch, flush_remaining_batch, format_date,
+  format_datetime, format_time, number_duplicate_columns, tagged_value, widen_f32, ExtraResultSets,
   NonQueryHandling, QueryColumnMetadata, QueryExecutionSummary, QueryResultBatch, QueryRow,
   QueryTruncationReason, StreamOptions,
 };
@@ -1091,9 +1091,7 @@ fn decode(column_type: ColumnType, data: &ColumnData<'static>) -> Result<JsonVal
     ColumnData::Guid(value) => {
       value.map(|guid| tagged_value("text", guid.to_string().to_uppercase()))
     }
-    ColumnData::Binary(value) => value.as_ref().map(|bytes| {
-      tagged_value("binary", bytes.iter().map(|byte| format!("{byte:02x}")).collect())
-    }),
+    ColumnData::Binary(value) => value.as_ref().map(|bytes| binary_json(bytes)),
     ColumnData::Numeric(value) => {
       value.map(|numeric| tagged_value("decimal", format_numeric(numeric.value(), numeric.scale())))
     }

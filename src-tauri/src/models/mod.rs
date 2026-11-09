@@ -961,4 +961,59 @@ mod tests {
     assert!(!profile.open_to_agents());
     assert_eq!(serde_json::to_value(AgentAccess::Read).ok(), Some(serde_json::json!("read")));
   }
+
+  /// 跨层契约：`ConnectionProfile` 与 `SshTunnelConfig` 的每一个字段名和枚举串与前端
+  /// `src/contracts/connection.ts` 共用同一份 `fixtures/contract-conformance.json`。
+  /// 这里不用 `..Default::default()`，任一侧改了或增删了字段都会在编译或断言时直接变红。
+  #[test]
+  fn connection_profile_matches_shared_contract_fixture() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+      env!("CARGO_MANIFEST_DIR"),
+      "/../fixtures/contract-conformance.json"
+    )))
+    .expect("valid contract fixture json");
+    let expected = &fixture["connection_profile"];
+
+    let sample = ConnectionProfile {
+      id: "profile-contract-1".to_string(),
+      name: "Orders PG".to_string(),
+      db_type: DatabaseType::PostgreSQL,
+      host: "db.internal".to_string(),
+      port: 5432,
+      database: Some("orders".to_string()),
+      username: "readonly_user".to_string(),
+      password: String::new(),
+      ssl: true,
+      tls_mode: Some(TlsMode::VerifyFull),
+      ca_certificate_path: Some("/etc/ssl/certs/ca.pem".to_string()),
+      client_certificate_path: Some("/etc/ssl/certs/client.pem".to_string()),
+      client_key_path: Some("/etc/ssl/private/client.key".to_string()),
+      save_password: true,
+      options: HashMap::from([("application_name".to_string(), "dataomni".to_string())]),
+      tags: vec!["core".to_string(), "reporting".to_string()],
+      environment: ConnectionEnvironment::Staging,
+      agent_access: AgentAccess::Read,
+      credential_ref: Some("keychain:profile-contract-1".to_string()),
+      ssh_tunnel: Some(SshTunnelConfig {
+        host: "bastion.internal".to_string(),
+        port: 2222,
+        username: "ops".to_string(),
+        private_key_path: "/Users/ops/.ssh/id_ed25519".to_string(),
+        auth: SshAuthMethod::PrivateKey,
+        secret: String::new(),
+        secret_ref: Some("keychain:profile-contract-1#ssh".to_string()),
+        remote_host: Some("10.0.1.15".to_string()),
+        remote_port: Some(5432),
+      }),
+      created_at: "2026-11-09T00:00:00Z".to_string(),
+      updated_at: "2026-11-09T01:00:00Z".to_string(),
+    };
+
+    let serialized = serde_json::to_value(&sample).expect("serialize sample profile");
+    assert_eq!(&serialized, expected);
+
+    let parsed: ConnectionProfile =
+      serde_json::from_value(expected.clone()).expect("deserialize contract profile");
+    assert_eq!(serde_json::to_value(&parsed).ok().as_ref(), Some(expected));
+  }
 }

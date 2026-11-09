@@ -17,6 +17,39 @@ pub const FILE_TOO_LARGE: &str = "DATAOMNI_FILE_TOO_LARGE";
 pub const FILES_EXIST: &str = "DATAOMNI_FILES_EXIST";
 /// 相对路径不合规矩（绝对路径、带 `..`、空的）。数据里带的是那条路径
 pub const RELATIVE_PATH_INVALID: &str = "DATAOMNI_RELATIVE_PATH_INVALID";
+/// 路径落在应用自己的配置目录里。数据里带的是那条路径
+pub const PATH_RESERVED: &str = "DATAOMNI_PATH_RESERVED";
+
+/// 下面三个命令收前端给的任意路径（不引入 `tauri-plugin-fs` 的取舍见 `write_text_file`）。
+/// CSP 挡住了外来脚本，这一道是万一没挡住时的第二层：前端脚本不能借它们读改
+/// `connections.json`（连接配置与 Agent 授权）以及同目录下的 CLI 审计记录
+fn refuse_reserved_path(target: &Path) -> Result<(), String> {
+  match crate::services::connection_service::app_config_dir() {
+    Some(reserved) => refuse_inside(target, &reserved),
+    None => Ok(()),
+  }
+}
+
+fn refuse_inside(target: &Path, reserved: &Path) -> Result<(), String> {
+  let reserved = reserved.canonicalize().unwrap_or_else(|_| reserved.to_path_buf());
+  if resolve_for_comparison(target).starts_with(&reserved) {
+    return Err(format!("{PATH_RESERVED}: {}", target.display()));
+  }
+  Ok(())
+}
+
+/// 解开符号链接与 `..` 再比。文件可能还不存在（另存为），那就规范化父目录再接上文件名
+fn resolve_for_comparison(target: &Path) -> PathBuf {
+  if let Ok(resolved) = target.canonicalize() {
+    return resolved;
+  }
+  match (target.parent(), target.file_name()) {
+    (Some(parent), Some(name)) => {
+      parent.canonicalize().map(|dir| dir.join(name)).unwrap_or_else(|_| target.to_path_buf())
+    }
+    _ => target.to_path_buf(),
+  }
+}
 
 /// 把导出内容写到用户在保存对话框里选定的路径。
 ///
@@ -56,6 +89,7 @@ pub async fn write_text_file(
   encoding: Option<TextEncoding>,
 ) -> Result<u64, String> {
   let target = PathBuf::from(&path);
+  refuse_reserved_path(&target)?;
 
   // 目录不存在时 `fs::write` 报的是 "No such file or directory (os error 2)"，
   // 指向的却是文件本身，看的人会以为路径拼错了。先点名说是父目录。
@@ -87,6 +121,7 @@ pub async fn write_binary_file(path: String, contents_base64: String) -> Result<
     STANDARD.decode(contents_base64.as_bytes()).map_err(|e| format!("{BASE64_INVALID}: {e}"))?;
 
   let target = PathBuf::from(&path);
+  refuse_reserved_path(&target)?;
   if let Some(parent) = target.parent() {
     if !parent.as_os_str().is_empty() && !parent.exists() {
       return Err(format!("{DIRECTORY_MISSING}: {}", parent.display()));
@@ -113,6 +148,7 @@ const MAX_TEXT_FILE_BYTES: u64 = 8 * 1024 * 1024;
 #[tauri::command]
 pub async fn read_text_file(path: String) -> Result<TextFile, String> {
   let target = PathBuf::from(&path);
+  refuse_reserved_path(&target)?;
 
   let size = file_size(&target)?;
   if size > MAX_TEXT_FILE_BYTES {
@@ -169,6 +205,7 @@ pub async fn write_new_text_files(
   files: Vec<NewTextFile>,
 ) -> Result<Vec<String>, String> {
   let root = PathBuf::from(&directory);
+  refuse_reserved_path(&root)?;
   if !root.is_dir() {
     return Err(format!("{DIRECTORY_MISSING}: {}", root.display()));
   }
@@ -204,6 +241,36 @@ pub async fn write_new_text_files(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn refuses_paths_inside_the_reserved_directory_even_through_dot_dot_and_symlinks() {
+    let root = std::env::temp_dir().join(format!("dataomni-reserved-{}", std::process::id()));
+    let reserved = root.join("config");
+    let elsewhere = root.join("exports");
+    std::fs::create_dir_all(&reserved).expect("reserved dir");
+    std::fs::create_dir_all(&elsewhere).expect("other dir");
+    std::fs::write(reserved.join("connections.json"), "{}").expect("seed");
+
+    // 已有的文件、要新建的文件、绕一圈 `..` 回来的，都拒
+    assert!(refuse_inside(&reserved.join("connections.json"), &reserved)
+      .is_err_and(|error| error.starts_with(PATH_RESERVED)));
+    assert!(refuse_inside(&reserved.join("new.sql"), &reserved).is_err());
+    assert!(refuse_inside(&elsewhere.join("../config/connections.json"), &reserved).is_err());
+    #[cfg(unix)]
+    {
+      let link = elsewhere.join("innocent.json");
+      std::os::unix::fs::symlink(reserved.join("connections.json"), &link).expect("symlink");
+      assert!(refuse_inside(&link, &reserved).is_err(), "符号链接指进去的也要拒");
+    }
+
+    // 旁边的目录、名字以它开头的兄弟目录照常放行
+    assert!(refuse_inside(&elsewhere.join("report.csv"), &reserved).is_ok());
+    let sibling = root.join("config-backup");
+    std::fs::create_dir_all(&sibling).expect("sibling");
+    assert!(refuse_inside(&sibling.join("a.sql"), &reserved).is_ok());
+
+    std::fs::remove_dir_all(&root).ok();
+  }
 
   fn new_file(path: &str, contents: &str) -> NewTextFile {
     NewTextFile { path: path.to_string(), contents: contents.to_string() }

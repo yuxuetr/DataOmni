@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { PLAIN_TEXT_INPUT } from './FormControls';
 import {
   Database,
@@ -148,7 +149,7 @@ export default function DatabaseExplorer({
   onOpenAiDesign,
   onOpenQuery
 }: DatabaseExplorerProps) {
-  const { connections } = useConnectionStore();
+  const connections = useConnectionStore((state) => state.connections);
   const {
     database,
     connectionString,
@@ -156,13 +157,24 @@ export default function DatabaseExplorer({
     connectionLost,
     // 局部的 error 是「对象列表没读出来」，和连接死没死是两回事
     error: connectionError
-  } = useQueryStore();
+  } = useQueryStore(useShallow((state) => ({
+    database: state.database,
+    connectionString: state.connectionString,
+    isConnecting: state.isConnecting,
+    connectionLost: state.connectionLost,
+    error: state.error
+  })));
   const {
     databaseMetadata,
     setDatabaseMetadata,
     connectionReady,
     schemaVersion
-  } = useAppStore();
+  } = useAppStore(useShallow((state) => ({
+    databaseMetadata: state.databaseMetadata,
+    setDatabaseMetadata: state.setDatabaseMetadata,
+    connectionReady: state.connectionReady,
+    schemaVersion: state.schemaVersion
+  })));
   
   const health = connectionHealth({
     isConnecting,

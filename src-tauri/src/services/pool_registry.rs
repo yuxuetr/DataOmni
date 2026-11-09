@@ -19,17 +19,32 @@ impl<P> Default for PoolRegistry<P> {
 
 impl<P> PoolRegistry<P> {
   pub fn insert(&self, key: String, pool: Arc<P>) {
-    if let Ok(mut pools) = self.pools.lock() {
-      pools.insert(key, pool);
+    match self.pools.lock() {
+      Ok(mut pools) => {
+        pools.insert(key, pool);
+      }
+      Err(_) => log::error!("连接池注册表锁已中毒，无法登记连接池: {key}"),
     }
   }
 
   pub fn get(&self, key: &str) -> Option<Arc<P>> {
-    self.pools.lock().ok().and_then(|pools| pools.get(key).cloned())
+    match self.pools.lock() {
+      Ok(pools) => pools.get(key).cloned(),
+      Err(_) => {
+        log::error!("连接池注册表锁已中毒，无法读取连接池: {key}");
+        None
+      }
+    }
   }
 
   pub fn remove(&self, key: &str) -> bool {
-    self.pools.lock().ok().and_then(|mut pools| pools.remove(key)).is_some()
+    match self.pools.lock() {
+      Ok(mut pools) => pools.remove(key).is_some(),
+      Err(_) => {
+        log::error!("连接池注册表锁已中毒，无法移除连接池: {key}");
+        false
+      }
+    }
   }
 }
 

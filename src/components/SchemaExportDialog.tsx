@@ -49,7 +49,7 @@ const DDL_CONCURRENCY = 4;
  */
 export function SchemaExportDialog({ connection, tables, onClose }: SchemaExportDialogProps) {
   const t = useLanguageStore((state) => state.t);
-  const { database } = useQueryStore();
+  const database = useQueryStore((state) => state.database);
   const [filter, setFilter] = useState('');
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [format, setFormat] = useState<Format>('sql');

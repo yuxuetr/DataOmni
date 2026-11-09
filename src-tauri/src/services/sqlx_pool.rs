@@ -14,6 +14,7 @@
 //! 插件的 `select` 可执行任意语句、`load` 会替不存在的路径新建文件，撤掉前端 `sql:*` 权限后统一由后端打开。
 use crate::services::opengauss_relay;
 use crate::services::plugin_decode::{mysql_to_json, postgres_to_json};
+use crate::services::query_executor::encode_hex;
 use crate::services::QueryError;
 use indexmap::IndexMap;
 use serde_json::Value as JsonValue;
@@ -350,8 +351,9 @@ fn sqlite_to_json(value: sqlx::sqlite::SqliteValueRef<'_>) -> Result<JsonValue, 
   let decoded = match kind.as_str() {
     "INTEGER" => <i64 as Decode<Sqlite>>::decode(value).map(JsonValue::from),
     "REAL" => <f64 as Decode<Sqlite>>::decode(value).map(JsonValue::from),
-    "BLOB" => <Vec<u8> as Decode<Sqlite>>::decode(value)
-      .map(|bytes| JsonValue::String(bytes.iter().map(|byte| format!("{byte:02x}")).collect())),
+    "BLOB" => {
+      <Vec<u8> as Decode<Sqlite>>::decode(value).map(|bytes| JsonValue::String(encode_hex(&bytes)))
+    }
     _ => <String as Decode<Sqlite>>::decode(value).map(JsonValue::String),
   };
   decoded.map_err(|error| format!("{kind}: {error}"))

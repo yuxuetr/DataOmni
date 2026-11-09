@@ -446,6 +446,66 @@
 
 ---
 
+## 二次评估（2026-11-09，`25cf3e4`）
+
+来源：架构 / 安全 / 扩展性 / 性能四个维度的读码评估（没有运行时实测）。无高危项。按「收益 ÷ 改动量」排序。
+
+评估里核过、**不新开条目**的：引入 Driver trait（1.0 不新增数据库，且穷尽 `match` 已在编译期列全改点；
+有人要第 8 种 SQL 驱动时重估）、拆大文件、表格 / 对象树虚拟化、连接心跳（断线按 `CONNECTION_LOST` 在下一次查询发现，可接受）。
+
+- [x] PA1 二进制单元格：逐字节 `format!` 做 hex 编码、且在字节上限之前整格解码（`query_executor.rs` `binary_json` / `tagged_binary_value`）
+  - 已做：新增 `query_executor::encode_hex`（一次分配、查表），MySQL / PG / SQLite / SQL Server / Oracle / DuckDB / ClickHouse、
+    Mongo shell 与 CSV 导入的 hex 编码全部改用它；`serialized_row_size` 改为只计数不落缓冲（原来为取长度把整行再 `to_vec` 一份）。
+    一格 N 字节的 BLOB 在拒行之前的峰值从「原始 + 2N 十六进制 + 2N 序列化副本 + N 次小分配」降为「原始 + 2N」。
+  - **没做单格截断**，原因：驱动在解码前已把整格读进内存，截断省不下这一份；而二进制列会被拿去当行定位条件和编辑初值
+    （`rowStatements.ts` 的 `isCompleteHex`、`editStartValue`），截断值进 WHERE 就是定位错行。整行仍受 12 MB 字节上限拒收。
+    重估条件：有人报单格大 BLOB 查询卡顿或内存告警时，先测 `SELECT` 一行 50 MB BYTEA 的峰值 RSS，再决定是否加「截断 + 禁止编辑」。
+  - 验证：`hex_encoding_matches_the_per_byte_format_it_replaced`（0..=255 全字节与旧实现逐字符一致）、
+    `serialized_row_size_counts_exactly_what_serde_writes`；`cargo test` 全过。
+- [x] PA2 编辑器每次按键整棵树重渲染：`App.tsx` 订阅三个 store 的全部字段，且每次按键同步写一次工作区快照
+  - 已做：`App.tsx` 与 9 个组件里 13 处整 store 解构（`useXStore()`）改为 `useShallow` 按字段订阅；App 不再订阅整份
+    `documents`，只选「未保存标签 id 列表」与离线标签的草稿；快照写入移到 `watchWorkspaceSnapshot`（直接订阅 store，
+    500 ms 防抖，关窗口前与 `pagehide` 时立刻补写）。
+  - 验证：新增 `src/App.test.tsx`（第一份根组件渲染测试）——驱动量门：草稿连改四次，根下 Profiler 提交 0 次；
+    反向验证：退回旧的 App 与组件代码，同一测试红。`workspacePersistence.test.ts` 新增防抖 / flush / 停止三段断言。
+    `bun run test` 185 个文件 2301 条全过，lint 0 警告。留待：`bun tauri dev` 实机打字、切标签、关窗口后重开草稿还在。
+- [x] PA3 「优先 / 要求 TLS」两档不校验证书，界面没说；旧 `ssl:true` 连接按 Required 处理
+  - 已做：连接表单在这两档（含旧 `ssl:true`、没有 `tls_mode` 的连接）下方显示 `form.tls.unverifiedHint`：只加密、不校验证书，
+    要防中间人选「校验证书和主机名」。行为不改（与 libpq 的 prefer / require 语义一致）。
+  - 验证：`ConnectionForm.test.tsx` 渲染表单逐档切换，断言提示文字（不是文案键）只在 preferred / required 出现；i18n 门过。
+- [x] PA4 删掉没有消费者的 `opener:default` 与 `@tauri-apps/plugin-opener`（插件未注册，后端直接调 `open_url`）
+  - 已做：`capabilities/default.json` 撤掉 `opener:default` 与 `window-state:default`（窗口状态由 Rust 侧插件自动存取，
+    前端从没调过它的命令）；`package.json` 删掉无人 import 的 `@tauri-apps/plugin-opener` 与 `@tauri-apps/plugin-cli`。现剩 5 条权限。
+  - 验证：`databaseHandle.test.ts` 新增门——每条非 `core:` 权限和每个 `@tauri-apps/plugin-*` 依赖都要在 `src` 里有 import；
+    反向验证：删依赖前该门红（报 `cli`、`opener`），删后绿。`cargo check` 过。留待：打包版确认窗口位置大小仍能在重启后恢复。
+- [x] PA5 前端方言分支不穷尽：新增方言会悄悄走 MySQL / PG 的默认分支
+  - 已做：`contracts/queryExecution.ts` 新增 `unhandledDialect(never)`；「选哪种写法」的五处改成列全七种方言的 `switch`：
+    绑定占位符（`rowStatements` `createPlaceholderAllocator`）、展示时的占位符正则、分页子句（`tablePagination` `pageClause`）、
+    预览查询（`TOP` / `FETCH FIRST` / `LIMIT`）、建表默认 schema（`tableDdl` `defaultSchemaName`）。输出不变。
+  - 没改的：「这家要不要多做一步」的布尔判断（如 `dialect === 'clickhouse'` 时跳过某步）——默认分支本身就是正确的通用行为。
+  - 验证：反向——临时给 `SqlDialect` 加 `'fakedb'`，`tsc` 在这五处全部报错；恢复后绿。`src/utils` 130 个文件 1996 条全过。
+- [x] PA6 `write_text_file` / `write_binary_file` / `read_text_file` 接受任意路径
+  - 已做：`file_commands.rs` 新增 `refuse_reserved_path`（先规范化路径解开 `..` 与符号链接，拒绝落在 `app_config_dir` 内的路径，
+    返回 `DATAOMNI_PATH_RESERVED`），接入 `write_text_file`、`write_binary_file`、`read_text_file` 与 `write_new_text_files`；
+    前端 `backendError.ts` 与中英文文案补齐 `error.backend.pathReserved`。
+  - 验证：`refuses_paths_inside_the_reserved_directory_even_through_dot_dot_and_symlinks` 覆盖直接路径、未创建文件、`..` 绕回、
+    符号链接与兄弟目录前缀放行；`backendError.test.ts` 与 i18n 门全过。
+- [x] PA7 跨层结构体字段只靠手工同步：加 Rust → JSON → TS 契约夹具（`ConnectionProfile` / `QueryError`）
+  - 已做：新增共用夹具 `fixtures/contract-conformance.json`（含全字段 `ConnectionProfile`、`SshTunnelConfig` 与平铺 `QueryError`）；
+    Rust 侧 `models::tests::connection_profile_matches_shared_contract_fixture` 与 `query_error::tests::query_error_matches_shared_contract_fixture`
+    不用 `..Default::default()` 逐字段构造并双向校对序列化结果；TS 侧 `src/contracts/contractConformance.test.ts` 用
+    `satisfies Record<keyof Required<...>, true>` + 差集类型约束与运行时键集合断言双端同步。
+  - 验证：反向——将夹具中的 `credential_ref` 改为 `credential_reference`，`vitest` 与 `cargo test` 双双变红；恢复后全绿。
+- [x] PA8 杂项：只读闸门补 `dblink_connect` / `dblink_open` / `pg_sleep` / `BENCHMARK`；mysqldump 库名前加 `--`；
+  `PoolRegistry` 锁中毒时记日志；AGENTS.md 删掉已不存在的 `services/database_service.rs`。
+  - 已做：`read_only_gate.rs` 在 `SIDE_EFFECT_FUNCTIONS` 中补齐 `PG_SLEEP` / `PG_SLEEP_FOR` / `PG_SLEEP_UNTIL` / `SLEEP` / `BENCHMARK`，
+    并在 `SIDE_EFFECT_PREFIXES` 中补齐 `DBLINK_`（拦住 `dblink_connect`、`dblink_open` 等整族），同步扩充 `fixtures/agent-read-only.json`；
+    `backup.rs` 在 `mysqldump_command` 的库名前加入 `--` 分隔符；`pool_registry.rs` 在 `insert` / `get` / `remove` 遇到锁中毒时记 `log::error!`；
+    `AGENTS.md` 替换已删除的 `services/database_service.rs` 说明。
+  - 验证：`bun run check`、`bun run rust:clippy:no-ai`、`bun run rust:audit`、`bun run audit:frontend` 全绿。
+
+---
+
 ## 兼容性矩阵里的缺口（2026-10-16 盘点）
 
 按 README「兼容性矩阵」逐条分了类。服务端本身没有的（MySQL 5.7 的检查约束目录、函数索引、表达式默认值；
