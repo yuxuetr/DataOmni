@@ -446,6 +446,32 @@
 
 ---
 
+## 二次评估（2026-11-09，`25cf3e4`）
+
+来源：架构 / 安全 / 扩展性 / 性能四个维度的读码评估（没有运行时实测）。无高危项。按「收益 ÷ 改动量」排序。
+
+评估里核过、**不新开条目**的：引入 Driver trait（1.0 不新增数据库，且穷尽 `match` 已在编译期列全改点；
+有人要第 8 种 SQL 驱动时重估）、拆大文件、表格 / 对象树虚拟化、连接心跳（断线按 `CONNECTION_LOST` 在下一次查询发现，可接受）。
+
+- [ ] PA1 二进制单元格：逐字节 `format!` 做 hex 编码、且在字节上限之前整格解码（`query_executor.rs` `binary_json` / `tagged_binary_value`）
+  - 做：查表法编码；单格超过上限时截断并带标记（与 Mongo / Redis 已有的单格截断一致）。判据：单测里超大单元格被截断且带标记。
+- [ ] PA2 编辑器每次按键整棵树重渲染：`App.tsx` 订阅三个 store 的全部字段，且每次按键同步写一次工作区快照
+  - 做：按字段订阅（`useShallow` / selector）；快照写入防抖。判据：测试断言按键只触发快照防抖后写一次。
+- [ ] PA3 「优先 / 要求 TLS」两档不校验证书，界面没说；旧 `ssl:true` 连接按 Required 处理
+  - 做：表单在这两档下写明「加密但不校验证书」。判据：渲染看过；i18n 门过。
+- [ ] PA4 删掉没有消费者的 `opener:default` 与 `@tauri-apps/plugin-opener`（插件未注册，后端直接调 `open_url`）
+  - 判据：`databaseHandle.test.ts` 的配置门断言没有 `opener:` 权限。
+- [ ] PA5 前端方言分支不穷尽：新增方言会悄悄走 MySQL / PG 的默认分支
+  - 做：最大的几处（`rowStatements` / `tablePagination` / `tableDdl`）补穷尽检查。判据：反向验证——临时加一个假方言编译报错。
+- [ ] PA6 `write_text_file` / `write_binary_file` / `read_text_file` 接受任意路径
+  - 做：拒绝应用配置目录（`connections.json` 所在处）。判据：单测，配置目录内路径被拒、普通路径放行。
+- [ ] PA7 跨层结构体字段只靠手工同步：加 Rust → JSON → TS 契约夹具（`ConnectionProfile` / `QueryError`）
+  - 判据：故意改一个字段名测试变红。
+- [ ] PA8 杂项：只读闸门补 `dblink_connect` / `dblink_open` / `pg_sleep` / `BENCHMARK`；mysqldump 库名前加 `--`；
+  `PoolRegistry` 锁中毒时记日志；AGENTS.md 删掉已不存在的 `services/database_service.rs`。
+
+---
+
 ## 兼容性矩阵里的缺口（2026-10-16 盘点）
 
 按 README「兼容性矩阵」逐条分了类。服务端本身没有的（MySQL 5.7 的检查约束目录、函数索引、表达式默认值；
